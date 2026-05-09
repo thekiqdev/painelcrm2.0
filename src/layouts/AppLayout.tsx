@@ -52,7 +52,8 @@ import {
   useSidebar
 } from "@/components/ui/sidebar";
 import { Badge } from '@/components/ui/badge';
-import { Avatar } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { normalizeCatalogMediaUrlForBrowser } from '@/services/catalogMediaUpload';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -78,6 +79,12 @@ import { TenantSidebarMark } from '@/components/tenant/TenantMarks';
 import { RequireModuleView } from '@/components/RequireModuleView';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { routePreload } from '@/routePreload';
+import {
+  prefetchClientsListNav,
+  prefetchDashboardOverview,
+  prefetchLeadsListNav,
+  prefetchTasksSummaryNav,
+} from '@/lib/prefetchAppData';
 import { cn } from '@/lib/utils';
 import { MobileAppNavigation } from '@/components/navigation/MobileAppNavigation';
 import {
@@ -117,8 +124,13 @@ function AppMainColumn({ children }: { children: React.ReactNode }) {
   );
 }
 
-// Prefetch dos chunks das rotas mais usadas após o layout carregar (evita espera no primeiro clique)
-const usePrefetchRoutes = () => {
+const Nav = () => {
+  const { state } = useSidebar();
+  const collapsed = state === "collapsed";
+  const { user } = useAuth();
+  const tenantId = user?.tenant_id ?? "";
+  const userId = user?.id ?? "";
+
   useEffect(() => {
     const t = setTimeout(() => {
       routePreload.dashboard();
@@ -127,16 +139,15 @@ const usePrefetchRoutes = () => {
       routePreload.agenda();
       routePreload.projects();
       routePreload.products();
+      if (tenantId && userId) {
+        prefetchDashboardOverview(tenantId, userId);
+        prefetchTasksSummaryNav(tenantId, userId);
+      }
     }, 1500);
     return () => clearTimeout(t);
-  }, []);
-};
+  }, [tenantId, userId]);
 
-const Nav = () => {
-  const { state } = useSidebar();
-  const collapsed = state === "collapsed";
-  const { canView } = useModulePermissions();
-  usePrefetchRoutes();
+  const { canView, hasPermissionKey } = useModulePermissions();
   const hasDashboard = useFeatureFlag('dashboard');
   const hasClients = useFeatureFlag('clients');
   const hasLeads = useFeatureFlag('leads');
@@ -292,7 +303,15 @@ const Nav = () => {
         <SidebarGroup className="py-1.5">
           <SidebarMenu className="gap-0.5">
             {show(hasDashboard, 'dashboard') && (
-              <NavLinkItem to="/dashboard" icon={LayoutDashboard} label="Dashboard" preload={() => routePreload.dashboard()} />
+              <NavLinkItem
+                to="/dashboard"
+                icon={LayoutDashboard}
+                label="Dashboard"
+                preload={() => {
+                  routePreload.dashboard();
+                  prefetchDashboardOverview(tenantId, userId);
+                }}
+              />
             )}
           </SidebarMenu>
         </SidebarGroup>
@@ -304,10 +323,26 @@ const Nav = () => {
           <SidebarGroupContent>
             <SidebarMenu className="gap-0.5">
               {show(hasClients, 'clients') && (
-                <NavLinkItem to="/clients" icon={Users} label="Clientes" preload={() => routePreload.clients()} />
+                <NavLinkItem
+                  to="/clients"
+                  icon={Users}
+                  label="Clientes"
+                  preload={() => {
+                    routePreload.clients();
+                    prefetchClientsListNav(tenantId, userId);
+                  }}
+                />
               )}
               {show(hasLeads, 'leads') && (
-                <NavLinkItem to="/leads" icon={UserPlus} label="Leads" preload={() => routePreload.leads()} />
+                <NavLinkItem
+                  to="/leads"
+                  icon={UserPlus}
+                  label="Leads"
+                  preload={() => {
+                    routePreload.leads();
+                    prefetchLeadsListNav(tenantId, userId);
+                  }}
+                />
               )}
               {show(hasAgenda, 'agenda') && (
                 <NavLinkItem to="/agenda" icon={CalendarDays} label="Agenda" preload={() => routePreload.agenda()} />
@@ -333,35 +368,44 @@ const Nav = () => {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {show(hasInvoices, 'billing') && (
+        {show(hasInvoices, 'billing') &&
+        (hasPermissionKey('billing.view_invoices') ||
+          hasPermissionKey('billing.view_charges') ||
+          hasPermissionKey('billing.view_subscriptions')) ? (
           <SidebarGroup className="py-1.5">
             <SidebarGroupLabel className={cn('px-2.5 text-[11px] font-semibold uppercase tracking-wide text-sidebar-foreground/50', collapsed && 'sr-only')}>
               Faturamento
             </SidebarGroupLabel>
           <SidebarGroupContent>
               <SidebarMenu className="gap-0.5">
+                {hasPermissionKey('billing.view_invoices') ? (
                 <NavLinkItem
                   to="/customer-invoices"
                   icon={FileText}
                   label="Faturas"
                   preload={() => routePreload.customerInvoices()}
                 />
+                ) : null}
+                {hasPermissionKey('billing.view_charges') ? (
                 <NavLinkItem
                   to="/customer-charges"
                   icon={CreditCard}
                   label="Cobranças"
                   preload={() => routePreload.customerCharges()}
                 />
+                ) : null}
+                {hasPermissionKey('billing.view_subscriptions') ? (
                 <NavLinkItem
                   to="/crm-subscriptions"
                   icon={CalendarSync}
                   label="Assinaturas"
                   preload={() => routePreload.crmSubscriptions()}
                 />
+                ) : null}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
-        )}
+        ) : null}
 
         {show(hasFunnels, 'funnels') && (
           <SidebarGroup className="py-1.5">
@@ -403,7 +447,15 @@ const Nav = () => {
                 <NavLinkItem to="/projects" icon={Calendar} label="Projetos" preload={() => routePreload.projects()} />
               )}
               {show(hasTasks, 'tasks') && (
-                <NavLinkItem to="/tasks" icon={ClipboardCheck} label="Tarefas" preload={() => routePreload.tasks()} />
+                <NavLinkItem
+                  to="/tasks"
+                  icon={ClipboardCheck}
+                  label="Tarefas"
+                  preload={() => {
+                    routePreload.tasks();
+                    prefetchTasksSummaryNav(tenantId, userId);
+                  }}
+                />
               )}
               {show(hasTasks, 'project_templates') && (
                 <NavLinkItem
@@ -433,15 +485,23 @@ const Nav = () => {
           </SidebarGroupContent>
         </SidebarGroup>
         
+        {show(hasExpenses, 'finance') &&
+        (hasPermissionKey('finance.view') ||
+          hasPermissionKey('finance.view_revenue') ||
+          hasPermissionKey('finance.view_expenses') ||
+          hasPermissionKey('finance.view_accounts_payable') ||
+          hasPermissionKey('finance.view_reports')) ? (
         <SidebarGroup className="py-1.5">
           <SidebarGroupLabel className={cn('px-2.5 text-[11px] font-semibold uppercase tracking-wide text-sidebar-foreground/50', collapsed && 'sr-only')}>
             Financeiro
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu className="gap-0.5">
-              {show(hasExpenses, 'finance') && (
                 <>
+                  {hasPermissionKey('finance.view') ? (
                   <NavLinkItem to="/finance" end icon={LayoutDashboard} label="Resumo geral" preload={() => routePreload.finance()} />
+                  ) : null}
+                  {hasPermissionKey('finance.view') ? (
                   <NavLinkItem
                     to="/finance/accounts"
                     icon={Landmark}
@@ -449,31 +509,42 @@ const Nav = () => {
                     excludeActiveWhenPathStartsWith="/finance/accounts-payable"
                     preload={() => routePreload.finance()}
                   />
+                  ) : null}
+                  {hasPermissionKey('finance.view_revenue') || hasPermissionKey('finance.view_expenses') ? (
                   <NavLinkItem
                     to="/finance/transactions"
                     icon={ArrowLeftRight}
                     label="Entradas e saídas"
                     preload={() => routePreload.finance()}
                   />
+                  ) : null}
+                  {hasPermissionKey('finance.view_accounts_payable') ? (
                   <NavLinkItem
                     to="/finance/accounts-payable"
                     icon={ClipboardList}
                     label="Contas a pagar"
                     preload={() => routePreload.finance()}
                   />
+                  ) : null}
+                  {hasPermissionKey('finance.view') ? (
                   <NavLinkItem
                     to="/finance/credit-cards"
                     icon={CreditCard}
                     label="Cartões de crédito"
                     preload={() => routePreload.finance()}
                   />
+                  ) : null}
+                  {hasPermissionKey('finance.view_expenses') ? (
                   <NavLinkItem to="/finance/categories" icon={Tags} label="Categorias" preload={() => routePreload.finance()} />
+                  ) : null}
+                  {hasPermissionKey('finance.view_reports') ? (
                   <NavLinkItem to="/finance/relatorios" icon={PieChart} label="Relatórios" preload={() => routePreload.finance()} />
+                  ) : null}
                 </>
-              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+        ) : null}
         
         <SidebarGroup className="py-1.5">
           <SidebarGroupLabel className={cn('px-2.5 text-[11px] font-semibold uppercase tracking-wide text-sidebar-foreground/50', collapsed && 'sr-only')}>
@@ -497,7 +568,7 @@ const CREATE_MENU_ITEM_CLASS =
 
 const Header = () => {
   const { user, profile, signOut } = useAuth();
-  const { canView, canCreate } = useModulePermissions();
+  const { canView, canCreate, hasPermissionKey } = useModulePermissions();
   const { showMobileGlobalHeader } = useMobileShellChrome();
   const navigate = useNavigate();
   const { pathname } = useLocation();
@@ -547,13 +618,35 @@ const Header = () => {
     commandSearchInteracted,
   ]);
 
-  const initials = profile ? 
-    (profile.first_name?.charAt(0) || '') + (profile.last_name?.charAt(0) || '') : 
-    'U';
-  
-  const displayName = profile ? 
-    `${profile.first_name || ''} ${profile.last_name || ''}`.trim() : 
-    'Usuário';
+  const initials = useMemo(() => {
+    const src = profile ?? user;
+    const f = (src?.first_name || '').trim().charAt(0);
+    const l = (src?.last_name || '').trim().charAt(0);
+    const pair = `${f}${l}`.trim();
+    if (pair) return pair.toUpperCase();
+    const em = (user?.email || '').trim().charAt(0);
+    return em ? em.toUpperCase() : 'U';
+  }, [profile, user]);
+
+  const displayName = useMemo(() => {
+    const src = profile ?? user;
+    const name = `${src?.first_name || ''} ${src?.last_name || ''}`.trim();
+    if (name) return name;
+    return user?.email?.split('@')[0] || 'Usuário';
+  }, [profile, user]);
+
+  /** Mesmo contrato que GET /api/auth/me (`avatar_url` no objeto raiz). */
+  const headerAvatarSrc = useMemo(() => {
+    const raw =
+      (profile as { avatar_url?: string | null } | null)?.avatar_url ??
+      (user as { avatar_url?: string | null } | null)?.avatar_url;
+    if (!raw || !String(raw).trim()) return null;
+    try {
+      return normalizeCatalogMediaUrlForBrowser(String(raw).trim());
+    } catch {
+      return String(raw).trim();
+    }
+  }, [profile, user]);
 
   const { notifUnread, updatesUnread } = useInAppNotificationBadges();
   useRealtimeEvents();
@@ -571,13 +664,15 @@ const Header = () => {
   const hasProducts = useFeatureFlag('products');
   const hasChat = useFeatureFlag('chat');
 
-  const showCreateInvoice = hasInvoices && canView('billing') && canCreate('billing');
+  const showCreateInvoice =
+    hasInvoices && canView('billing') && hasPermissionKey('billing.create_invoice');
   const showCreateClient = hasClients && canView('clients') && canCreate('clients');
   const showCreateProposal = hasProposals && canView('proposals') && canCreate('proposals');
   const showCreateContract = hasContracts && canView('contracts') && canCreate('contracts');
   const showCreateTask = hasTasks && canView('tasks') && canCreate('tasks');
   const showCreateAppointment = hasAgenda && canView('agenda') && canCreate('agenda');
-  const showCreateFinanceTx = hasExpenses && canView('finance') && canCreate('finance');
+  const showCreateFinanceTx =
+    hasExpenses && canView('finance') && hasPermissionKey('finance.create_expense');
   const showTransfer = showCreateFinanceTx;
   const showCreateMenu =
     showCreateInvoice ||
@@ -1045,9 +1140,12 @@ const Header = () => {
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" className="h-9 max-w-[min(100%,14rem)] gap-2 rounded-lg px-2 hover:bg-accent/80">
               <Avatar className="h-8 w-8 shrink-0">
-                <div className="flex h-full w-full items-center justify-center bg-crm-primary font-medium text-white">
+                {headerAvatarSrc ? (
+                  <AvatarImage src={headerAvatarSrc} alt="" className="object-cover" />
+                ) : null}
+                <AvatarFallback className="bg-crm-primary font-medium text-xs text-white">
                   {initials || 'U'}
-                </div>
+                </AvatarFallback>
               </Avatar>
               <span className="hidden min-w-0 truncate font-medium md:inline">{displayName}</span>
             </Button>

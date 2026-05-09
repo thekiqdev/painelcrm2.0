@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
-import { chatService, type ChatConversation } from '@/services/chat';
+import { chatService, resolveChatKanbanTagsForUi, type ChatConversation } from '@/services/chat';
 import { resolveConversationIdentity } from '@/utils/chatIdentityDisplay';
 import { cn } from '@/lib/utils';
 import { beginConversationDragSession, endConversationDragSession } from '@/lib/chatKanbanConversationDrag';
@@ -19,6 +19,7 @@ import {
 } from '@/lib/conversationDragPreview';
 import { useFloatingChat } from './floatingChatContext';
 import { FLOATING_LIST_WIDTH_PX } from './constants';
+import { ChatKanbanTagBadge } from '@/components/chat/ChatKanbanTagBadge';
 
 type QuickFilter = 'all' | 'mine' | 'unread';
 
@@ -68,9 +69,14 @@ export function FloatingConversationList({ className }: { className?: string }) 
         if (!prev) byId.set(c.id, c);
       }
       let list = Array.from(byId.values()).sort((a, b) => {
-        const ta = new Date(a.lastMessageAt || a.updated_at || a.created_at || 0).getTime();
-        const tb = new Date(b.lastMessageAt || b.updated_at || b.created_at || 0).getTime();
-        return tb - ta;
+        const ta = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+        const tb = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+        if (ta && tb) return tb - ta;
+        if (ta && !tb) return -1;
+        if (!ta && tb) return 1;
+        const ca = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const cb = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return cb - ca;
       });
       if (quick === 'unread') {
         list = list.filter((c) => (c.unreadCount ?? 0) > 0);
@@ -159,6 +165,9 @@ export function FloatingConversationList({ className }: { className?: string }) 
               {filtered.map((c) => {
                 const id = resolveConversationIdentity(c, null, null);
                 const unread = c.unreadCount ?? 0;
+                const tagUi = resolveChatKanbanTagsForUi(c);
+                const tagVisible = tagUi.slice(0, 3);
+                const tagMore = tagUi.length - tagVisible.length;
                 return (
                   <li key={c.id}>
                     <button
@@ -204,13 +213,30 @@ export function FloatingConversationList({ className }: { className?: string }) 
                         <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-muted-foreground">
                           {previewLine(c)}
                         </p>
+                        {tagVisible.length > 0 ? (
+                          <div className="mt-0.5 flex max-w-full flex-wrap items-center gap-1">
+                            {tagVisible.map((t) => (
+                              <ChatKanbanTagBadge
+                                key={t.id}
+                                label={t.label}
+                                color={t.color}
+                                className="max-w-[44%]"
+                              />
+                            ))}
+                            {tagMore > 0 ? (
+                              <span className="shrink-0 text-[10px] font-medium tabular-nums text-muted-foreground">
+                                +{tagMore}
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : null}
                         <p className="mt-0.5 text-[10px] text-muted-foreground/90">
                           {c.lastMessageAt
                             ? formatDistanceToNow(new Date(c.lastMessageAt), {
                                 addSuffix: true,
                                 locale: ptBR,
                               })
-                            : ''}
+                            : 'Sem mensagens recentes'}
                         </p>
                       </div>
                     </button>

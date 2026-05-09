@@ -16,7 +16,7 @@ import { BoardView } from "@/components/projects/BoardView";
 import { TaskListView } from "@/components/projects/TaskListView";
 import { CalendarView } from "@/components/projects/CalendarView";
 import { TaskDetailDialog } from "@/components/projects/TaskDetailDialog";
-import { NewTaskDialog } from "@/components/projects/NewTaskDialog";
+import { TaskFormDialog } from "@/components/tasks";
 import { NewListDialog } from "@/components/projects/NewListDialog";
 import { EditListDialog } from "@/components/projects/EditListDialog";
 
@@ -114,8 +114,6 @@ const Projects = () => {
   const [editingList, setEditingList] = useState<ProjectList | null>(null);
   const [selectedTask, setSelectedTask] = useState<{task: Task, listId: string} | null>(null);
   const [newChecklistItemText, setNewChecklistItemText] = useState("");
-  const [newTagText, setNewTagText] = useState("");
-  const [tagsInput, setTagsInput] = useState<string[]>([]);
   const [editingTask, setEditingTask] = useState(false);
   const [projectSettingsOpen, setProjectSettingsOpen] = useState(false);
   const [saveAsTemplateOpen, setSaveAsTemplateOpen] = useState(false);
@@ -772,113 +770,35 @@ const Projects = () => {
     }
   };
 
-  // Funções para gestão de tarefas
-  const handleCreateTask = async (formData: FormData) => {
-    if (!selectedProject || !selectedListId) return;
-    
-    try {
-      // Obter dados básicos do formulário
-      const title = formData.get('title') as string;
-      const description = formData.get('description') as string;
-      const priority = (formData.get('priority') as string) || "medium";
-      const dueDate = formData.get('dueDate') as string;
-      const assigneeId = formData.get('assignee') as string;
-      const tagsJson = formData.get('tags') as string;
-      const tags = tagsJson ? JSON.parse(tagsJson) : [];
-      // Campos avançados (Configurações Avançadas)
-      const startDate = formData.get('startDate') as string | null;
-      const startTime = (formData.get('startTime') as string) || null;
-      const endTime = (formData.get('endTime') as string) || null;
-      const estimatedHoursRaw = formData.get('estimatedHours') as string | null;
-      const estimatedHours = estimatedHoursRaw != null && estimatedHoursRaw !== '' ? Number(estimatedHoursRaw) : null;
-      const storyPointsRaw = formData.get('storyPoints') as string | null;
-      const storyPoints = storyPointsRaw != null && storyPointsRaw !== '' ? Number(storyPointsRaw) : null;
-      const checklistJson = formData.get('checklist') as string | null;
-      const checklist = checklistJson ? JSON.parse(checklistJson) : [];
-      const watchersJson = formData.get('watchers') as string | null;
-      const watchers = watchersJson ? JSON.parse(watchersJson) : [];
-      const visibility = (formData.get('visibility') as string) || 'internal';
-      const billable = formData.get('billable') === '1';
-      const hourlyRateRaw = formData.get('hourlyRate') as string | null;
-      const hourlyRate = hourlyRateRaw != null && hourlyRateRaw !== '' ? Number(hourlyRateRaw) : null;
-      const budgetCapRaw = formData.get('budgetCap') as string | null;
-      const budgetCap = budgetCapRaw != null && budgetCapRaw !== '' ? Number(budgetCapRaw) : null;
-      const hasRecurrence = formData.get('hasRecurrence') === '1';
-      const recurrenceType = formData.get('recurrenceType') as string | null;
-      const recurrence_rule = hasRecurrence && recurrenceType ? { type: recurrenceType } : null;
-      const meetingLocation = (formData.get('meetingLocation') as string) || null;
-      const meetingLink = (formData.get('meetingLink') as string) || null;
-      const severity = (formData.get('severity') as string) || null;
-      
-      const apiTask = await projectsService.createProjectTask(selectedListId, {
-        title,
-        description: description || null,
-        status: "todo",
-        priority,
-        due_date: dueDate || null,
-        assignee_id: assigneeId || null,
-        tags: tags || [],
-        checklist,
-        start_date: startDate || null,
-        start_time: startTime,
-        end_time: endTime,
-        estimated_effort_hours: estimatedHours,
-        estimated_story_points: storyPoints,
-        watchers,
-        visibility,
-        billable,
-        hourly_rate: hourlyRate,
-        budget_cap: budgetCap,
-        recurrence_rule,
-        meeting_location: meetingLocation,
-        meeting_link: meetingLink,
-        severity,
-      });
-      
-      // Encontrar o membro selecionado
-      let assignee;
-      if (assigneeId) {
-        assignee = members.find(m => m.id === assigneeId);
-      }
-      
-      // Converter para formato do frontend
-      const newTask: Task = {
-        id: apiTask.id,
-        title: apiTask.title,
-        description: apiTask.description || "",
-        status: apiTask.status as TaskStatus,
-        priority: apiTask.priority as any,
-        dueDate: apiTask.due_date || undefined,
-        assignee,
-        tags: apiTask.tags || [],
-        checklist: (apiTask.checklist || []).map((item: any, index: number) => ({
-          id: item.id || `checklist-${index}`,
-          text: item.text || item.title || "",
-          completed: item.completed || false
-        }))
-      };
-      
-      // Atualizar o projeto
-      const updatedProject = {
-        ...selectedProject,
-        lists: selectedProject.lists.map(list => {
-          if (list.id !== selectedListId) return list;
-          
-          return {
-            ...list,
-            tasks: [...list.tasks, newTask]
-          };
-        })
-      };
-      
-      setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
-      setSelectedProject(updatedProject);
-      setNewTaskDialogOpen(false);
-      toast.success("Tarefa criada com sucesso!");
-    } catch (error) {
-      console.error('Erro ao criar tarefa:', error);
-      toast.error('Erro ao criar tarefa');
-    }
+  const applyNewProjectTask = (apiTask: ApiProjectTask, listId: string) => {
+    if (!selectedProject) return;
+    const assignee = apiTask.assignee_id
+      ? members.find((m) => m.id === apiTask.assignee_id)
+      : undefined;
+    const newTask: Task = {
+      id: apiTask.id,
+      title: apiTask.title,
+      description: apiTask.description || "",
+      status: apiTask.status as TaskStatus,
+      priority: apiTask.priority as Task["priority"],
+      dueDate: apiTask.due_date || undefined,
+      assignee,
+      tags: apiTask.tags || [],
+      checklist: (apiTask.checklist || []).map((item: any, index: number) => ({
+        id: item.id || `checklist-${index}`,
+        text: item.text || item.title || "",
+        completed: item.completed || false,
+      })),
+    };
+    const updatedProject = {
+      ...selectedProject,
+      lists: selectedProject.lists.map((list) => {
+        if (list.id !== listId) return list;
+        return { ...list, tasks: [...list.tasks, newTask] };
+      }),
+    };
+    setProjects(projects.map((p) => (p.id === selectedProject.id ? updatedProject : p)));
+    setSelectedProject(updatedProject);
   };
 
   // Move task between lists
@@ -1957,17 +1877,25 @@ const Projects = () => {
         onSave={handleEditList}
       />
       
-      <NewTaskDialog
-        open={newTaskDialogOpen}
-        onOpenChange={setNewTaskDialogOpen}
-        members={members}
-        teams={teams}
-        onAddTask={handleCreateTask}
-        tagsInput={tagsInput}
-        setTagsInput={setTagsInput}
-        newTagText={newTagText}
-        setNewTagText={setNewTagText}
-      />
+      {selectedProject && selectedListId ? (
+        <TaskFormDialog
+          key={selectedListId}
+          open={newTaskDialogOpen}
+          onOpenChange={setNewTaskDialogOpen}
+          canSubmit={canCreateProject(MODULE_TASKS)}
+          context={{
+            origin: "project",
+            projectId: selectedProject.id,
+            listId: selectedListId,
+            areaId: null,
+            projectName: selectedProject.name,
+            teams: teams.map((t) => ({ id: t.id, name: t.name })),
+          }}
+          onSuccess={(r) => {
+            if (r.origin === "project") applyNewProjectTask(r.apiTask, r.listId);
+          }}
+        />
+      ) : null}
       
       <TaskDetailDialog
         open={taskDetailOpen}

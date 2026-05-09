@@ -12,6 +12,21 @@ import {
   getInvoicesForCharge,
 } from '../services/customerChargesService.js';
 import { clientBelongsToTenant } from '../services/customerBillingService.js';
+import { assertPermissionKey, ModulePermissionError } from '../permissions/index.js';
+import type { PermissionCatalogKey } from '../permissions/permissionCatalog.js';
+
+async function requirePermKey(req: AuthRequest, key: PermissionCatalogKey, res: Response): Promise<boolean> {
+  try {
+    await assertPermissionKey(req.userId, key, req);
+    return true;
+  } catch (e) {
+    if (e instanceof ModulePermissionError) {
+      res.status(e.statusCode).json({ error: e.message });
+      return false;
+    }
+    throw e;
+  }
+}
 
 const createBodySchema = z.object({
   client_id: z.string().uuid().optional().nullable(),
@@ -30,6 +45,7 @@ export async function listCustomerCharges(req: AuthRequest, res: Response): Prom
       res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
+    if (!(await requirePermKey(req, 'billing.view_charges', res))) return;
     const client_id = typeof req.query.client_id === 'string' ? req.query.client_id : undefined;
     const status = typeof req.query.status === 'string' ? req.query.status : undefined;
     const q = typeof req.query.q === 'string' ? req.query.q : undefined;
@@ -51,6 +67,7 @@ export async function getCustomerChargeById(req: AuthRequest, res: Response): Pr
       res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
+    if (!(await requirePermKey(req, 'billing.view_charges', res))) return;
     const { id } = req.params;
     const charge = await getChargeById(tenantId, id);
     if (!charge) {
@@ -73,6 +90,7 @@ export async function createCustomerCharge(req: AuthRequest, res: Response): Pro
       res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
+    if (!(await requirePermKey(req, 'billing.create_charge', res))) return;
     const parsed = createBodySchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: 'Dados inválidos', details: parsed.error.flatten() });
@@ -104,6 +122,7 @@ export async function updateCustomerCharge(req: AuthRequest, res: Response): Pro
       res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
+    if (!(await requirePermKey(req, 'billing.edit_charge', res))) return;
     const { id } = req.params;
     const parsed = updateBodySchema.safeParse(req.body);
     if (!parsed.success) {

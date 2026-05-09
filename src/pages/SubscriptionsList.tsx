@@ -24,6 +24,7 @@ import { ptBR } from "date-fns/locale";
 import { AlertTriangle, ArrowRight, CalendarClock, CalendarSync, CheckCircle2, Eye, EyeOff, Filter, Plus, Wallet } from "lucide-react";
 import { MobilePageHeader } from "@/components/mobile/MobilePageHeader";
 import { cn } from "@/lib/utils";
+import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 
 const HIDE_ENDED_STORAGE_KEY = "crm_subscriptions_hide_ended";
 
@@ -77,6 +78,8 @@ function subscriptionStatusUi(row: CrmSubscriptionListItem): { label: string; va
 
 const SubscriptionsList = () => {
   const navigate = useNavigate();
+  const { hasPermissionKey, loading: permLoading } = useModulePermissions();
+  const canCreateInvoice = hasPermissionKey("billing.create_invoice") && !permLoading;
   const [rows, setRows] = useState<CrmSubscriptionListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [hideEnded, setHideEnded] = useState<boolean>(readStoredHideEnded);
@@ -164,11 +167,15 @@ const SubscriptionsList = () => {
               onClick: () => setHideEnded((v) => !v),
             },
           ]}
-          primaryAction={{
-            label: "Nova cobrança",
-            icon: <Plus className="h-4 w-4" aria-hidden />,
-            href: "/customer-invoices/new",
-          }}
+          primaryAction={
+            canCreateInvoice
+              ? {
+                  label: "Nova cobrança",
+                  icon: <Plus className="h-4 w-4" aria-hidden />,
+                  href: "/customer-invoices/new",
+                }
+              : undefined
+          }
         />
       </div>
 
@@ -184,9 +191,11 @@ const SubscriptionsList = () => {
             de cada assinatura.
           </p>
         </div>
-        <Button variant="outline" asChild className="shrink-0">
-          <Link to="/customer-invoices/new">Nova fatura ou assinatura</Link>
-        </Button>
+        {canCreateInvoice ? (
+          <Button variant="outline" asChild className="shrink-0">
+            <Link to="/customer-invoices/new">Nova fatura ou assinatura</Link>
+          </Button>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">

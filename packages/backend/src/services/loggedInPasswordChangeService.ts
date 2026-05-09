@@ -1,5 +1,6 @@
 /**
  * Alteração de senha com utilizador autenticado: código por WhatsApp (instância do utilizador ou plataforma).
+ * Confirmação separada (purpose profile_edit) para desbloquear edição de dados pessoais / foto.
  */
 import { randomInt } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
@@ -16,13 +17,21 @@ const CODE_TTL_MINUTES = 10;
 const MAX_VERIFY_ATTEMPTS = 5;
 const MAX_NEW_CODES_PER_HOUR = 5;
 
+export type CodePurpose = 'password' | 'profile_edit';
+
 function generateSixDigitCode(): string {
   return String(randomInt(100000, 1000000));
 }
 
-function buildMessage(code: string): string {
+function buildPasswordMessage(code: string): string {
   return normalizeWhatsAppOutboundPlainText(
     `Seu código para alterar a senha é: ${code}. Ele expira em ${CODE_TTL_MINUTES} minutos. Se não foi você, ignore esta mensagem.`,
+  );
+}
+
+function buildProfileEditMessage(code: string): string {
+  return normalizeWhatsAppOutboundPlainText(
+    `Seu código para editar os dados do perfil é: ${code}. Expira em ${CODE_TTL_MINUTES} minutos. Se não foi você, ignore esta mensagem.`,
   );
 }
 
@@ -35,12 +44,12 @@ async function countRecentCodes(pool: Pool | PoolClient, userId: string): Promis
   return parseInt(r.rows[0]?.c ?? '0', 10) || 0;
 }
 
-async function supersedePendingCodes(client: PoolClient, userId: string): Promise<void> {
+async function supersedePendingCodes(client: PoolClient, userId: string, purpose: CodePurpose): Promise<void> {
   await client.query(
     `UPDATE user_password_change_codes
      SET consumed_at = now(), updated_at = now()
-     WHERE user_id = $1::uuid AND consumed_at IS NULL`,
-    [userId],
+     WHERE user_id = $1::uuid AND consumed_at IS NULL AND purpose = $2`,
+    [userId, purpose],
   );
 }
 
@@ -86,11 +95,7 @@ async function sendCodeToWhatsapp(params: {
   return { ok: true };
 }
 
-export type RequestLoggedInPasswordChangeCodeResult =
-  | { ok: true }
-  | { ok: false; error: string; code?: 'NO_WHATSAPP' | 'RATE_LIMIT' | 'SEND_FAILED' };
-
-export async function requestLoggedInPasswordChangeCode(pool: Pool, userId: string, tenantId: string | null): Promise<RequestLoggedInPasswordChangeCodeResult> {
+async function getRegisteredWhatsappDigits(pool: Pool, userId: string): Promise<string> {
   const u = await pool.query<{ whatsapp: string | null }>(
     `SELECT regexp_replace(COALESCE(u.whatsapp_number, p.whatsapp_number, ''), '\\D', '', 'g') AS whatsapp
      FROM users u
@@ -98,9 +103,24 @@ export async function requestLoggedInPasswordChangeCode(pool: Pool, userId: stri
      WHERE u.id = $1`,
     [userId],
   );
-  const digits = (u.rows[0]?.whatsapp ?? '').replace(/\D/g, '');
+  return (u.rows[0]?.whatsapp ?? '').replace(/\D/g, '');
+}
+
+export type RequestLoggedInPasswordChangeCodeResult =
+  | { ok: true }
+  | { ok: false; error: string; code?: 'NO_WHATSAPP' | 'RATE_LIMIT' | 'SEND_FAILED' };
+
+async function requestWhatsappSixDigitCode(
+  pool: Pool,
+  userId: string,
+  tenantId: string | null,
+  purpose: CodePurpose,
+  messageForPlainCode: (code: string) => string,
+  noWhatsappError: string,
+): Promise<RequestLoggedInPasswordChangeCodeResult> {
+  const digits = await getRegisteredWhatsappDigits(pool, userId);
   if (digits.length < 8) {
-    return { ok: false, error: 'Cadastre o WhatsApp no perfil antes de alterar a senha por código.', code: 'NO_WHATSAPP' };
+    return { ok: false, error: noWhatsappError, code: 'NO_WHATSAPP' };
   }
 
   const recent = await countRecentCodes(pool, userId);
@@ -116,12 +136,12 @@ export async function requestLoggedInPasswordChangeCode(pool: Pool, userId: stri
   let rowId: string | null = null;
   try {
     await client.query('BEGIN');
-    await supersedePendingCodes(client, userId);
+    await supersedePendingCodes(client, userId, purpose);
     const ins = await client.query<{ id: string }>(
-      `INSERT INTO user_password_change_codes (user_id, code_hash, expires_at)
-       VALUES ($1::uuid, $2, $3)
+      `INSERT INTO user_password_change_codes (user_id, code_hash, expires_at, purpose)
+       VALUES ($1::uuid, $2, $3, $4)
        RETURNING id::text AS id`,
-      [userId, codeHash, expiresAt.toISOString()],
+      [userId, codeHash, expiresAt.toISOString(), purpose],
     );
     rowId = ins.rows[0]?.id ?? null;
     if (!rowId) {
@@ -146,7 +166,7 @@ export async function requestLoggedInPasswordChangeCode(pool: Pool, userId: stri
     tenantId,
     userId,
     phoneDigits: digits,
-    text: buildMessage(plainCode),
+    text: messageForPlainCode(plainCode),
   });
 
   if (!send.ok && rowId) {
@@ -155,6 +175,36 @@ export async function requestLoggedInPasswordChangeCode(pool: Pool, userId: stri
   }
 
   return { ok: true };
+}
+
+export async function requestLoggedInPasswordChangeCode(
+  pool: Pool,
+  userId: string,
+  tenantId: string | null,
+): Promise<RequestLoggedInPasswordChangeCodeResult> {
+  return requestWhatsappSixDigitCode(
+    pool,
+    userId,
+    tenantId,
+    'password',
+    buildPasswordMessage,
+    'Cadastre o WhatsApp no perfil antes de alterar a senha por código.',
+  );
+}
+
+export async function requestProfileEditVerificationCode(
+  pool: Pool,
+  userId: string,
+  tenantId: string | null,
+): Promise<RequestLoggedInPasswordChangeCodeResult> {
+  return requestWhatsappSixDigitCode(
+    pool,
+    userId,
+    tenantId,
+    'profile_edit',
+    buildProfileEditMessage,
+    'Cadastre o WhatsApp no perfil para receber o código de confirmação.',
+  );
 }
 
 export type ConfirmLoggedInPasswordChangeResult = { ok: true } | { ok: false; error: string };
@@ -185,7 +235,7 @@ export async function confirmLoggedInPasswordChange(
   }>(
     `SELECT id::text, code_hash, attempts_count::text
      FROM user_password_change_codes
-     WHERE user_id = $1::uuid AND consumed_at IS NULL AND expires_at > now()
+     WHERE user_id = $1::uuid AND consumed_at IS NULL AND expires_at > now() AND purpose = 'password'
      ORDER BY created_at DESC
      LIMIT 1`,
     [userId],
@@ -216,5 +266,54 @@ export async function confirmLoggedInPasswordChange(
   await pool.query(`UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2::uuid`, [passwordHash, userId]);
   await pool.query(`DELETE FROM sessions WHERE user_id = $1::uuid`, [userId]);
 
+  return { ok: true };
+}
+
+export type ConfirmProfileEditCodeResult = { ok: true } | { ok: false; error: string };
+
+/** Valida código profile_edit e marca como consumido (não altera senha). O JWT de edição é emitido no controller. */
+export async function confirmProfileEditVerificationCode(
+  pool: Pool,
+  userId: string,
+  rawCode: string,
+): Promise<ConfirmProfileEditCodeResult> {
+  const code = String(rawCode ?? '').replace(/\D/g, '').trim();
+  if (code.length !== 6) {
+    return { ok: false, error: 'Código inválido ou expirado.' };
+  }
+
+  const r = await pool.query<{
+    id: string;
+    code_hash: string;
+    attempts_count: string;
+  }>(
+    `SELECT id::text, code_hash, attempts_count::text
+     FROM user_password_change_codes
+     WHERE user_id = $1::uuid AND consumed_at IS NULL AND expires_at > now() AND purpose = 'profile_edit'
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [userId],
+  );
+  const row = r.rows[0];
+  if (!row) {
+    return { ok: false, error: 'Código inválido ou expirado.' };
+  }
+
+  const attempts = parseInt(row.attempts_count, 10) || 0;
+  if (attempts >= MAX_VERIFY_ATTEMPTS) {
+    await pool.query(`UPDATE user_password_change_codes SET consumed_at = now(), updated_at = now() WHERE id = $1::uuid`, [row.id]);
+    return { ok: false, error: 'Limite de tentativas excedido. Solicite um novo código.' };
+  }
+
+  const match = await comparePassword(code, row.code_hash);
+  if (!match) {
+    await pool.query(
+      `UPDATE user_password_change_codes SET attempts_count = attempts_count + 1, updated_at = now() WHERE id = $1::uuid`,
+      [row.id],
+    );
+    return { ok: false, error: 'Código inválido.' };
+  }
+
+  await pool.query(`UPDATE user_password_change_codes SET consumed_at = now(), updated_at = now() WHERE id = $1::uuid`, [row.id]);
   return { ok: true };
 }

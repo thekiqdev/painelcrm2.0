@@ -175,11 +175,16 @@ export async function patchMySubscription(req: AuthRequest, res: Response): Prom
       return;
     }
     const effectivePlanId = bodyPlanId ?? sub.plan_id;
-    const result = await changeSubscriptionPlan(sub.id, tenantId, {
-      plan_id: effectivePlanId,
-      billing_interval,
-      users_count: users_count ?? undefined,
-    });
+    const result = await changeSubscriptionPlan(
+      sub.id,
+      tenantId,
+      {
+        plan_id: effectivePlanId,
+        billing_interval,
+        users_count: users_count ?? undefined,
+      },
+      { syncContractSnapshot: true }
+    );
     if (!result.ok) {
       res.status(400).json({ error: result.error });
       return;

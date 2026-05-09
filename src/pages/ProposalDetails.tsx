@@ -501,11 +501,17 @@ const ProposalDetails = () => {
                         </Link>
                       </DropdownMenuItem>
                     )}
-                    <DropdownMenuItem disabled={!canUsePublicLinkActions} onClick={() => openPublicProposalPage()}>
+                    <DropdownMenuItem
+                      disabled={!(canManagePublicLink && canUsePublicLinkActions)}
+                      onClick={() => openPublicProposalPage()}
+                    >
                       <ExternalLink className="mr-2 h-4 w-4" />
                       Abrir proposta
                     </DropdownMenuItem>
-                    <DropdownMenuItem disabled={!canUsePublicLinkActions} onClick={() => void copyPublicUrl()}>
+                    <DropdownMenuItem
+                      disabled={!(canManagePublicLink && canUsePublicLinkActions)}
+                      onClick={() => void copyPublicUrl()}
+                    >
                       <Copy className="mr-2 h-4 w-4" />
                       Copiar link
                     </DropdownMenuItem>
@@ -550,13 +556,15 @@ const ProposalDetails = () => {
               type="button"
               size="sm"
               variant="outline"
-              disabled={!canUsePublicLinkActions}
+              disabled={!(canManagePublicLink && canUsePublicLinkActions)}
               title={
-                publicLinkMeta?.active === false
-                  ? "Link público revogado. Gere um novo na secção Faturamento, se disponível."
-                  : !effectivePublicUrl
-                    ? "URL do link não disponível. Verifique PROPOSAL_WEBHOOK_SECRET_KEY ou abra a proposta após criar no Kanban na mesma sessão."
-                    : undefined
+                !canManagePublicLink
+                  ? "Sem permissão para partilhar ou abrir o link público."
+                  : publicLinkMeta?.active === false
+                    ? "Link público revogado. Gere um novo na secção Faturamento, se disponível."
+                    : !effectivePublicUrl
+                      ? "URL do link não disponível. Verifique PROPOSAL_WEBHOOK_SECRET_KEY ou abra a proposta após criar no Kanban na mesma sessão."
+                      : undefined
               }
               onClick={() => openPublicProposalPage()}
             >
@@ -567,13 +575,15 @@ const ProposalDetails = () => {
               type="button"
               size="sm"
               variant="outline"
-              disabled={!canUsePublicLinkActions}
+              disabled={!(canManagePublicLink && canUsePublicLinkActions)}
               title={
-                !canUsePublicLinkActions
-                  ? publicLinkMeta?.active === false
-                    ? "Link público revogado."
-                    : "URL do link não disponível."
-                  : undefined
+                !canManagePublicLink
+                  ? "Sem permissão para copiar o link público."
+                  : !canUsePublicLinkActions
+                    ? publicLinkMeta?.active === false
+                      ? "Link público revogado."
+                      : "URL do link não disponível."
+                    : undefined
               }
               onClick={() => void copyPublicUrl()}
             >
@@ -996,7 +1006,7 @@ const ProposalDetails = () => {
                   variant="outline"
                   size="sm"
                   className="w-full justify-start"
-                  disabled={!canUsePublicLinkActions}
+                  disabled={!(canManagePublicLink && canUsePublicLinkActions)}
                   onClick={() => openPublicProposalPage()}
                 >
                   <ExternalLink className="mr-2 h-4 w-4 shrink-0" />
@@ -1007,7 +1017,7 @@ const ProposalDetails = () => {
                   variant="outline"
                   size="sm"
                   className="w-full justify-start"
-                  disabled={!canUsePublicLinkActions}
+                  disabled={!(canManagePublicLink && canUsePublicLinkActions)}
                   onClick={() => void copyPublicUrl()}
                 >
                   <Copy className="mr-2 h-4 w-4 shrink-0" />

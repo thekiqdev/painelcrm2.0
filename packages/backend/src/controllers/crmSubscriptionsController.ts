@@ -9,6 +9,21 @@ import {
   patchCrmSubscriptionCyclesConfig,
   crmSubscriptionMeta,
 } from '../services/crmSubscriptionsService.js';
+import { assertPermissionKey, ModulePermissionError } from '../permissions/index.js';
+import type { PermissionCatalogKey } from '../permissions/permissionCatalog.js';
+
+async function requirePermKey(req: AuthRequest, key: PermissionCatalogKey, res: Response): Promise<boolean> {
+  try {
+    await assertPermissionKey(req.userId, key, req);
+    return true;
+  } catch (e) {
+    if (e instanceof ModulePermissionError) {
+      res.status(e.statusCode).json({ error: e.message });
+      return false;
+    }
+    throw e;
+  }
+}
 
 export async function listCrmSubscriptions(req: AuthRequest, res: Response): Promise<void> {
   try {
@@ -17,6 +32,7 @@ export async function listCrmSubscriptions(req: AuthRequest, res: Response): Pro
       res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
+    if (!(await requirePermKey(req, 'billing.view_subscriptions', res))) return;
     const subscriptions = await listCrmCustomerSubscriptions(tenantId);
     res.json({ subscriptions });
   } catch (e) {
@@ -32,6 +48,7 @@ export async function getCrmSubscription(req: AuthRequest, res: Response): Promi
       res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
+    if (!(await requirePermKey(req, 'billing.view_subscriptions', res))) return;
     const { id } = req.params;
     const detail = await getCrmSubscriptionDetail(tenantId, id);
     if (!detail) {
@@ -74,6 +91,7 @@ export async function patchCrmSubscriptionCyclesHandler(req: AuthRequest, res: R
       res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
+    if (!(await requirePermKey(req, 'billing.edit_subscription', res))) return;
     const { id } = req.params;
     const parsed = patchCyclesBody.safeParse(req.body);
     if (!parsed.success) {
@@ -110,6 +128,7 @@ export async function patchCrmSubscriptionNextBillingHandler(req: AuthRequest, r
       res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
+    if (!(await requirePermKey(req, 'billing.edit_subscription', res))) return;
     const { id } = req.params;
     const parsed = patchNextBody.safeParse(req.body);
     if (!parsed.success) {
@@ -154,6 +173,7 @@ export async function postCrmSubscriptionCancel(req: AuthRequest, res: Response)
       res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
+    if (!(await requirePermKey(req, 'billing.cancel_subscription', res))) return;
     const { id } = req.params;
     const parsed = cancelBody.safeParse(req.body);
     if (!parsed.success) {

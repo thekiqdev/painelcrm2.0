@@ -6,13 +6,24 @@ import { normalizeBrandUrl } from '@/utils/tenantBranding';
  * - força https quando a página é https (URLs antigas gravadas como http);
  * - em produção com API no mesmo host (base relativa), usa path relativo completo (incl. query) para
  *   `/api/public/catalog-media/raw?...` (assinado no backend; path sem .png para contornar nginx estático).
+ * - em dev com `VITE_API_URL` (ex.: :3002): prefixa `/api/...` com essa base — senão o `<img>` pediria ao Vite
+ *   (:8081) e o proxy padrão (`VITE_API_PROXY_TARGET` :3001) falharia com ECONNREFUSED se o backend estiver noutra porta.
  */
 export function normalizeCatalogMediaUrlForBrowser(publicUrl: string): string {
   const fixed = normalizeBrandUrl(publicUrl.trim());
   if (!fixed || typeof window === 'undefined') return fixed;
   try {
-    const apiBase = getApiUrl();
-    if (apiBase !== '') return fixed;
+    const apiBase = getApiUrl().replace(/\/$/, '');
+    if (apiBase !== '') {
+      if (fixed.startsWith('/api/')) {
+        return `${apiBase}${fixed}`;
+      }
+      const u = new URL(fixed, window.location.origin);
+      if (u.pathname.startsWith('/api/') && u.origin === window.location.origin) {
+        return `${apiBase}${u.pathname}${u.search}`;
+      }
+      return fixed;
+    }
     const u = new URL(fixed, window.location.origin);
     if (u.origin === window.location.origin) {
       return `${u.pathname}${u.search}`;

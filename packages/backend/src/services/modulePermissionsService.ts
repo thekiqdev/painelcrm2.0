@@ -4,6 +4,7 @@
  */
 import { pool } from '../utils/db.js';
 import { ModulePermissionError } from '../permissions/errors.js';
+import { assertModulePermission as assertModulePermissionEngine } from '../permissions/assertModulePermission.js';
 import { incrementPermissionVersion } from './permissionVersionService.js';
 import type { AppRole } from './rolePermissionsService.js';
 import { isValidAppRole } from './rolePermissionsService.js';
@@ -160,9 +161,14 @@ export async function setRoleModulePermissions(
   try {
     for (const moduleId of MODULE_IDS) {
       const p = permissions[moduleId];
+      const extrasJson = JSON.stringify(
+        p?.module_extras && typeof p.module_extras === 'object' && !Array.isArray(p.module_extras)
+          ? p.module_extras
+          : {}
+      );
       await client.query(
         `INSERT INTO role_module_permissions (role, module, can_view, can_create, can_edit, can_delete, edit_own_only, delete_own_only, module_extras)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{}'::jsonb)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
          ON CONFLICT (role, module) DO UPDATE SET
            can_view = EXCLUDED.can_view,
            can_create = EXCLUDED.can_create,
@@ -170,7 +176,7 @@ export async function setRoleModulePermissions(
            can_delete = EXCLUDED.can_delete,
            edit_own_only = EXCLUDED.edit_own_only,
            delete_own_only = EXCLUDED.delete_own_only,
-           module_extras = role_module_permissions.module_extras,
+           module_extras = EXCLUDED.module_extras,
            updated_at = now()`,
         [
           role,
@@ -181,6 +187,7 @@ export async function setRoleModulePermissions(
           p?.can_delete ?? false,
           p?.edit_own_only ?? false,
           p?.delete_own_only ?? false,
+          extrasJson,
         ]
       );
     }
@@ -251,10 +258,8 @@ export interface AssertModulePermissionOptions {
 }
 
 /**
- * Garante que o usuário tem permissão para a ação no módulo.
- * Para create: exige can_create.
- * Para edit/delete: exige can_edit/can_delete; se edit_own_only/delete_own_only, exige ownerId === userId ou assigneeId === userId.
- * Lança ModulePermissionError(403) quando não permitido.
+ * @deprecated Preferir import de `../permissions/index.js`. Mantido para controllers legados.
+ * Delega ao permission engine (fail-closed quando o módulo não existe no mapa).
  */
 export async function assertModulePermission(
   userId: string,
@@ -262,42 +267,5 @@ export async function assertModulePermission(
   action: 'create' | 'edit' | 'delete',
   options?: AssertModulePermissionOptions
 ): Promise<void> {
-  const perms = await getEffectiveModulePermissions(userId);
-  const p = perms[moduleId];
-  if (!p) return;
-
-  if (action === 'create') {
-    if (!p.can_create) {
-      throw new ModulePermissionError(403, 'Sem permissão para criar neste módulo.');
-    }
-    return;
-  }
-
-  if (action === 'edit') {
-    if (!p.can_edit) {
-      throw new ModulePermissionError(403, 'Sem permissão para editar neste módulo.');
-    }
-    if (p.edit_own_only) {
-      const isOwner = options?.ownerId != null && options.ownerId === userId;
-      const isAssignee = options?.assigneeId != null && options.assigneeId === userId;
-      if (!isOwner && !isAssignee) {
-        throw new ModulePermissionError(403, 'Sem permissão para editar este registro.');
-      }
-    }
-    return;
-  }
-
-  if (action === 'delete') {
-    if (!p.can_delete) {
-      throw new ModulePermissionError(403, 'Sem permissão para excluir neste módulo.');
-    }
-    if (p.delete_own_only) {
-      const isOwner = options?.ownerId != null && options.ownerId === userId;
-      const isAssignee = options?.assigneeId != null && options.assigneeId === userId;
-      if (!isOwner && !isAssignee) {
-        throw new ModulePermissionError(403, 'Sem permissão para excluir este registro.');
-      }
-    }
-    return;
-  }
+  await assertModulePermissionEngine(userId, moduleId, action, options, undefined);
 }

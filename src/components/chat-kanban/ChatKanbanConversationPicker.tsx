@@ -2,6 +2,8 @@ import { Loader2, Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { cn } from '@/lib/utils';
 import type { ChatConversation } from '@/services/chat';
 import {
@@ -14,14 +16,15 @@ import {
   applyConversationDragPreview,
   conversationDragPreviewFromChatConversation,
 } from '@/lib/conversationDragPreview';
+import { resolveConversationIdentity } from '@/utils/chatIdentityDisplay';
 
 type Props = {
   search: string;
   onSearchChange: (value: string) => void;
   conversations: ChatConversation[];
   loading: boolean;
-  selectedId: string | null;
-  onSelect: (id: string) => void;
+  selectedIds: ReadonlySet<string>;
+  onToggleSelect: (id: string) => void;
 };
 
 export function ChatKanbanConversationPicker({
@@ -29,8 +32,8 @@ export function ChatKanbanConversationPicker({
   onSearchChange,
   conversations,
   loading,
-  selectedId,
-  onSelect,
+  selectedIds,
+  onToggleSelect,
 }: Props) {
   return (
     <div className="flex flex-col gap-3 min-h-0">
@@ -68,13 +71,22 @@ export function ChatKanbanConversationPicker({
                 });
                 const preview = (c.lastMessagePreview || '').trim() || '—';
                 const when = formatKanbanActivity(c.lastMessageAt);
-                const active = selectedId === c.id;
+                const selected = selectedIds.has(c.id);
+                const identity = resolveConversationIdentity(c, null, null);
+                const avatarLabel = (identity.displayName || title || '?').slice(0, 2).toUpperCase();
                 return (
                   <li key={c.id}>
-                    <button
-                      type="button"
+                    <div
+                      role="button"
+                      tabIndex={0}
                       draggable
-                      title="Arrastar para uma coluna do quadro"
+                      title="Clique para marcar; arraste para uma coluna do quadro"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          onToggleSelect(c.id);
+                        }
+                      }}
                       onDragStart={(e) => {
                         beginConversationDragSession(e.dataTransfer, {
                           type: 'conversation',
@@ -88,40 +100,62 @@ export function ChatKanbanConversationPicker({
                         );
                       }}
                       onDragEnd={() => endConversationDragSession()}
-                      onClick={() => onSelect(c.id)}
+                      onClick={() => onToggleSelect(c.id)}
                       className={cn(
-                        'w-full text-left rounded-md px-3 py-2.5 text-sm transition-colors border border-transparent cursor-grab active:cursor-grabbing',
-                        active
+                        'w-full text-left rounded-md px-2 py-2 text-sm transition-colors border border-transparent cursor-grab active:cursor-grabbing flex gap-2 items-start',
+                        selected
                           ? 'bg-primary/10 border-primary/25 ring-1 ring-primary/20'
                           : 'hover:bg-muted/70',
                       )}
                     >
-                      <div className="flex items-start justify-between gap-2">
-                        <span className="font-medium truncate">{title}</span>
-                        {when ? (
-                          <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">{when}</span>
-                        ) : null}
+                      <div
+                        className="pt-0.5 shrink-0"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => e.stopPropagation()}
+                        onKeyDown={(e) => e.stopPropagation()}
+                      >
+                        <Checkbox
+                          checked={selected}
+                          onCheckedChange={() => onToggleSelect(c.id)}
+                          aria-label={selected ? `Desmarcar ${title}` : `Selecionar ${title}`}
+                        />
                       </div>
-                      {phone ? (
-                        <p className="text-xs text-muted-foreground tabular-nums truncate mt-0.5">{phone}</p>
-                      ) : null}
-                      <p className="text-xs text-muted-foreground line-clamp-2 mt-1">{preview}</p>
-                      <div className="flex flex-wrap gap-1 mt-1.5">
-                        {c.client_id ? (
-                          <Badge variant="secondary" className="text-[10px] h-5 px-1.5">
-                            Cliente
-                          </Badge>
+                      <Avatar className="h-10 w-10 shrink-0 border border-border/60 mt-0.5">
+                        {identity.avatarUrl ? (
+                          <AvatarImage src={identity.avatarUrl} alt="" />
                         ) : null}
-                        {c.leadId && !c.client_id ? (
-                          <Badge className="text-[10px] h-5 px-1.5 bg-blue-100 text-blue-800 border-blue-200">Lead</Badge>
+                        <AvatarFallback className="text-[11px] font-medium">{avatarLabel}</AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="font-medium truncate">{title}</span>
+                          {when ? (
+                            <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">{when}</span>
+                          ) : null}
+                        </div>
+                        {phone ? (
+                          <p className="text-xs text-muted-foreground tabular-nums truncate mt-0.5">{phone}</p>
                         ) : null}
-                        {!c.client_id && !c.leadId ? (
-                          <Badge variant="outline" className="text-[10px] h-5 px-1.5 text-muted-foreground">
-                            Sem vínculo
-                          </Badge>
-                        ) : null}
+                        <p className="text-xs text-muted-foreground line-clamp-2 mt-1">{preview}</p>
+                        <div className="flex flex-wrap gap-1 mt-1.5">
+                          {c.client_id ? (
+                            <Badge variant="secondary" className="text-[10px] h-5 px-1.5">
+                              Cliente
+                            </Badge>
+                          ) : null}
+                          {c.leadId && !c.client_id ? (
+                            <Badge className="text-[10px] h-5 px-1.5 bg-blue-100 text-blue-800 border-blue-200">
+                              Lead
+                            </Badge>
+                          ) : null}
+                          {!c.client_id && !c.leadId ? (
+                            <Badge variant="outline" className="text-[10px] h-5 px-1.5 text-muted-foreground">
+                              Sem vínculo
+                            </Badge>
+                          ) : null}
+                        </div>
                       </div>
-                    </button>
+                    </div>
                   </li>
                 );
               })}

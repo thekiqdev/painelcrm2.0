@@ -204,9 +204,23 @@ export function globalTaskToUnified(
     assignee?: string | null;
     assigneeAvatar?: string | null;
     checklist?: { id: string; text: string; completed: boolean }[] | unknown;
+    origin?: string;
+    normalized_status?: string;
+    assignee_id?: string | null;
+    project_id?: string | null;
+    project_name?: string | null;
+    client_name?: string | null;
+    lead_id?: string | null;
+    lead_name?: string | null;
   }
 ): UnifiedTask {
-  const status = task.status === 'completed' ? 'completed' : normalizeStatus(task.status ?? 'pending');
+  const done =
+    task.normalized_status === 'done' ||
+    String(task.status ?? '').toLowerCase() === 'completed' ||
+    String(task.status ?? '').toLowerCase() === 'done';
+  const status: UnifiedTaskStatus = done
+    ? 'completed'
+    : normalizeStatus(task.status ?? 'pending');
   return {
     id: task.id,
     title: task.title,
@@ -218,7 +232,7 @@ export function globalTaskToUnified(
     startDate: null,
     startTime: null,
     endTime: null,
-    assigneeId: null,
+    assigneeId: task.assignee_id ?? null,
     assigneeName: task.assignee ?? null,
     assigneeAvatar: task.assigneeAvatar ?? null,
     checklist: normalizeChecklist(
@@ -227,10 +241,10 @@ export function globalTaskToUnified(
     tags: [],
     labels: [],
     listId: null,
-    projectId: null,
+    projectId: task.project_id ?? null,
     areaId: null,
     clientId: task.clientId ?? null,
-    clientName: task.client ?? null,
+    clientName: task.client_name ?? task.client ?? null,
     deal: task.deal ?? null,
     estimatedEffortHours: null,
     estimatedStoryPoints: null,
@@ -246,7 +260,7 @@ export function globalTaskToUnified(
     recurrenceRule: null,
     createdAt: null,
     updatedAt: null,
-    source: 'global',
+    source: task.origin === 'project' ? 'project' : 'global',
   };
 }
 

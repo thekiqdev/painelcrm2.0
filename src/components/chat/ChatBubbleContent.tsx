@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Download, ExternalLink, FileText } from 'lucide-react';
-import { coerceChatPlainText, type ChatMessage } from '@/services/chat';
+import { coerceChatPlainText, groupMessageSenderPrefix, type ChatMessage } from '@/services/chat';
 import { chatMediaDebugLog } from '@/lib/chatMediaDebug';
 
 /** Texto da bolha: preserva quebras do remetente; quebra só por palavras / overflow normal (evita “uma letra por linha”). */
@@ -127,7 +127,11 @@ function detectDocumentTypeLabel(mime: string, fileName: string | null): string 
 }
 
 /** Conteúdo da bolha: texto + imagem conforme `message_contract` / mídia persistida */
-export const ChatBubbleContent: React.FC<{ message: ChatMessage }> = ({ message }) => {
+export const ChatBubbleContent: React.FC<{
+  message: ChatMessage;
+  /** Mensagens recebidas em conversa de grupo: prefixo com nome do remetente quando disponível. */
+  groupIncomingFormat?: boolean;
+}> = ({ message, groupIncomingFormat }) => {
   const c = message.message_contract;
   const kind = c?.kind;
   const rawMediaUrl = firstRenderableMediaUrl(message);
@@ -140,6 +144,11 @@ export const ChatBubbleContent: React.FC<{ message: ChatMessage }> = ({ message 
     coerceChatPlainText(c?.body) ||
     coerceChatPlainText(message.body) ||
     '';
+  const groupPrefix =
+    groupIncomingFormat && message.direction === 'incoming'
+      ? groupMessageSenderPrefix(message.metadata)
+      : null;
+  const displayText = groupPrefix && text ? `${groupPrefix}: ${text}` : text;
   const docName = mediaFileName(message);
 
   const isAudioKind =
@@ -164,7 +173,7 @@ export const ChatBubbleContent: React.FC<{ message: ChatMessage }> = ({ message 
               ? 'Áudio — reprodução indisponível no momento (metadados preservados).'
               : 'Áudio — sem URL de reprodução.'}
         </p>
-        {text ? <p className={CHAT_MSG_TEXT}>{text}</p> : null}
+        {displayText ? <p className={CHAT_MSG_TEXT}>{displayText}</p> : null}
       </div>
     );
   }
@@ -173,7 +182,7 @@ export const ChatBubbleContent: React.FC<{ message: ChatMessage }> = ({ message 
     return (
       <div className="space-y-1">
         <audio controls src={url} className="max-w-full" preload="metadata" />
-        {text ? <p className={CHAT_MSG_TEXT}>{text}</p> : null}
+        {displayText ? <p className={CHAT_MSG_TEXT}>{displayText}</p> : null}
       </div>
     );
   }
@@ -256,7 +265,7 @@ export const ChatBubbleContent: React.FC<{ message: ChatMessage }> = ({ message 
             <p className="mt-2 text-xs opacity-70">Link indisponível</p>
           )}
         </div>
-        {text ? <p className={CHAT_MSG_TEXT}>{text}</p> : null}
+        {displayText ? <p className={CHAT_MSG_TEXT}>{displayText}</p> : null}
       </div>
     );
   }
@@ -272,7 +281,7 @@ export const ChatBubbleContent: React.FC<{ message: ChatMessage }> = ({ message 
       kind === 'video' ? 'Vídeo' : kind === 'audio' ? 'Áudio' : kind === 'document' ? 'Documento' : 'Mídia';
     return (
       <p className={CHAT_MSG_TEXT}>
-        {text || `[${label}]`}
+        {displayText || `[${label}]`}
       </p>
     );
   }
@@ -289,9 +298,9 @@ export const ChatBubbleContent: React.FC<{ message: ChatMessage }> = ({ message 
       typeof c?.caption === 'string' && c.caption.trim() ? c.caption.trim() : '';
     const captionFromBody =
       !captionFromContract &&
-      text &&
+      displayText &&
       (kind === 'image' || kind === 'sticker' || kind === 'unknown' || !kind)
-        ? text
+        ? displayText
         : '';
     const cap = captionFromContract || captionFromBody;
     return <ChatMessageImage rawUrl={rawMediaUrl} caption={cap || undefined} />;
@@ -305,17 +314,17 @@ export const ChatBubbleContent: React.FC<{ message: ChatMessage }> = ({ message 
     return (
       <div className="rounded-md border border-dashed border-border bg-muted/40 px-2 py-3 text-center">
         <p className="text-xs text-muted-foreground">Imagem indisponível</p>
-        {text ? <p className={`mt-2 text-xs ${CHAT_MSG_TEXT}`}>{text}</p> : null}
+        {displayText ? <p className={`mt-2 text-xs ${CHAT_MSG_TEXT}`}>{displayText}</p> : null}
       </div>
     );
   }
 
-  if (url && text) {
-    return <p className={CHAT_MSG_TEXT}>{text}</p>;
+  if (url && displayText) {
+    return <p className={CHAT_MSG_TEXT}>{displayText}</p>;
   }
 
-  if (text) {
-    return <p className={CHAT_MSG_TEXT}>{text}</p>;
+  if (displayText) {
+    return <p className={CHAT_MSG_TEXT}>{displayText}</p>;
   }
 
   if (url) {

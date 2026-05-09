@@ -254,6 +254,111 @@ export class UazapiService {
       token: instanceToken,
     });
   }
+
+  /** POST /group/info — detalhes, participantes, convite opcional (token da instância). */
+  async groupInfo(instanceToken: string, payload: Record<string, unknown>) {
+    return this.request<unknown>('/group/info', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      token: instanceToken,
+    });
+  }
+
+  /** POST /group/create — participantes: apenas dígitos (spec UazAPI). */
+  async groupCreate(instanceToken: string, payload: { name: string; participants: string[] }) {
+    return this.request<unknown>('/group/create', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      token: instanceToken,
+    });
+  }
+
+  async groupUpdateName(instanceToken: string, payload: Record<string, unknown>) {
+    return this.request<unknown>('/group/updateName', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      token: instanceToken,
+    });
+  }
+
+  async groupUpdateDescription(instanceToken: string, payload: Record<string, unknown>) {
+    return this.request<unknown>('/group/updateDescription', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      token: instanceToken,
+    });
+  }
+
+  async groupUpdateImage(instanceToken: string, payload: Record<string, unknown>) {
+    return this.request<unknown>('/group/updateImage', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      token: instanceToken,
+    });
+  }
+
+  async groupUpdateAnnounce(instanceToken: string, payload: Record<string, unknown>) {
+    return this.request<unknown>('/group/updateAnnounce', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      token: instanceToken,
+    });
+  }
+
+  async groupUpdateLocked(instanceToken: string, payload: Record<string, unknown>) {
+    return this.request<unknown>('/group/updateLocked', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      token: instanceToken,
+    });
+  }
+
+  /**
+   * Tenta um POST opcional (ex.: definições ainda não documentadas na OpenAPI).
+   * 404 = rota inexistente nesta versão do servidor, sem propagar erro.
+   */
+  async groupPostOptional(
+    instanceToken: string,
+    path: string,
+    body: Record<string, unknown>
+  ): Promise<{ applied: boolean; status: number }> {
+    try {
+      await this.request<unknown>(path, {
+        method: 'POST',
+        body: JSON.stringify(body),
+        token: instanceToken,
+      });
+      return { applied: true, status: 200 };
+    } catch (e: any) {
+      const st = typeof e?.status === 'number' ? e.status : 502;
+      if (st === 404) return { applied: false, status: 404 };
+      throw e;
+    }
+  }
+
+  async groupResetInviteCode(instanceToken: string, payload: Record<string, unknown>) {
+    return this.request<unknown>('/group/resetInviteCode', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      token: instanceToken,
+    });
+  }
+
+  async groupLeave(instanceToken: string, payload: Record<string, unknown>) {
+    return this.request<unknown>('/group/leave', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      token: instanceToken,
+    });
+  }
+
+  async groupUpdateParticipants(instanceToken: string, payload: Record<string, unknown>) {
+    return this.request<unknown>('/group/updateParticipants', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      token: instanceToken,
+    });
+  }
 }
 
 export const uazapiService = new UazapiService();

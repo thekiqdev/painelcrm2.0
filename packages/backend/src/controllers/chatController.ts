@@ -24,6 +24,10 @@ import {
   type ConversationMatchResult,
 } from '../services/conversationMatchingService.js';
 import { createClientTimelineEvent } from '../services/clientTimelineEventsService.js';
+import { applyKanbanAutomationForConversation } from '../services/chatKanbanAutomationService.js';
+import { readKanbanTagIdsFromConversationMetadata } from '../services/chatKanbanConversationKanbanTagsService.js';
+import { DEFAULT_KANBAN_TAG_COLOR_UI } from '../services/chatKanbanTagStore.js';
+import { resolveTenantIdForUser } from '../utils/resolveTenantIdForUser.js';
 import {
   extractUazapiChatDisplayName,
   extractUazapiChatImageUrl,
@@ -91,6 +95,12 @@ import {
   type ChatMessageKind,
 } from '../utils/chatMessageContract.js';
 import { SQL_CHAT_ACCESS_PREDICATE, sqlChatAccessPredicate } from '../utils/chatConversationAccess.js';
+import { isWhatsappGroupsEnabled } from '../config/whatsappGroupsEnv.js';
+import {
+  deriveConversationTypeFromNormalized,
+  extractGroupMessageMetadataForDb,
+  type ChatConversationType,
+} from '../utils/whatsappGroupChat.js';
 import { normalizeAttendanceStatusForDb } from '../utils/chatAttendanceStatus.js';
 import {
   decorateInstanceForApi,
@@ -121,6 +131,13 @@ import {
 import { canAccessWhatsappOfficialOperationalChat } from '../utils/whatsappOfficialOperationalAccess.js';
 import { getAccountCredentials } from '../services/whatsappOfficial/whatsappOfficialConfigService.js';
 import { sendTextMessage as graphOfficialSendText } from '../services/whatsappOfficial/whatsappOfficialClient.js';
+import { insertChatGroupAdminAudit } from '../services/chatGroupAdminAuditService.js';
+import { normalizeUazGroupInfo } from './chatGroupController.js';
+import {
+  digitsOnlyMsisdn,
+  mergeUniqueParticipantPhones,
+  resolveConversationPrimaryMsisdn,
+} from '../utils/groupInvitePhoneNormalize.js';
 
 const instanceSchema = z.object({
   name: z.string().min(3),
@@ -143,6 +160,18 @@ const syncSchema = z.object({
   filters: z.record(z.any()).optional(),
   /** Sobrescreve o período da instância para este sync manual (opcional). */
   syncMode: syncModeSchema.optional(),
+});
+
+const createGroupFromConversationSchema = z.object({
+  name: z.string().min(1).max(100),
+  description: z.string().max(512).optional().nullable(),
+  participants: z.array(
+    z.object({
+      phone: z.string().min(1),
+      source: z.enum(['team', 'client', 'lead', 'manual']),
+    })
+  ),
+  confirmDuplicate: z.boolean().optional(),
 });
 
 const webhookConfigSchema = z.object({
@@ -545,8 +574,8 @@ function chatFindRowDedupeKey(raw: any): string {
 
 /** Classificação heurística para logs (API deve enviar wa_isGroup). */
 function classifyChatRowForLog(raw: any): 'group' | 'private' | 'unknown' {
-  if (raw?.wa_isGroup === true) return 'group';
-  if (raw?.wa_isGroup === false) return 'private';
+  if (raw?.wa_isGroup === true || raw?.isGroup === true) return 'group';
+  if (raw?.wa_isGroup === false && raw?.isGroup !== true) return 'private';
   const jid = String(raw?.wa_chatid || raw?.chatid || raw?.jid || raw?.remoteJid || '');
   if (jid.endsWith('@g.us')) return 'group';
   if (jid.includes('@s.whatsapp.net') || jid.includes('@c.us') || jid.includes('@lid')) return 'private';
@@ -793,6 +822,14 @@ function normalizeChatPayload(raw: any) {
     raw.lastMessage ||
     null;
 
+  const metadata =
+    raw && typeof raw === 'object'
+      ? ({
+          ...(raw as Record<string, unknown>),
+          ...(raw.isGroup === true && raw.wa_isGroup == null ? { wa_isGroup: true } : {}),
+        } as Record<string, unknown>)
+      : raw;
+
   return {
     externalChatId,
     externalFastId: fastId,
@@ -803,7 +840,7 @@ function normalizeChatPayload(raw: any) {
     unreadCount,
     lastMessageAt,
     lastMessagePreview,
-    metadata: raw,
+    metadata,
   };
 }
 
@@ -831,14 +868,6 @@ async function loadInstanceForManage(userId: string, instanceId: string, res: Re
   }
   res.status(404).json({ error: 'Instância não encontrada' });
   return null;
-}
-
-async function resolveTenantIdForUser(userId: string): Promise<string | null> {
-  const r = await pool.query<{ tenant_id: string }>(
-    `SELECT tenant_id FROM users WHERE id = $1 LIMIT 1`,
-    [userId]
-  );
-  return r.rows[0]?.tenant_id ?? null;
 }
 
 async function assertWhatsappOfficialConversationSendAllowed(
@@ -882,6 +911,9 @@ async function syncCommunicationContactFromNormalized(
   linked?: { clientId?: string | null; leadId?: string | null }
 ): Promise<string | null> {
   if (!tenantId || !normalized) return null;
+  if (deriveConversationTypeFromNormalized(normalized) === 'group') {
+    return null;
+  }
   const row = await upsertCommunicationContactFromProvider({
     tenantId,
     provider: DEFAULT_COMMUNICATION_PROVIDER,
@@ -899,7 +931,7 @@ async function syncCommunicationContactFromNormalized(
 async function upsertConversation(
   instance: ChatInstanceRow,
   chatData: ReturnType<typeof normalizeChatPayload>,
-  opts?: { communicationContactId?: string | null }
+  opts?: { communicationContactId?: string | null; skipCrmAutoLink?: boolean }
 ) {
   if (!chatData) {
     console.warn('[UpsertConversation] chatData is null or undefined');
@@ -907,6 +939,14 @@ async function upsertConversation(
   }
 
   const upsertId = randomUUID().substring(0, 8);
+  const conversationType: ChatConversationType = deriveConversationTypeFromNormalized(chatData);
+  const isGroupConversation = conversationType === 'group';
+  if (isGroupConversation) {
+    console.log('[chat-group-upsert]', {
+      instanceId: instance.id,
+      externalChatId: chatData.externalChatId,
+    });
+  }
   console.log(`[UpsertConversation ${upsertId}] Starting upsert`, {
     instanceId: instance.id,
     externalChatId: chatData.externalChatId,
@@ -924,7 +964,7 @@ async function upsertConversation(
   };
   let autoLinkedClientIdForTimeline: string | null = null;
   const tenantId = await resolveTenantIdForUser(instance.user_id);
-  if (tenantId) {
+  if (tenantId && !isGroupConversation && !opts?.skipCrmAutoLink) {
     try {
       match = await resolveConversationMatch({
         tenantId,
@@ -997,12 +1037,13 @@ async function upsertConversation(
   );
 
   let result;
+  let insertedNewConversation = false;
   if ((existingResult.rowCount ?? 0) > 0) {
     const current = existingResult.rows[0];
     const currentMeta = (current.metadata as Record<string, unknown> | null) ?? {};
     const currentLeadId = leadColumnAvailable ? (current.lead_id ?? null) : null;
     const currentSource = (currentMeta.link_source as LinkSource | undefined) ?? 'system';
-    const manualLink = currentSource === 'manual';
+    const manualLink = currentSource === 'manual' && !isGroupConversation;
 
     let nextClientId = current.client_id ?? null;
     let nextLeadId = currentLeadId;
@@ -1026,8 +1067,16 @@ async function upsertConversation(
       linkConfidence = match.confidence === 'ambiguous' ? 'review' : 'high';
     }
 
-    const linkState =
-      nextClientId != null
+    if (isGroupConversation) {
+      nextClientId = null;
+      nextLeadId = null;
+      linkSource = 'system';
+      linkConfidence = 'review';
+    }
+
+    const linkState = isGroupConversation
+      ? 'unlinked'
+      : nextClientId != null
         ? 'client_linked'
         : nextLeadId != null
           ? 'lead_linked'
@@ -1068,7 +1117,7 @@ async function upsertConversation(
     );
     const mergedMeta = {
       ...mergedMetaBase,
-      ...buildMatchMetadata(match),
+      ...(isGroupConversation ? {} : buildMatchMetadata(match)),
       link_source: linkSource,
       link_confidence: linkConfidence,
       link_state: linkState,
@@ -1151,10 +1200,12 @@ async function upsertConversation(
             ELSE $9::jsonb
           END,
           client_id = CASE
+            WHEN $27::text = 'group' THEN NULL
             WHEN COALESCE(metadata->>'link_source', 'system') = 'manual' THEN client_id
             ELSE $10
           END,
           lead_id = CASE
+            WHEN $27::text = 'group' THEN NULL
             WHEN COALESCE(metadata->>'link_source', 'system') = 'manual' THEN lead_id
             ELSE $11
           END,
@@ -1174,9 +1225,13 @@ async function upsertConversation(
           last_history_sync_reason = $25,
           provider = 'whatsapp_uazapi',
           provider_conversation_id = COALESCE(provider_conversation_id, $26),
-          communication_contact_id = COALESCE($27::uuid, communication_contact_id),
+          conversation_type = $27::text,
+          communication_contact_id = CASE
+            WHEN $27::text = 'group' THEN NULL
+            ELSE COALESCE($28::uuid, communication_contact_id)
+          END,
           updated_at = now()
-        WHERE id = $28
+        WHERE id = $29
         RETURNING *
         `,
         [
@@ -1206,6 +1261,7 @@ async function upsertConversation(
           fc.history_sync_status,
           fc.last_history_sync_reason,
           chatData.externalChatId,
+          conversationType,
           opts?.communicationContactId ?? null,
           conversationId,
         ]
@@ -1228,6 +1284,7 @@ async function upsertConversation(
             ELSE $9::jsonb
           END,
           client_id = CASE
+            WHEN $26::text = 'group' THEN NULL
             WHEN COALESCE(metadata->>'link_source', 'system') = 'manual' THEN client_id
             ELSE $10
           END,
@@ -1247,9 +1304,13 @@ async function upsertConversation(
           last_history_sync_reason = $24,
           provider = 'whatsapp_uazapi',
           provider_conversation_id = COALESCE(provider_conversation_id, $25),
-          communication_contact_id = COALESCE($26::uuid, communication_contact_id),
+          conversation_type = $26::text,
+          communication_contact_id = CASE
+            WHEN $26::text = 'group' THEN NULL
+            ELSE COALESCE($27::uuid, communication_contact_id)
+          END,
           updated_at = now()
-        WHERE id = $27
+        WHERE id = $28
         RETURNING *
         `,
         [
@@ -1278,6 +1339,7 @@ async function upsertConversation(
           fc.history_sync_status,
           fc.last_history_sync_reason,
           chatData.externalChatId,
+          conversationType,
           opts?.communicationContactId ?? null,
           conversationId,
         ]
@@ -1286,7 +1348,34 @@ async function upsertConversation(
     if (!manualLink && linkSource === 'auto' && nextClientId && nextClientId !== (current.client_id ?? null)) {
       autoLinkedClientIdForTimeline = nextClientId;
     }
+
+    const updRow = result.rows[0];
+    if (tenantId && !isGroupConversation && updRow) {
+      const actor = instance.user_id;
+      const cid = String(updRow.id);
+      const hadLead = Boolean(currentLeadId);
+      const hasLead = leadColumnAvailable ? Boolean((updRow as { lead_id?: string | null }).lead_id) : false;
+      const hadClient = Boolean(current.client_id);
+      const hasClient = Boolean(updRow.client_id);
+      if (!hadLead && hasLead) {
+        void applyKanbanAutomationForConversation({
+          tenantId,
+          actorUserId: actor,
+          conversationId: cid,
+          reason: 'lead_linked',
+        }).catch((err) => console.error('[kanban-entry-automation] lead_linked (sync upsert)', err));
+      }
+      if (!hadClient && hasClient) {
+        void applyKanbanAutomationForConversation({
+          tenantId,
+          actorUserId: actor,
+          conversationId: cid,
+          reason: 'client_linked',
+        }).catch((err) => console.error('[kanban-entry-automation] client_linked (sync upsert)', err));
+      }
+    }
   } else {
+    insertedNewConversation = true;
     let clientId: string | null = null;
     let leadId: string | null = null;
     let linkSource: LinkSource = 'system';
@@ -1301,6 +1390,12 @@ async function upsertConversation(
         linkSource = 'auto';
         linkConfidence = 'high';
       }
+    }
+    if (isGroupConversation) {
+      clientId = null;
+      leadId = null;
+      linkSource = 'system';
+      linkConfidence = 'review';
     }
     const linkState =
       clientId != null
@@ -1333,7 +1428,7 @@ async function upsertConversation(
     );
     const metadata = {
       ...insertMetaBase,
-      ...buildMatchMetadata(match),
+      ...(isGroupConversation ? {} : buildMatchMetadata(match)),
       link_source: linkSource,
       link_confidence: linkConfidence,
       link_state: linkState,
@@ -1394,10 +1489,10 @@ async function upsertConversation(
           canonical_chat_id, canonical_phone, display_name, avatar_url,
           avatar_cached_url, avatar_source_url, avatar_cached_at, avatar_cache_status,
           identity_source, identity_strength, identity_state, history_sync_status, last_history_sync_reason,
-          provider, provider_conversation_id, communication_contact_id, attendance_status
+          provider, provider_conversation_id, communication_contact_id, conversation_type, attendance_status
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'open'), $9, $10, COALESCE($11, 0), $12::jsonb, $13, $14, $15,
-          $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, 'whatsapp_uazapi', $29, $30, $31)
+          $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, 'whatsapp_uazapi', $29, $30, $31, $32)
         RETURNING *
         `,
         [
@@ -1431,6 +1526,7 @@ async function upsertConversation(
           fcInsert.last_history_sync_reason,
           chatData.externalChatId,
           opts?.communicationContactId ?? null,
+          conversationType,
           attendanceStatusForInsert,
         ]
       );
@@ -1445,10 +1541,10 @@ async function upsertConversation(
           canonical_chat_id, canonical_phone, display_name, avatar_url,
           avatar_cached_url, avatar_source_url, avatar_cached_at, avatar_cache_status,
           identity_source, identity_strength, identity_state, history_sync_status, last_history_sync_reason,
-          provider, provider_conversation_id, communication_contact_id, attendance_status
+          provider, provider_conversation_id, communication_contact_id, conversation_type, attendance_status
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'open'), $9, $10, COALESCE($11, 0), $12::jsonb, $13, $14,
-          $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, 'whatsapp_uazapi', $28, $29, $30)
+          $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, 'whatsapp_uazapi', $28, $29, $30, $31)
         RETURNING *
         `,
         [
@@ -1481,6 +1577,7 @@ async function upsertConversation(
           fcInsert.last_history_sync_reason,
           chatData.externalChatId,
           opts?.communicationContactId ?? null,
+          conversationType,
           attendanceStatusForInsert,
         ]
       );
@@ -1536,7 +1633,7 @@ async function upsertConversation(
         },
       });
     }
-    if (tenantId) {
+    if (tenantId && !isGroupConversation) {
       try {
         await upsertCommunicationContactFromProvider({
           tenantId,
@@ -1573,18 +1670,48 @@ async function upsertConversation(
         });
       }
     }
-    await persistConversationAvatarOnCrm(
-      instance.user_id,
-      (upserted.client_id as string | null) ?? null,
-      ((upserted as Record<string, unknown>).lead_id as string | null) ?? null,
-      ((upserted as Record<string, unknown>).avatar_url as string | null) ?? null,
-      {
-        cachedUrl: ((upserted as Record<string, unknown>).avatar_cached_url as string | null) ?? null,
-        sourceUrl: ((upserted as Record<string, unknown>).avatar_source_url as string | null) ?? null,
-        cachedAt: (upserted as Record<string, unknown>).avatar_cached_at as Date | null ?? null,
-        status: ((upserted as Record<string, unknown>).avatar_cache_status as string | null) ?? null,
-      },
-    );
+    if (!isGroupConversation) {
+      await persistConversationAvatarOnCrm(
+        instance.user_id,
+        (upserted.client_id as string | null) ?? null,
+        ((upserted as Record<string, unknown>).lead_id as string | null) ?? null,
+        ((upserted as Record<string, unknown>).avatar_url as string | null) ?? null,
+        {
+          cachedUrl: ((upserted as Record<string, unknown>).avatar_cached_url as string | null) ?? null,
+          sourceUrl: ((upserted as Record<string, unknown>).avatar_source_url as string | null) ?? null,
+          cachedAt: (upserted as Record<string, unknown>).avatar_cached_at as Date | null ?? null,
+          status: ((upserted as Record<string, unknown>).avatar_cache_status as string | null) ?? null,
+        },
+      );
+    }
+
+    if (tenantId && !isGroupConversation && insertedNewConversation) {
+      const actor = instance.user_id;
+      const cid = String(upserted.id);
+      void applyKanbanAutomationForConversation({
+        tenantId,
+        actorUserId: actor,
+        conversationId: cid,
+        reason: 'new_conversation',
+      }).catch((err) => console.error('[kanban-entry-automation] new_conversation', err));
+      if (leadColumnAvailable && (upserted as { lead_id?: string | null }).lead_id) {
+        void applyKanbanAutomationForConversation({
+          tenantId,
+          actorUserId: actor,
+          conversationId: cid,
+          reason: 'lead_linked',
+        }).catch((err) => console.error('[kanban-entry-automation] lead_linked (insert)', err));
+      }
+      if ((upserted as { client_id?: string | null }).client_id) {
+        void applyKanbanAutomationForConversation({
+          tenantId,
+          actorUserId: actor,
+          conversationId: cid,
+          reason: 'client_linked',
+        }).catch((err) => console.error('[kanban-entry-automation] client_linked (insert)', err));
+      }
+    }
+
   return upserted;
   } catch (error: any) {
     const code = error?.code as string | undefined;
@@ -2153,15 +2280,18 @@ export async function createInstance(req: AuthRequest, res: Response) {
   }
 }
 
-const BOOTSTRAP_CONV_LIMIT = 200;
+const BOOTSTRAP_CONV_LIMIT = 100;
 /** Máximo de conversas não-grupo para tentar `/message/find` no bootstrap (evita N chamadas em grupos). */
-const BOOTSTRAP_MAX_CHATS_FOR_MESSAGES = 40;
+const BOOTSTRAP_MAX_CHATS_FOR_MESSAGES = 10;
 /** Últimas N mensagens por chat no bootstrap e default do sync manual de mensagens. */
 const BOOTSTRAP_MSG_LIMIT = 50;
 /** Teto do body enviado ao POST /message/find (a UazAPI costuma ecoar o limit na resposta). */
 const UAZ_MESSAGE_FIND_MAX_LIMIT = 100;
 /** Após sync manual de conversas: no máximo N chats recebem /message/find em lote (só candidatos). */
 const MANUAL_POST_SYNC_MESSAGE_BATCH_MAX = 10;
+/** Fase 2 grupos: teto de grupos por ciclo de /chat/find e de lote de mensagens. */
+const GROUP_SYNC_MAX_CHATS_PER_CYCLE = 50;
+const GROUP_MESSAGE_SYNC_LIMIT = 30;
 /** Debounce do POST /conversations/:id/messages/sync (evita duplo disparo do frontend). */
 const MESSAGE_SYNC_HTTP_DEBOUNCE_MS = 30_000;
 /** Conversa já `synced` + identidade resolvida: não repetir full logo em seguida sem `force`. */
@@ -2474,7 +2604,7 @@ async function scheduleBootstrapSyncIfNeeded(
        AND status IN ('connected', 'open')
        AND (
          metadata->'bootstrap_sync' IS NULL
-         OR (metadata->'bootstrap_sync'->>'status') IN ('completed', 'failed')
+         OR (metadata->'bootstrap_sync'->>'status') = 'failed'
          OR (
            (metadata->'bootstrap_sync'->>'status') IN ('running', 'queued')
            AND (
@@ -2592,11 +2722,12 @@ async function batchHydrateIdentitiesAfterChatListSync(
     contactCatalog?: Map<string, UazContactCatalogEntry>;
   }
 ): Promise<{ attempted: number; updated: number }> {
+  const allowGroups = isWhatsappGroupsEnabled();
   const unique = [
     ...new Set(
       externalChatJids
         .map(j => String(j).trim())
-        .filter(j => j.length > 0 && !j.endsWith('@g.us'))
+        .filter(j => j.length > 0 && (allowGroups || !j.endsWith('@g.us')))
     ),
   ];
   const attempted = unique.length;
@@ -2672,7 +2803,11 @@ async function runBatchMessageSyncForRecentConversations(
         AND c.identity_state = 'resolved'
         AND c.canonical_chat_id IS NOT NULL
         ${emptyFilter}
-      ORDER BY COALESCE(c.last_message_at, c.created_at) DESC NULLS LAST
+      ORDER BY COALESCE(
+        (SELECT MAX(COALESCE(m.sent_at, m.created_at)) FROM chat_messages m WHERE m.conversation_id = c.id),
+        c.last_message_at,
+        c.created_at
+      ) DESC NULLS LAST
       LIMIT $3
     `,
     [userId, instance.id, limitChats]
@@ -2692,6 +2827,48 @@ async function runBatchMessageSyncForRecentConversations(
     messagesSaved += r.synced;
   }
 
+  let groupTried = 0;
+  if (isWhatsappGroupsEnabled()) {
+    const groupRows = await pool.query<{
+      id: string;
+      external_chat_id: string;
+      instance_id: string;
+      instance_token: string;
+    }>(
+      `
+      SELECT c.id, c.external_chat_id, c.instance_id, i.instance_token
+      FROM chat_conversations c
+      INNER JOIN chat_instances i ON i.id = c.instance_id
+      WHERE c.user_id = $1 AND c.instance_id = $2
+        AND (c.conversation_type = 'group' OR c.external_chat_id LIKE '%@g.us')
+        AND c.identity_state = 'resolved'
+        AND c.canonical_chat_id IS NOT NULL
+        ${emptyFilter}
+      ORDER BY COALESCE(
+        (SELECT MAX(COALESCE(m.sent_at, m.created_at)) FROM chat_messages m WHERE m.conversation_id = c.id),
+        c.last_message_at,
+        c.created_at
+      ) DESC NULLS LAST
+      LIMIT $3
+    `,
+      [userId, instance.id, GROUP_SYNC_MAX_CHATS_PER_CYCLE]
+    );
+    groupTried = groupRows.rows.length;
+    for (const row of groupRows.rows) {
+      const r = await performSyncConversationMessagesForConversation(row, userId, {
+        limit: GROUP_MESSAGE_SYNC_LIMIT,
+        syncRunId: ctx.syncRunId ?? null,
+        tenantId: ctx.tenantId,
+        trigger: ctx.trigger,
+        eventType: ctx.eventType,
+        minTimestampMs: ctx.minTimestampMs ?? null,
+        skipTerminalIdentityRefresh: true,
+      });
+      messagesSaved += r.synced;
+    }
+  }
+
+  const totalTried = convRows.rows.length + groupTried;
   logUazChat('info', {
     event_type: ctx.eventType,
     phase: 'batch_messages_after_chat_sync_done',
@@ -2701,10 +2878,10 @@ async function runBatchMessageSyncForRecentConversations(
     external_instance_name: instance.external_instance_name,
     sync_run_id: ctx.syncRunId ?? null,
     trigger: ctx.trigger ?? null,
-    detail: `chatsTried=${convRows.rows.length} messagesSaved=${messagesSaved} limitPerChat=${BOOTSTRAP_MSG_LIMIT} onlyWithoutLocalMessages=${onlyEmpty} maxChats=${limitChats}`,
+    detail: `privateTried=${convRows.rows.length} groupTried=${groupTried} totalTried=${totalTried} messagesSaved=${messagesSaved} limitPrivate=${BOOTSTRAP_MSG_LIMIT} limitGroup=${GROUP_MESSAGE_SYNC_LIMIT} onlyWithoutLocalMessages=${onlyEmpty} maxPrivate=${limitChats}`,
   });
 
-  return { conversationsTried: convRows.rows.length, messagesSaved };
+  return { conversationsTried: totalTried, messagesSaved };
 }
 
 async function performSyncConversationsForInstance(
@@ -2795,6 +2972,7 @@ async function performSyncConversationsForInstance(
   }
 
   const explicitWaIsGroup = Object.prototype.hasOwnProperty.call(filters, 'wa_isGroup');
+  const groupsFeat = isWhatsappGroupsEnabled();
 
   logUazChat('info', {
     event_type,
@@ -2807,8 +2985,10 @@ async function performSyncConversationsForInstance(
     correlation_id,
     trigger: opts.trigger ?? null,
     detail: explicitWaIsGroup
-      ? 'single_request (wa_isGroup definido pelo cliente; grupos filtrados antes do upsert)'
-      : 'somente_nao_grupo (sem perna wa_isGroup:true; doc /chat/find)',
+      ? `single_request_wa_isGroup_client grupos=${groupsFeat ? 'mantidos_se_classificados' : 'filtrados'}`
+      : groupsFeat
+        ? 'privados_wa_isGroup_false_mais_grupos_wa_isGroup_true_limitado'
+        : 'somente_nao_grupo (sem perna wa_isGroup:true; doc /chat/find)',
   });
 
   let chatsArray: any[] = [];
@@ -2826,11 +3006,12 @@ async function performSyncConversationsForInstance(
       wa_isGroup: filters.wa_isGroup,
     };
     const remoteChats = (await uazapiService.findChats(instance.instance_token, payload)) as AnyObject;
-    chatsArray = extractChatsArrayFromFindResponse(remoteChats).filter(
-      row => classifyChatRowForLog(row) !== 'group'
-    );
+    const rawExplicit = extractChatsArrayFromFindResponse(remoteChats);
+    chatsArray = groupsFeat
+      ? rawExplicit
+      : rawExplicit.filter(row => classifyChatRowForLog(row) !== 'group');
     remotePrivateRows = chatsArray.filter(c => classifyChatRowForLog(c) === 'private').length;
-    remoteGroupRows = 0;
+    remoteGroupRows = chatsArray.filter(c => classifyChatRowForLog(c) === 'group').length;
     mergedAfterDedupe = chatsArray.length;
     logSyncChatFindLegAudit({
       event_type,
@@ -2966,7 +3147,58 @@ async function performSyncConversationsForInstance(
       });
     }
 
-    chatsArray = Array.from(merged.values()).filter(row => classifyChatRowForLog(row) !== 'group');
+    if (groupsFeat) {
+      const groupLimit = Math.min(GROUP_SYNC_MAX_CHATS_PER_CYCLE, limit);
+      const payloadGroups: Record<string, unknown> = {
+        ...extraFilters,
+        limit: groupLimit,
+        sort,
+        offset: 0,
+        wa_isGroup: true,
+      };
+      try {
+        const grpResp = (await uazapiService.findChats(instance.instance_token, payloadGroups)) as AnyObject;
+        const arrGrp = extractChatsArrayFromFindResponse(grpResp);
+        remoteGroupRows = arrGrp.length;
+        for (const row of arrGrp) merged.set(chatFindRowDedupeKey(row), row);
+        logSyncChatFindLegAudit({
+          event_type,
+          correlation_id,
+          sync_run_id: opts.syncRunId ?? null,
+          tenant_id: tenantId,
+          user_id: instance.user_id,
+          instance_id: instance.id,
+          external_instance_name: instance.external_instance_name,
+          instance_token_suffix,
+          trigger: opts.trigger ?? null,
+          leg: 'wa_isGroup_true_groups',
+          endpoint: '/chat/find',
+          request_body: payloadGroups,
+          raw_response: grpResp,
+          extracted: arrGrp,
+        });
+        console.log('[chat-groups-sync]', {
+          instance_id: instance.id,
+          trigger: opts.trigger ?? null,
+          group_rows: arrGrp.length,
+          limit: groupLimit,
+        });
+      } catch (gErr: unknown) {
+        logUazChat('warn', {
+          event_type,
+          phase: 'find_chats_groups_leg_error',
+          tenant_id: tenantId,
+          user_id: instance.user_id,
+          instance_id: instance.id,
+          sync_run_id: opts.syncRunId ?? null,
+          detail: gErr instanceof Error ? gErr.message : String(gErr),
+        });
+      }
+    }
+
+    chatsArray = Array.from(merged.values()).filter(
+      row => groupsFeat || classifyChatRowForLog(row) !== 'group'
+    );
     mergedAfterDedupe = chatsArray.length;
   }
 
@@ -3099,6 +3331,14 @@ async function performSyncConversationsForInstance(
     detail:
       'API→merged→classify→normalize(discard)→upsert; comparar com sync_chat_find_leg_audit',
   });
+
+  if (groupsFeat && upsertedGroup > 0) {
+    console.log('[chat-groups-sync]', {
+      instance_id: instance.id,
+      trigger: opts.trigger ?? null,
+      upserted_group: upsertedGroup,
+    });
+  }
 
   logUazChat('info', {
     event_type,
@@ -3502,6 +3742,11 @@ async function performSyncConversationMessagesForConversation(
         }
       }
     }
+    const msgRec = message && typeof message === 'object' ? (message as Record<string, unknown>) : {};
+    const groupMeta =
+      extId.toLowerCase().endsWith('@g.us') && isWhatsappGroupsEnabled()
+        ? extractGroupMessageMetadataForDb(msgRec)
+        : {};
     await saveMessage(conversation.id, direction, {
       externalMessageId: msgExternalId,
       body: syncBody,
@@ -3512,7 +3757,7 @@ async function performSyncConversationMessagesForConversation(
           ? (pickBestOutgoingStatus('provider_sent', message.status) ?? 'provider_sent')
           : (message.status || null),
       sentAt,
-      metadata: message,
+      metadata: { ...msgRec, ...groupMeta },
       skipUnreadUpdate: true,
     });
     saved += 1;
@@ -3686,6 +3931,7 @@ async function runBootstrapSyncJob(
   syncRunId: string,
   trigger: BootstrapSyncTrigger
 ): Promise<void> {
+  const startedWallMs = Date.now();
   const tenantId = await resolveTenantIdForUser(userId);
   const instRes = await pool.query<ChatInstanceRow>(
     'SELECT * FROM chat_instances WHERE id = $1',
@@ -3693,6 +3939,19 @@ async function runBootstrapSyncJob(
   );
   const instance = instRes.rows[0];
   if (!instance) {
+    console.log(
+      JSON.stringify({
+        tag: '[chat-initial-sync]',
+        instanceId,
+        tenantId,
+        trigger,
+        status: 'failed',
+        reason: 'instance_not_found',
+        conversationsSynced: 0,
+        messagesSaved: 0,
+        durationMs: Date.now() - startedWallMs,
+      })
+    );
     logUazChat('warn', {
       event_type: 'bootstrap_sync_aborted',
       tenant_id: tenantId,
@@ -3706,6 +3965,19 @@ async function runBootstrapSyncJob(
 
   const bs = instance.metadata?.bootstrap_sync;
   if (!bs || bs.sync_run_id !== syncRunId) {
+    console.log(
+      JSON.stringify({
+        tag: '[chat-initial-sync]',
+        instanceId,
+        tenantId,
+        trigger,
+        status: 'skipped',
+        reason: 'stale_sync_run',
+        conversationsSynced: 0,
+        messagesSaved: 0,
+        durationMs: Date.now() - startedWallMs,
+      })
+    );
     logUazChat('info', {
       event_type: 'bootstrap_sync_skip',
       tenant_id: tenantId,
@@ -3726,6 +3998,19 @@ async function runBootstrapSyncJob(
         error: 'instance_not_connected',
       },
     });
+    console.log(
+      JSON.stringify({
+        tag: '[chat-initial-sync]',
+        instanceId,
+        tenantId,
+        trigger,
+        status: 'failed',
+        reason: 'instance_not_connected',
+        conversationsSynced: 0,
+        messagesSaved: 0,
+        durationMs: Date.now() - startedWallMs,
+      })
+    );
     logUazChat('warn', {
       event_type: 'bootstrap_sync_failed',
       tenant_id: tenantId,
@@ -3766,6 +4051,19 @@ async function runBootstrapSyncJob(
         ? `janela=${effectiveSyncMode} min_iso=${new Date(bootstrapSinceMs).toISOString()}`
         : `janela=${effectiveSyncMode} (sem filtro de data além dos limites padrão)`,
   });
+  console.log(
+    JSON.stringify({
+      tag: '[chat-initial-sync]',
+      instanceId,
+      tenantId,
+      trigger,
+      status: 'started',
+      reason: null,
+      conversationsSynced: 0,
+      messagesSaved: 0,
+      durationMs: Date.now() - startedWallMs,
+    })
+  );
 
   try {
     const convResult = await performSyncConversationsForInstance(instance, {
@@ -3787,7 +4085,11 @@ async function runBootstrapSyncJob(
         AND c.identity_state = 'resolved'
         AND c.canonical_chat_id IS NOT NULL
         AND NOT EXISTS (SELECT 1 FROM chat_messages m WHERE m.conversation_id = c.id)
-      ORDER BY COALESCE(c.last_message_at, c.created_at) DESC NULLS LAST
+      ORDER BY COALESCE(
+        (SELECT MAX(COALESCE(m.sent_at, m.created_at)) FROM chat_messages m WHERE m.conversation_id = c.id),
+        c.last_message_at,
+        c.created_at
+      ) DESC NULLS LAST
       LIMIT $3
       `,
       [userId, instanceId, BOOTSTRAP_MAX_CHATS_FOR_MESSAGES]
@@ -3807,6 +4109,55 @@ async function runBootstrapSyncJob(
       messagesSynced += r.synced;
     }
 
+    let groupBootstrapTried = 0;
+    if (isWhatsappGroupsEnabled()) {
+      const groupConvRows = await pool.query<{
+        id: string;
+        external_chat_id: string;
+        instance_id: string;
+        instance_token: string;
+      }>(
+        `
+      SELECT c.id, c.external_chat_id, c.instance_id, i.instance_token
+      FROM chat_conversations c
+      INNER JOIN chat_instances i ON i.id = c.instance_id
+      WHERE c.user_id = $1 AND c.instance_id = $2
+        AND (c.conversation_type = 'group' OR c.external_chat_id LIKE '%@g.us')
+        AND c.identity_state = 'resolved'
+        AND c.canonical_chat_id IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM chat_messages m WHERE m.conversation_id = c.id)
+      ORDER BY COALESCE(
+        (SELECT MAX(COALESCE(m.sent_at, m.created_at)) FROM chat_messages m WHERE m.conversation_id = c.id),
+        c.last_message_at,
+        c.created_at
+      ) DESC NULLS LAST
+      LIMIT $3
+      `,
+        [userId, instanceId, GROUP_SYNC_MAX_CHATS_PER_CYCLE]
+      );
+      groupBootstrapTried = groupConvRows.rows.length;
+      for (const row of groupConvRows.rows) {
+        const r = await performSyncConversationMessagesForConversation(row, userId, {
+          limit: GROUP_MESSAGE_SYNC_LIMIT,
+          syncRunId,
+          tenantId,
+          trigger,
+          eventType: 'bootstrap_sync_messages_group',
+          minTimestampMs: bootstrapSinceMs,
+          skipTerminalIdentityRefresh: true,
+        });
+        messagesSynced += r.synced;
+      }
+      if (groupBootstrapTried > 0) {
+        console.log('[chat-groups-sync]', {
+          instance_id: instanceId,
+          trigger,
+          phase: 'bootstrap_messages',
+          group_chats_tried: groupBootstrapTried,
+        });
+      }
+    }
+
     const finishedAt = new Date().toISOString();
     await mergeInstanceMetadata(instanceId, {
       bootstrap_sync: {
@@ -3821,7 +4172,7 @@ async function runBootstrapSyncJob(
         conversations_total: convResult.total,
         conversations_upserted: convResult.upserted,
         messages_synced: messagesSynced,
-        chats_messages_tried: convRows.rows.length,
+        chats_messages_tried: convRows.rows.length + groupBootstrapTried,
       },
     });
 
@@ -3833,8 +4184,21 @@ async function runBootstrapSyncJob(
       external_instance_name: instance.external_instance_name,
       sync_run_id: syncRunId,
       phase: 'completed',
-      detail: `conv_total=${convResult.total} conv_upserted=${convResult.upserted} msgs=${messagesSynced} chats_tried=${convRows.rows.length}`,
+      detail: `conv_total=${convResult.total} conv_upserted=${convResult.upserted} msgs=${messagesSynced} private_chats_tried=${convRows.rows.length} group_chats_tried=${groupBootstrapTried}`,
     });
+    console.log(
+      JSON.stringify({
+        tag: '[chat-initial-sync]',
+        instanceId,
+        tenantId,
+        trigger,
+        status: 'completed',
+        reason: null,
+        conversationsSynced: convResult.upserted,
+        messagesSaved: messagesSynced,
+        durationMs: Date.now() - startedWallMs,
+      })
+    );
   } catch (e: any) {
     const msg = e?.message || String(e);
     await mergeInstanceMetadata(instanceId, {
@@ -3857,6 +4221,19 @@ async function runBootstrapSyncJob(
       phase: 'error',
       detail: msg,
     });
+    console.log(
+      JSON.stringify({
+        tag: '[chat-initial-sync]',
+        instanceId,
+        tenantId,
+        trigger,
+        status: 'failed',
+        reason: msg.slice(0, 500),
+        conversationsSynced: 0,
+        messagesSaved: 0,
+        durationMs: Date.now() - startedWallMs,
+      })
+    );
   }
 }
 
@@ -4865,11 +5242,9 @@ export async function getInstanceStatus(req: AuthRequest, res: Response) {
           console.log('Instance status changed to connected, auto-configuring webhook...');
           await autoConfigureWebhook(updatedInstance.rows[0]);
         }
+        /** Primeira vez como conectado: qualquer estado anterior não-ativo dispara sync inicial (idempotência via metadata). */
         const shouldBootstrapPoll =
-          instance.status === 'connecting' ||
-          instance.status === 'disconnected' ||
-          instance.status === 'close' ||
-          instance.status === 'closed';
+          instance.status !== 'connected' && instance.status !== 'open';
         if (shouldBootstrapPoll) {
           await scheduleBootstrapSyncIfNeeded(userId, instance.id, 'status_poll_connected');
         }
@@ -4893,6 +5268,386 @@ export async function getInstanceStatus(req: AuthRequest, res: Response) {
   } catch (error: any) {
     console.error('Error fetching instance status:', error);
     res.status(500).json({ error: error.message || 'Failed to get status' });
+  }
+}
+
+/** Reagenda sincronização inicial (bootstrap) após falha ou quando o cliente solicita — não duplica se já concluído ou em execução. */
+export async function retryInitialInstanceSync(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.userId!;
+    const { id } = req.params;
+    const instance = await loadInstanceForOperate(userId, id, res);
+    if (!instance) return;
+
+    const bs = (instance.metadata as Record<string, unknown> | null)?.bootstrap_sync as
+      | { status?: string }
+      | undefined;
+    const st = bs?.status;
+    if (st === 'completed') {
+      res.json({ ok: true, skipped: true, reason: 'already_completed' });
+      return;
+    }
+    if (st === 'running' || st === 'queued') {
+      res.json({ ok: true, skipped: true, reason: 'already_in_progress' });
+      return;
+    }
+
+    await scheduleBootstrapSyncIfNeeded(userId, instance.id, 'manual_retry');
+    res.json({ ok: true });
+  } catch (error: any) {
+    console.error('retryInitialInstanceSync:', error);
+    res.status(500).json({ error: error.message || 'Failed to retry initial sync' });
+  }
+}
+
+/** GET /api/chat/runtime-config — flags de UI (sem dados sensíveis). */
+export async function getChatRuntimeConfig(_req: AuthRequest, res: Response) {
+  res.json({
+    whatsappGroupsEnabled: isWhatsappGroupsEnabled(),
+  });
+}
+
+/** GET /api/chat/tenant-users-for-group — utilizadores do tenant com WhatsApp (Fase 4). */
+export async function getChatTenantUsersForGroupInvite(req: AuthRequest, res: Response) {
+  try {
+    if (!isWhatsappGroupsEnabled()) {
+      res.status(404).json({ error: 'Recurso não disponível' });
+      return;
+    }
+    const tenantId = req.tenantId;
+    if (!tenantId) {
+      res.status(403).json({ error: 'Empresa não identificada' });
+      return;
+    }
+    const r = await pool.query<{
+      id: string;
+      email: string;
+      whatsapp_digits: string;
+      display_name: string;
+    }>(
+      `
+      SELECT u.id::text AS id,
+             u.email,
+             regexp_replace(COALESCE(u.whatsapp_number, ''), '\\D', '', 'g') AS whatsapp_digits,
+             TRIM(CONCAT(COALESCE(p.first_name, ''), ' ', COALESCE(p.last_name, ''))) AS display_name
+      FROM users u
+      LEFT JOIN profiles p ON p.id = u.id
+      WHERE u.tenant_id = $1::uuid AND COALESCE(u.is_super_admin, false) = false
+      ORDER BY lower(COALESCE(p.first_name, '')), lower(u.email)
+      `,
+      [tenantId]
+    );
+    const items = r.rows.map((row) => {
+      const w = String(row.whatsapp_digits || '').trim();
+      const whatsapp_digits = w.length >= 10 ? w : null;
+      const dn = row.display_name?.trim() || row.email?.split('@')[0] || 'Utilizador';
+      return {
+        id: row.id,
+        email: row.email,
+        display_name: dn,
+        whatsapp_digits,
+      };
+    });
+    res.json({ items });
+  } catch (e: any) {
+    console.error('[getChatTenantUsersForGroupInvite]', e);
+    res.status(500).json({ error: e?.message || 'Erro' });
+  }
+}
+
+/**
+ * POST /api/chat/conversations/:id/group/create-from-conversation
+ * Cria grupo WhatsApp (UazAPI) a partir de conversa 1:1.
+ */
+export async function postChatCreateGroupFromConversation(req: AuthRequest, res: Response) {
+  const userId = req.userId!;
+  const tenantId = req.tenantId ?? null;
+  const conversationId = req.params.id;
+
+  const auditFail = async (params: {
+    instanceId: string;
+    groupJid: string;
+    payload: Record<string, unknown>;
+    status: number;
+    msg: string;
+  }) => {
+    await insertChatGroupAdminAudit({
+      tenantId,
+      actorUserId: userId,
+      conversationId,
+      instanceId: params.instanceId,
+      groupJid: params.groupJid,
+      action: 'create_group_from_conversation',
+      payload: params.payload,
+      uazapiStatus: params.status,
+      errorMessage: params.msg,
+    });
+  };
+
+  try {
+    if (!isWhatsappGroupsEnabled()) {
+      res.status(404).json({ error: 'Recurso não disponível' });
+      return;
+    }
+    if (!(await canChatAction(userId, 'create_group', req))) {
+      res.status(403).json({ error: 'Sem permissão para criar grupo pelo chat.' });
+      return;
+    }
+
+    const parsed = createGroupFromConversationSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Dados inválidos', details: parsed.error.flatten() });
+      return;
+    }
+    const body = parsed.data;
+
+    const convRow = await pool.query<{
+      id: string;
+      instance_id: string;
+      external_chat_id: string;
+      conversation_type: string;
+      provider: string | null;
+      phone_number: string | null;
+      canonical_phone: string | null;
+      contact_name: string | null;
+      profile_name: string | null;
+      display_name: string | null;
+    }>(
+      `
+      SELECT c.id, c.instance_id, c.external_chat_id, c.conversation_type, c.provider,
+             c.phone_number, c.canonical_phone, c.contact_name, c.profile_name, c.display_name
+      FROM chat_conversations c
+      WHERE c.id = $1::uuid AND ${SQL_CHAT_ACCESS_PREDICATE}
+      `,
+      [conversationId, userId]
+    );
+    if (convRow.rowCount === 0) {
+      res.status(404).json({ error: 'Conversa não encontrada' });
+      return;
+    }
+    const c = convRow.rows[0];
+    const ext = c.external_chat_id?.trim() ?? '';
+    const isGroup = c.conversation_type === 'group' || ext.toLowerCase().endsWith('@g.us');
+    if (isGroup) {
+      res.status(400).json({ error: 'Só é possível criar grupo a partir de conversa individual' });
+      return;
+    }
+    const prov = (c.provider || '').trim() || 'whatsapp_uazapi';
+    if (prov === 'whatsapp_official') {
+      res.status(400).json({ error: 'Indisponível para WhatsApp Oficial (Meta)' });
+      return;
+    }
+
+    const instance = await fetchInstanceForOperate(userId, c.instance_id);
+    if (!instance) {
+      res.status(404).json({ error: 'Instância não encontrada' });
+      return;
+    }
+
+    const instanceSelf =
+      digitsOnlyMsisdn(instance.connected_phone || '') ||
+      digitsOnlyMsisdn(instance.phone_key || '') ||
+      null;
+
+    const clientMsisdn = resolveConversationPrimaryMsisdn(
+      {
+        external_chat_id: c.external_chat_id,
+        canonical_phone: c.canonical_phone,
+        phone_number: c.phone_number,
+      },
+      instanceSelf
+    );
+    if (!clientMsisdn) {
+      res.status(400).json({
+        error:
+          'Não foi possível determinar o telefone WhatsApp desta conversa. Verifique o número ou a identidade do contacto.',
+      });
+      return;
+    }
+
+    const fromBody = body.participants.map((p) => p.phone);
+    const merged = mergeUniqueParticipantPhones([clientMsisdn, ...fromBody], instanceSelf);
+    if (!merged.ok) {
+      res.status(400).json({ error: merged.error });
+      return;
+    }
+    if (!merged.list.includes(clientMsisdn)) {
+      res.status(500).json({ error: 'Falha ao incluir o contacto da conversa nos participantes' });
+      return;
+    }
+    if (merged.list.length < 1) {
+      res.status(400).json({ error: 'É necessário pelo menos um participante' });
+      return;
+    }
+
+    const dup = await pool.query<{ id: string; external_chat_id: string }>(
+      `
+      SELECT id::text, external_chat_id
+      FROM chat_conversations
+      WHERE instance_id = $1::uuid
+        AND (conversation_type = 'group' OR external_chat_id ILIKE '%@g.us')
+        AND (metadata->>'created_from_conversation_id') = $2
+      ORDER BY created_at DESC
+      LIMIT 5
+      `,
+      [c.instance_id, conversationId]
+    );
+    if ((dup.rowCount ?? 0) > 0 && !body.confirmDuplicate) {
+      res.status(409).json({
+        code: 'DUPLICATE_GROUP_FROM_CONVERSATION',
+        message:
+          'Já existe um grupo criado a partir desta conversa. Confirme se deseja criar outro.',
+        existing: dup.rows,
+      });
+      return;
+    }
+
+    let rawCreate: unknown;
+    try {
+      rawCreate = await uazapiService.groupCreate(instance.instance_token, {
+        name: body.name.trim(),
+        participants: merged.list,
+      });
+    } catch (e: any) {
+      const status = typeof e?.status === 'number' ? e.status : 502;
+      const msg = e?.message || 'Falha ao criar grupo no WhatsApp';
+      await auditFail({
+        instanceId: c.instance_id,
+        groupJid: '',
+        payload: {
+          original_conversation_id: conversationId,
+          new_group_conversation_id: null,
+          instance_id: c.instance_id,
+          participant_count: merged.list.length,
+        },
+        status,
+        msg,
+      });
+      res.status(status >= 400 && status < 600 ? status : 502).json({
+        error: msg,
+        details: e?.payload,
+      });
+      return;
+    }
+
+    const g0 = normalizeUazGroupInfo(rawCreate);
+    let groupJid = g0.jid?.trim() || '';
+    if (!groupJid) {
+      await auditFail({
+        instanceId: c.instance_id,
+        groupJid: '',
+        payload: {
+          original_conversation_id: conversationId,
+          new_group_conversation_id: null,
+          instance_id: c.instance_id,
+          participant_count: merged.list.length,
+        },
+        status: 502,
+        msg: 'Resposta do WhatsApp sem JID do grupo',
+      });
+      res.status(502).json({ error: 'Resposta inválida ao criar grupo' });
+      return;
+    }
+
+    const desc = body.description?.trim();
+    if (desc) {
+      try {
+        await uazapiService.groupUpdateDescription(instance.instance_token, {
+          groupjid: groupJid,
+          description: desc,
+        });
+      } catch (descErr: any) {
+        console.warn('[postChatCreateGroupFromConversation] updateDescription', descErr?.message);
+      }
+    }
+
+    const contactLabel =
+      c.display_name?.trim() ||
+      c.profile_name?.trim() ||
+      c.contact_name?.trim() ||
+      clientMsisdn;
+
+    const chatData = normalizeChatPayload({
+      wa_chatid: groupJid,
+      wa_isGroup: true,
+      wa_name: body.name.trim(),
+      profileName: body.name.trim(),
+      contactName: body.name.trim(),
+    });
+    if (!chatData) {
+      await auditFail({
+        instanceId: c.instance_id,
+        groupJid,
+        payload: {
+          original_conversation_id: conversationId,
+          new_group_conversation_id: null,
+          instance_id: c.instance_id,
+          participant_count: merged.list.length,
+        },
+        status: 500,
+        msg: 'Falha ao normalizar dados do grupo',
+      });
+      res.status(500).json({ error: 'Falha interna ao guardar conversa' });
+      return;
+    }
+
+    const metaBase = (chatData.metadata as Record<string, unknown>) || {};
+    chatData.metadata = {
+      ...metaBase,
+      created_from_conversation_id: conversationId,
+      created_from_contact_phone: clientMsisdn,
+      created_from_contact_name: contactLabel,
+      created_by_user_id: userId,
+      created_via: 'chat_create_group',
+    };
+
+    const upserted = await upsertConversation(instance as ChatInstanceRow, chatData, {
+      communicationContactId: null,
+    });
+    if (!upserted?.id) {
+      await auditFail({
+        instanceId: c.instance_id,
+        groupJid,
+        payload: {
+          original_conversation_id: conversationId,
+          new_group_conversation_id: null,
+          instance_id: c.instance_id,
+          participant_count: merged.list.length,
+        },
+        status: 500,
+        msg: 'Falha ao persistir conversa do grupo',
+      });
+      res.status(500).json({ error: 'Grupo criado no WhatsApp mas falhou ao guardar no painel' });
+      return;
+    }
+
+    const fresh = await pool.query(
+      `SELECT * FROM chat_conversations WHERE id = $1::uuid LIMIT 1`,
+      [upserted.id]
+    );
+    const apiRow = conversationRowForClientApi(fresh.rows[0] as Record<string, unknown>);
+
+    await insertChatGroupAdminAudit({
+      tenantId,
+      actorUserId: userId,
+      conversationId,
+      instanceId: c.instance_id,
+      groupJid,
+      action: 'create_group_from_conversation',
+      payload: {
+        original_conversation_id: conversationId,
+        new_group_conversation_id: upserted.id,
+        instance_id: c.instance_id,
+        participant_count: merged.list.length,
+      },
+      uazapiStatus: 200,
+      errorMessage: null,
+    });
+
+    res.status(201).json({ conversation: apiRow });
+  } catch (error: any) {
+    console.error('[postChatCreateGroupFromConversation]', error);
+    res.status(500).json({ error: error?.message || 'Erro ao criar grupo' });
   }
 }
 
@@ -4926,7 +5681,7 @@ export async function syncConversations(req: AuthRequest, res: Response) {
         detail:
           'sync_mode=none — nada sincronizado. Envie syncMode no body para forçar janela (ex.: full, days_30).',
       });
-      res.json({
+    res.json({
         total: 0,
         upserted: 0,
         skipped: true,
@@ -5045,9 +5800,17 @@ export async function getCrmWhatsappIdentity(req: AuthRequest, res: Response) {
 export async function getConversations(req: AuthRequest, res: Response) {
   try {
     const userId = req.userId!;
+    if (!(await canChatAction(userId, 'view', req))) {
+      res.status(403).json({ error: 'Sem permissão para acessar o chat.' });
+      return;
+    }
     const { instanceId, search, status, startDate, endDate } = req.query;
     const inboxScope = req.query.inboxScope === 'tenant' ? 'tenant' : 'owner';
     const attendanceFilter = typeof req.query.attendanceFilter === 'string' ? req.query.attendanceFilter : '';
+    const conversationFilterRaw =
+      typeof req.query.conversationFilter === 'string' ? req.query.conversationFilter.trim().toLowerCase() : '';
+    const conversationFilter = conversationFilterRaw === 'groups' ? 'groups' : 'all';
+    const groupsFeat = isWhatsappGroupsEnabled();
     const diagDeep = String(req.query.diag || '') === '1';
     const logChatList = diagDeep || process.env.CHAT_LIST_LOG === '1';
     const includeWhatsAppOfficial =
@@ -5125,6 +5888,19 @@ export async function getConversations(req: AuthRequest, res: Response) {
     const teamCols = attendanceCols && (await hasAssignedTeamColumn());
     const slaPhase5Cols = await hasChatPhase5SlaColumns();
 
+    /** Última mensagem real: mensagens locais → colunas da conversa → SLA; nunca updated_at. */
+    const messagesMaxAtExpr = `(SELECT MAX(COALESCE(m.sent_at, m.created_at))::timestamptz FROM chat_messages m WHERE m.conversation_id = c.id)`;
+    const effectiveLastMessageExpr = slaPhase5Cols
+      ? `COALESCE(
+          ${messagesMaxAtExpr},
+          c.last_message_at,
+          GREATEST(c.last_customer_message_at, c.last_agent_message_at)
+        )`
+      : `COALESCE(
+          ${messagesMaxAtExpr},
+          c.last_message_at
+        )`;
+
     const attendanceSelectAndJoins = attendanceCols
       ? {
           select: `c.attendance_status,
@@ -5138,7 +5914,11 @@ export async function getConversations(req: AuthRequest, res: Response) {
         COALESCE(
           NULLIF(TRIM(COALESCE(pf.first_name, '') || ' ' || COALESCE(pf.last_name, '')), ''),
           assignee.email
-        ) AS assignee_display,`,
+        ) AS assignee_display,
+        COALESCE(
+          NULLIF(TRIM(pf.avatar_url), ''),
+          NULLIF(TRIM(assignee.avatar_url), '')
+        ) AS assignee_avatar_url,`,
           joins: `
       LEFT JOIN users assignee ON assignee.id = c.assigned_to_user_id
       LEFT JOIN profiles pf ON pf.id = assignee.id${teamCols ? '\n      LEFT JOIN teams t_chat_team ON t_chat_team.id = c.assigned_team_id' : ''}`,
@@ -5151,7 +5931,8 @@ export async function getConversations(req: AuthRequest, res: Response) {
         NULL::timestamptz AS closed_at,
         NULL::text AS last_assignment_reason,
         NULL::text AS assignee_email,
-        NULL::text AS assignee_display,`,
+        NULL::text AS assignee_display,
+        NULL::text AS assignee_avatar_url,`,
           joins: '',
         };
 
@@ -5179,6 +5960,7 @@ export async function getConversations(req: AuthRequest, res: Response) {
         c.instance_id,
         c.provider,
         c.external_chat_id,
+        c.conversation_type,
         c.external_fast_id,
         c.contact_name,
         c.profile_name,
@@ -5200,6 +5982,7 @@ export async function getConversations(req: AuthRequest, res: Response) {
         c.status,
         c.last_message_preview,
         c.last_message_at,
+        ${effectiveLastMessageExpr} AS effective_last_message_at,
         c.unread_count,
         c.metadata,
         c.created_at,
@@ -5270,6 +6053,12 @@ export async function getConversations(req: AuthRequest, res: Response) {
       params.push(instanceId.trim());
       query += ` AND c.instance_id = $${params.length}`;
       paramIndex++;
+    }
+
+    if (!groupsFeat) {
+      query += ` AND (COALESCE(c.conversation_type, 'direct') <> 'group' AND c.external_chat_id NOT LIKE '%@g.us')`;
+    } else if (conversationFilter === 'groups') {
+      query += ` AND (c.conversation_type = 'group' OR c.external_chat_id LIKE '%@g.us')`;
     }
 
     if (attendanceCols) {
@@ -5377,7 +6166,11 @@ export async function getConversations(req: AuthRequest, res: Response) {
       }
     }
 
-    query += ' ORDER BY COALESCE(c.last_message_at, c.created_at) DESC, c.updated_at DESC LIMIT 200';
+    query += ` ORDER BY
+      CASE WHEN (${effectiveLastMessageExpr}) IS NULL THEN 1 ELSE 0 END ASC,
+      (${effectiveLastMessageExpr}) DESC NULLS LAST,
+      c.created_at DESC NULLS LAST
+      LIMIT 200`;
 
     console.log('[GetConversations] Querying conversations', {
       userId,
@@ -5599,6 +6392,49 @@ export async function getConversations(req: AuthRequest, res: Response) {
       });
     }
 
+    if (rowsForClient.length > 0) {
+      const tenantForTags = dbTenantId;
+      if (tenantForTags) {
+        const allTagIds = new Set<string>();
+        const convToTagIds = new Map<string, string[]>();
+        for (const row of rowsForClient) {
+          const rec = row as Record<string, unknown>;
+          const ids = readKanbanTagIdsFromConversationMetadata(rec.metadata);
+          convToTagIds.set(String(rec.id), ids);
+          ids.forEach((id) => allTagIds.add(id));
+        }
+        if (allTagIds.size > 0) {
+          const idList = [...allTagIds];
+          const tr = await pool.query<{ id: string; label: string; color: string | null }>(
+            `SELECT id::text, label, color FROM chat_kanban_tags WHERE tenant_id = $1 AND id = ANY($2::uuid[])`,
+            [tenantForTags, idList],
+          );
+          const byId = new Map(tr.rows.map((x) => [x.id, x]));
+          for (const row of rowsForClient) {
+            const rec = row as Record<string, unknown>;
+            const ids = convToTagIds.get(String(rec.id)) ?? [];
+            const tags = ids
+              .map((id) => {
+                const t = byId.get(id);
+                if (!t) return null;
+                const color = t.color?.trim() || DEFAULT_KANBAN_TAG_COLOR_UI;
+                return { id, label: t.label, name: t.label, color };
+              })
+              .filter((x): x is { id: string; label: string; name: string; color: string } => Boolean(x));
+            rec.tags = tags;
+          }
+        } else {
+          for (const row of rowsForClient) {
+            (row as Record<string, unknown>).tags = [];
+          }
+        }
+      } else {
+        for (const row of rowsForClient) {
+          (row as Record<string, unknown>).tags = [];
+        }
+      }
+    }
+
     res.json(rowsForClient);
   } catch (error: any) {
     console.error('[GetConversations] Error fetching conversations:', {
@@ -5654,6 +6490,9 @@ export async function getConversationAttendanceCounts(req: AuthRequest, res: Res
     )`;
 
     const params: unknown[] = [userId, instanceIds];
+    const groupsHiddenSql = isWhatsappGroupsEnabled()
+      ? ''
+      : ` AND (COALESCE(c.conversation_type, 'direct') <> 'group' AND c.external_chat_id NOT LIKE '%@g.us')`;
 
     let selectCounts: string;
     if (attendanceCols) {
@@ -5711,7 +6550,7 @@ export async function getConversationAttendanceCounts(req: AuthRequest, res: Res
       FROM chat_conversations c
       INNER JOIN chat_instances i ON i.id = c.instance_id
       WHERE ${whereOwnerOrTenant}
-        AND c.instance_id = ANY($2::uuid[])
+        AND c.instance_id = ANY($2::uuid[])${groupsHiddenSql}
     `;
 
     const r = await pool.query<{
@@ -5743,13 +6582,26 @@ export async function getConversationMessages(req: AuthRequest, res: Response) {
     const userId = req.userId!;
     const { id } = req.params;
 
-    const conversation = await pool.query(
-      `SELECT id FROM chat_conversations c WHERE c.id = $1 AND ${SQL_CHAT_ACCESS_PREDICATE}`,
+    const conversation = await pool.query<{
+      id: string;
+      external_chat_id: string;
+      conversation_type: string | null;
+    }>(
+      `SELECT c.id, c.external_chat_id, c.conversation_type FROM chat_conversations c WHERE c.id = $1 AND ${SQL_CHAT_ACCESS_PREDICATE}`,
       [id, userId]
     );
     if (conversation.rowCount === 0) {
       res.status(404).json({ error: 'Conversa não encontrada' });
       return;
+    }
+    const convOpen = conversation.rows[0];
+    const isGroupOpen =
+      convOpen.conversation_type === 'group' || convOpen.external_chat_id?.endsWith('@g.us');
+    if (isGroupOpen && isWhatsappGroupsEnabled()) {
+      console.log('[chat-group-open]', {
+        conversation_id: id,
+        external_chat_id: convOpen.external_chat_id,
+      });
     }
     const tenantId = req.tenantId ?? null;
     scheduleConversationAvatarAutoRecache({
@@ -6104,6 +6956,12 @@ export async function linkConversation(req: AuthRequest, res: Response) {
             : null,
       });
     }
+    void applyKanbanAutomationForConversation({
+      tenantId,
+      actorUserId: userId,
+      conversationId,
+      reason: body.type === 'lead' ? 'lead_linked' : 'client_linked',
+    }).catch((err) => console.error('[kanban-entry-automation] manual link', err));
     res.json(updatedRow ?? null);
   } catch (error: any) {
     if (error instanceof z.ZodError) {
@@ -6324,7 +7182,7 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
  * POST /chat/find (wa_chatid) + opcional GET/POST contacts + upsert local.
  * Contacts só quando necessário (@lid sem PN ou nomes fracos) — evita agenda completa a cada sync.
  */
-async function fetchAndUpsertRemoteChatIdentity(
+export async function fetchAndUpsertRemoteChatIdentity(
   instance: ChatInstanceRow,
   externalChatId: string,
   opts?: {
@@ -6332,6 +7190,8 @@ async function fetchAndUpsertRemoteChatIdentity(
     /** true: ignora `metadata.last_identity_sync_at` (sync manual, botão “atualizar perfil”, hidratação de lacunas). */
     forceRefresh?: boolean;
     telemetry?: RemoteIdentityTelemetry;
+    /** true: não corre matching CRM (cliente/lead) — ex.: sync de participante a partir do grupo. */
+    skipCrmAutoLink?: boolean;
   }
 ): Promise<AnyObject | null> {
   const telemetry = opts?.telemetry;
@@ -6433,6 +7293,7 @@ async function fetchAndUpsertRemoteChatIdentity(
   const ccId = await syncCommunicationContactFromNormalized(tenantId, normalized);
   const upserted = (await upsertConversation(instance, normalized, {
     communicationContactId: ccId,
+    skipCrmAutoLink: opts?.skipCrmAutoLink === true,
   })) as AnyObject | null;
   if (upserted) {
     const metaForLog =
@@ -6461,7 +7322,11 @@ async function hydrateMissingIdentityFromStoredConversations(
          c.display_name IS NULL OR btrim(c.display_name) = ''
          OR c.avatar_url IS NULL OR btrim(c.avatar_url) = ''
        )
-     ORDER BY COALESCE(c.last_message_at, c.updated_at, c.created_at) DESC NULLS LAST
+     ORDER BY COALESCE(
+       (SELECT MAX(COALESCE(m.sent_at, m.created_at)) FROM chat_messages m WHERE m.conversation_id = c.id),
+       c.last_message_at,
+       c.created_at
+     ) DESC NULLS LAST
      LIMIT $2`,
     [instance.id, limit]
   );
@@ -8559,6 +9424,13 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
         return;
       }
 
+      if (
+        !isWhatsappGroupsEnabled() &&
+        (extracted.isGroup === true || chatData.externalChatId?.endsWith('@g.us'))
+      ) {
+        return;
+      }
+
       // Criar ou atualizar conversa
       console.log(`[Webhook ${webhookId}] Attempting to upsert conversation`, {
         chatId: extracted.chatId,
@@ -8674,6 +9546,17 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
         messageId ||
         randomUUID();
 
+      const groupMsgMeta =
+        extracted.isGroup || extracted.chatId?.endsWith('@g.us')
+          ? extractGroupMessageMetadataForDb(message as Record<string, unknown>)
+          : {};
+      if (Object.keys(groupMsgMeta).length > 0 && process.env.CHAT_GROUP_DEBUG === '1') {
+        console.log('[chat-group-message]', {
+          conversationId: conversation.id,
+          direction: extracted.direction,
+          has_sender_name: typeof groupMsgMeta.sender_name === 'string',
+        });
+      }
       const saveResult = await saveMessage(conversation.id, extracted.direction, {
         externalMessageId: effectiveMessageId,
         body: messageBody || null,
@@ -8685,7 +9568,8 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
             : (message.status || null),
         sentAt: sentAt || new Date(),
         metadata: {
-          ...message,
+          ...(message && typeof message === 'object' ? (message as Record<string, unknown>) : {}),
+          ...groupMsgMeta,
           messageType: extracted.messageType,
           isGroup: extracted.isGroup,
           originalPayload: payload,
@@ -8975,6 +9859,13 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
         return;
       }
 
+      if (
+        !isWhatsappGroupsEnabled() &&
+        deriveConversationTypeFromNormalized(chatData) === 'group'
+      ) {
+        return;
+      }
+
       const ccIdChats = await syncCommunicationContactFromNormalized(tenantId, chatData);
       const conversation = await upsertConversation(instance, chatData, { communicationContactId: ccIdChats });
 
@@ -9258,10 +10149,24 @@ function extractProviderInstanceIdCandidates(payload: Record<string, any>): stri
   };
   push(payload.instance);
   push(payload.instanceName);
+  push(payload.instance_name);
+  push(payload.instanceKey);
+  push(payload.externalInstanceName);
   push(payload.data?.instance);
   push(payload.data?.instanceName);
+  push(payload.data?.instance_name);
+  push(payload.data?.instanceKey);
+  push(payload.data?.externalInstanceName);
+  push(payload.instance?.name);
+  push(payload.instance?.instanceName);
+  push(payload.instance?.instance_name);
+  push(payload.data?.instance?.name);
+  push(payload.data?.instance?.instanceName);
+  push(payload.data?.instance?.instance_name);
   push(payload.instance_id);
   push(payload.data?.instance_id);
+  push(payload.instanceId);
+  push(payload.data?.instanceId);
   return out;
 }
 
@@ -9326,15 +10231,14 @@ function webhookSecretsEqual(a: string, b: string): boolean {
  * Extrai o identificador de instância no payload/header/query (mesma regra que o restante do handler).
  */
 function extractUazWebhookInstanceExternalKey(payload: Record<string, any>, req: Request): string | null {
+    const providerCandidates = extractProviderInstanceIdCandidates(payload);
     const rawInstanceId =
-      payload.instance ||
-      payload.instanceName ||
-      payload.data?.instance ||
-      payload.data?.instanceName ||
+      providerCandidates[0] ||
       req.query.instance ||
+      req.query.instanceName ||
+      req.query.instance_name ||
       req.headers['x-uazapi-instance'];
-    const instanceName =
-      typeof rawInstanceId === 'string'
+    const instanceName = typeof rawInstanceId === 'string'
         ? rawInstanceId
         : Array.isArray(rawInstanceId) && typeof rawInstanceId[0] === 'string'
           ? rawInstanceId[0]
@@ -9580,11 +10484,13 @@ export async function handleWebhook(req: Request, res: Response) {
 
     const instanceMatchCount = instanceRows.length;
     if (instanceMatchCount === 0) {
+      const providerCandidates = extractProviderInstanceIdCandidates(payload);
       console.warn(`[Webhook ${webhookId}] instance_resolution_failed`, {
         webhookId,
         reason: 'instance_not_found',
         hasInstanceId: Boolean(requestedInstanceId),
         hasExternalKey: Boolean(externalKeyEarly),
+        providerCandidatesSample: providerCandidates.slice(0, 5),
       });
       res.status(404).json({ error: 'Instance not registered' });
       return;
@@ -9604,9 +10510,15 @@ export async function handleWebhook(req: Request, res: Response) {
 
     const instanceColumnSecret = normalizeIncomingWebhookSecret((instance as any).webhook_secret);
     const metadataSecret = extractMetadataWebhookSecret(instance.metadata);
+    const metadataDeliverySecrets = collectMetadataWebhookSecretCandidates(instance.metadata);
+    const instanceTokenVariants = instance.instance_token
+      ? instanceTokenSecretVariants(instance.instance_token)
+      : [];
     const configuredSecretLengths = [
       ...(instanceColumnSecret ? [instanceColumnSecret.length] : []),
       ...(metadataSecret ? [metadataSecret.length] : []),
+      ...metadataDeliverySecrets.map((s) => s.length),
+      ...instanceTokenVariants.map((s) => s.length),
       ...configuredSecrets.map((s) => s.length),
     ];
 
@@ -9614,14 +10526,28 @@ export async function handleWebhook(req: Request, res: Response) {
       !!instanceColumnSecret && secretCandidates.some((c) => webhookSecretsEqual(c, instanceColumnSecret));
     const secretMatchesMetadata =
       !!metadataSecret && secretCandidates.some((c) => webhookSecretsEqual(c, metadataSecret));
+    const secretMatchesMetadataDelivery =
+      metadataDeliverySecrets.length > 0 &&
+      secretCandidatesMatchAnyVariantCaseRelaxed(secretCandidates, metadataDeliverySecrets);
+    const secretMatchesInstanceToken =
+      instanceTokenVariants.length > 0 &&
+      secretCandidatesMatchAnyVariantCaseRelaxed(secretCandidates, instanceTokenVariants);
     const secretMatchesLegacyEnv =
       legacyEnvEnabled &&
       configuredSecrets.length > 0 &&
       secretCandidates.some((c) => configuredSecrets.some((cfg) => webhookSecretsEqual(c, cfg)));
 
-    let matchedSource: 'instance_column' | 'metadata' | 'legacy_env' | 'none' = 'none';
+    let matchedSource:
+      | 'instance_column'
+      | 'metadata'
+      | 'metadata_delivery'
+      | 'instance_token'
+      | 'legacy_env'
+      | 'none' = 'none';
     if (secretMatchesInstanceColumn) matchedSource = 'instance_column';
     else if (secretMatchesMetadata) matchedSource = 'metadata';
+    else if (secretMatchesMetadataDelivery) matchedSource = 'metadata_delivery';
+    else if (secretMatchesInstanceToken) matchedSource = 'instance_token';
     else if (secretMatchesLegacyEnv) matchedSource = 'legacy_env';
 
     const secretValid = matchedSource !== 'none';

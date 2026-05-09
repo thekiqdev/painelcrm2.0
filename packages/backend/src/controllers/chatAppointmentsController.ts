@@ -4,7 +4,7 @@ import { pool } from '../utils/db.js';
 import type { AuthRequest } from '../middleware/auth.js';
 import { requireTenantId } from '../middleware/auth.js';
 import { SQL_CHAT_ACCESS_PREDICATE } from '../utils/chatConversationAccess.js';
-import { assertModulePermission, ModulePermissionError } from '../services/modulePermissionsService.js';
+import { assertModulePermission, ModulePermissionError } from '../permissions/index.js';
 import { canChatAction } from '../services/chatAccess.js';
 import { createAppointment } from '../services/appointmentsService.js';
 import { loadConnectionForUser } from '../services/googleCalendarService.js';
@@ -176,6 +176,10 @@ export async function postChatConversationCreateMeetNow(req: AuthRequest, res: R
     return;
   }
   try {
+    if (!(await canChatAction(req.userId, 'schedule_from_chat', req))) {
+      res.status(403).json({ error: 'Sem permissão para agendar pelo chat.' });
+      return;
+    }
     await assertModulePermission(req.userId, AGENDA_MODULE, 'create');
     if (!(await canChatAction(req.userId, 'reply', req))) {
       res.status(403).json({ error: 'Sem permissão para enviar mensagens nesta conversa' });
@@ -313,6 +317,10 @@ export async function postChatConversationScheduleAppointment(req: AuthRequest, 
   const d = parsed.data;
 
   try {
+    if (!(await canChatAction(req.userId, 'schedule_from_chat', req))) {
+      res.status(403).json({ error: 'Sem permissão para agendar pelo chat.' });
+      return;
+    }
     await assertModulePermission(req.userId, AGENDA_MODULE, 'create');
     if (d.send_chat_confirmation && !(await canChatAction(req.userId, 'reply', req))) {
       res.status(403).json({ error: 'Sem permissão para enviar mensagens nesta conversa' });

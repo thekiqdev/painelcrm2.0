@@ -24,7 +24,9 @@ import {
 import {
   applyKanbanDestColumnEnterSideEffectsBeforeCardUpdate,
   runKanbanDestColumnPostUpdateAutomations,
+  type KanbanDestColumnPostUpdateResult,
 } from '../services/kanbanInternalCardColumnPipeline.js';
+import { runDeferredKanbanEntryAutomationsAfterCommit } from '../services/chatKanbanAutomationService.js';
 import {
   cancelAllPendingScheduledMovesFromColumn,
   cancelPendingScheduledMovesForCardColumn,
@@ -51,6 +53,7 @@ import {
 import type { KanbanAutoCreatedProposalPayload } from '../services/kanbanColumnAutoProposalService.js';
 import { runKanbanAutoCreateProposalInTransaction } from '../services/kanbanColumnAutoProposalService.js';
 import { resolveConversationAvatarUrlForDisplay } from '../utils/uazapiChatIdentity.js';
+import { sanitizeKanbanAutomationConfigInMetadata } from '../utils/kanbanAutomationConfigMetadata.js';
 
 /** Modelo oficial (`proposal_templates`) ou legado (`proposals` em draft). */
 async function assertValidKanbanProposalColumnRefs(
@@ -883,6 +886,35 @@ export async function listColumns(req: AuthRequest, res: Response): Promise<void
   }
 }
 
+/** Valida destino cross-board do «mover por tempo» (quadro visível + coluna pertence ao quadro). */
+async function validateKanbanAutoMoveCrossBoardDestination(
+  req: AuthRequest,
+  res: Response,
+  tenantId: string,
+  meta: unknown,
+): Promise<boolean> {
+  const p = parseKanbanPhase2(meta);
+  const m = p.automations.auto_move_by_time;
+  if (!m.enabled || !m.to_board_id || !m.to_column_id) return true;
+  if (!(await requireVisibleKanbanBoard(req, res, tenantId, m.to_board_id))) return false;
+  const chk = await pool.query(
+    `SELECT 1
+     FROM chat_kanban_columns c
+     INNER JOIN chat_kanban_boards b ON b.id = c.board_id AND b.tenant_id = c.tenant_id
+     WHERE c.id = $1 AND c.tenant_id = $2 AND b.id = $3
+     LIMIT 1`,
+    [m.to_column_id, tenantId, m.to_board_id],
+  );
+  if (chk.rows.length === 0) {
+    res.status(400).json({
+      error:
+        'Movimento automático por tempo: a coluna de destino não pertence ao quadro Kanban escolhido ou não existe.',
+    });
+    return false;
+  }
+  return true;
+}
+
 export async function createColumn(req: AuthRequest, res: Response): Promise<void> {
   try {
     const tenantId = ensureTenantIdForInsert(req);
@@ -899,6 +931,7 @@ export async function createColumn(req: AuthRequest, res: Response): Promise<voi
       position = pr.rows[0]?.p ?? 0;
     }
     const meta = applyKanbanPhase2Defaults(body.metadata ?? {});
+    await sanitizeKanbanAutomationConfigInMetadata(meta as Record<string, unknown>, tenantId);
     sanitizeKanbanProposalsInMetadata(meta);
     const phase2Issues = validateKanbanPhase2ForSave(meta);
     if (phase2Issues.length > 0) {
@@ -915,6 +948,7 @@ export async function createColumn(req: AuthRequest, res: Response): Promise<voi
       res.status(400).json({ error: autoMoveIssues.join('; ') });
       return;
     }
+    if (!(await validateKanbanAutoMoveCrossBoardDestination(req, res, tenantId, meta))) return;
     const proposalAcceptIssues = validateKanbanProposalAcceptAutomation(null, meta, boardColSet);
     if (proposalAcceptIssues.length > 0) {
       res.status(400).json({ error: proposalAcceptIssues.join('; ') });
@@ -1040,6 +1074,7 @@ export async function patchColumn(req: AuthRequest, res: Response): Promise<void
     }
     if (body.metadata !== undefined) {
       const normalizedMeta = applyKanbanPhase2Defaults(body.metadata);
+      await sanitizeKanbanAutomationConfigInMetadata(normalizedMeta as Record<string, unknown>, tenantId);
       sanitizeKanbanProposalsInMetadata(normalizedMeta);
       const phase2Issues = validateKanbanPhase2ForSave(normalizedMeta);
       if (phase2Issues.length > 0) {
@@ -1056,6 +1091,7 @@ export async function patchColumn(req: AuthRequest, res: Response): Promise<void
         res.status(400).json({ error: autoMoveIssues.join('; ') });
         return;
       }
+      if (!(await validateKanbanAutoMoveCrossBoardDestination(req, res, tenantId, normalizedMeta))) return;
       const proposalAcceptIssues = validateKanbanProposalAcceptAutomation(columnId, normalizedMeta, boardColSet);
       if (proposalAcceptIssues.length > 0) {
         res.status(400).json({ error: proposalAcceptIssues.join('; ') });
@@ -1585,6 +1621,7 @@ export async function patchCard(req: AuthRequest, res: Response): Promise<void> 
     }
 
     let kanbanAutoPending: KanbanAutoCreatedProposalPayload | null = null;
+    let postColumnUpdateResult: KanbanDestColumnPostUpdateResult | null = null;
 
     client = await pool.connect();
     await beginKanbanTxWithRls(client, tenantId, userId);
@@ -1676,6 +1713,7 @@ export async function patchCard(req: AuthRequest, res: Response): Promise<void> 
           cardId,
           conversationId: String(card.conversation_id),
         });
+        postColumnUpdateResult = postRes;
         if (postRes.kanban_auto_created_proposal) {
           kanbanAutoPending = postRes.kanban_auto_created_proposal;
         }
@@ -1698,6 +1736,15 @@ export async function patchCard(req: AuthRequest, res: Response): Promise<void> 
     }
 
     await client.query('COMMIT');
+
+    if (postColumnUpdateResult?.deferredEntryAutomations?.length) {
+      void runDeferredKanbanEntryAutomationsAfterCommit({
+        tenantId,
+        actorUserId: userId,
+        conversationId: String(card.conversation_id),
+        reasons: postColumnUpdateResult.deferredEntryAutomations,
+      });
+    }
 
     let kanbanAutoForResponse: KanbanAutoCreatedProposalPayload | undefined;
     if (kanbanAutoPending && tenantId) {

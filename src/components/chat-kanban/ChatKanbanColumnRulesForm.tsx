@@ -52,13 +52,10 @@ export function ChatKanbanColumnRulesForm({
   };
 
   const attendanceSection = (
-    <div className="rounded-md border border-border/50 bg-muted/15 p-3 space-y-3 text-sm">
+    <div className="rounded-md border border-border/40 bg-muted/10 p-2 space-y-2.5 text-sm">
       {variant === 'all' ? (
-        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Atendimento</p>
+        <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Atendimento</p>
       ) : null}
-      <p className="text-[11px] text-muted-foreground leading-snug">
-        Aplicadas no servidor ao mover um cartão para esta coluna (não alteram CRM/funil).
-      </p>
 
       <div className="flex items-center justify-between gap-3">
         <Label htmlFor="kr-close" className="text-xs font-normal leading-tight cursor-pointer">
@@ -96,12 +93,11 @@ export function ChatKanbanColumnRulesForm({
         />
       </div>
 
-      <div className="space-y-2 rounded-md border border-border/40 bg-background/40 p-2.5">
-        <p className="text-[11px] font-medium text-muted-foreground">Atribuições</p>
+      <div className="space-y-2 rounded-md border border-border/35 bg-background/30 p-2">
+        <p className="text-[10px] font-medium text-muted-foreground">Atribuições</p>
         {blocksAssignTargets ? (
-          <p className="text-[10px] text-muted-foreground leading-snug">
-            Atribuir equipe ou operador fica indisponível enquanto «Encerrar conversa», «Limpar responsável» ou «Enviar
-            para fila geral» estiver ativo.
+          <p className="text-[9px] text-muted-foreground leading-tight" title="Desative encerrar, limpar responsável ou fila para atribuir.">
+            Indisponível com encerrar / fila / limpar responsável.
           </p>
         ) : null}
         <div className="space-y-1.5">
@@ -174,15 +170,10 @@ export function ChatKanbanColumnRulesForm({
   );
 
   const organizationSection = (
-    <div className="rounded-md border border-border/50 bg-muted/15 p-3 space-y-3 text-sm">
+    <div className="rounded-md border border-border/40 bg-muted/10 p-2 space-y-2.5 text-sm">
       {variant === 'all' ? (
-        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Organização</p>
+        <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Organização</p>
       ) : null}
-      <p className="text-[11px] text-muted-foreground leading-snug">
-        Etiquetas e prioridade em <span className="font-mono text-[10px]">metadata</span> da conversa (
-        <span className="font-mono text-[10px]">kanban_labels</span>,{' '}
-        <span className="font-mono text-[10px]">kanban_priority</span>).
-      </p>
 
       <div className="space-y-1.5">
         <Label htmlFor="kr-add-tag" className="text-xs">

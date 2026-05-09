@@ -53,6 +53,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 import { isInvoiceActionable } from "@/lib/customerInvoiceActions";
 import {
   addCalendarDaysToIsoYmd,
@@ -95,6 +96,11 @@ function formatYmdBr(ymd: string | null | undefined): string {
 const SubscriptionDetail = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { hasPermissionKey } = useModulePermissions();
+  const canViewInvoices = hasPermissionKey("billing.view_invoices");
+  const canEditInvoice = hasPermissionKey("billing.edit_invoice");
+  const canEditSubscription = hasPermissionKey("billing.edit_subscription");
+  const canCancelSubscription = hasPermissionKey("billing.cancel_subscription");
   const [detail, setDetail] = useState<CrmSubscriptionDetailPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [techOpen, setTechOpen] = useState(false);
@@ -220,12 +226,13 @@ const SubscriptionDetail = () => {
     nextYmd && nextYmd.length === 10 ? computeRecurringGenerationDateYmd(nextYmd, daysBeforeAcct) : null;
   const latestPaidId = detail.latest_paid_invoice_id;
   const canReschedule = s.status === "active" && Boolean(latestPaidId);
-  const editHref =
+  const editHrefRaw =
     detail.latest_invoice_id &&
     detail.latest_invoice_status &&
     isInvoiceActionable(detail.latest_invoice_status)
       ? `/customer-invoices/${detail.latest_invoice_id}/edit`
       : null;
+  const editHref = editHrefRaw && canEditInvoice ? editHrefRaw : null;
 
   return (
     <div className="space-y-6 max-w-[1100px] pb-10">
@@ -354,12 +361,18 @@ const SubscriptionDetail = () => {
                     </TableCell>
                     <TableCell className="text-right">
                       {row.invoice_id ? (
-                        <Button variant="outline" size="sm" className="h-8" asChild>
-                          <Link to={`/customer-invoices/${row.invoice_id}`}>
-                            <FileText className="h-3.5 w-3.5 mr-1" />
-                            Ver fatura
-                          </Link>
-                        </Button>
+                        canViewInvoices ? (
+                          <Button variant="outline" size="sm" className="h-8" asChild>
+                            <Link to={`/customer-invoices/${row.invoice_id}`}>
+                              <FileText className="h-3.5 w-3.5 mr-1" />
+                              Ver fatura
+                            </Link>
+                          </Button>
+                        ) : (
+                          <span className="text-xs text-muted-foreground" title="Sem permissão para ver faturas">
+                            —
+                          </span>
+                        )
                       ) : (
                         <span className="text-xs text-muted-foreground">—</span>
                       )}
@@ -439,7 +452,7 @@ const SubscriptionDetail = () => {
                 id="cycles_unlimited_sub"
                 checked={cyclesUnlimitedEdit}
                 onCheckedChange={setCyclesUnlimitedEdit}
-                disabled={s.status !== "active"}
+                disabled={!canEditSubscription || s.status !== "active"}
               />
             </div>
             {!cyclesUnlimitedEdit && (
@@ -452,7 +465,7 @@ const SubscriptionDetail = () => {
                   className="mt-1"
                   value={maxCyclesEdit}
                   onChange={(e) => setMaxCyclesEdit(e.target.value)}
-                  disabled={s.status !== "active"}
+                  disabled={!canEditSubscription || s.status !== "active"}
                 />
               </div>
             )}
@@ -460,7 +473,7 @@ const SubscriptionDetail = () => {
               type="button"
               size="sm"
               onClick={() => void saveCyclesConfig()}
-              disabled={cyclesSaving || s.status !== "active"}
+              disabled={!canEditSubscription || cyclesSaving || s.status !== "active"}
             >
               {cyclesSaving ? "A guardar…" : "Guardar ciclos"}
             </Button>
@@ -470,7 +483,7 @@ const SubscriptionDetail = () => {
             <Button
               variant="outline"
               size="sm"
-              disabled={!canReschedule}
+              disabled={!canEditSubscription || !canReschedule}
               onClick={() => {
                 const gen =
                   nextYmd && nextYmd.length === 10
@@ -482,7 +495,7 @@ const SubscriptionDetail = () => {
             >
               Alterar próxima cobrança
             </Button>
-            {detail.latest_invoice_id && (
+            {detail.latest_invoice_id && canViewInvoices && (
               <Button variant="outline" size="sm" asChild>
                 <Link to={`/customer-invoices/${detail.latest_invoice_id}`}>Ver fatura mais recente</Link>
               </Button>
@@ -497,7 +510,12 @@ const SubscriptionDetail = () => {
             )}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="gap-1" disabled={s.status !== "active"}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1"
+                  disabled={s.status !== "active" || !canCancelSubscription}
+                >
                   <MoreHorizontal className="h-4 w-4" />
                   Encerrar assinatura
                 </Button>
@@ -565,9 +583,13 @@ const SubscriptionDetail = () => {
                             <TableCell className="text-xs whitespace-nowrap">{j.updated_at?.slice(0, 19)}</TableCell>
                             <TableCell>
                               {j.result_invoice_id ? (
-                                <Link className="text-primary underline text-xs" to={`/customer-invoices/${j.result_invoice_id}`}>
-                                  Abrir
-                                </Link>
+                                canViewInvoices ? (
+                                  <Link className="text-primary underline text-xs" to={`/customer-invoices/${j.result_invoice_id}`}>
+                                    Abrir
+                                  </Link>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground">—</span>
+                                )
                               ) : (
                                 "—"
                               )}
@@ -621,7 +643,7 @@ const SubscriptionDetail = () => {
             <Button variant="outline" onClick={() => setNextOpen(false)}>
               Cancelar
             </Button>
-            <Button onClick={saveNext} disabled={savingNext}>
+            <Button onClick={saveNext} disabled={!canEditSubscription || savingNext}>
               {savingNext ? "Salvando…" : "Salvar"}
             </Button>
           </DialogFooter>

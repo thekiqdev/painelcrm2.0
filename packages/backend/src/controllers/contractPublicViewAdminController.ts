@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { z } from 'zod';
 import { AuthRequest } from '../middleware/auth.js';
-import { assertModulePermission, ModulePermissionError } from '../permissions/index.js';
+import { assertModulePermission, assertPermissionKey, ModulePermissionError } from '../permissions/index.js';
 import { pool } from '../utils/db.js';
 import {
   getActiveViewTokenMetaForContract,
@@ -87,6 +87,7 @@ export async function issueContractPublicViewLink(req: AuthRequest, res: Respons
       return;
     }
     await assertModulePermission(userId, 'contracts', 'edit', { ownerId: perm.user_id, assigneeId: perm.responsible_id }, req);
+    await assertPermissionKey(userId, 'contracts.send', req);
 
     const result = await issuePublicViewToken({ contractId: id, requesterUserId: userId, regenerate: regenerate === true });
     if (!result.ok) {
@@ -165,6 +166,7 @@ export async function revokeContractPublicViewLink(req: AuthRequest, res: Respon
       return;
     }
     await assertModulePermission(userId, 'contracts', 'edit', { ownerId: perm.user_id, assigneeId: perm.responsible_id }, req);
+    await assertPermissionKey(userId, 'contracts.send', req);
     const revokedRows = await revokePublicViewToken(id, userId);
     if (revokedRows < 0) {
       res.status(404).json({ error: 'Contrato não encontrado' });

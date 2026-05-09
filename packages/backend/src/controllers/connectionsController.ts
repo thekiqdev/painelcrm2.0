@@ -9,7 +9,11 @@ import {
 import { disconnectSuperadminOfficialAccount } from '../services/whatsappOfficial/whatsappOfficialConfigService.js';
 
 const flagBodySchema = z.object({
-  key: z.enum(['whatsapp_official_enabled', 'whatsapp_official_tenant_enabled']),
+  key: z.enum([
+    'whatsapp_official_enabled',
+    'whatsapp_official_tenant_enabled',
+    'whatsapp_groups_enabled',
+  ]),
   value: z.boolean(),
 });
 

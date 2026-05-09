@@ -109,8 +109,11 @@ function buildInvoiceListRows(invoices: CustomerInvoice[]): ListRowModel[] {
 
 const CustomerInvoices = () => {
   const navigate = useNavigate();
-  const { canCreate: canCreateModule, loading: permLoading } = useModulePermissions();
-  const canCreateInvoice = canCreateModule("billing") && !permLoading;
+  const { hasPermissionKey, loading: permLoading } = useModulePermissions();
+  const canCreateInvoice = hasPermissionKey("billing.create_invoice") && !permLoading;
+  const canEditInvoice = hasPermissionKey("billing.edit_invoice");
+  const canCancelInvoice = hasPermissionKey("billing.cancel_invoice");
+  const canDeleteInvoice = hasPermissionKey("billing.delete_invoice");
   const [invoices, setInvoices] = useState<CustomerInvoice[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
@@ -274,21 +277,23 @@ const CustomerInvoices = () => {
         <MobilePageHeader
           title="Faturas"
           secondarySlot={
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button type="button" variant="ghost" size="icon" className="h-10 w-10" aria-label="Mais ações">
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem asChild>
-                  <Link to="/customer-invoices/new?by_link=1&kind=subscription">Assinatura por link</Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link to="/customer-invoices/new?by_link=1&kind=one_off">Fatura por link</Link>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            canCreateInvoice ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button type="button" variant="ghost" size="icon" className="h-10 w-10" aria-label="Mais ações">
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem asChild>
+                    <Link to="/customer-invoices/new?by_link=1&kind=subscription">Assinatura por link</Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to="/customer-invoices/new?by_link=1&kind=one_off">Fatura por link</Link>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null
           }
           primaryAction={
             canCreateInvoice
@@ -303,21 +308,23 @@ const CustomerInvoices = () => {
           <p className="mt-0.5 text-xs text-muted-foreground">Operação rápida de cobranças e acompanhamento.</p>
         </div>
         <div className="flex items-center gap-2">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button type="button" variant="outline" size="icon" aria-label="Mais ações">
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem asChild>
-                <Link to="/customer-invoices/new?by_link=1&kind=subscription">Assinatura por link</Link>
-              </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <Link to="/customer-invoices/new?by_link=1&kind=one_off">Fatura por link</Link>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {canCreateInvoice ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" variant="outline" size="icon" aria-label="Mais ações">
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem asChild>
+                  <Link to="/customer-invoices/new?by_link=1&kind=subscription">Assinatura por link</Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link to="/customer-invoices/new?by_link=1&kind=one_off">Fatura por link</Link>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
           {canCreateInvoice ? (
             <Button asChild>
               <Link to="/customer-invoices/new">
@@ -645,7 +652,7 @@ const CustomerInvoices = () => {
                             <Eye className="mr-2 h-4 w-4" />
                             Ver detalhes
                           </DropdownMenuItem>
-                          {isInvoiceActionable(inv.status) && (
+                          {isInvoiceActionable(inv.status) && canEditInvoice && (
                             <DropdownMenuItem
                               onSelect={() =>
                                 navigate(`/customer-invoices/${inv.id}/edit`)
@@ -655,7 +662,7 @@ const CustomerInvoices = () => {
                               Editar
                             </DropdownMenuItem>
                           )}
-                          {isInvoiceActionable(inv.status) && (
+                          {isInvoiceActionable(inv.status) && canCancelInvoice && (
                             <>
                               <DropdownMenuSeparator />
                               <DropdownMenuItem
@@ -670,7 +677,7 @@ const CustomerInvoices = () => {
                               </DropdownMenuItem>
                             </>
                           )}
-                          {canDeleteCustomerInvoice(inv) && (
+                          {canDeleteCustomerInvoice(inv) && canDeleteInvoice && (
                             <DropdownMenuItem
                               className="text-destructive focus:text-destructive"
                               onSelect={(e) => {
@@ -793,10 +800,37 @@ const CustomerInvoices = () => {
                           <Eye className="mr-2 h-4 w-4" />
                           Abrir
                         </DropdownMenuItem>
-                        {isInvoiceActionable(inv.status) ? (
+                        {isInvoiceActionable(inv.status) && canEditInvoice ? (
                           <DropdownMenuItem onSelect={() => navigate(`/customer-invoices/${inv.id}/edit`)}>
                             <Pencil className="mr-2 h-4 w-4" />
                             Editar
+                          </DropdownMenuItem>
+                        ) : null}
+                        {isInvoiceActionable(inv.status) && canCancelInvoice ? (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              className="text-destructive focus:text-destructive"
+                              onSelect={(e) => {
+                                e.preventDefault();
+                                setInvoiceToCancel(inv);
+                              }}
+                            >
+                              <XCircle className="mr-2 h-4 w-4" />
+                              Cancelar fatura
+                            </DropdownMenuItem>
+                          </>
+                        ) : null}
+                        {canDeleteCustomerInvoice(inv) && canDeleteInvoice ? (
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive"
+                            onSelect={(e) => {
+                              e.preventDefault();
+                              setInvoiceToDelete(inv);
+                            }}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Excluir
                           </DropdownMenuItem>
                         ) : null}
                       </DropdownMenuContent>

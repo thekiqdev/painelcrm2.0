@@ -45,6 +45,7 @@ import { CustomerInvoiceStatusBadge, getCustomerInvoiceStatusLabel } from "@/lib
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { INVOICE_ACTIONABLE, canDeleteCustomerInvoice, isSubscriptionInvoicePurgeable } from "@/lib/customerInvoiceActions";
 import { useAuth } from "@/contexts/AuthContext";
+import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 import { InvoiceRecurrenceBlock } from "@/components/invoices/InvoiceRecurrenceBlock";
 import {
   effectiveLinkPaymentMethods,
@@ -122,6 +123,12 @@ const CustomerInvoiceDetail = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
+  const { hasPermissionKey } = useModulePermissions();
+  const canEditInvoice = hasPermissionKey("billing.edit_invoice");
+  const canCancelInvoice = hasPermissionKey("billing.cancel_invoice");
+  const canDeleteInvoicePerm = hasPermissionKey("billing.delete_invoice");
+  const canSendInvoice = hasPermissionKey("billing.send_invoice");
+  const canEditSubscription = hasPermissionKey("billing.edit_subscription");
   const showRecurrenceOperational = Boolean(
     user?.is_tenant_admin || user?.can_manage_plan || user?.is_super_admin
   );
@@ -386,8 +393,8 @@ const CustomerInvoiceDetail = () => {
     mpFeatureOn &&
     mpConnected &&
     !mpIntegrationLoading &&
-    actionable &&
-    invoice.status !== "paid";
+    invoice.status !== "paid" &&
+    (Boolean(existingMpUrl) || (actionable && canSendInvoice));
 
   return (
     <div className="space-y-6">
@@ -425,7 +432,7 @@ const CustomerInvoiceDetail = () => {
               </p>
             </div>
             <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:justify-end">
-              {actionable && (
+              {actionable && canEditInvoice && (
                 <Button
                   variant="outline"
                   size="sm"
@@ -438,7 +445,8 @@ const CustomerInvoiceDetail = () => {
               )}
               {invoice.origin === "subscription" &&
                 invoice.status === "paid" &&
-                Boolean(invoice.subscription_id) && (
+                Boolean(invoice.subscription_id) &&
+                canEditSubscription && (
                   <Button
                     variant="secondary"
                     size="sm"
@@ -450,7 +458,7 @@ const CustomerInvoiceDetail = () => {
                     Alterar próxima cobrança
                   </Button>
                 )}
-              {actionable && (
+              {actionable && canCancelInvoice && (
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button variant="destructive" size="sm" disabled={cancelling}>
@@ -475,7 +483,7 @@ const CustomerInvoiceDetail = () => {
                   </AlertDialogContent>
                 </AlertDialog>
               )}
-              {canDelete && (
+              {canDelete && canDeleteInvoicePerm && (
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button variant="outline" size="sm" className="text-destructive border-destructive/50" disabled={deleteSaving}>
@@ -760,31 +768,33 @@ const CustomerInvoiceDetail = () => {
                     <Copy className="mr-2 h-4 w-4" />
                     Copiar link
                   </Button>
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button type="button" size="sm" variant="secondary" disabled={mpGenerating}>
-                        Gerar nova preferência
-                      </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>Gerar nova preferência?</AlertDialogTitle>
-                        <AlertDialogDescription>
-                          Será criada outra preferência no Mercado Pago. O link anterior pode deixar de ser a referência
-                          principal; use se precisar atualizar valor ou descrição após alterar a fatura.
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                        <AlertDialogAction onClick={() => void handleMercadoPagoGenerate(true)}>
-                          Gerar nova
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
+                  {canSendInvoice ? (
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button type="button" size="sm" variant="secondary" disabled={mpGenerating}>
+                          Gerar nova preferência
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Gerar nova preferência?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            Será criada outra preferência no Mercado Pago. O link anterior pode deixar de ser a referência
+                            principal; use se precisar atualizar valor ou descrição após alterar a fatura.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                          <AlertDialogAction onClick={() => void handleMercadoPagoGenerate(true)}>
+                            Gerar nova
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  ) : null}
                 </div>
               </>
-            ) : (
+            ) : actionable && canSendInvoice ? (
               <Button
                 type="button"
                 size="sm"
@@ -793,7 +803,7 @@ const CustomerInvoiceDetail = () => {
               >
                 {mpGenerating ? "Gerando…" : "Gerar pagamento Mercado Pago"}
               </Button>
-            )}
+            ) : null}
           </CardContent>
         </Card>
       ) : null}
@@ -910,7 +920,10 @@ const CustomerInvoiceDetail = () => {
               currentInvoiceId={invoice.id}
               recurringAmountLabel={formatAmount(invoice.amount_cents)}
               showChangeNextBilling={
-                invoice.origin === "subscription" && invoice.status === "paid" && Boolean(invoice.subscription_id)
+                canEditSubscription &&
+                invoice.origin === "subscription" &&
+                invoice.status === "paid" &&
+                Boolean(invoice.subscription_id)
               }
               onChangeNextBilling={() => id && navigate(`/customer-invoices/${id}/edit?flow=renewal`)}
             />

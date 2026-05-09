@@ -30,6 +30,7 @@ export {
 } from './permissionEngine.js';
 export { ModulePermissionError } from './errors.js';
 export { assertModulePermission } from './assertModulePermission.js';
+export { assertPermissionKey } from './assertPermissionKey.js';
 export { requirePermission } from './requirePermission.js';
 export { parsePermissionDescriptor } from './parsePermissionDescriptor.js';
 export { resolveModulePermissions } from './modulePermissionResolver.js';

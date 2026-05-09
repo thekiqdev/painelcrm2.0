@@ -41,6 +41,20 @@ export interface LogPermissionDeniedParams {
  */
 export function logPermissionDenied(params: LogPermissionDeniedParams): void {
   console.warn('[PermissionDenied]', JSON.stringify(params));
+  if (process.env.PERMISSION_DEBUG === '1') {
+    console.log(
+      '[permission-check]',
+      JSON.stringify({
+        userId: params.userId,
+        tenantId: params.tenantId ?? null,
+        module: params.module,
+        action: params.action,
+        allowed: false,
+        source: 'permissionEngine',
+        reason: params.reason,
+      })
+    );
+  }
 }
 
 /**
@@ -179,6 +193,19 @@ export async function checkPermission(
     }
   }
 
+  if (process.env.PERMISSION_DEBUG === '1') {
+    console.log(
+      '[permission-check]',
+      JSON.stringify({
+        userId: ctx.userId,
+        tenantId: ctx.tenantId ?? null,
+        module: moduleId,
+        action,
+        allowed: true,
+        source: 'permissionEngine',
+      })
+    );
+  }
   return true;
 }
 

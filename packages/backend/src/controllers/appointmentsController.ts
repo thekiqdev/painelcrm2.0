@@ -2,7 +2,8 @@ import type { Response } from 'express';
 import { z } from 'zod';
 import type { AuthRequest } from '../middleware/auth.js';
 import { requireTenantId } from '../middleware/auth.js';
-import { getEffectiveModulePermissions, assertModulePermission, ModulePermissionError } from '../services/modulePermissionsService.js';
+import { getEffectiveModulePermissions, ModulePermissionError } from '../services/modulePermissionsService.js';
+import { assertModulePermission } from '../permissions/index.js';
 import {
   listAppointments,
   listAppointmentConflicts,

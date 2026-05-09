@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { toast } from '@/components/ui/sonner';
 import { useModulePermissions } from '@/contexts/ModulePermissionsContext';
+import type { PermissionCatalogKey } from '@/permissions/permissionCatalog';
 
 /** Mapeia pathname para moduleId (ordem: mais específico primeiro). */
 function pathToModule(pathname: string): string | null {
@@ -28,16 +29,43 @@ function pathToModule(pathname: string): string | null {
   return null;
 }
 
+/** Rotas com chave granular adicional (além de can_view no módulo). */
+function catalogKeyForPath(pathname: string): PermissionCatalogKey | null {
+  const path = pathname.split('?')[0].replace(/\/+$/, '') || '/';
+  if (path === '/customer-invoices/new' || path.startsWith('/customer-invoices/new/')) {
+    return 'billing.create_invoice';
+  }
+  if (/\/customer-invoices\/[^/]+\/edit$/.test(path)) {
+    return 'billing.edit_invoice';
+  }
+  if (pathname.startsWith('/customer-invoices')) return 'billing.view_invoices';
+  if (pathname.startsWith('/customer-charges')) return 'billing.view_charges';
+  if (pathname.startsWith('/crm-subscriptions')) return 'billing.view_subscriptions';
+  if (pathname.startsWith('/finance/relatorios') || pathname.startsWith('/finance/relatórios'))
+    return 'finance.view_reports';
+  if (pathname.startsWith('/finance/accounts-payable')) return 'finance.view_accounts_payable';
+  if (pathname.startsWith('/clients')) return 'clients.view';
+  if (pathname.startsWith('/leads')) return 'leads.view';
+  if (pathname.startsWith('/proposals')) return 'proposals.view';
+  if (pathname.startsWith('/contracts')) return 'contracts.view';
+  return null;
+}
+
 export function RequireModuleView({ children }: { children: React.ReactNode }) {
   const location = useLocation();
-  const { canView, loading } = useModulePermissions();
+  const { canView, loading, hasPermissionKey } = useModulePermissions();
   const moduleId = pathToModule(location.pathname);
+  const extraKey = catalogKeyForPath(location.pathname);
 
   if (loading || !moduleId) {
     return <>{children}</>;
   }
 
   if (!canView(moduleId)) {
+    return <RedirectNoPermission />;
+  }
+
+  if (extraKey && !hasPermissionKey(extraKey)) {
     return <RedirectNoPermission />;
   }
 

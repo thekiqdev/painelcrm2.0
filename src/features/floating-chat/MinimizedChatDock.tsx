@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { X } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -13,6 +13,7 @@ import {
   applyConversationDragPreview,
   conversationDragPreviewFromChatConversation,
 } from '@/lib/conversationDragPreview';
+import { getCachedFloatingConversationById } from './queryCache';
 
 function shortName(displayName: string): string {
   const first = displayName.split(/\s+/)[0]?.trim();
@@ -33,6 +34,7 @@ export function MinimizedChatDock({
 }) {
   const { panels, expandPanel, closeFloatingConversation, instanceIds, inboxScope, pulseUntil } =
     useFloatingChat();
+  const queryClient = useQueryClient();
   const minimized = panels.filter((p) => p.minimized);
   const shellRef = useRef<HTMLDivElement>(null);
   const minimizedIdsKey = minimized.map((p) => p.conversationId).join(',');
@@ -57,18 +59,22 @@ export function MinimizedChatDock({
 
   const { data: metas = {} } = useQuery({
     queryKey: ['floating-chat', 'minimized-meta', idsKey, instanceIds.join(','), inboxScope],
-    enabled: minimized.length > 0 && instanceIds.length > 0,
+    enabled: minimized.length > 0,
     queryFn: async (): Promise<Record<string, ChatConversation | null>> => {
       const out: Record<string, ChatConversation | null> = {};
       for (const p of minimized) {
-        out[p.conversationId] = null;
+        out[p.conversationId] = getCachedFloatingConversationById(queryClient, p.conversationId);
       }
+      const missingIds = minimized
+        .map((p) => p.conversationId)
+        .filter((id) => !out[id]);
+      if (missingIds.length === 0) return out;
       for (const instanceId of instanceIds) {
         const rows = await chatService.getConversations({ instanceId, inboxScope });
-        for (const p of minimized) {
-          if (out[p.conversationId]) continue;
-          const hit = rows.find((r) => r.id === p.conversationId);
-          if (hit) out[p.conversationId] = hit;
+        for (const conversationId of missingIds) {
+          if (out[conversationId]) continue;
+          const hit = rows.find((r) => r.id === conversationId);
+          if (hit) out[conversationId] = hit;
         }
       }
       const stillMissing = minimized.filter((p) => !out[p.conversationId]);
@@ -86,6 +92,13 @@ export function MinimizedChatDock({
       return out;
     },
     staleTime: 20_000,
+    placeholderData: () => {
+      const out: Record<string, ChatConversation | null> = {};
+      for (const p of minimized) {
+        out[p.conversationId] = getCachedFloatingConversationById(queryClient, p.conversationId);
+      }
+      return out;
+    },
   });
 
   if (minimized.length === 0) return null;

@@ -2,7 +2,8 @@ import { Response } from 'express';
 import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { z } from 'zod';
-import { assertModulePermission, ModulePermissionError } from '../permissions/index.js';
+import { assertModulePermission, assertPermissionKey, ModulePermissionError } from '../permissions/index.js';
+import { resolveLeadsGranularFromLegacy } from '../permissions/permissionCatalog.js';
 import { normalizeConversationPhone } from '../services/conversationMatchingService.js';
 import { migrateConversationLeadToClient } from '../services/conversationLinkService.js';
 
@@ -86,6 +87,22 @@ export async function getLeads(req: AuthRequest, res: Response): Promise<void> {
       res.json([]);
       return;
     }
+    const userId = req.userId;
+    if (!userId) {
+      res.status(401).json({ error: 'Não autenticado' });
+      return;
+    }
+    let permMap;
+    try {
+      permMap = await assertPermissionKey(userId, 'leads.view', req);
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        res.status(e.statusCode).json({ error: e.message });
+        return;
+      }
+      throw e;
+    }
+    const lg = resolveLeadsGranularFromLegacy(permMap);
     const { profileId, onlyConverted } = req.query;
     const onlyConv = onlyConverted === 'true' || onlyConverted === '1';
 
@@ -143,6 +160,11 @@ export async function getLeads(req: AuthRequest, res: Response): Promise<void> {
     `;
     const params: any[] = [tenantId];
 
+    if (lg.view_own && !lg.view_all) {
+      query += ` AND l.user_id = $${params.length + 1}`;
+      params.push(userId);
+    }
+
     if (onlyConv) {
       query += ` AND l.status = 'Convertido'`;
     } else {
@@ -183,6 +205,18 @@ export async function getLeadById(req: AuthRequest, res: Response): Promise<void
   try {
     const userId = req.userId!;
     const { id } = req.params;
+
+    let permMap;
+    try {
+      permMap = await assertPermissionKey(userId, 'leads.view', req);
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        res.status(e.statusCode).json({ error: e.message });
+        return;
+      }
+      throw e;
+    }
+    const lg = resolveLeadsGranularFromLegacy(permMap);
 
     const waAvatarExpr = await leadWhatsappAvatarSelectExpr();
 
@@ -243,7 +277,13 @@ export async function getLeadById(req: AuthRequest, res: Response): Promise<void
       return;
     }
 
-    res.json(result.rows[0]);
+    const row = result.rows[0];
+    if (lg.view_own && !lg.view_all && row.user_id !== userId) {
+      res.status(404).json({ error: 'Lead not found' });
+      return;
+    }
+
+    res.json(row);
   } catch (error) {
     console.error('Error fetching lead:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -254,6 +294,7 @@ export async function createLead(req: AuthRequest, res: Response): Promise<void>
   try {
     const userId = req.userId!;
     await assertModulePermission(userId, MODULE_LEADS, 'create', undefined, req);
+    await assertPermissionKey(userId, 'leads.create', req);
     const leadData = leadSchema.parse(req.body);
 
     // Clean up the data - convert empty strings to null for optional fields
@@ -396,6 +437,7 @@ export async function updateLead(req: AuthRequest, res: Response): Promise<void>
     const updatedLead = result.rows[0];
     if ((leadFields.status ?? null) === 'Convertido' || updatedLead.status === 'Convertido') {
       try {
+        await assertPermissionKey(userId, 'leads.convert_to_client', req);
         const tenantRow = await pool.query<{ tenant_id: string }>(
           `SELECT tenant_id FROM users WHERE id = $1 LIMIT 1`,
           [userId]

@@ -1,5 +1,7 @@
 import { pool } from '../../utils/db.js';
 import { normalizeAttendanceStatusForDb } from '../../utils/chatAttendanceStatus.js';
+import { applyKanbanAutomationForConversation } from '../chatKanbanAutomationService.js';
+import { resolveTenantIdForUser } from '../../utils/resolveTenantIdForUser.js';
 import { normalizeBrazilWhatsappPhone } from '../../utils/phone/normalizeBrazilPhone.js';
 import { sendTextMessage as graphSendText } from './whatsappOfficialClient.js';
 import { getAccountCredentials } from './whatsappOfficialConfigService.js';
@@ -42,6 +44,7 @@ export async function sendOfficialTextAndPersist(params: {
   const phoneDigits = normalized.phone.replace(/\D/g, '');
 
   const client = await pool.connect();
+  let insertedNewConversation = false;
   try {
     await client.query('BEGIN');
 
@@ -53,6 +56,7 @@ export async function sendOfficialTextAndPersist(params: {
 
     let conversationId: string;
     if (conv.rows.length === 0) {
+      insertedNewConversation = true;
       const ins = await client.query<{ id: string }>(
         `INSERT INTO chat_conversations (
            user_id, instance_id, external_chat_id, phone_number,
@@ -97,6 +101,19 @@ export async function sendOfficialTextAndPersist(params: {
     }
 
     await client.query('COMMIT');
+
+    if (insertedNewConversation) {
+      const tid = await resolveTenantIdForUser(params.inboxUserId);
+      if (tid) {
+        void applyKanbanAutomationForConversation({
+          tenantId: tid,
+          actorUserId: params.inboxUserId,
+          conversationId,
+          reason: 'new_conversation',
+        }).catch((err) => console.error('[kanban-entry-automation] new_conversation (official send)', err));
+      }
+    }
+
     return { ok: true, wamid };
   } catch (e) {
     await client.query('ROLLBACK');

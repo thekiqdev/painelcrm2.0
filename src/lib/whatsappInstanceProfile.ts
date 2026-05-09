@@ -1,4 +1,4 @@
-import { format, formatDistanceToNow } from 'date-fns';
+import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import type { ChatInstance, BootstrapSyncMeta } from '@/services/chat';
 import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
@@ -184,18 +184,9 @@ export function getLastConnectionDisplay(instance: ChatInstance): string | null 
 
 export function getActivityHint(instance: ChatInstance): string | null {
   if (!instanceStatusIsConnected(instance.status)) return null;
-  if (!instance.updated_at) return 'Recebendo mensagens normalmente';
-  try {
-    const t = new Date(instance.updated_at).getTime();
-    if (Number.isNaN(t)) return 'Recebendo mensagens normalmente';
-    const diff = Date.now() - t;
-    if (diff < 10 * 60 * 1000) {
-      return `Última atividade: ${formatDistanceToNow(new Date(t), { addSuffix: true, locale: ptBR })}`;
-    }
-  } catch {
-    /* empty */
-  }
-  return 'Recebendo mensagens normalmente';
+  const syncMsg = getSyncStatusUserMessage(instance);
+  if (syncMsg?.line) return syncMsg.line;
+  return 'WhatsApp conectado';
 }
 
 export function getSyncStatusUserMessage(
@@ -205,13 +196,13 @@ export function getSyncStatusUserMessage(
   if (!bs?.status) return null;
   switch (bs.status) {
     case 'queued':
-      return { line: 'Sincronização aguardando na fila' };
+      return { line: 'Sincronizando conversas pela primeira vez (na fila)…' };
     case 'running':
-      return { line: 'Sincronizando mensagens' };
+      return { line: 'Sincronizando conversas pela primeira vez…' };
     case 'completed':
-      return { line: 'Tudo pronto para uso' };
+      return { line: 'Conversas sincronizadas' };
     case 'failed':
-      return { line: 'Não foi possível concluir a sincronização inicial', isError: true };
+      return { line: 'Não foi possível sincronizar automaticamente', isError: true };
     default:
       return { line: String(bs.status) };
   }

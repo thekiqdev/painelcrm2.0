@@ -324,6 +324,20 @@ const order = [
   '213_client_google_drive_files_upload_status.sql',
   '210_uazapi_webhook_instance_secret_hardening.sql',
   '211_chat_conversations_attendance_status_default_fix.sql',
+  /** Chat Fase 2: conversation_type (direct/group/community) para grupos WhatsApp */
+  '214_chat_conversations_conversation_type.sql',
+  /** Chat Fase 3: auditoria de administração de grupos WhatsApp (UazAPI) */
+  '215_chat_group_admin_audit.sql',
+  '216_chat_group_admin_audit_success.sql',
+  /** Kanban: tags por tenant + automação de entrada por tag */
+  '217_chat_kanban_tags.sql',
+  /** Kanban: cor opcional em chat_kanban_tags */
+  '219_chat_kanban_tags_color.sql',
+  '218_chat_kanban_scheduled_moves_to_board.sql',
+  /** system_feature_flags: grupos WhatsApp UazAPI (default on; Super Admin) */
+  '218_whatsapp_groups_system_feature_flag.sql',
+  /** Billing: snapshot de preço contratado em subscriptions (sem alterar motor de renovação) */
+  '221_subscriptions_pricing_snapshot.sql',
   'create-admin-user.sql',
 ];
 

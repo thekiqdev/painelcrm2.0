@@ -31,6 +31,21 @@ import { getCustomerInvoiceRecurrenceInsight } from '../services/customerInvoice
 import { patchCustomerSubscriptionNextBillingFromPaidInvoice } from '../services/customerInvoiceRecurrenceNextBillingService.js';
 import { ensureTenantOverdueStatusesFresh } from '../services/billingOverdueStatusService.js';
 import { createMercadoPagoCheckoutPreferenceForInvoice } from '../services/mercadoPagoCustomerInvoicePaymentService.js';
+import { assertPermissionKey, ModulePermissionError } from '../permissions/index.js';
+import type { PermissionCatalogKey } from '../permissions/permissionCatalog.js';
+
+async function requirePermKey(req: AuthRequest, key: PermissionCatalogKey, res: Response): Promise<boolean> {
+  try {
+    await assertPermissionKey(req.userId, key, req);
+    return true;
+  } catch (e) {
+    if (e instanceof ModulePermissionError) {
+      res.status(e.statusCode).json({ error: e.message });
+      return false;
+    }
+    throw e;
+  }
+}
 
 const createItemSchema = z.object({
   description: z.string().min(1, 'Descrição é obrigatória'),
@@ -90,6 +105,7 @@ export async function getCustomerInvoicesGatewayStatus(req: AuthRequest, res: Re
       res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
+    if (!(await requirePermKey(req, 'billing.view_invoices', res))) return;
     const gatewayConfigured = await isCrmGatewayActiveForTenant(tenantId);
     const cfg = await getActiveConfig('crm', tenantId);
     const pm = paymentMethodSlugsFromConfigRow(cfg);
@@ -112,6 +128,7 @@ export async function getCustomerInvoicePreconditions(req: AuthRequest, res: Res
       res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
+    if (!(await requirePermKey(req, 'billing.create_invoice', res))) return;
 
     const clientId = typeof req.query.client_id === 'string' ? req.query.client_id.trim() : null;
     if (!clientId) {
@@ -147,6 +164,7 @@ export async function getCustomerInvoicesSummaryHandler(req: AuthRequest, res: R
       res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
+    if (!(await requirePermKey(req, 'billing.view_invoices', res))) return;
     await ensureTenantOverdueStatusesFresh(tenantId).catch((err) =>
       console.error('[customerInvoicesController] getCustomerInvoicesSummaryHandler overdue sync:', err)
     );
@@ -166,6 +184,7 @@ export async function listCustomerInvoices(req: AuthRequest, res: Response): Pro
       res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
+    if (!(await requirePermKey(req, 'billing.view_invoices', res))) return;
     await ensureTenantOverdueStatusesFresh(tenantId).catch((err) =>
       console.error('[customerInvoicesController] listCustomerInvoices overdue sync:', err)
     );
@@ -208,6 +227,7 @@ export async function getCustomerInvoiceById(req: AuthRequest, res: Response): P
       res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
+    if (!(await requirePermKey(req, 'billing.view_invoices', res))) return;
     await ensureTenantOverdueStatusesFresh(tenantId).catch((err) =>
       console.error('[customerInvoicesController] getCustomerInvoiceById overdue sync:', err)
     );
@@ -234,6 +254,7 @@ export async function getCustomerInvoiceRecurrenceInsightHandler(req: AuthReques
       res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
+    if (!(await requirePermKey(req, 'billing.view_invoices', res))) return;
     const { id } = req.params;
     const insight = await getCustomerInvoiceRecurrenceInsight(tenantId, id);
     res.json(insight);
@@ -256,6 +277,7 @@ export async function getCustomerInvoiceRecurrenceHistory(req: AuthRequest, res:
       res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
+    if (!(await requirePermKey(req, 'billing.view_invoices', res))) return;
     const { id } = req.params;
     const invoice = await getInvoiceById(tenantId, id);
     if (!invoice) {
@@ -278,6 +300,7 @@ export async function createCustomerInvoice(req: AuthRequest, res: Response): Pr
       res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
+    if (!(await requirePermKey(req, 'billing.create_invoice', res))) return;
 
     const parsed = createBodySchema.safeParse(req.body);
     if (!parsed.success) {
@@ -397,6 +420,10 @@ export async function updateCustomerInvoice(req: AuthRequest, res: Response): Pr
       return;
     }
 
+    const invoicePatchPerm: PermissionCatalogKey =
+      parsed.data.status === 'cancelled' ? 'billing.cancel_invoice' : 'billing.edit_invoice';
+    if (!(await requirePermKey(req, invoicePatchPerm, res))) return;
+
     const updated = await patchCustomerInvoiceWithGateway(tenantId, id, parsed.data);
     res.json(updated);
   } catch (err) {
@@ -442,6 +469,7 @@ export async function patchCustomerInvoiceRecurrenceNextBilling(req: AuthRequest
       res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
+    if (!(await requirePermKey(req, 'billing.edit_subscription', res))) return;
 
     const { id } = req.params;
     const parsed = patchRecurrenceNextBillingBodySchema.safeParse(req.body);
@@ -495,6 +523,7 @@ export async function postCustomerInvoiceMercadoPagoCreatePayment(req: AuthReque
       res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
+    if (!(await requirePermKey(req, 'billing.send_invoice', res))) return;
     const { id: invoiceId } = req.params;
     if (!invoiceId || !z.string().uuid().safeParse(invoiceId).success) {
       res.status(400).json({ error: 'ID da fatura inválido' });
@@ -551,6 +580,7 @@ export async function deleteCustomerInvoice(req: AuthRequest, res: Response): Pr
       res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
+    if (!(await requirePermKey(req, 'billing.delete_invoice', res))) return;
     const { id } = req.params;
     await deleteCustomerInvoiceWithGateway(tenantId, id);
     res.status(204).send();

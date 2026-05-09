@@ -1,5 +1,6 @@
 
 import { apiClient } from '@/integrations/api/client';
+import { clearMeProfileEditToken } from '@/lib/meProfileEditVerification';
 
 export async function getCurrentUserId(): Promise<string | null> {
   try {
@@ -98,6 +99,7 @@ export async function clearAuthState() {
     // Limpar armazenamento local relacionado à autenticação
     localStorage.removeItem('auth_token');
     apiClient.setToken(null);
+    clearMeProfileEditToken();
     
     // Outras limpezas específicas se necessário
     console.log('Auth state cleared');

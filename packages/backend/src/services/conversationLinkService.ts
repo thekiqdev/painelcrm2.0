@@ -1,5 +1,6 @@
 import { pool } from '../utils/db.js';
 import { createClientTimelineEvent } from './clientTimelineEventsService.js';
+import { applyKanbanAutomationForConversation } from './chatKanbanAutomationService.js';
 import { ensureConversationAvatarCachedAndReplicateToCrm } from './whatsappAvatarCacheService.js';
 
 export interface LeadToClientMigrationContext {
@@ -90,4 +91,11 @@ export async function migrateConversationLeadToClient(params: {
     userId: params.userId,
     tenantId,
   });
+
+  void applyKanbanAutomationForConversation({
+    tenantId,
+    actorUserId: params.context.actorUserId,
+    conversationId: params.conversationId,
+    reason: 'client_linked',
+  }).catch((err) => console.error('[kanban-entry-automation] lead_to_client migration', err));
 }

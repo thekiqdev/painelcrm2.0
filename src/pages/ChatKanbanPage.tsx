@@ -355,11 +355,10 @@ const ChatKanbanPage = () => {
           ev.dataTransfer.dropEffect = 'copy';
           setNativeDragHoverColumnId(columnId);
         },
-        onNativeDragLeave: (ev: React.DragEvent) => {
-          if (!ev.currentTarget.contains(ev.relatedTarget as Node)) {
-            setNativeDragHoverColumnId((prev) => (prev === columnId ? null : prev));
-          }
-        },
+        // Não limpar no dragLeave: relatedTarget costuma ser null ou instável entre header/scroll/filhos,
+        // o que removia o highlight da coluna certa antes do drop. O hover é atualizado só em dragOver;
+        // `painelcrm:conversation-drag-end` e o drop limpam o estado.
+        onNativeDragLeave: undefined,
         onNativeDrop: (ev: React.DragEvent) => {
           void handleNativeConversationDrop(ev, columnId);
         },

@@ -94,3 +94,17 @@ export function shortOperatorName(display?: string | null): string {
   const first = display.trim().split(/\s+/)[0];
   return first.length > 18 ? `${first.slice(0, 16)}…` : first;
 }
+
+/** Iniciais para avatar do operador em atendimento (lista / cabeçalho / float). */
+export function assigneeInitials(display: string): string {
+  const t = display.trim();
+  if (!t) return '?';
+  const parts = t.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    const a = parts[0]![0] ?? '';
+    const b = parts[1]![0] ?? '';
+    return `${a}${b}`.toUpperCase();
+  }
+  const w = parts[0] ?? t;
+  return w.slice(0, 2).toUpperCase();
+}

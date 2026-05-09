@@ -4,7 +4,7 @@
 import type { Response } from 'express';
 import type { AuthRequest } from '../middleware/auth.js';
 import { pool } from '../utils/db.js';
-import { assertModulePermission, ModulePermissionError } from '../permissions/index.js';
+import { assertModulePermission, assertPermissionKey, ModulePermissionError } from '../permissions/index.js';
 import {
   issueNewPublicTokenForProposal,
   revokeActivePublicTokensForProposal,
@@ -96,7 +96,8 @@ export async function issueProposalPublicLink(req: AuthRequest, res: Response): 
       return;
     }
 
-    await assertModulePermission(userId, 'proposals', 'proposals_send', { ownerId: existing.rows[0].user_id }, req);
+    await assertModulePermission(userId, 'proposals', 'edit', { ownerId: existing.rows[0].user_id }, req);
+    await assertPermissionKey(userId, 'proposals.send', req);
 
     const st = existing.rows[0].status;
     if (!LINKABLE_STATUSES.has(st)) {
@@ -158,7 +159,8 @@ export async function revokeProposalPublicLink(req: AuthRequest, res: Response):
       return;
     }
 
-    await assertModulePermission(userId, 'proposals', 'proposals_send', { ownerId: existing.rows[0].user_id }, req);
+    await assertModulePermission(userId, 'proposals', 'edit', { ownerId: existing.rows[0].user_id }, req);
+    await assertPermissionKey(userId, 'proposals.send', req);
 
     const n = await revokeActivePublicTokensForProposal(id, tenantId);
     try {

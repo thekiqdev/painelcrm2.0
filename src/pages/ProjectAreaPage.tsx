@@ -6,9 +6,8 @@ import { toast } from "@/components/ui/sonner";
 import { BoardView } from "@/components/projects/BoardView";
 import { TaskListView } from "@/components/projects/TaskListView";
 import { TaskDetailDialog } from "@/components/projects/TaskDetailDialog";
-import { TaskSidePanel } from "@/components/tasks";
+import { TaskSidePanel, TaskFormDialog } from "@/components/tasks";
 import type { UnifiedTask } from "@/lib/taskUnified";
-import { NewTaskDialog } from "@/components/projects/NewTaskDialog";
 import { ProjectList, Task, TaskStatus } from "@/components/projects/types";
 import { ProjectArea } from "@/components/projects/types";
 import { projectsService, type AreaComment } from "@/services/projects";
@@ -35,8 +34,6 @@ export default function ProjectAreaPage() {
   const [selectedTask, setSelectedTask] = useState<{ task: Task; listId: string } | null>(null);
   const [editingTask, setEditingTask] = useState(false);
   const [newChecklistItemText, setNewChecklistItemText] = useState("");
-  const [tagsInput, setTagsInput] = useState<string[]>([]);
-  const [newTagText, setNewTagText] = useState("");
   const [hideCompletedTasks, setHideCompletedTasks] = useState(false);
   const [fullViewTask, setFullViewTask] = useState<UnifiedTask | null>(null);
   const [comments, setComments] = useState<AreaComment[]>([]);
@@ -181,73 +178,6 @@ export default function ProjectAreaPage() {
         tasks: list.tasks.filter((t) => t.status !== "completed"),
       }))
     : lists;
-
-  const handleCreateTask = async (formData: FormData) => {
-    if (!selectedListId || !areaId) return;
-    try {
-      const title = formData.get("title") as string;
-      const description = formData.get("description") as string;
-      const priority = (formData.get("priority") as string) || "medium";
-      const dueDate = formData.get("dueDate") as string;
-      const assigneeId = formData.get("assignee") as string;
-      const tagsJson = formData.get("tags") as string;
-      const tags = tagsJson ? JSON.parse(tagsJson) : [];
-      const startDate = formData.get("startDate") as string | null;
-      const startTime = (formData.get("startTime") as string) || null;
-      const endTime = (formData.get("endTime") as string) || null;
-      const estimatedHoursRaw = formData.get("estimatedHours") as string | null;
-      const estimatedHours = estimatedHoursRaw != null && estimatedHoursRaw !== "" ? Number(estimatedHoursRaw) : null;
-      const storyPointsRaw = formData.get("storyPoints") as string | null;
-      const storyPoints = storyPointsRaw != null && storyPointsRaw !== "" ? Number(storyPointsRaw) : null;
-      const checklistJson = formData.get("checklist") as string | null;
-      const checklist = checklistJson ? JSON.parse(checklistJson) : [];
-      const watchersJson = formData.get("watchers") as string | null;
-      const watchers = watchersJson ? JSON.parse(watchersJson) : [];
-      const visibility = (formData.get("visibility") as string) || "internal";
-      const billable = formData.get("billable") === "1";
-      const hourlyRateRaw = formData.get("hourlyRate") as string | null;
-      const hourlyRate = hourlyRateRaw != null && hourlyRateRaw !== "" ? Number(hourlyRateRaw) : null;
-      const budgetCapRaw = formData.get("budgetCap") as string | null;
-      const budgetCap = budgetCapRaw != null && budgetCapRaw !== "" ? Number(budgetCapRaw) : null;
-      const hasRecurrence = formData.get("hasRecurrence") === "1";
-      const recurrenceType = formData.get("recurrenceType") as string | null;
-      const recurrence_rule = hasRecurrence && recurrenceType ? { type: recurrenceType } : null;
-      const meetingLocation = (formData.get("meetingLocation") as string) || null;
-      const meetingLink = (formData.get("meetingLink") as string) || null;
-      const severity = (formData.get("severity") as string) || null;
-      await projectsService.createProjectTask(selectedListId, {
-        title,
-        description: description || null,
-        status: "todo",
-        priority,
-        due_date: dueDate || null,
-        assignee_id: assigneeId || null,
-        tags: tags || [],
-        checklist,
-        area_id: areaId,
-        start_date: startDate || null,
-        start_time: startTime,
-        end_time: endTime,
-        estimated_effort_hours: estimatedHours,
-        estimated_story_points: storyPoints,
-        watchers,
-        visibility,
-        billable,
-        hourly_rate: hourlyRate,
-        budget_cap: budgetCap,
-        recurrence_rule,
-        meeting_location: meetingLocation,
-        meeting_link: meetingLink,
-        severity,
-      });
-      toast.success("Tarefa criada com sucesso!");
-      setNewTaskDialogOpen(false);
-      refreshTasks();
-    } catch (e) {
-      console.error(e);
-      toast.error("Erro ao criar tarefa");
-    }
-  };
 
   const toggleTaskStatus = async (listId: string, taskId: string) => {
     const list = lists.find((l) => l.id === listId);
@@ -562,16 +492,27 @@ export default function ProjectAreaPage() {
         </div>
       )}
 
-      <NewTaskDialog
-        open={newTaskDialogOpen}
-        onOpenChange={setNewTaskDialogOpen}
-        members={members}
-        onAddTask={handleCreateTask}
-        tagsInput={tagsInput}
-        setTagsInput={setTagsInput}
-        newTagText={newTagText}
-        setNewTagText={setNewTagText}
-      />
+      {projectId && areaId && selectedListId ? (
+        <TaskFormDialog
+          key={`${selectedListId}-${areaId}`}
+          open={newTaskDialogOpen}
+          onOpenChange={setNewTaskDialogOpen}
+          canSubmit
+          context={{
+            origin: "project",
+            projectId,
+            listId: selectedListId,
+            areaId,
+            projectName,
+          }}
+          onSuccess={(r) => {
+            if (r.origin === "project") {
+              setNewTaskDialogOpen(false);
+              void refreshTasks();
+            }
+          }}
+        />
+      ) : null}
 
       <TaskDetailDialog
         open={taskDetailOpen}

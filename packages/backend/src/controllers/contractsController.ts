@@ -3,7 +3,8 @@ import { pool, withTenantRlsContext } from '../utils/db.js';
 import { insertActivePublicViewTokenRow } from '../services/contractPublicViewService.js';
 import { bootstrapSignatureInvitesForContract } from '../services/contractInviteBootstrapService.js';
 import { AuthRequest } from '../middleware/auth.js';
-import { assertModulePermission, ModulePermissionError } from '../permissions/index.js';
+import { assertModulePermission, assertPermissionKey, ModulePermissionError } from '../permissions/index.js';
+import { resolveContractsGranularFromLegacy } from '../permissions/permissionCatalog.js';
 import {
   CONTRACT_DELETE_ALLOWED_STATUSES,
   canDeleteContractStatus,
@@ -101,6 +102,22 @@ export async function getContracts(req: AuthRequest, res: Response): Promise<voi
       res.json([]);
       return;
     }
+    const userId = req.userId;
+    if (!userId) {
+      res.status(401).json({ error: 'Não autenticado' });
+      return;
+    }
+    let permMap;
+    try {
+      permMap = await assertPermissionKey(userId, 'contracts.view', req);
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        res.status(e.statusCode).json({ error: e.message });
+        return;
+      }
+      throw e;
+    }
+    const cg = resolveContractsGranularFromLegacy(permMap);
     const { status, clientId, responsibleId, startDate, endDate, search, sortField, sortDirection } = req.query;
 
     let query = `SELECT c.*,
@@ -119,6 +136,12 @@ export async function getContracts(req: AuthRequest, res: Response): Promise<voi
        WHERE 1=1`;
     const params: unknown[] = [tenantId];
     let paramIndex = 2;
+
+    if (cg.view_own && !cg.view_all) {
+      query += ` AND (c.user_id = $${paramIndex} OR c.responsible_id = $${paramIndex})`;
+      params.push(userId);
+      paramIndex++;
+    }
 
     if (status && status !== 'all') {
       query += ` AND c.status = $${paramIndex}`;
@@ -178,6 +201,18 @@ export async function getContractById(req: AuthRequest, res: Response): Promise<
     const userId = req.userId!;
     const { id } = req.params;
 
+    let permMap;
+    try {
+      permMap = await assertPermissionKey(userId, 'contracts.view', req);
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        res.status(e.statusCode).json({ error: e.message });
+        return;
+      }
+      throw e;
+    }
+    const cg = resolveContractsGranularFromLegacy(permMap);
+
     const result = await pool.query(
       `SELECT c.* FROM contracts c
        INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
@@ -191,6 +226,15 @@ export async function getContractById(req: AuthRequest, res: Response): Promise<
     }
 
     const contract = result.rows[0];
+    if (
+      cg.view_own &&
+      !cg.view_all &&
+      contract.user_id !== userId &&
+      contract.responsible_id !== userId
+    ) {
+      res.status(404).json({ error: 'Contract not found' });
+      return;
+    }
     await assertModulePermission(
       userId,
       'contracts',
@@ -216,6 +260,7 @@ export async function createContract(req: AuthRequest, res: Response): Promise<v
     const contractData = contractSchema.parse(normalizeContractPayload(req.body));
 
     await assertModulePermission(userId, 'contracts', 'create', undefined, req);
+    await assertPermissionKey(userId, 'contracts.create', req);
 
     if (contractData.status != null && contractData.status !== 'DRAFT') {
       res.status(400).json({
@@ -401,6 +446,16 @@ export async function updateContract(req: AuthRequest, res: Response): Promise<v
       ownerId: row.user_id as string,
       assigneeId: (row.responsible_id as string | null) ?? null,
     }, req);
+
+    if (contractData.status !== undefined && contractData.status !== rowStatus) {
+      if (contractData.status === 'CANCELLED') {
+        await assertPermissionKey(userId, 'contracts.cancel', req);
+      } else if (contractData.status === 'ACTIVE' && rowStatus !== 'ACTIVE') {
+        await assertPermissionKey(userId, 'contracts.send', req);
+      } else if (contractData.status === 'PENDING_SIGNATURE' && rowStatus !== 'PENDING_SIGNATURE') {
+        await assertPermissionKey(userId, 'contracts.request_signature', req);
+      }
+    }
 
     const incomingKeys = Object.entries(contractData).filter(([, v]) => v !== undefined).map(([k]) => k);
 

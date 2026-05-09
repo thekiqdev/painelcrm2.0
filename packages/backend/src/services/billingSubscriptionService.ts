@@ -4,6 +4,7 @@
  */
 import { pool } from '../utils/db.js';
 import { yyyyMmDdFromDbDateValue } from '../utils/calendarDateBr.js';
+import type { TenantBillingRow } from './invoiceService.js';
 
 export type SubscriptionType = 'saas' | 'customer';
 export type BillingInterval = 'monthly' | 'quarterly' | 'semi_annual' | 'yearly';
@@ -48,6 +49,13 @@ export interface SubscriptionRow {
   /** Ciclos ilimitados (default true). Se false, `max_cycles` é obrigatório. */
   cycles_unlimited: boolean;
   max_cycles: number | null;
+  /** Etapa 1 snapshot — renovação ainda usa lista pública até Etapa 2. */
+  contracted_at?: string | Date | null;
+  contracted_billing_interval?: string | null;
+  contracted_plan_price_cents?: number | null;
+  contracted_price_per_user_cents?: number | null;
+  contract_currency?: string | null;
+  pricing_snapshot_source?: string | null;
 }
 
 export interface CreateSubscriptionInput {
@@ -89,7 +97,9 @@ export async function createSubscription(data: CreateSubscriptionInput): Promise
     RETURNING id, type, tenant_id, customer_id, plan_id, amount_cents, currency, billing_anchor_day,
       billing_cycle_count, billing_interval, status, next_billing_date, current_period_start, current_period_end,
       cancel_at_period_end, grace_period_days, default_payment_method, users_count, gateway, last_job_at, created_by, created_at, updated_at,
-      cycles_unlimited, max_cycles`,
+      cycles_unlimited, max_cycles,
+      contracted_at, contracted_billing_interval, contracted_plan_price_cents, contracted_price_per_user_cents,
+      contract_currency, pricing_snapshot_source`,
     [
       data.type,
       data.tenant_id,
@@ -123,7 +133,9 @@ export async function getActiveSaasSubscriptionByTenant(
     `SELECT id, type, tenant_id, customer_id, plan_id, amount_cents, currency, billing_anchor_day,
        billing_cycle_count, billing_interval, status, next_billing_date, current_period_start, current_period_end,
        cancel_at_period_end, grace_period_days, default_payment_method, users_count, gateway, last_job_at, created_by, created_at, updated_at,
-       cycles_unlimited, max_cycles
+       cycles_unlimited, max_cycles,
+       contracted_at, contracted_billing_interval, contracted_plan_price_cents, contracted_price_per_user_cents,
+       contract_currency, pricing_snapshot_source
      FROM subscriptions
      WHERE type = 'saas' AND tenant_id = $1 AND status = 'active'
      LIMIT 1`,
@@ -390,7 +402,9 @@ export async function getSubscriptionById(subscriptionId: string): Promise<Subsc
       `SELECT id, type, tenant_id, customer_id, plan_id, amount_cents, currency, billing_anchor_day,
        billing_cycle_count, billing_interval, status, next_billing_date, current_period_start, current_period_end,
        cancel_at_period_end, grace_period_days, default_payment_method, users_count, gateway, last_job_at, created_by, created_at, updated_at,
-       cycles_unlimited, max_cycles
+       cycles_unlimited, max_cycles,
+       contracted_at, contracted_billing_interval, contracted_plan_price_cents, contracted_price_per_user_cents,
+       contract_currency, pricing_snapshot_source
      FROM subscriptions WHERE id = $1`,
       [subscriptionId]
     );
@@ -409,7 +423,9 @@ export async function getSubscriptionById(subscriptionId: string): Promise<Subsc
     const r = await pool.query<SubscriptionRowDb>(
       `SELECT id, type, tenant_id, customer_id, plan_id, amount_cents, currency, billing_anchor_day,
        billing_cycle_count, billing_interval, status, next_billing_date, current_period_start, current_period_end,
-       cancel_at_period_end, grace_period_days, default_payment_method, users_count, gateway, last_job_at, created_by, created_at, updated_at
+       cancel_at_period_end, grace_period_days, default_payment_method, users_count, gateway, last_job_at, created_by, created_at, updated_at,
+       contracted_at, contracted_billing_interval, contracted_plan_price_cents, contracted_price_per_user_cents,
+       contract_currency, pricing_snapshot_source
      FROM subscriptions WHERE id = $1`,
       [subscriptionId]
     );
@@ -446,7 +462,9 @@ export async function patchSubscriptionCyclesConfig(params: {
      RETURNING id, type, tenant_id, customer_id, plan_id, amount_cents, currency, billing_anchor_day,
        billing_cycle_count, billing_interval, status, next_billing_date, current_period_start, current_period_end,
        cancel_at_period_end, grace_period_days, default_payment_method, users_count, gateway, last_job_at, created_by, created_at, updated_at,
-       cycles_unlimited, max_cycles`,
+       cycles_unlimited, max_cycles,
+       contracted_at, contracted_billing_interval, contracted_plan_price_cents, contracted_price_per_user_cents,
+       contract_currency, pricing_snapshot_source`,
     [unlimited, maxCycles, params.subscriptionId, params.tenantId]
   );
   const row = r.rows[0];
@@ -564,12 +582,226 @@ export async function expireCancelledSubscriptions(): Promise<number> {
 }
 
 /**
+ * Deriva valores de snapshot contratual a partir da fatura paga (Etapa 3 — fonte: linha `tenant_billing`).
+ * Exportado para testes unitários.
+ */
+export function deriveCheckoutContractPricingFromBilling(params: {
+  planType: string;
+  billingAmountCents: number;
+  billingUsersCount: number | null | undefined;
+  /** `plan_interval_prices.price_per_user_cents` quando custom sem `users_count` na fatura. */
+  catalogPricePerUserCents: number | null;
+}): {
+  contracted_plan_price_cents: number;
+  contracted_price_per_user_cents: number | null;
+} {
+  const total = Math.max(0, params.billingAmountCents);
+  const isCustom = params.planType === 'custom';
+  if (!isCustom) {
+    return { contracted_plan_price_cents: total, contracted_price_per_user_cents: null };
+  }
+  const uc = params.billingUsersCount;
+  if (uc != null && uc > 0) {
+    return {
+      contracted_plan_price_cents: total,
+      contracted_price_per_user_cents: Math.round(total / uc),
+    };
+  }
+  const pu = params.catalogPricePerUserCents;
+  return {
+    contracted_plan_price_cents: total,
+    contracted_price_per_user_cents: pu != null && pu >= 0 ? pu : null,
+  };
+}
+
+/**
+ * Define se um modo de persistência de snapshot deve rodar para este `billing_reason`.
+ * - `checkout_initial`: primeira contratação (exclui seat_addon e renovação).
+ * - `explicit`: upgrade/downgrade/troca paga (exclui renovação e primeira compra `plan_purchase`).
+ */
+export function shouldPersistContractSnapshotMode(
+  billingReason: string | undefined,
+  mode: 'checkout_initial' | 'explicit'
+): boolean {
+  const r = billingReason ?? 'plan_purchase';
+  if (mode === 'checkout_initial') {
+    return r !== 'seat_addon' && r !== 'plan_renewal';
+  }
+  return r !== 'plan_renewal' && r !== 'plan_purchase';
+}
+
+function pricingSnapshotSourceForPaidBilling(
+  mode: 'checkout_initial' | 'explicit',
+  billingReason: string
+): string {
+  if (mode === 'checkout_initial') return 'checkout';
+  switch (billingReason) {
+    case 'plan_upgrade':
+      return 'contract_change';
+    case 'manual_charge':
+      return 'manual_charge';
+    case 'seat_addon':
+      return 'seat_addon';
+    default:
+      return 'contract_change';
+  }
+}
+
+/**
+ * Grava snapshot contratual a partir da linha `tenant_billing` paga.
+ * - `checkout_initial`: só quando `contracted_at IS NULL` (checkout / primeira linha contratual).
+ * - `explicit`: sobrescreve snapshot em mudança contratual paga (upgrade, manual_charge, seat_addon, etc.).
+ * Renovação (`plan_renewal`) nunca passa pelos filtros acima.
+ */
+export async function persistContractSnapshotFromPaidBilling(params: {
+  tenantId: string;
+  subscriptionId: string;
+  billing: TenantBillingRow;
+  mode: 'checkout_initial' | 'explicit';
+}): Promise<void> {
+  const { billing, tenantId, subscriptionId, mode } = params;
+  const reason = billing.billing_reason ?? 'plan_purchase';
+  if (!shouldPersistContractSnapshotMode(reason, mode)) {
+    return;
+  }
+
+  const planRow = await pool.query<{ plan_type: string | null; name: string }>(
+    'SELECT plan_type, name FROM plans WHERE id = $1',
+    [billing.plan_id]
+  );
+  const prow = planRow.rows[0];
+  if (!prow) return;
+
+  const planType = prow.plan_type ?? 'standard';
+  const interval = (billing.billing_interval ?? 'monthly') as BillingInterval;
+
+  let catalogPu: number | null = null;
+  if (planType === 'custom' && (!(billing.users_count != null && billing.users_count > 0))) {
+    const pip = await pool.query<{ price_per_user_cents: number }>(
+      'SELECT price_per_user_cents FROM plan_interval_prices WHERE plan_id = $1 AND billing_interval = $2',
+      [billing.plan_id, interval]
+    );
+    catalogPu = pip.rows[0]?.price_per_user_cents ?? null;
+  }
+
+  const derived = deriveCheckoutContractPricingFromBilling({
+    planType,
+    billingAmountCents: billing.amount_cents,
+    billingUsersCount: billing.users_count,
+    catalogPricePerUserCents: catalogPu,
+  });
+
+  const source = pricingSnapshotSourceForPaidBilling(mode, reason);
+  const initialOnly = mode === 'checkout_initial';
+
+  const r = await pool.query(
+    `UPDATE subscriptions
+     SET contracted_at = COALESCE($1::timestamptz, now()),
+         contracted_billing_interval = $2,
+         contracted_plan_price_cents = $3,
+         contracted_price_per_user_cents = $4,
+         contract_currency = 'BRL',
+         pricing_snapshot_source = $5,
+         updated_at = now()
+     WHERE id = $6::uuid AND tenant_id = $7::uuid AND type = 'saas' AND status = 'active'
+       ${initialOnly ? 'AND contracted_at IS NULL' : ''}`,
+    [
+      billing.paid_at ?? null,
+      interval,
+      derived.contracted_plan_price_cents,
+      derived.contracted_price_per_user_cents,
+      source,
+      subscriptionId,
+      tenantId,
+    ]
+  );
+
+  if ((r.rowCount ?? 0) < 1) {
+    return;
+  }
+
+  await pool.query(
+    `UPDATE tenant_billing
+     SET plan_name_snapshot = COALESCE(plan_name_snapshot, $1),
+         plan_price_snapshot = COALESCE(plan_price_snapshot, $2),
+         updated_at = now()
+     WHERE id = $3::uuid`,
+    [prow.name, billing.amount_cents, billing.id]
+  );
+}
+
+/**
+ * Primeira ativação via checkout: grava snapshot na assinatura SaaS a partir da fatura paga.
+ * Idempotente: não altera se `contracted_at` já existe (webhook duplicado / reentrância).
+ */
+export async function applyCheckoutContractSnapshotFromPaidBilling(params: {
+  tenantId: string;
+  subscriptionId: string;
+  billing: TenantBillingRow;
+}): Promise<void> {
+  await persistContractSnapshotFromPaidBilling({ ...params, mode: 'checkout_initial' });
+}
+
+/**
+ * Mudança contratual via PATCH (sem nova fatura imediata — Fase 2): atualiza snapshot a partir do valor calculado do plano.
+ */
+export async function updateSubscriptionContractSnapshotFromCalculatedContract(params: {
+  tenantId: string;
+  subscriptionId: string;
+  planId: string;
+  billingInterval: BillingInterval;
+  amountCents: number;
+  usersCount: number | null | undefined;
+}): Promise<void> {
+  const planRow = await pool.query<{ plan_type: string | null }>('SELECT plan_type FROM plans WHERE id = $1', [
+    params.planId,
+  ]);
+  const planType = planRow.rows[0]?.plan_type ?? 'standard';
+  let catalogPu: number | null = null;
+  if (planType === 'custom' && !(params.usersCount != null && params.usersCount > 0)) {
+    const pip = await pool.query<{ price_per_user_cents: number }>(
+      'SELECT price_per_user_cents FROM plan_interval_prices WHERE plan_id = $1 AND billing_interval = $2',
+      [params.planId, params.billingInterval]
+    );
+    catalogPu = pip.rows[0]?.price_per_user_cents ?? null;
+  }
+
+  const derived = deriveCheckoutContractPricingFromBilling({
+    planType,
+    billingAmountCents: params.amountCents,
+    billingUsersCount: params.usersCount,
+    catalogPricePerUserCents: catalogPu,
+  });
+
+  await pool.query(
+    `UPDATE subscriptions
+     SET contracted_at = now(),
+         contracted_billing_interval = $1,
+         contracted_plan_price_cents = $2,
+         contracted_price_per_user_cents = $3,
+         contract_currency = 'BRL',
+         pricing_snapshot_source = 'self_service',
+         updated_at = now()
+     WHERE id = $4::uuid AND tenant_id = $5::uuid AND type = 'saas' AND status = 'active'`,
+    [
+      params.billingInterval,
+      derived.contracted_plan_price_cents,
+      derived.contracted_price_per_user_cents,
+      params.subscriptionId,
+      params.tenantId,
+    ]
+  );
+}
+
+/**
  * Altera plano da assinatura (upgrade/downgrade). Próxima cobrança usará o novo plano; sem cobrança imediata na Fase 2.
+ * `syncContractSnapshot`: apenas alterações explícitas pelo tenant (PATCH); worker de renovação/agendamentos não deve passar true.
  */
 export async function changeSubscriptionPlan(
   subscriptionId: string,
   tenantId: string,
-  data: { plan_id: string; billing_interval?: BillingInterval; users_count?: number | null }
+  data: { plan_id: string; billing_interval?: BillingInterval; users_count?: number | null },
+  options?: { syncContractSnapshot?: boolean }
 ): Promise<{ ok: boolean; error?: string }> {
   const sub = await getSubscriptionById(subscriptionId);
   if (!sub || sub.tenant_id !== tenantId) {
@@ -579,21 +811,59 @@ export async function changeSubscriptionPlan(
     return { ok: false, error: 'Assinatura não está ativa' };
   }
 
-  const { calculateInvoiceAmount } = await import('./billingService.js');
+  const { calculateInvoiceAmount, tryResolveSubscriptionLineAmountFromContractSnapshot } =
+    await import('./billingService.js');
   const { validatePlanForPurchase } = await import('./billingService.js');
   await validatePlanForPurchase(data.plan_id, data.users_count ?? null);
-  const amountCents = await calculateInvoiceAmount(
+
+  const planTypeRow = await pool.query<{ plan_type: string | null }>(
+    'SELECT plan_type FROM plans WHERE id = $1 AND is_active = true',
+    [data.plan_id]
+  );
+  if (planTypeRow.rows.length === 0) {
+    return { ok: false, error: 'Plano não encontrado ou inativo' };
+  }
+  const planType = planTypeRow.rows[0]?.plan_type ?? 'standard';
+
+  const interval = (data.billing_interval ?? sub.billing_interval) as BillingInterval;
+  const samePlanContract =
+    data.plan_id === sub.plan_id && String(interval) === String(sub.billing_interval);
+
+  let amountCents = await calculateInvoiceAmount(
     data.plan_id,
-    (data.billing_interval ?? sub.billing_interval) as BillingInterval,
+    interval,
     data.users_count ?? sub.users_count ?? null
   );
 
-  const interval = data.billing_interval ?? sub.billing_interval;
+  if (samePlanContract) {
+    const fromSnap = tryResolveSubscriptionLineAmountFromContractSnapshot(
+      planType,
+      data.users_count ?? sub.users_count ?? null,
+      sub.contracted_plan_price_cents,
+      sub.contracted_price_per_user_cents
+    );
+    if (fromSnap != null) {
+      amountCents = fromSnap;
+    }
+  }
+
   await pool.query(
     `UPDATE subscriptions
      SET plan_id = $1, amount_cents = $2, billing_interval = $3, users_count = COALESCE($4, users_count), updated_at = now()
      WHERE id = $5 AND tenant_id = $6`,
     [data.plan_id, amountCents, interval, data.users_count ?? null, subscriptionId, tenantId]
   );
+
+  if (options?.syncContractSnapshot) {
+    await updateSubscriptionContractSnapshotFromCalculatedContract({
+      tenantId,
+      subscriptionId,
+      planId: data.plan_id,
+      billingInterval: interval,
+      amountCents,
+      usersCount: data.users_count ?? sub.users_count ?? null,
+    });
+  }
+
   return { ok: true };
 }

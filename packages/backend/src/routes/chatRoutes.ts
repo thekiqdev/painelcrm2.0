@@ -5,9 +5,11 @@ import {
   listInstances,
   connectInstance,
   getInstanceStatus,
+  retryInitialInstanceSync,
   deleteInstance,
   patchInstance,
   syncConversations,
+  getChatRuntimeConfig,
   getConversations,
   getConversationAttendanceCounts,
   getConversationMessages,
@@ -25,7 +27,14 @@ import {
   linkConversation,
   unlinkConversation,
   getCrmWhatsappIdentity,
+  getChatTenantUsersForGroupInvite,
+  postChatCreateGroupFromConversation,
 } from '../controllers/chatController.js';
+import {
+  deleteConversationKanbanTag,
+  getConversationKanbanTags,
+  postConversationKanbanTag,
+} from '../controllers/chatConversationKanbanTagsController.js';
 import {
   attendConversation,
   patchConversationAttendance,
@@ -83,6 +92,19 @@ import {
   postCrmNote,
   postMessageComment,
 } from '../controllers/chatCollaborationController.js';
+import {
+  getChatGroupDetails,
+  getChatGroupParticipants,
+  postChatGroupDescription,
+  postChatGroupImage,
+  postChatGroupLeave,
+  postChatGroupName,
+  postChatGroupParticipants,
+  postChatGroupResetInvite,
+  postChatGroupSettings,
+  postChatGroupParticipantSyncProfile,
+  postChatGroupParticipantsSyncMissing,
+} from '../controllers/chatGroupController.js';
 
 const router = Router();
 
@@ -95,6 +117,7 @@ router.get('/instances', listInstances);
 router.post('/instances', createInstance);
 router.post('/instances/:id/connect', connectInstance);
 router.get('/instances/:id/status', getInstanceStatus);
+router.post('/instances/:id/initial-sync/retry', retryInitialInstanceSync);
 router.delete('/instances/:id', deleteInstance);
 router.patch('/instances/:id', patchInstance);
 router.get('/instances/:id/webhook', getInstanceWebhook);
@@ -102,6 +125,8 @@ router.post('/instances/:id/webhook', configureInstanceWebhook);
 router.post('/instances/:id/webhook/force', forceConfigureWebhook);
 router.post('/instances/:id/webhook/reconfigure', reconfigureInstanceWebhook);
 router.post('/instances/:id/webhook/rotate-secret', rotateInstanceWebhookSecret);
+router.get('/runtime-config', getChatRuntimeConfig);
+router.get('/tenant-users-for-group', getChatTenantUsersForGroupInvite);
 router.post('/conversations/sync', syncConversations);
 router.get('/conversations/attendance-counts', getConversationAttendanceCounts);
 router.get('/metrics', getChatMetrics);
@@ -140,9 +165,24 @@ router.get('/teams/:teamId/members', chatTeamMembersList);
 router.post('/teams/:teamId/members', chatTeamMembersAdd);
 router.delete('/teams/:teamId/members/:memberId', chatTeamMembersRemove);
 router.get('/conversations/:id/messages', getConversationMessages);
+router.get('/conversations/:id/group', getChatGroupDetails);
+router.post('/conversations/:id/group/participants/sync-missing-profiles', postChatGroupParticipantsSyncMissing);
+router.post('/conversations/:id/group/participants/:participantJid/sync-profile', postChatGroupParticipantSyncProfile);
+router.get('/conversations/:id/group/participants', getChatGroupParticipants);
+router.post('/conversations/:id/group/name', postChatGroupName);
+router.post('/conversations/:id/group/description', postChatGroupDescription);
+router.post('/conversations/:id/group/image', postChatGroupImage);
+router.post('/conversations/:id/group/invite-reset', postChatGroupResetInvite);
+router.post('/conversations/:id/group/leave', postChatGroupLeave);
+router.post('/conversations/:id/group/participants', postChatGroupParticipants);
+router.post('/conversations/:id/group/settings', postChatGroupSettings);
+router.post('/conversations/:id/group/create-from-conversation', postChatCreateGroupFromConversation);
 router.get('/conversations/:id/profile', getConversationProfile);
 router.post('/conversations/:id/link', linkConversation);
 router.delete('/conversations/:id/link', unlinkConversation);
+router.get('/conversations/:id/kanban-tags', getConversationKanbanTags);
+router.post('/conversations/:id/kanban-tags', postConversationKanbanTag);
+router.delete('/conversations/:id/kanban-tags/:tagId', deleteConversationKanbanTag);
 router.get('/clients/:id/messages', getClientMessages);
 router.post('/conversations/:id/messages/sync', syncConversationMessages);
 router.post('/conversations/:id/refresh-identity', refreshConversationIdentity);

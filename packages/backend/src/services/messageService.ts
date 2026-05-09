@@ -2,6 +2,8 @@ import { pool } from '../utils/db.js';
 import { uazapiService } from './uazapi.js';
 import { randomUUID } from 'crypto';
 import { normalizeAttendanceStatusForDb } from '../utils/chatAttendanceStatus.js';
+import { applyKanbanAutomationForConversation } from './chatKanbanAutomationService.js';
+import { resolveTenantIdForUser } from '../utils/resolveTenantIdForUser.js';
 
 export interface SendMessageParams {
   userId: string;
@@ -154,7 +156,17 @@ async function findOrCreateConversation(
       [userId, instanceId, phoneNumber, phoneNumber, normalizeAttendanceStatusForDb(undefined)]
     );
 
-    return newConversationResult.rows[0].id;
+    const newConvId = newConversationResult.rows[0].id;
+    const tid = await resolveTenantIdForUser(userId);
+    if (tid) {
+      void applyKanbanAutomationForConversation({
+        tenantId: tid,
+        actorUserId: userId,
+        conversationId: String(newConvId),
+        reason: 'new_conversation',
+      }).catch((err) => console.error('[kanban-entry-automation] new_conversation (messageService)', err));
+    }
+    return newConvId;
   } catch (error: any) {
     console.error('Error finding or creating conversation:', error);
     throw error;

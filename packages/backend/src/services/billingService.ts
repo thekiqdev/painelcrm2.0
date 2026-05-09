@@ -58,26 +58,59 @@ export interface SeatAddonProrataBreakdown {
  * Cobrança incremental de assentos no plano custom: proporcional ao tempo até o fim do período atual da assinatura.
  * Não cobra período cheio antecipado — apenas a fração do ciclo em aberto, por usuário adicional.
  */
+/**
+ * Valor da linha da assinatura SaaS quando plano e intervalo não mudam (ex.: só assentos),
+ * usando snapshot contratado. Custom sem `contracted_price_per_user_cents` → null (usa catálogo).
+ */
+export function tryResolveSubscriptionLineAmountFromContractSnapshot(
+  planType: string,
+  usersCount: number | null | undefined,
+  contracted_plan_price_cents: number | null | undefined,
+  contracted_price_per_user_cents: number | null | undefined
+): number | null {
+  if (planType === 'custom') {
+    const pu = contracted_price_per_user_cents;
+    if (pu != null && pu >= 0) {
+      const seats = Math.max(1, usersCount ?? 1);
+      return Math.max(0, Math.round(pu * seats));
+    }
+    return null;
+  }
+  const base = contracted_plan_price_cents;
+  if (base != null && base >= 0) {
+    return Math.max(0, base);
+  }
+  return null;
+}
+
 export async function calculateSeatAddonProrata(
   planId: string,
   billingInterval: BillingInterval,
   additionalSeats: number,
   periodStart: unknown,
-  periodEnd: unknown
+  periodEnd: unknown,
+  options?: { contractedPricePerUserCents?: number | null }
 ): Promise<SeatAddonProrataBreakdown> {
   if (additionalSeats < 1) {
     throw new Error('É necessário informar pelo menos 1 novo assento');
   }
   const startIso = periodBoundaryToYmd(periodStart);
   const endIso = periodBoundaryToYmd(periodEnd);
-  const priceRow = await pool.query<{ price_per_user_cents: number }>(
-    'SELECT price_per_user_cents FROM plan_interval_prices WHERE plan_id = $1 AND billing_interval = $2',
-    [planId, billingInterval]
-  );
-  if (priceRow.rows.length === 0) {
-    throw new Error(`Plano sem preço por usuário para o intervalo "${billingInterval}"`);
+
+  let pricePerUser: number;
+  const contractedPu = options?.contractedPricePerUserCents;
+  if (contractedPu != null && contractedPu >= 0) {
+    pricePerUser = contractedPu;
+  } else {
+    const priceRow = await pool.query<{ price_per_user_cents: number }>(
+      'SELECT price_per_user_cents FROM plan_interval_prices WHERE plan_id = $1 AND billing_interval = $2',
+      [planId, billingInterval]
+    );
+    if (priceRow.rows.length === 0) {
+      throw new Error(`Plano sem preço por usuário para o intervalo "${billingInterval}"`);
+    }
+    pricePerUser = priceRow.rows[0].price_per_user_cents;
   }
-  const pricePerUser = priceRow.rows[0].price_per_user_cents;
   const today = new Date().toISOString().slice(0, 10);
   const totalPeriodDays = Math.max(1, inclusiveCalendarDaysBetween(startIso, endIso));
   const windowStart = startIso > today ? startIso : today;
@@ -140,6 +173,104 @@ export async function calculateInvoiceAmount(
   }
 
   return Math.max(0, plan.price_cents ?? 0);
+}
+
+/** Origem do valor na renovação SaaS (Etapa 2 — snapshot vs catálogo). */
+export type SaasRenewalPriceSource = 'contracted_snapshot' | 'catalog_fallback';
+
+/**
+ * Tenta obter o valor da renovação apenas a partir do snapshot em `subscriptions`.
+ * Retorna `null` quando deve usar {@link calculateInvoiceAmount} (preço público atual).
+ *
+ * Regras:
+ * - **standard:** `contracted_plan_price_cents`
+ * - **custom:** `contracted_price_per_user_cents × usersForRenewal` (mín. 1 assento)
+ * - **custom** sem unitário: fallback seguro para `contracted_plan_price_cents` (total fixo no snapshot)
+ */
+export function tryResolveSaasRenewalAmountFromContractSnapshot(
+  planType: string,
+  usersForRenewal: number | null,
+  contracted_plan_price_cents: number | null | undefined,
+  contracted_price_per_user_cents: number | null | undefined
+): { amountCents: number; planPriceSnapshotForInvoice: number } | null {
+  const seats = Math.max(1, usersForRenewal ?? 1);
+  const isCustom = planType === 'custom';
+
+  if (isCustom) {
+    const pu = contracted_price_per_user_cents;
+    if (pu != null && pu >= 0) {
+      const total = Math.max(0, Math.round(pu * seats));
+      return { amountCents: total, planPriceSnapshotForInvoice: total };
+    }
+    const totalFixed = contracted_plan_price_cents;
+    if (totalFixed != null && totalFixed >= 0) {
+      const v = Math.max(0, totalFixed);
+      /* Fallback quando só existe total no snapshot (ex.: backfill sem divisão por assento). */
+      return { amountCents: v, planPriceSnapshotForInvoice: v };
+    }
+    return null;
+  }
+
+  const base = contracted_plan_price_cents;
+  if (base != null && base >= 0) {
+    const v = Math.max(0, base);
+    return { amountCents: v, planPriceSnapshotForInvoice: v };
+  }
+  return null;
+}
+
+export interface CalculateSaasRenewalInvoiceAmountParams {
+  planId: string;
+  billingInterval: BillingInterval;
+  planType: string;
+  /** `plans.price_cents` — usado só em metadata da fatura no fallback catálogo (standard). */
+  planListPriceCents: number | null;
+  usersForRenewal: number | null;
+  contracted_plan_price_cents?: number | null;
+  contracted_price_per_user_cents?: number | null;
+}
+
+/**
+ * Valor da fatura de **renovação SaaS** apenas: usa snapshot contratado quando disponível;
+ * caso contrário mantém o comportamento do catálogo (`calculateInvoiceAmount`).
+ * Não altera checkout nem primeira contratação.
+ */
+export async function calculateSaasRenewalInvoiceAmount(
+  params: CalculateSaasRenewalInvoiceAmountParams
+): Promise<{
+  amountCents: number;
+  priceSource: SaasRenewalPriceSource;
+  planPriceSnapshotForInvoice: number;
+}> {
+  const snap = tryResolveSaasRenewalAmountFromContractSnapshot(
+    params.planType,
+    params.usersForRenewal,
+    params.contracted_plan_price_cents,
+    params.contracted_price_per_user_cents
+  );
+  if (snap) {
+    return {
+      amountCents: snap.amountCents,
+      priceSource: 'contracted_snapshot',
+      planPriceSnapshotForInvoice: snap.planPriceSnapshotForInvoice,
+    };
+  }
+
+  const amountCents = await calculateInvoiceAmount(
+    params.planId,
+    params.billingInterval,
+    params.usersForRenewal
+  );
+  const planPriceSnapshotForInvoice =
+    params.planType === 'custom'
+      ? amountCents
+      : params.planListPriceCents ?? amountCents;
+
+  return {
+    amountCents,
+    priceSource: 'catalog_fallback',
+    planPriceSnapshotForInvoice,
+  };
 }
 
 /**

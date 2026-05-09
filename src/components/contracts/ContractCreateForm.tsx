@@ -122,9 +122,10 @@ export function ContractCreateForm({
   const location = useLocation();
   const contractsIndexFallback = listReturnPath?.trim() || "/contracts";
   const { user } = useAuth();
-  const { canCreate, canEdit, loading: permLoading } = useModulePermissions();
+  const { canCreate, canEdit, loading: permLoading, hasPermissionKey } = useModulePermissions();
   const permissionOk = isEditMode ? canEdit("contracts") : canCreate("contracts");
   const canUseContracts = permissionOk && !permLoading;
+  const canRequestContractSignature = hasPermissionKey("contracts.request_signature");
   const [step, setStep] = useState<"select" | "edit">(() =>
     embedded && !id ? "edit" : id ? "edit" : "select"
   );
@@ -833,7 +834,13 @@ export function ContractCreateForm({
             <Save className="mr-2 h-4 w-4" />
             Salvar Rascunho
           </Button>
-          <Button onClick={handleSendForSignature} disabled={loading || documentLocked || !canUseContracts}>
+          <Button
+            onClick={handleSendForSignature}
+            disabled={loading || documentLocked || !canUseContracts || !canRequestContractSignature}
+            title={
+              !canRequestContractSignature ? "Sem permissão para pedir assinatura eletrónica." : undefined
+            }
+          >
             <Send className="mr-2 h-4 w-4" />
             Enviar para Assinatura
           </Button>

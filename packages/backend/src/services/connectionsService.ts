@@ -4,7 +4,11 @@ import { getSuperadminAccount } from './whatsappOfficial/whatsappOfficialConfigS
 import { listInstancesForActor, type ChatInstanceDbRow } from '../utils/chatInstanceAccess.js';
 import { getPlatformNotificationsGlobalSettingsRow } from './platformNotifications/platformNotificationsGlobalSettingsService.js';
 
-const FLAG_KEYS = new Set(['whatsapp_official_enabled', 'whatsapp_official_tenant_enabled']);
+const FLAG_KEYS = new Set([
+  'whatsapp_official_enabled',
+  'whatsapp_official_tenant_enabled',
+  'whatsapp_groups_enabled',
+]);
 
 export type ConnectionsSummary = {
   whatsapp_official: {
@@ -22,6 +26,8 @@ export type ConnectionsSummary = {
     instances_count: number;
     connected_count: number;
     designated_instance_id: string | null;
+    /** Grupos WhatsApp (UazAPI) — listagem, sync, criar grupo, painel admin. */
+    groups_feature_enabled: boolean;
     /** Prévia das instâncias (id, status, nome) */
     instances: Array<{ id: string; name: string; status: string; connected_phone?: string | null }>;
   };
@@ -62,6 +68,7 @@ export async function listConnectionsSummary(actorUserId: string): Promise<Conne
       instances_count: inst.length,
       connected_count: countConnectedUazapi(inst),
       designated_instance_id: settings.platform_notifications_whatsapp_chat_instance_id || null,
+      groups_feature_enabled: getSystemFlag('whatsapp_groups_enabled'),
       instances: inst.slice(0, 20).map((i) => ({
         id: i.id,
         name: i.name,

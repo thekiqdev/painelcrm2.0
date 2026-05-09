@@ -33,6 +33,7 @@ import { getActiveGateway } from '../modules/payments/gatewayProvider.js';
 import { getActiveConfig } from './paymentGatewayConfigService.js';
 import type { PaymentGateway, PaymentMethod } from '../modules/payments/paymentGatewayTypes.js';
 import {
+  persistContractSnapshotFromPaidBilling,
   changeSubscriptionPlan,
   createSubscription,
   getActiveSaasSubscriptionByTenant,
@@ -252,6 +253,21 @@ async function ensureSaasSubscriptionAfterPaidActivation(params: {
     if (subAfter && billingFresh && !billingFresh.subscription_id) {
       await setBillingSubscriptionId(billingId, subAfter.id);
     }
+
+    if (subAfter && billingFresh) {
+      await persistContractSnapshotFromPaidBilling({
+        tenantId,
+        subscriptionId: subAfter.id,
+        billing: billingFresh,
+        mode: 'checkout_initial',
+      });
+      await persistContractSnapshotFromPaidBilling({
+        tenantId,
+        subscriptionId: subAfter.id,
+        billing: billingFresh,
+        mode: 'explicit',
+      });
+    }
   });
 }
 
@@ -385,6 +401,13 @@ async function activateSeatAddonFromBilling(billing: TenantBillingRow): Promise<
     });
     if (!sync.ok) {
       console.error('[SUBSCRIPTION] seat_addon: falha ao sincronizar subscriptions', sync.error);
+    } else {
+      await persistContractSnapshotFromPaidBilling({
+        tenantId: billing.tenant_id,
+        subscriptionId: sub.id,
+        billing,
+        mode: 'explicit',
+      });
     }
   }
 }

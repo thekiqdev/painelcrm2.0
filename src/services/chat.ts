@@ -6,6 +6,7 @@ import {
   pickConversationAvatarRawForDisplay,
 } from '@/lib/chatAvatarUrl';
 import { chatAvatarDebugLog } from '@/lib/chatAvatarDebug';
+import { DEFAULT_CHAT_TAG_COLOR, normalizeHexColor } from '@/lib/chatKanbanTagStyle';
 
 /** Etapa 4 — mesmos valores persistidos em `chat_instances.metadata`. */
 export type InstanceSyncMode = 'none' | 'days_7' | 'days_30' | 'days_90' | 'full';
@@ -70,6 +71,85 @@ export type ChatAttendanceStatus =
   | 'queued'
   | 'in_service';
 
+/** Tipo de conversa multicanal (Fase 2 grupos WhatsApp). */
+export type ChatConversationType = 'direct' | 'group' | 'community';
+
+/** Tag Kanban na conversa (cor vinda da API / listagem). */
+export type ChatKanbanTagUi = {
+  id: string;
+  label: string;
+  name?: string;
+  color: string;
+};
+
+export function normalizeConversationTagsFromApi(raw: unknown): ChatKanbanTagUi[] | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) return undefined;
+  const out: ChatKanbanTagUi[] = [];
+  for (const t of raw) {
+    if (!t || typeof t !== 'object') continue;
+    const o = t as Record<string, unknown>;
+    const id = typeof o.id === 'string' ? o.id : '';
+    const label =
+      typeof o.label === 'string' ? o.label : typeof o.name === 'string' ? o.name : '';
+    if (!id || !label) continue;
+    out.push({
+      id,
+      label,
+      name: typeof o.name === 'string' ? o.name : label,
+      color:
+        typeof o.color === 'string' && o.color.trim() ? normalizeHexColor(o.color) : DEFAULT_CHAT_TAG_COLOR,
+    });
+  }
+  return out;
+}
+
+/** Fase 3 — participante normalizado (UazAPI /group/info). */
+export type ChatGroupParticipantRow = {
+  jid: string;
+  lid: string | null;
+  phone: string | null;
+  phoneDisplay: string | null;
+  isAdmin: boolean;
+  isSuperAdmin: boolean;
+  displayName: string | null;
+  profilePicUrl: string | null;
+};
+
+/** Fase 3 — detalhes do grupo WhatsApp (painel administrativo). */
+export type ChatGroupDetails = {
+  jid: string;
+  name: string;
+  topic: string | null;
+  ownerJid: string | null;
+  profilePicUrl: string | null;
+  isLocked: boolean;
+  isAnnounce: boolean;
+  isJoinApprovalRequired: boolean;
+  memberAddMode: string | null;
+  isEphemeral: boolean | null;
+  disappearingTimer: number | null;
+  ownerIsAdmin: boolean;
+  ownerCanSendMessage: boolean | null;
+  inviteLink: string | null;
+  participantCount: number;
+  participants: ChatGroupParticipantRow[];
+};
+
+export type ChatGroupParticipantProfileSyncStatus = 'synced' | 'not_found' | 'failed';
+
+export type ChatGroupParticipantProfileSyncResult = {
+  participantJid: string;
+  phone: string | null;
+  displayName: string | null;
+  participantAvatarUrl: string | null;
+  profilePicUrl: string | null;
+  directConversationId: string | null;
+  status: ChatGroupParticipantProfileSyncStatus;
+  reason?: string | null;
+  participant?: ChatGroupParticipantRow | null;
+};
+
 export interface ChatConversation {
   id: string;
   user_id: string;
@@ -83,6 +163,8 @@ export interface ChatConversation {
   leadId?: string | null;
   lead_status?: string | null;
   external_chat_id: string;
+  /** Backend `conversation_type` (grupo vs 1:1). */
+  conversation_type?: ChatConversationType | null;
   contactName?: string | null;
   profileName?: string | null;
   phoneNumber?: string | null;
@@ -143,10 +225,46 @@ export interface ChatConversation {
   last_assignment_reason?: string | null;
   assignee_email?: string | null;
   assignee_display?: string | null;
+  /** Foto do operador (profiles.avatar_url ou users.avatar_url), quando exposta pela API. */
+  assignee_avatar_url?: string | null;
   /** Fase 5 SLA — quando exposto pela API */
   first_response_at?: string | null;
   last_customer_message_at?: string | null;
   last_agent_message_at?: string | null;
+  /** Tags Kanban resolvidas (listagem / realtime). */
+  tags?: ChatKanbanTagUi[];
+}
+
+/** Preferir `conversation.tags`; senão metadata.kanban_tags (legacy). */
+export function resolveChatKanbanTagsForUi(conversation: ChatConversation | null | undefined): ChatKanbanTagUi[] {
+  if (!conversation) return [];
+  const fromApi = normalizeConversationTagsFromApi(conversation.tags as unknown);
+  if (fromApi !== undefined) return fromApi;
+  const m = conversation.metadata;
+  if (!m || typeof m !== 'object') return [];
+  const arr = (m as Record<string, unknown>).kanban_tags;
+  if (!Array.isArray(arr)) return [];
+  const out: ChatKanbanTagUi[] = [];
+  for (const t of arr) {
+    if (typeof t === 'string') {
+      const label = t.trim();
+      if (!label) continue;
+      out.push({ id: `legacy:${label}`, label, color: DEFAULT_CHAT_TAG_COLOR });
+    } else if (t && typeof t === 'object') {
+      const o = t as Record<string, unknown>;
+      const id = typeof o.id === 'string' ? o.id : '';
+      const label =
+        typeof o.label === 'string' ? o.label : typeof o.name === 'string' ? o.name : '';
+      if (!label && !id) continue;
+      out.push({
+        id: id || `legacy:${label}`,
+        label: label || id,
+        color:
+          typeof o.color === 'string' && o.color.trim() ? normalizeHexColor(o.color) : DEFAULT_CHAT_TAG_COLOR,
+      });
+    }
+  }
+  return out;
 }
 
 export interface ConversationProfile {
@@ -310,17 +428,35 @@ export function normalizeConversation(raw: any): ChatConversation {
   const history_sync_status = trimStr(raw?.history_sync_status);
   const last_history_sync_reason = trimStr(raw?.last_history_sync_reason);
 
+  const asIso = (v: unknown): string | null => {
+    if (v == null) return null;
+    if (typeof v === 'string' && v.trim()) return v.trim();
+    if (v instanceof Date && !Number.isNaN(v.getTime())) return v.toISOString();
+    return null;
+  };
+  /** Lista: última mensagem real (API); não usar updated_at. */
+  const listLastActivityAt =
+    asIso(raw?.effective_last_message_at) ??
+    asIso(raw?.effective_last_activity_at) ??
+    asIso(raw?.last_message_at);
+
+  const normalizedTags = normalizeConversationTagsFromApi(raw?.tags);
+
   return {
     id: raw.id,
     user_id: raw.user_id,
     instance_id: raw.instance_id ?? null,
     whatsapp_official_account_id: raw.whatsapp_official_account_id ?? null,
-    provider: (raw.provider as CommunicationProvider | undefined) ?? DEFAULT_COMMUNICATION_PROVIDER,
+    provider:
+      typeof raw.provider === 'string' && raw.provider.trim()
+        ? (raw.provider as CommunicationProvider)
+        : DEFAULT_COMMUNICATION_PROVIDER,
     instance_name: raw.instance_name,
     client_id: raw.client_id ?? null,
     leadId: raw.lead_id ?? null,
     lead_status: raw.lead_status ?? null,
     external_chat_id: raw.external_chat_id,
+    conversation_type: (raw.conversation_type as ChatConversationType | undefined) ?? null,
     contactName: raw.contact_name ?? null,
     profileName: raw.profile_name ?? null,
     phoneNumber: raw.phone_number ?? null,
@@ -352,7 +488,7 @@ export function normalizeConversation(raw: any): ChatConversation {
     last_history_sync_reason,
     status: raw.status ?? null,
     lastMessagePreview: raw.last_message_preview ?? null,
-    lastMessageAt: raw.last_message_at ?? null,
+    lastMessageAt: listLastActivityAt,
     unreadCount: typeof raw.unread_count === 'number' ? raw.unread_count : 0,
     link_state: raw.link_state ?? metadata.link_state ?? null,
     link_source: raw.link_source ?? metadata.link_source ?? null,
@@ -370,9 +506,11 @@ export function normalizeConversation(raw: any): ChatConversation {
     last_assignment_reason: raw.last_assignment_reason ?? null,
     assignee_email: raw.assignee_email ?? null,
     assignee_display: raw.assignee_display ?? null,
+    assignee_avatar_url: trimStr(raw?.assignee_avatar_url),
     first_response_at: raw.first_response_at ?? null,
     last_customer_message_at: raw.last_customer_message_at ?? null,
     last_agent_message_at: raw.last_agent_message_at ?? null,
+    ...(normalizedTags !== undefined ? { tags: normalizedTags } : {}),
   };
 }
 
@@ -388,6 +526,21 @@ export function parseMediaField(raw: unknown): ChatMediaItem[] {
     }
   }
   return [];
+}
+
+/** Prefixo "Nome: " para bolhas de grupo (metadata persistida no backend). */
+export function groupMessageSenderPrefix(metadata: unknown): string | null {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const m = metadata as Record<string, unknown>;
+  const name = m.sender_name;
+  if (typeof name === 'string' && name.trim()) return name.trim();
+  const jid = m.sender_jid ?? m.participant;
+  if (typeof jid === 'string' && jid.includes('@')) {
+    const local = jid.split('@')[0] || '';
+    if (/^\d{10,15}$/.test(local)) return local;
+    return local.length > 0 ? local.slice(0, 14) : null;
+  }
+  return null;
 }
 
 /** Evita `[object Object]` na UI quando `body` veio como objeto (ex.: payload WhatsApp/UazAPI). */
@@ -691,6 +844,15 @@ export const chatService = {
     return response.data;
   },
 
+  async retryInitialInstanceSync(id: string) {
+    const response = await apiClient.post<{ ok?: boolean; skipped?: boolean; reason?: string }>(
+      `/api/chat/instances/${id}/initial-sync/retry`,
+      {}
+    );
+    if (response.error) throw new Error(response.error);
+    return response.data ?? {};
+  },
+
   async configureWebhook(id: string, data?: Record<string, unknown>) {
     const response = await apiClient.post(`/api/chat/instances/${id}/webhook`, data || {});
     if (response.error) {
@@ -730,6 +892,193 @@ export const chatService = {
     return response.data;
   },
 
+  async getChatRuntimeConfig(): Promise<{ whatsappGroupsEnabled: boolean }> {
+    const response = await apiClient.get<{ whatsappGroupsEnabled: boolean }>('/api/chat/runtime-config');
+    if (response.error) throw new Error(response.error);
+    return {
+      whatsappGroupsEnabled: response.data?.whatsappGroupsEnabled !== false,
+    };
+  },
+
+  async getConversationGroupDetails(
+    conversationId: string,
+    opts?: { refresh?: boolean },
+  ): Promise<ChatGroupDetails> {
+    const params = new URLSearchParams();
+    if (opts?.refresh) params.set('refresh', '1');
+    const q = params.toString();
+    const response = await apiClient.get<{ group: ChatGroupDetails }>(
+      `/api/chat/conversations/${conversationId}/group${q ? `?${q}` : ''}`,
+    );
+    if (response.error) throw new Error(response.error);
+    if (!response.data?.group) throw new Error('Resposta inválida do servidor');
+    return response.data.group;
+  },
+
+  async getConversationGroupParticipants(
+    conversationId: string,
+    opts?: { q?: string; refresh?: boolean },
+  ): Promise<{ participants: ChatGroupParticipantRow[]; participantCount: number; ownerIsAdmin: boolean }> {
+    const params = new URLSearchParams();
+    if (opts?.q?.trim()) params.set('q', opts.q.trim());
+    if (opts?.refresh) params.set('refresh', '1');
+    const q = params.toString();
+    const response = await apiClient.get<{
+      participants: ChatGroupParticipantRow[];
+      participantCount: number;
+      ownerIsAdmin: boolean;
+    }>(`/api/chat/conversations/${conversationId}/group/participants${q ? `?${q}` : ''}`);
+    if (response.error) throw new Error(response.error);
+    return {
+      participants: response.data?.participants ?? [],
+      participantCount: response.data?.participantCount ?? 0,
+      ownerIsAdmin: response.data?.ownerIsAdmin === true,
+    };
+  },
+
+  async postConversationGroupName(conversationId: string, name: string): Promise<ChatGroupDetails> {
+    const response = await apiClient.post<{ ok: boolean; group: ChatGroupDetails }>(
+      `/api/chat/conversations/${conversationId}/group/name`,
+      { name },
+    );
+    if (response.error) throw new Error(response.error);
+    if (!response.data?.group) throw new Error('Resposta inválida');
+    return response.data.group;
+  },
+
+  async postConversationGroupDescription(conversationId: string, description: string): Promise<ChatGroupDetails> {
+    const response = await apiClient.post<{ ok: boolean; group: ChatGroupDetails }>(
+      `/api/chat/conversations/${conversationId}/group/description`,
+      { description },
+    );
+    if (response.error) throw new Error(response.error);
+    if (!response.data?.group) throw new Error('Resposta inválida');
+    return response.data.group;
+  },
+
+  async postConversationGroupImage(conversationId: string, image: string): Promise<ChatGroupDetails> {
+    const response = await apiClient.post<{ ok: boolean; group: ChatGroupDetails }>(
+      `/api/chat/conversations/${conversationId}/group/image`,
+      { image },
+    );
+    if (response.error) throw new Error(response.error);
+    if (!response.data?.group) throw new Error('Resposta inválida');
+    return response.data.group;
+  },
+
+  async postConversationGroupInviteReset(conversationId: string): Promise<ChatGroupDetails> {
+    const response = await apiClient.post<{ ok: boolean; group: ChatGroupDetails }>(
+      `/api/chat/conversations/${conversationId}/group/invite-reset`,
+      {},
+    );
+    if (response.error) throw new Error(response.error);
+    if (!response.data?.group) throw new Error('Resposta inválida');
+    return response.data.group;
+  },
+
+  async postConversationGroupLeave(conversationId: string): Promise<void> {
+    const response = await apiClient.post<{ ok: boolean }>(
+      `/api/chat/conversations/${conversationId}/group/leave`,
+      {},
+    );
+    if (response.error) throw new Error(response.error);
+  },
+
+  async postConversationGroupParticipants(
+    conversationId: string,
+    body: { action: 'add' | 'remove' | 'promote' | 'demote' | 'approve' | 'reject'; participants: string[] },
+  ): Promise<ChatGroupDetails> {
+    const response = await apiClient.post<{ ok: boolean; group: ChatGroupDetails }>(
+      `/api/chat/conversations/${conversationId}/group/participants`,
+      body,
+    );
+    if (response.error) throw new Error(response.error);
+    if (!response.data?.group) throw new Error('Resposta inválida');
+    return response.data.group;
+  },
+
+  async postConversationGroupSettings(
+    conversationId: string,
+    body: ChatGroupSettingsPayload,
+  ): Promise<{ group: ChatGroupDetails; warnings: string[] }> {
+    const response = await apiClient.post<{ ok: boolean; group: ChatGroupDetails; warnings?: string[] }>(
+      `/api/chat/conversations/${conversationId}/group/settings`,
+      body,
+    );
+    if (response.error) throw new Error(response.error);
+    if (!response.data?.group) throw new Error('Resposta inválida');
+    return {
+      group: response.data.group,
+      warnings: Array.isArray(response.data.warnings) ? response.data.warnings : [],
+    };
+  },
+
+  async postConversationGroupParticipantSyncProfile(
+    conversationId: string,
+    participantJid: string,
+  ): Promise<ChatGroupParticipantProfileSyncResult> {
+    const enc = encodeURIComponent(participantJid);
+    const response = await apiClient.post<ChatGroupParticipantProfileSyncResult>(
+      `/api/chat/conversations/${conversationId}/group/participants/${enc}/sync-profile`,
+      {},
+    );
+    if (response.error) throw new Error(response.error);
+    if (!response.data) throw new Error('Resposta inválida');
+    return response.data;
+  },
+
+  async postConversationGroupParticipantsSyncMissing(
+    conversationId: string,
+    body?: { limit?: number },
+  ): Promise<{ ok: boolean; processed: number; results: ChatGroupParticipantProfileSyncResult[] }> {
+    const response = await apiClient.post<{
+      ok: boolean;
+      processed: number;
+      results: ChatGroupParticipantProfileSyncResult[];
+    }>(`/api/chat/conversations/${conversationId}/group/participants/sync-missing-profiles`, body ?? {});
+    if (response.error) throw new Error(response.error);
+    if (!response.data) throw new Error('Resposta inválida');
+    return response.data;
+  },
+
+  async getChatTenantUsersForGroup(): Promise<
+    { id: string; email: string; display_name: string; whatsapp_digits: string | null }[]
+  > {
+    const response = await apiClient.get<{
+      items: { id: string; email: string; display_name: string; whatsapp_digits: string | null }[];
+    }>('/api/chat/tenant-users-for-group');
+    if (response.error) throw new Error(response.error);
+    return response.data?.items ?? [];
+  },
+
+  async postCreateGroupFromConversation(
+    conversationId: string,
+    body: {
+      name: string;
+      description?: string | null;
+      participants: { phone: string; source: 'team' | 'client' | 'lead' | 'manual' }[];
+      confirmDuplicate?: boolean;
+    },
+  ): Promise<ChatConversation> {
+    const response = await apiClient.post<{ conversation: ChatConversation }>(
+      `/api/chat/conversations/${conversationId}/group/create-from-conversation`,
+      body,
+    );
+    if (response.error) {
+      const err = new Error(response.error) as Error & {
+        code?: string;
+        status?: number;
+        details?: unknown;
+      };
+      err.code = response.code;
+      err.status = (response.details as { status?: number })?.status;
+      err.details = response.details;
+      throw err;
+    }
+    if (!response.data?.conversation) throw new Error('Resposta inválida');
+    return normalizeConversation(response.data.conversation as ChatConversation);
+  },
+
   async getConversations(filters?: {
     instanceId?: string;
     /** Apenas linhas `whatsapp_official` (Super Admin / tenant com flag). */
@@ -743,6 +1092,8 @@ export const chatService = {
     inboxScope?: 'owner' | 'tenant';
     /** `queue` = fila operacional (Etapa 5); `queued` aceite por compatibilidade */
     attendanceFilter?: 'mine' | 'unassigned' | 'queue' | 'queued' | 'closed' | 'team' | 'waiting';
+    /** Fase 2: `groups` = conversas de grupo (flag global `whatsapp_groups_enabled`, default on). */
+    conversationFilter?: 'all' | 'groups';
   }) {
     const params = new URLSearchParams();
     if (filters?.instanceId) params.append('instanceId', filters.instanceId);
@@ -758,6 +1109,9 @@ export const chatService = {
       const af =
         filters.attendanceFilter === 'queued' ? 'queue' : filters.attendanceFilter;
       params.append('attendanceFilter', af);
+    }
+    if (filters?.conversationFilter === 'groups') {
+      params.append('conversationFilter', 'groups');
     }
     const chatListDiag =
       import.meta.env.DEV || import.meta.env.VITE_CHAT_LIST_DIAG === '1';
@@ -1185,6 +1539,61 @@ export const chatService = {
     if (response.error) throw new Error(response.error);
     if (!response.data) throw new Error('Falha ao remover vínculo');
     return normalizeConversation(response.data);
+  },
+
+  async getConversationKanbanTags(conversationId: string): Promise<{
+    tags: ChatKanbanTagUi[];
+    legacy_labels: string[];
+  }> {
+    const response = await apiClient.get<{
+      tags: ChatKanbanTagUi[];
+      legacy_labels: string[];
+    }>(`/api/chat/conversations/${conversationId}/kanban-tags`);
+    if (response.error) throw new Error(response.error);
+    const data = response.data;
+    const rawTags = Array.isArray(data?.tags) ? data!.tags : [];
+    return {
+      tags: rawTags.map((t) => ({
+        id: String((t as ChatKanbanTagUi).id ?? ''),
+        label: String((t as ChatKanbanTagUi).label ?? ''),
+        name: (t as ChatKanbanTagUi).name,
+        color:
+          typeof (t as ChatKanbanTagUi).color === 'string' && (t as ChatKanbanTagUi).color!.trim()
+            ? normalizeHexColor((t as ChatKanbanTagUi).color)
+            : DEFAULT_CHAT_TAG_COLOR,
+      })).filter((t) => t.id && t.label),
+      legacy_labels: Array.isArray(data?.legacy_labels) ? data!.legacy_labels : [],
+    };
+  },
+
+  async addConversationKanbanTag(
+    conversationId: string,
+    body: { tag_id?: string; label?: string; color?: string },
+  ): Promise<{ ok: boolean; tag: ChatKanbanTagUi }> {
+    const response = await apiClient.post<{ ok: boolean; tag: ChatKanbanTagUi }>(
+      `/api/chat/conversations/${conversationId}/kanban-tags`,
+      body,
+    );
+    if (response.error) throw new Error(response.error);
+    if (!response.data?.tag?.id) throw new Error('Falha ao adicionar tag');
+    const tg = response.data.tag;
+    return {
+      ok: response.data.ok,
+      tag: {
+        id: tg.id,
+        label: tg.label,
+        name: tg.name,
+        color:
+          typeof tg.color === 'string' && tg.color.trim()
+            ? normalizeHexColor(tg.color)
+            : DEFAULT_CHAT_TAG_COLOR,
+      },
+    };
+  },
+
+  async removeConversationKanbanTag(conversationId: string, tagId: string): Promise<void> {
+    const response = await apiClient.delete(`/api/chat/conversations/${conversationId}/kanban-tags/${tagId}`);
+    if (response.error) throw new Error(response.error);
   },
 
   async deleteInstance(id: string) {

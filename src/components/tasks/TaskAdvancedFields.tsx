@@ -1,12 +1,11 @@
 /**
  * Campos de configurações avançadas de tarefa (reutilizável na criação e no painel).
- * Mesma estrutura do accordion "Configurações Avançadas" do NewTaskDialog.
+ * Prazo principal e checklist ficam fora deste bloco (formulário básico / TaskChecklistEditor).
  */
-import React, { useState } from "react";
+import React from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -21,9 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   CalendarIcon,
   Clock,
-  Plus,
   X,
-  Upload,
   DollarSign,
   Users,
   Repeat,
@@ -31,7 +28,6 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { format } from "date-fns";
-import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { UnifiedTask, UnifiedChecklistItem } from "@/lib/taskUnified";
 
@@ -95,12 +91,10 @@ export function formValueToApiPayload(
 ): Record<string, unknown> {
   const payload: Record<string, unknown> = {
     start_date: v.startDate ? format(v.startDate, "yyyy-MM-dd") : null,
-    due_date: v.dueDate ? format(v.dueDate, "yyyy-MM-dd") : null,
     start_time: v.startTime || null,
     end_time: v.endTime || null,
     estimated_effort_hours: v.estimatedEffortHours,
     estimated_story_points: v.estimatedStoryPoints,
-    checklist: v.checklist,
     watchers: v.watchers,
     visibility: v.visibility || "internal",
     billable: v.billable,
@@ -161,43 +155,8 @@ export function TaskAdvancedFields({
   mode = "create",
   idPrefix = "adv",
 }: TaskAdvancedFieldsProps) {
-  const [newChecklistItem, setNewChecklistItem] = useState("");
-
   const update = (partial: Partial<TaskAdvancedFormValue>) => {
     onChange({ ...value, ...partial });
-  };
-
-  const addChecklistItem = () => {
-    if (!newChecklistItem.trim()) return;
-    const item: TaskAdvancedChecklistItem = {
-      id: Math.random().toString(36).slice(2, 11),
-      text: newChecklistItem.trim(),
-      completed: false,
-    };
-    update({ checklist: [...value.checklist, item] });
-    setNewChecklistItem("");
-  };
-
-  const removeChecklistItem = (id: string) => {
-    update({ checklist: value.checklist.filter((i) => i.id !== id) });
-  };
-
-  const toggleChecklistItem = (id: string) => {
-    update({
-      checklist: value.checklist.map((i) =>
-        i.id === id ? { ...i, completed: !i.completed } : i
-      ),
-    });
-  };
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      update({ attachments: [...value.attachments, ...Array.from(e.target.files)] });
-    }
-  };
-
-  const removeAttachment = (index: number) => {
-    update({ attachments: value.attachments.filter((_, i) => i !== index) });
   };
 
   const p = (name: string) => (idPrefix ? `${idPrefix}-${name}` : name);
@@ -210,9 +169,9 @@ export function TaskAdvancedFields({
           <Clock className="h-4 w-4" />
           Datas e Tempo
         </h4>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="space-y-2">
-            <Label>Data de Início</Label>
+            <Label>Data de início</Label>
             <Popover>
               <PopoverTrigger asChild>
                 <Button variant="outline" className="w-full justify-start">
@@ -225,24 +184,6 @@ export function TaskAdvancedFields({
                   mode="single"
                   selected={value.startDate ?? undefined}
                   onSelect={(date) => update({ startDate: date ?? null })}
-                />
-              </PopoverContent>
-            </Popover>
-          </div>
-          <div className="space-y-2">
-            <Label>Data de Entrega</Label>
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="outline" className="w-full justify-start">
-                  <CalendarIcon className="mr-2 h-4 w-4" />
-                  {value.dueDate ? format(value.dueDate, "dd/MM/yyyy") : <span>Selecionar</span>}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-auto p-0">
-                <Calendar
-                  mode="single"
-                  selected={value.dueDate ?? undefined}
-                  onSelect={(date) => update({ dueDate: date ?? null })}
                 />
               </PopoverContent>
             </Popover>
@@ -309,94 +250,6 @@ export function TaskAdvancedFields({
             />
           </div>
         </div>
-      </div>
-
-      {/* Checklist / Subtarefas */}
-      <div className="space-y-2">
-        <Label>Checklist / Subtarefas</Label>
-        <div className="space-y-2">
-          {value.checklist.map((item) => (
-            <div key={item.id} className="flex items-center gap-2 p-2 bg-muted/50 rounded">
-              <Checkbox
-                checked={item.completed}
-                onCheckedChange={() => toggleChecklistItem(item.id)}
-              />
-              <span className={cn("flex-1 text-sm", item.completed && "line-through text-muted-foreground")}>
-                {item.text}
-              </span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-6 w-6 p-0"
-                onClick={() => removeChecklistItem(item.id)}
-              >
-                <X className="h-3 w-3" />
-              </Button>
-            </div>
-          ))}
-        </div>
-        <div className="flex gap-2">
-          <Input
-            placeholder="Nova subtarefa..."
-            value={newChecklistItem}
-            onChange={(e) => setNewChecklistItem(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                addChecklistItem();
-              }
-            }}
-          />
-          <Button type="button" variant="secondary" size="sm" onClick={addChecklistItem}>
-            <Plus className="h-4 w-4" />
-          </Button>
-        </div>
-      </div>
-
-      {/* Anexos: UI para seleção de arquivos e link externo. Persistência via API (multipart ou endpoint dedicado) em passo futuro; createProjectTask/updateProjectTask atuais recebem JSON. */}
-      <div className="space-y-2">
-        <Label>Anexos</Label>
-        <div className="space-y-2">
-          {value.attachments.map((file, index) => (
-            <div key={index} className="flex items-center gap-2 p-2 bg-muted/50 rounded">
-              <span className="text-sm truncate flex-1">{file.name}</span>
-              <span className="text-xs text-muted-foreground">{(file.size / 1024).toFixed(2)} KB</span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-6 w-6 p-0"
-                onClick={() => removeAttachment(index)}
-              >
-                <X className="h-3 w-3" />
-              </Button>
-            </div>
-          ))}
-        </div>
-        <div className="flex gap-2 flex-wrap">
-          <Input
-            type="file"
-            multiple
-            onChange={handleFileUpload}
-            className="hidden"
-            id={p("file-upload")}
-          />
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => document.getElementById(p("file-upload"))?.click()}
-          >
-            <Upload className="h-4 w-4 mr-2" />
-            Upload de Arquivo
-          </Button>
-        </div>
-        <Input
-          placeholder="Ou cole um link (Google Drive, Figma...)"
-          value={value.externalLink}
-          onChange={(e) => update({ externalLink: e.target.value })}
-        />
       </div>
 
       {/* Observadores (Watchers) */}

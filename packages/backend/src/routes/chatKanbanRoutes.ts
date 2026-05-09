@@ -18,11 +18,20 @@ import {
   deleteCard,
   attachConversation,
 } from '../controllers/chatKanbanController.js';
+import {
+  createTenantKanbanTag,
+  listTenantKanbanTags,
+  patchTenantKanbanTag,
+} from '../controllers/chatConversationKanbanTagsController.js';
 
 const router = Router();
 
 router.use(...tenantAuthCrm);
 router.use(requireFeature('chat'));
+
+router.get('/tags', listTenantKanbanTags);
+router.post('/tags', createTenantKanbanTag);
+router.patch('/tags/:tagId', patchTenantKanbanTag);
 
 router.get('/boards', listBoards);
 router.post('/boards', createBoard);

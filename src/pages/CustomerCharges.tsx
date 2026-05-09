@@ -47,6 +47,7 @@ import { Plus, CreditCard, Filter, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { applyUrlPatch, readInt } from "@/lib/listFiltersUrl";
 import { ClientSearchCombobox } from "@/components/clients/ClientSearchCombobox";
+import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 
 const PAGE_SIZE = 50;
 const STATUS_OPTIONS = [
@@ -85,6 +86,8 @@ const STATUS_URL_VALUES = new Set(["", "open", "partial", "paid"]);
 
 const CustomerCharges = () => {
   const navigate = useNavigate();
+  const { hasPermissionKey, loading: permLoading } = useModulePermissions();
+  const canCreateCharge = hasPermissionKey("billing.create_charge") && !permLoading;
   const [searchParams, setSearchParams] = useSearchParams();
   const [charges, setCharges] = useState<CustomerChargeWithSummary[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
@@ -276,10 +279,12 @@ const CustomerCharges = () => {
               </div>
             </SheetContent>
           </Sheet>
-          <Button onClick={() => setCreateOpen(true)} className="sm:ml-auto">
-            <Plus className="mr-2 h-4 w-4" />
-            Nova Cobrança
-          </Button>
+          {canCreateCharge ? (
+            <Button onClick={() => setCreateOpen(true)} className="sm:ml-auto">
+              <Plus className="mr-2 h-4 w-4" />
+              Nova Cobrança
+            </Button>
+          ) : null}
         </div>
       </div>
 

@@ -8,6 +8,7 @@ import {
 } from '../services/websocketService.js';
 import { hasAssignedTeamColumn, hasAttendanceColumns } from '../utils/chatAttendanceSchema.js';
 import { isTenantAdmin } from '../utils/tenant.js';
+import { canChatAction } from '../services/chatAccess.js';
 import { insertChatTransferRow } from '../services/chatProfessionalService.js';
 import { createNotification } from '../services/notifications.js';
 import {
@@ -24,6 +25,47 @@ function respondAttendanceMigrationRequired(res: Response): void {
       'Módulo de atendimento (Etapa 5) não está aplicado na base de dados. Execute a migration: database/init/96_chat_conversations_attendance_etapa5.sql (e, se ainda não correu, 97_rls_chat_app_actor_visibility.sql).',
     code: 'CHAT_ATTENDANCE_MIGRATION_REQUIRED',
   });
+}
+
+/** Nome, email e foto do operador para merge na conversa / WebSocket. */
+async function loadAssigneePublicFields(userId: string | null): Promise<{
+  assignee_email: string | null;
+  assignee_display: string | null;
+  assignee_avatar_url: string | null;
+}> {
+  if (!userId) {
+    return { assignee_email: null, assignee_display: null, assignee_avatar_url: null };
+  }
+  try {
+    const r = await pool.query<{
+      email: string;
+      display: string | null;
+      avatar: string | null;
+    }>(
+      `SELECT u.email,
+              COALESCE(
+                NULLIF(TRIM(COALESCE(pf.first_name, '') || ' ' || COALESCE(pf.last_name, '')), ''),
+                u.email
+              ) AS display,
+              COALESCE(NULLIF(TRIM(pf.avatar_url), ''), NULLIF(TRIM(u.avatar_url), '')) AS avatar
+       FROM users u
+       LEFT JOIN profiles pf ON pf.id = u.id
+       WHERE u.id = $1`,
+      [userId]
+    );
+    const row = r.rows[0];
+    if (!row) return { assignee_email: null, assignee_display: null, assignee_avatar_url: null };
+    const av = row.avatar?.trim() || null;
+    return {
+      assignee_email: row.email ?? null,
+      assignee_display: row.display?.trim() || row.email || null,
+      assignee_avatar_url: av,
+    };
+  } catch {
+    const r2 = await pool.query<{ email: string }>(`SELECT email FROM users WHERE id = $1`, [userId]);
+    const em = r2.rows[0]?.email ?? null;
+    return { assignee_email: em, assignee_display: em, assignee_avatar_url: null };
+  }
 }
 
 const attendanceStatusSchema = z.enum([
@@ -73,6 +115,48 @@ const patchAttendanceSchema = z.discriminatedUnion('action', [
     reason: z.string().max(500).optional(),
   }),
 ]);
+
+async function gateAttendancePatchPermissions(
+  userId: string,
+  body: z.infer<typeof patchAttendanceSchema>,
+  req: AuthRequest
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  switch (body.action) {
+    case 'queue': {
+      const ok =
+        (await canChatAction(userId, 'manage_queues', req)) ||
+        (await canChatAction(userId, 'transfer', req));
+      if (!ok) return { ok: false, message: 'Sem permissão para alterar fila ou enfileirar.' };
+      break;
+    }
+    case 'close':
+      if (!(await canChatAction(userId, 'close', req)))
+        return { ok: false, message: 'Sem permissão para encerrar atendimento.' };
+      break;
+    case 'unassign':
+      if (!(await canChatAction(userId, 'assign', req)))
+        return { ok: false, message: 'Sem permissão para desatribuir responsável.' };
+      break;
+    case 'reassign':
+    case 'reassign_team':
+      if (!(await canChatAction(userId, 'transfer', req)))
+        return { ok: false, message: 'Sem permissão para transferir atendimento.' };
+      break;
+    case 'waiting_customer':
+      if (!(await canChatAction(userId, 'assign', req)))
+        return { ok: false, message: 'Sem permissão para alterar estado do atendimento.' };
+      break;
+    case 'reopen':
+      if (!(await canChatAction(userId, 'reopen', req)))
+        return { ok: false, message: 'Sem permissão para reabrir atendimento.' };
+      break;
+    case 'set_status':
+      break;
+    default:
+      break;
+  }
+  return { ok: true };
+}
 
 type LockedConversation = {
   id: string;
@@ -201,6 +285,7 @@ function attendancePatchFromRow(row: Record<string, unknown>): Record<string, un
     last_assignment_reason: row.last_assignment_reason,
     assignee_email: row.assignee_email,
     assignee_display: row.assignee_display,
+    assignee_avatar_url: row.assignee_avatar_url ?? null,
   };
 }
 
@@ -210,6 +295,10 @@ export async function attendConversation(req: AuthRequest, res: Response) {
     return;
   }
   const actorUserId = req.userId!;
+  if (!(await canChatAction(actorUserId, 'take_attendance', req))) {
+    res.status(403).json({ error: 'Sem permissão para assumir atendimento' });
+    return;
+  }
   const { id: conversationId } = req.params;
   const reason =
     typeof req.body?.reason === 'string' && req.body.reason.trim() ? req.body.reason.trim().slice(0, 500) : null;
@@ -293,11 +382,10 @@ export async function attendConversation(req: AuthRequest, res: Response) {
 
     await client.query('COMMIT');
 
-    const assignee = await pool.query<{ email: string }>(`SELECT email FROM users WHERE id = $1`, [actorUserId]);
+    const assigneeFields = await loadAssigneePublicFields(actorUserId);
     const patch = attendancePatchFromRow({
       ...row,
-      assignee_email: assignee.rows[0]?.email ?? null,
-      assignee_display: assignee.rows[0]?.email ?? null,
+      ...assigneeFields,
     });
     emitConversationAttendanceUpdated(prev.owner_tenant_id, prev.user_id, patch);
     try {
@@ -355,6 +443,12 @@ export async function patchConversationAttendance(req: AuthRequest, res: Respons
     return;
   }
   const body = parsed.data;
+
+  const permEarly = await gateAttendancePatchPermissions(actorUserId, body, req);
+  if (!permEarly.ok) {
+    res.status(403).json({ error: permEarly.message });
+    return;
+  }
 
   const client = await pool.connect();
   try {
@@ -480,6 +574,24 @@ export async function patchConversationAttendance(req: AuthRequest, res: Respons
       nextClosedAt = null;
       operation = 'transfer_team';
     } else if (body.action === 'set_status') {
+      const nextSt = body.status;
+      if (nextSt === 'closed') {
+        if (!(await canChatAction(actorUserId, 'close', req))) {
+          await client.query('ROLLBACK');
+          res.status(403).json({ error: 'Sem permissão para encerrar atendimento.' });
+          return;
+        }
+      } else if (prev.attendance_status === 'closed') {
+        if (!(await canChatAction(actorUserId, 'reopen', req))) {
+          await client.query('ROLLBACK');
+          res.status(403).json({ error: 'Sem permissão para reabrir atendimento.' });
+          return;
+        }
+      } else if (!(await canChatAction(actorUserId, 'assign', req))) {
+        await client.query('ROLLBACK');
+        res.status(403).json({ error: 'Sem permissão para alterar o status do atendimento.' });
+        return;
+      }
       const actorIsTenantAdminSt = await isTenantAdmin(actorUserId);
       if (!isOwner && !isAssignee && !actorIsTenantAdminSt) {
         await client.query('ROLLBACK');
@@ -606,16 +718,9 @@ export async function patchConversationAttendance(req: AuthRequest, res: Respons
 
     await client.query('COMMIT');
 
-    let assigneeEmail: string | null = null;
-    let assigneeDisplay: string | null = null;
-    if (row.assigned_to_user_id) {
-      const u = await pool.query<{ email: string }>(
-        `SELECT email FROM users WHERE id = $1`,
-        [row.assigned_to_user_id]
-      );
-      assigneeEmail = u.rows[0]?.email ?? null;
-      assigneeDisplay = assigneeEmail;
-    }
+    const assigneeFields = await loadAssigneePublicFields(
+      (row.assigned_to_user_id as string | null) ?? null
+    );
 
     let teamName: string | null = null;
     if (hasTeamCol && row.assigned_team_id) {
@@ -628,8 +733,7 @@ export async function patchConversationAttendance(req: AuthRequest, res: Respons
 
     const patch = attendancePatchFromRow({
       ...row,
-      assignee_email: assigneeEmail,
-      assignee_display: assigneeDisplay,
+      ...assigneeFields,
       assigned_team_name: teamName,
     });
     emitConversationAttendanceUpdated(prev.owner_tenant_id, prev.user_id, patch);

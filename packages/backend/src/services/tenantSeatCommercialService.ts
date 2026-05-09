@@ -102,7 +102,8 @@ export async function previewSeatAddonPurchase(params: {
     billingInterval,
     additionalSeats,
     sub.current_period_start,
-    sub.current_period_end
+    sub.current_period_end,
+    { contractedPricePerUserCents: sub.contracted_price_per_user_cents ?? null }
   );
 
   return {

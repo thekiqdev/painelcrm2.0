@@ -198,8 +198,9 @@ async function tryMoveOneCard(
     [dest.id, nextPos, actorUserId, cardId, tenantId],
   );
 
+  let postUpdateResult: Awaited<ReturnType<typeof runKanbanDestColumnPostUpdateAutomations>> | null = null;
   try {
-    await runKanbanDestColumnPostUpdateAutomations(client, {
+    postUpdateResult = await runKanbanDestColumnPostUpdateAutomations(client, {
       tenantId,
       actorUserId,
       boardId: String(card.board_id),
@@ -234,6 +235,19 @@ async function tryMoveOneCard(
   });
 
   await client.query('COMMIT');
+
+  if (postUpdateResult?.deferredEntryAutomations?.length) {
+    void import('./chatKanbanAutomationService.js')
+      .then(({ runDeferredKanbanEntryAutomationsAfterCommit }) =>
+        runDeferredKanbanEntryAutomationsAfterCommit({
+          tenantId,
+          actorUserId,
+          conversationId: String(card.conversation_id),
+          reasons: postUpdateResult.deferredEntryAutomations!,
+        }),
+      )
+      .catch((err) => console.error('[kanban-entry-automation] deferred (proposal accept)', err));
+  }
 
   if (side.emitCtx && side.attendancePatch) {
     emitKanbanAttendanceIfNeeded(side.emitCtx.tenantId, side.emitCtx.ownerUserId, side.attendancePatch);

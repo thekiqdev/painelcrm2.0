@@ -65,9 +65,12 @@ const AuthGuard: React.FC<AuthGuardProps> = ({
     // Case 1: Usuário não está autenticado, mas a página requer autenticação
     if (requireAuth && !user) {
       console.log('User not authenticated, redirecting to:', redirectTo);
-      if (!isLoginPage && redirectTo !== location.pathname) { // Evita loops de redirecionamento
+      if (!isLoginPage && redirectTo !== location.pathname) {
         toast.error('Você precisa estar logado para acessar esta página');
-        navigate(redirectTo);
+        navigate(redirectTo, {
+          replace: true,
+          state: { from: { pathname: location.pathname, search: location.search } },
+        });
       }
       return;
     }

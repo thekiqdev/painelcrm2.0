@@ -3,8 +3,10 @@ import {
   closestCorners,
   KeyboardSensor,
   PointerSensor,
+  pointerWithin,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
   type DragOverEvent,
   type DragStartEvent,
@@ -50,6 +52,19 @@ function findContainerForItemId(
   }
   return undefined;
 }
+
+/**
+ * Colunas horizontais: `closestCorners` tende a escolher a coluna vizinha errada.
+ * Prioriza o retângulo sob o ponteiro; se coluna e cartão coincidem, prefere o cartão (ordenar dentro da coluna).
+ */
+const kanbanBoardCollisionDetection: CollisionDetection = (args) => {
+  const pointerHits = pointerWithin(args);
+  if (pointerHits.length > 0) {
+    const cardHit = pointerHits.find((h) => !String(h.id).startsWith(KANBAN_DROP_PREFIX));
+    return cardHit ? [cardHit] : pointerHits;
+  }
+  return closestCorners(args);
+};
 
 function itemMapsEqual(
   a: Record<string, string[]>,
@@ -322,7 +337,7 @@ export function useChatKanbanBoardDnd({
   return {
     dndItems,
     sensors,
-    collisionDetection: closestCorners,
+    collisionDetection: kanbanBoardCollisionDetection,
     onDragStart,
     onDragOver,
     onDragEnd,

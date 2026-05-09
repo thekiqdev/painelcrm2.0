@@ -31,7 +31,12 @@ import {
   listTenantUsersForPicker,
   listTeamsForPicker,
 } from '../services/financialAccountPermissionsService.js';
-import { assertModulePermission, ModulePermissionError, checkPermission } from '../permissions/index.js';
+import {
+  assertModulePermission,
+  assertPermissionKey,
+  ModulePermissionError,
+  checkPermission,
+} from '../permissions/index.js';
 import {
   createFinancialTransaction,
   getFinancialTransaction,
@@ -897,7 +902,7 @@ function defaultMonthRangeUtc(): { from: string; to: string } {
 
 export async function getPayablesHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
-  if (!tenantId) return;
+  if (!tenantId || !req.userId) return;
   const q = req.query;
   const fromQ = typeof q.from === 'string' && q.from.trim() ? q.from.trim() : undefined;
   const toQ = typeof q.to === 'string' && q.to.trim() ? q.to.trim() : undefined;
@@ -924,9 +929,11 @@ export async function getPayablesHandler(req: AuthRequest, res: Response): Promi
     to = def.to;
   }
   try {
+    await assertPermissionKey(req.userId, 'finance.view_accounts_payable', req);
     const data = await listPayablesForTenant(tenantId, from, to);
     res.json(data);
-  } catch (e) {
+  } catch (e: unknown) {
+    if (respondPermissionDenied(res, e)) return;
     console.error('[financial] getPayablesHandler', e);
     res.status(500).json({ error: 'Erro ao carregar contas a pagar' });
   }
@@ -1091,11 +1098,13 @@ export async function listFinancialTransfersHandler(req: AuthRequest, res: Respo
 
 export async function listExpenseCategoriesHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
-  if (!tenantId) return;
+  if (!tenantId || !req.userId) return;
   try {
+    await assertPermissionKey(req.userId, 'finance.view_expenses', req);
     const rows = await listExpenseCategories(tenantId);
     res.json(rows);
-  } catch (e) {
+  } catch (e: unknown) {
+    if (respondPermissionDenied(res, e)) return;
     console.error('[financial] listExpenseCategoriesHandler', e);
     res.status(500).json({ error: 'Erro ao listar categorias' });
   }
@@ -1103,16 +1112,18 @@ export async function listExpenseCategoriesHandler(req: AuthRequest, res: Respon
 
 export async function createExpenseCategoryHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
-  if (!tenantId) return;
+  if (!tenantId || !req.userId) return;
   const parsed = createCategoryBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'Dados inválidos', details: parsed.error.flatten() });
     return;
   }
   try {
+    await assertPermissionKey(req.userId, 'finance.create_expense', req);
     const row = await createExpenseCategory(tenantId, parsed.data.name);
     res.status(201).json(row);
   } catch (e: unknown) {
+    if (respondPermissionDenied(res, e)) return;
     const err = e as { code?: string };
     if (err?.code === '23505') {
       res.status(409).json({ error: 'Já existe uma categoria com esse nome' });
@@ -1554,13 +1565,15 @@ export async function payCreditCardStatementHandler(req: AuthRequest, res: Respo
 
 export async function getFinancialReportsHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
-  if (!tenantId) return;
+  if (!tenantId || !req.userId) return;
   const q = req.query as Record<string, unknown>;
   try {
+    await assertPermissionKey(req.userId, 'finance.view_reports', req);
     const { from, to, preset } = resolveSummaryRange(q);
     const report = await getFinancialEnterpriseReport(tenantId, { from, to });
     res.json({ ...report, preset: preset ?? null });
-  } catch (e) {
+  } catch (e: unknown) {
+    if (respondPermissionDenied(res, e)) return;
     console.error('[financial] getFinancialReportsHandler', e);
     res.status(500).json({ error: 'Erro ao gerar relatórios' });
   }

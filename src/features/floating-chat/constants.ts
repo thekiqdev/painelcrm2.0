@@ -22,19 +22,19 @@ export const FLOATING_Z_BUBBLE = 54;
 export const FLOATING_CHAT_BOTTOM_PX = 16;
 export const FLOATING_CHAT_RIGHT_PX = 24;
 
-/** Diâmetro da bolha (Button h-14 w-14). */
+/** Fallback de largura do FAB quando ainda não medido (bolha circular antiga ≈ 56px). */
 export const FLOATING_BUBBLE_DIAMETER_PX = 56;
 
-/** Espaço horizontal entre pills e bolha, e entre colunas de janelas (px). */
-export const FLOATING_GAP_PX = 12;
+/** Espaço horizontal entre dock e pílula, entre dock e primeira janela, e entre colunas de janelas (px). */
+export const FLOATING_GAP_PX = 8;
 
 /**
- * Lista “Conversas” (position fixed): folga entre base da lista e topo da bolha.
- * O deslocamento vertical total usa também `FLOATING_LIST_STACK_ABOVE_BUBBLE_PX`.
+ * Lista “Conversas” (position fixed): folga entre base da lista e topo da pílha.
+ * O `bottom` da lista usa a altura medida do FAB + este valor.
  */
-export const FLOATING_LIST_GAP_ABOVE_BUBBLE_PX = 12;
+export const FLOATING_LIST_GAP_ABOVE_BUBBLE_PX = 10;
 
-/** Altura reservada “acima da base” para posicionar a lista (especificação produto; FAB real = 56px). */
+/** @deprecated Preferir altura medida do FAB em `FloatingChatWidget`; mantido só se algum código legado importar. */
 export const FLOATING_LIST_STACK_ABOVE_BUBBLE_PX = 64;
 
 /** Base direita para empilhar janelas: margem + bolha + intervalo até a primeira janela. */

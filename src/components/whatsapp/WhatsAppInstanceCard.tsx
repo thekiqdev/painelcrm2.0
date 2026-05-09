@@ -16,6 +16,7 @@ import {
   getWhatsAppInstanceProfileInfo,
   formatWhatsappDisplayPhone,
   getActivityHint,
+  getSyncStatusUserMessage,
 } from "@/lib/whatsappInstanceProfile";
 
 type Props = {
@@ -31,6 +32,8 @@ type Props = {
   onOpenQR: () => void;
   onDisconnect: () => void;
   canOperateConversations?: boolean;
+  onRetryInitialSync?: () => void;
+  retryInitialSyncing?: boolean;
 };
 
 function connectionBadge(status: string): string {
@@ -53,6 +56,8 @@ export function WhatsAppInstanceCard({
   onOpenQR,
   onDisconnect,
   canOperateConversations = true,
+  onRetryInitialSync,
+  retryInitialSyncing = false,
 }: Props) {
   const { phone, name, pictureUrl } = getWhatsAppInstanceProfileInfo(instance);
   const phoneDisplay = formatWhatsappDisplayPhone(phone);
@@ -61,8 +66,10 @@ export function WhatsAppInstanceCard({
   const profileTitle = name?.trim() || "WhatsApp";
   const avatarLabel = name || profileTitle;
   const badgeText = connectionBadge(instance.status);
-  const busy = generatingQR || checkingStatus || deleting || quickSyncing;
+  const busy = generatingQR || checkingStatus || deleting || quickSyncing || retryInitialSyncing;
   const activityHint = getActivityHint(instance);
+  const syncUserMsg = getSyncStatusUserMessage(instance);
+  const showRetryInitial = Boolean(syncUserMsg?.isError && onRetryInitialSync);
 
   return (
     <Card
@@ -87,7 +94,7 @@ export function WhatsAppInstanceCard({
             </p>
             <p className="mt-1 text-xs font-medium text-foreground">{badgeText}</p>
             <p className="truncate text-[11px] text-muted-foreground">
-              {activityHint || "Última atividade: agora"}
+              {activityHint || "—"}
             </p>
           </div>
           <DropdownMenu>
@@ -128,7 +135,25 @@ export function WhatsAppInstanceCard({
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-        <div className="mt-2 flex items-center justify-end">
+        <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+          {showRetryInitial ? (
+            <Button
+              type="button"
+              variant="secondary"
+              className="h-8 px-3 sm:w-auto"
+              onClick={onRetryInitialSync}
+              disabled={retryInitialSyncing || !canManage}
+            >
+              {retryInitialSyncing ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Tentando…
+                </>
+              ) : (
+                "Tentar novamente"
+              )}
+            </Button>
+          ) : null}
           <Button
             type="button"
             className="h-8 px-4 sm:w-auto"

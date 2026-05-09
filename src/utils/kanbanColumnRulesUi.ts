@@ -88,6 +88,8 @@ export type KanbanPhase2Config = {
   automations: {
     auto_move_by_time: {
       enabled: boolean;
+      /** Quadro destino quando o movimento é para outro Kanban; null = mesma coluna do quadro atual. */
+      to_board_id: string | null;
       to_column_id: string | null;
       delay_value: number;
       delay_unit: 'minutes' | 'hours' | 'days';
@@ -187,6 +189,7 @@ export const EMPTY_KANBAN_PHASE2: KanbanPhase2Config = {
   automations: {
     auto_move_by_time: {
       enabled: false,
+      to_board_id: null,
       to_column_id: null,
       delay_value: 60,
       delay_unit: 'minutes',
@@ -388,6 +391,10 @@ export function parseKanbanPhase2(metadata: unknown): KanbanPhase2Config {
           ? (rawAutomations.auto_move_by_time as Record<string, unknown>)
           : {};
       const enabled = rawAmt.enabled === true;
+      let toBoard: string | null = null;
+      if (typeof rawAmt.to_board_id === 'string' && UUID_RE.test(rawAmt.to_board_id.trim())) {
+        toBoard = rawAmt.to_board_id.trim();
+      }
       let toCol: string | null = null;
       if (typeof rawAmt.to_column_id === 'string' && UUID_RE.test(rawAmt.to_column_id)) {
         toCol = rawAmt.to_column_id;
@@ -402,6 +409,7 @@ export function parseKanbanPhase2(metadata: unknown): KanbanPhase2Config {
       return {
         auto_move_by_time: {
           enabled,
+          to_board_id: toBoard,
           to_column_id: toCol,
           delay_value: delayValue,
           delay_unit: delayUnit,

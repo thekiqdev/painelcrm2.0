@@ -41,6 +41,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
@@ -80,12 +81,14 @@ import { formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { withUserId } from "@/utils/auth-helpers";
+import { useAuth } from "@/contexts/AuthContext";
 import { addClient, addClientTask } from "@/utils/clients-helpers";
 import { formatCpfCnpjDisplay } from "@/utils/cpfCnpj";
 import { resolveProfileAvatarUrl } from "@/utils/chatIdentityDisplay";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { StickyNote, StickyNoteData } from "@/components/clients/StickyNote";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
+import { resolveClientsGranularFromLegacy } from "@/permissions/permissionCatalog";
 import { proposalsService, type Proposal } from "@/services/proposals";
 import { applyUrlPatch } from "@/lib/listFiltersUrl";
 import { cn } from "@/lib/utils";
@@ -170,7 +173,17 @@ const Clients = () => {
   const clientsListHref = `${location.pathname}${location.search}`;
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
-  const { canCreate, canEdit, canDelete, canView } = useModulePermissions();
+  const { user } = useAuth();
+  const tenantId = user?.tenant_id ?? "";
+  const userId = user?.id ?? "";
+  const { canCreate, canEdit, canDelete, canView, permissions, loading: permissionsLoading } =
+    useModulePermissions();
+  const clientsPermissionScope = useMemo(
+    () => resolveClientsGranularFromLegacy(permissions),
+    [permissions],
+  );
+  const showClientsOwnListBanner =
+    !permissionsLoading && clientsPermissionScope.view_own && clientsPermissionScope.view;
   const hasChat = useFeatureFlag("chat");
   const floatingChat = useFloatingChat();
   const [clients, setClients] = useState<any[]>([]);
@@ -348,7 +361,7 @@ const Clients = () => {
 
   // Clientes e grupos em cache – ao voltar na página os dados aparecem na hora
   const { data: clientsData, isPending: isLoading } = useQuery({
-    queryKey: ["clients", "list"],
+    queryKey: [...CLIENTS_QUERY_KEY, tenantId, userId],
     queryFn: async () => {
       const [groupsData, clientsData] = await Promise.all([
         clientsService.getClientGroups(),
@@ -370,6 +383,7 @@ const Clients = () => {
       }));
       return { clients: formatted, groups };
     },
+    enabled: Boolean(tenantId && userId),
   });
   useEffect(() => {
     if (clientsData) {
@@ -555,7 +569,7 @@ const Clients = () => {
         });
         
         setClients(updatedClients);
-        queryClient.invalidateQueries({ queryKey: CLIENTS_QUERY_KEY });
+        queryClient.invalidateQueries({ queryKey: [...CLIENTS_QUERY_KEY, tenantId, userId] });
         setSelectedClient({
           ...selectedClient,
           name: editedClient.name,
@@ -653,7 +667,7 @@ const Clients = () => {
       };
       
       setClients([...clients, formattedClient]);
-      queryClient.invalidateQueries({ queryKey: CLIENTS_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: [...CLIENTS_QUERY_KEY, tenantId, userId] });
       toast.success("Cliente adicionado com sucesso!");
       setIsAddDialogOpen(false);
       
@@ -710,7 +724,7 @@ const Clients = () => {
         );
       }
 
-      await queryClient.invalidateQueries({ queryKey: CLIENTS_QUERY_KEY });
+      await queryClient.invalidateQueries({ queryKey: [...CLIENTS_QUERY_KEY, tenantId, userId] });
 
       setCsvImportSummary({ created, failed });
       const showReportDialog = failed.length > 0 || created === 0;
@@ -756,7 +770,7 @@ const Clients = () => {
         });
         
         setClients(updatedClients);
-        queryClient.invalidateQueries({ queryKey: CLIENTS_QUERY_KEY });
+        queryClient.invalidateQueries({ queryKey: [...CLIENTS_QUERY_KEY, tenantId, userId] });
         setSelectedClient({
           ...selectedClient, 
           group_id: newClientGroup,
@@ -825,7 +839,7 @@ const Clients = () => {
       });
       
       setClients(updatedClients);
-      queryClient.invalidateQueries({ queryKey: CLIENTS_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: [...CLIENTS_QUERY_KEY, tenantId, userId] });
       // Atualizar o cliente selecionado
       setSelectedClient({
         ...selectedClient,
@@ -914,7 +928,7 @@ const Clients = () => {
     try {
       await clientsService.deleteClient(clientToDelete.id);
       setClients(clients.filter(client => client.id !== clientToDelete.id));
-      queryClient.invalidateQueries({ queryKey: CLIENTS_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: [...CLIENTS_QUERY_KEY, tenantId, userId] });
       // If the deleted client was selected, clear selection
       if (selectedClient && selectedClient.id === clientToDelete.id) {
         setSelectedClient(null);
@@ -1302,6 +1316,13 @@ const Clients = () => {
         }
         belowTitle={
           <>
+            {showClientsOwnListBanner ? (
+              <Alert className="border-muted-foreground/25 bg-muted/40 py-2 md:mt-0">
+                <AlertDescription className="text-xs text-muted-foreground">
+                  Você está vendo apenas clientes criados por você.
+                </AlertDescription>
+              </Alert>
+            ) : null}
             <input
               ref={csvImportInputRef}
               type="file"

@@ -19,8 +19,8 @@ import {
   LayoutTemplate,
   UserCheck,
   XCircle,
-  Headphones,
   ArrowRightLeft,
+  Headphones,
   ListFilter,
   Video,
   MoreVertical,
@@ -71,6 +71,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Separator } from '@/components/ui/separator';
 import { Label } from '@/components/ui/label';
 import { Calendar } from '@/components/ui/calendar';
 import {
@@ -90,10 +91,14 @@ import {
   normalizeConversation,
   normalizeInternalComment,
   parseMediaField,
+  resolveChatKanbanTagsForUi,
   type ChatInternalComment,
+  type ChatKanbanTagUi,
 } from '@/services/chat';
+import { chatKanbanService } from '@/services/chatKanban';
 import { useAuth } from '@/contexts/AuthContext';
 import { useModulePermissions } from '@/contexts/ModulePermissionsContext';
+import { chatCommercialGates } from '@/utils/chatCommercialGates';
 import { useFeatureFlag } from '@/hooks/useFeatureFlag';
 import { ChatWhatsappModelPickerDialog } from '@/components/chat/ChatWhatsappModelPickerDialog';
 import {
@@ -111,6 +116,10 @@ import {
   conversationDragPreviewFromChatConversation,
 } from '@/lib/conversationDragPreview';
 import { buildChatInboxTemplateContext } from '@/utils/chatInboxTemplateContext';
+import { DEFAULT_CHAT_TAG_COLOR, normalizeHexColor } from '@/lib/chatKanbanTagStyle';
+import { ChatKanbanTagBadge } from '@/components/chat/ChatKanbanTagBadge';
+import { ChatKanbanTagQuickPicker } from '@/components/chat/ChatKanbanTagQuickPicker';
+import { patchConversationKanbanTagsEverywhere } from '@/features/floating-chat/conversationKanbanTagsCache';
 import { io, Socket } from 'socket.io-client';
 import { apiClient } from '@/integrations/api/client';
 import ProposalCreateForm, {
@@ -133,6 +142,11 @@ import {
   type ChatProfileFieldKey,
   type ChatProfileFieldRow,
 } from '@/components/chat/ChatContactProfileSheet';
+import {
+  CreateGroupFromConversationDialog,
+  resolveClientMsisdnForCreateGroup,
+} from '@/components/chat/CreateGroupFromConversationDialog';
+import { ChatGroupProfilePanel, ChatGroupProfileSheet } from '@/components/chat/ChatGroupProfilePanel';
 import { MobileCommerceScreenLayout } from '@/components/mobile/MobileCommerceScreenLayout';
 import { resolveConversationIdentity } from '@/utils/chatIdentityDisplay';
 import { CrmIdentityListRow } from '@/components/crm/CrmIdentityListRow';
@@ -151,6 +165,7 @@ import {
 } from '@/lib/communicationChannelUi';
 import { isChatClientProfileReturn, isChatListReturnPath } from '@/lib/chatListNavigation';
 import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
+import { assigneeInitials } from '@/utils/chatKanbanCardDisplay';
 import {
   logChatRealtimeDuplicateSkipped,
   logChatRealtimeLegacyEventReceived,
@@ -361,21 +376,174 @@ function resolveInstanceConnectionUi(instance: ChatInstance | null): {
 
 const CHAT_COMPOSER_MAX_HEIGHT_PX = 120;
 
+/** Eventos realtime enviam payloads parciais — não apagar `instance_id` / vínculos quando o patch vem sem esses campos. */
+function mergeChatConversationRealtimePatch(
+  prev: ChatConversation,
+  incoming: ChatConversation,
+): ChatConversation {
+  return {
+    ...prev,
+    ...incoming,
+    instance_id: incoming.instance_id ?? prev.instance_id ?? null,
+    whatsapp_official_account_id:
+      incoming.whatsapp_official_account_id ?? prev.whatsapp_official_account_id ?? null,
+    client_id: incoming.client_id ?? prev.client_id ?? null,
+    leadId: incoming.leadId ?? prev.leadId ?? null,
+    external_chat_id: incoming.external_chat_id || prev.external_chat_id,
+    phoneNumber: incoming.phoneNumber ?? prev.phoneNumber,
+    canonicalPhone: incoming.canonicalPhone ?? prev.canonicalPhone,
+    canonical_phone: incoming.canonical_phone ?? prev.canonical_phone,
+    conversation_type: incoming.conversation_type ?? prev.conversation_type,
+    provider: incoming.provider || prev.provider,
+    contactName: incoming.contactName ?? prev.contactName ?? null,
+    profileName: incoming.profileName ?? prev.profileName ?? null,
+    displayName: incoming.displayName ?? prev.displayName ?? null,
+    display_name: incoming.display_name ?? prev.display_name ?? null,
+    avatarUrl: incoming.avatarUrl ?? prev.avatarUrl ?? null,
+    avatar_url: incoming.avatar_url ?? prev.avatar_url ?? null,
+    final_avatar_url: incoming.final_avatar_url ?? prev.final_avatar_url ?? null,
+    avatar_cached_url: incoming.avatar_cached_url ?? prev.avatar_cached_url ?? null,
+    tags: incoming.tags !== undefined ? incoming.tags : prev.tags,
+    metadata: incoming.metadata !== undefined ? incoming.metadata : prev.metadata,
+  };
+}
+
+/** Cabeçalho da thread: pills de tags Kanban, + (lista / criar) e nome do operador. */
+function ChatHeaderKanbanThreadExtras({
+  conversation,
+  conversationKanbanTags,
+  tenantOptions,
+  tenantLoading,
+  busy,
+  showTagPicker,
+  onAddTag,
+}: {
+  conversation: ChatConversation;
+  conversationKanbanTags: ChatKanbanTagUi[];
+  tenantOptions: ChatKanbanTagUi[];
+  tenantLoading: boolean;
+  busy: boolean;
+  showTagPicker: boolean;
+  onAddTag: (opts: { tagId?: string; newLabel?: string; newColor?: string }) => Promise<void>;
+}) {
+  const hasTags = conversationKanbanTags.length > 0;
+  const showAssignee =
+    attendanceIsInProgress(conversation.attendance_status) && Boolean(conversation.assignee_display?.trim());
+
+  if (!hasTags && !showAssignee && !showTagPicker) return null;
+
+  return (
+    <>
+      {(hasTags || showTagPicker || showAssignee) ? (
+        <span className="shrink-0 text-[10px] text-muted-foreground" aria-hidden>
+          |
+        </span>
+      ) : null}
+      {hasTags ? (
+        <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-1">
+          {conversationKanbanTags.map((tag) => (
+            <ChatKanbanTagBadge
+              key={tag.id}
+              label={tag.label}
+              color={tag.color}
+              className="h-4 max-w-[min(120px,28vw)]"
+            />
+          ))}
+        </span>
+      ) : null}
+      {showTagPicker ? (
+        <ChatKanbanTagQuickPicker
+          tenantOptions={tenantOptions}
+          tenantLoading={tenantLoading}
+          busy={busy}
+          conversationKanbanTags={conversationKanbanTags}
+          onAddTag={onAddTag}
+        />
+      ) : null}
+      {showAssignee ? (
+        <>
+          {(hasTags || showTagPicker) ? (
+            <span className="shrink-0 text-[10px] text-muted-foreground" aria-hidden>
+              |
+            </span>
+          ) : null}
+          <span
+            className="inline-flex min-w-0 max-w-[min(220px,50vw)] items-center gap-1"
+            title={conversation.assignee_display?.trim() ?? undefined}
+          >
+            <Headphones className="h-2.5 w-2.5 shrink-0 text-muted-foreground" aria-hidden />
+            <Avatar className="h-4 w-4 shrink-0 border border-border/60">
+              {chatAvatarUrlForImgSrc(conversation.assignee_avatar_url) ? (
+                <AvatarImage
+                  src={chatAvatarUrlForImgSrc(conversation.assignee_avatar_url)!}
+                  alt=""
+                  className="object-cover"
+                />
+              ) : null}
+              <AvatarFallback className="bg-primary/15 text-[7px] font-semibold text-primary">
+                {assigneeInitials(conversation.assignee_display || '')}
+              </AvatarFallback>
+            </Avatar>
+            <span className="min-w-0 truncate text-[10px] font-medium text-foreground">
+              {shortOperatorName(conversation.assignee_display)}
+            </span>
+          </span>
+        </>
+      ) : null}
+    </>
+  );
+}
+
 const Chat = () => {
   const { user, session, profile } = useAuth();
-  const { canView, canEdit, canCreate, loading: modulePermLoading } = useModulePermissions();
+  const {
+    canView,
+    canEdit,
+    canChatReply,
+    hasPermissionKey,
+    permissions,
+    loading: modulePermLoading,
+  } = useModulePermissions();
+
+  const crmAllowGroupManage = useMemo(
+    () =>
+      hasPermissionKey('chat.manage_groups') ||
+      hasPermissionKey('chat.manage_group_settings') ||
+      hasPermissionKey('chat.manage_group_participants'),
+    [hasPermissionKey, permissions.chat?.module_extras],
+  );
+
+  const canViewAttendanceQueue = hasPermissionKey('chat.view_queue');
+  const hasChatFeature = useFeatureFlag('chat');
   const hasAgendaFeature = useFeatureFlag('agenda');
-  const canCreateAgendaInChat = hasAgendaFeature && canCreate('agenda') && !modulePermLoading;
-  const canCreateProposalsInChat = canCreate('proposals') && !modulePermLoading;
-  const canCreateContractsInChat = canCreate('contracts') && !modulePermLoading;
-  const canCreateInvoicesInChat = canCreate('billing') && !modulePermLoading;
+  const commercial = useMemo(() => chatCommercialGates(hasPermissionKey), [hasPermissionKey]);
+  const canCreateAgendaInChat =
+    hasAgendaFeature && hasPermissionKey('chat.schedule_from_chat') && !modulePermLoading;
+  const canCreateProposalsInChat =
+    commercial.canCreateProposalFromChatFull && !modulePermLoading;
+  const canCreateContractsInChat =
+    commercial.canCreateContractFromChatFull && !modulePermLoading;
+  const canCreateInvoicesInChat =
+    commercial.canCreateInvoiceFromChatFull && !modulePermLoading;
   const navigate = useNavigate();
   const location = useLocation();
+
+  useEffect(() => {
+    if (!hasChatFeature || modulePermLoading) return;
+    if (user?.is_tenant_admin) return;
+    if (!canView('chat')) {
+      toast.error('Sem permissão para acessar o Chat');
+      navigate('/dashboard', { replace: true });
+    }
+  }, [hasChatFeature, modulePermLoading, user?.is_tenant_admin, canView, navigate]);
   const [searchParams, setSearchParams] = useSearchParams();
   const focusMessageIdParam = searchParams.get('focusMessageId')?.trim() ?? '';
   const { conversationId: routeConversationId } = useParams<{ conversationId: string }>();
   const isMobile = useIsMobile();
   const queryClient = useQueryClient();
+  const handleGroupConversationSynced = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ['floating-chat'] });
+  }, [queryClient]);
 
   const [instances, setInstances] = useState<ChatInstance[]>([]);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
@@ -403,6 +571,17 @@ const Chat = () => {
   const [chatAttendanceFilter, setChatAttendanceFilter] = useState<
     '' | 'queue' | 'team' | 'mine' | 'closed' | 'unassigned'
   >('');
+  useEffect(() => {
+    if (modulePermLoading) return;
+    if (
+      !canViewAttendanceQueue &&
+      (chatAttendanceFilter === 'queue' ||
+        chatAttendanceFilter === 'team' ||
+        chatAttendanceFilter === 'unassigned')
+    ) {
+      setChatAttendanceFilter('');
+    }
+  }, [modulePermLoading, canViewAttendanceQueue, chatAttendanceFilter]);
   const [attendanceCounts, setAttendanceCounts] = useState({
     queue: 0,
     team: 0,
@@ -414,6 +593,8 @@ const Chat = () => {
   const [operationalPanelFilter, setOperationalPanelFilter] = useState<OperationalPanelFilter>('');
   /** Lista no painel: todas as origens | só UazAPI | só WhatsApp Cloud API (Meta). */
   const [chatChannelOrigin, setChatChannelOrigin] = useState<'all' | 'uazapi' | 'official'>('all');
+  /** Fase 2: filtro de grupo na lista UazAPI (requer flag no servidor). */
+  const [chatListConversationFilter, setChatListConversationFilter] = useState<'all' | 'groups'>('all');
   const channelQueryAppliedRef = useRef(false);
   useEffect(() => {
     if (channelQueryAppliedRef.current) return;
@@ -436,6 +617,7 @@ const Chat = () => {
   const [transferMode, setTransferMode] = useState<'operator' | 'team'>('operator');
   const [transferSubmitting, setTransferSubmitting] = useState(false);
   const [contactProfileOpen, setContactProfileOpen] = useState(false);
+  const [createGroupDialogOpen, setCreateGroupDialogOpen] = useState(false);
   const contactProfileOpenRef = useRef(contactProfileOpen);
   useEffect(() => {
     contactProfileOpenRef.current = contactProfileOpen;
@@ -451,6 +633,13 @@ const Chat = () => {
     staleTime: 120_000,
     enabled: contactProfileOpen,
   });
+  const { data: chatRuntimeConfig } = useQuery({
+    queryKey: ['chat-runtime-config'],
+    queryFn: () => chatService.getChatRuntimeConfig(),
+    staleTime: 60_000,
+  });
+  /** Ativo por defeito; só oculta quando o runtime-config devolve explicitamente false (Super Admin). */
+  const whatsappGroupsUiEnabled = chatRuntimeConfig?.whatsappGroupsEnabled !== false;
   const [attendingConversation, setAttendingConversation] = useState(false);
 
   const [loadingInstances, setLoadingInstances] = useState(false);
@@ -512,6 +701,11 @@ const Chat = () => {
   const [newCrmNoteOpen, setNewCrmNoteOpen] = useState(false);
   const [newCrmNoteText, setNewCrmNoteText] = useState('');
   const [newCrmNoteSaving, setNewCrmNoteSaving] = useState(false);
+  const [conversationKanbanTags, setConversationKanbanTags] = useState<ChatKanbanTagUi[]>([]);
+  const [conversationKanbanTagsLoading, setConversationKanbanTagsLoading] = useState(false);
+  const [tenantKanbanTagsCatalog, setTenantKanbanTagsCatalog] = useState<ChatKanbanTagUi[]>([]);
+  const [tenantKanbanTagsLoading, setTenantKanbanTagsLoading] = useState(false);
+  const [kanbanTagsBusy, setKanbanTagsBusy] = useState(false);
   const messageRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [flashMessageId, setFlashMessageId] = useState<string | null>(null);
   const [allCommentsDialog, setAllCommentsDialog] = useState<{ messageId: string } | null>(null);
@@ -641,12 +835,20 @@ const Chat = () => {
         inboxScope: 'owner' | 'tenant';
         attendanceFilter?: typeof attendanceFilterParam;
         channelOrigin?: 'uazapi' | 'official';
+        conversationFilter?: 'groups';
       } = {
         inboxScope: effectiveInboxScope,
         attendanceFilter: attendanceFilterParam,
       };
       if (origin !== 'all') {
         baseListFilters.channelOrigin = origin;
+      }
+      if (
+        whatsappGroupsUiEnabled &&
+        chatListConversationFilter === 'groups' &&
+        origin !== 'official'
+      ) {
+        baseListFilters.conversationFilter = 'groups';
       }
 
       if (origin === 'official') {
@@ -661,8 +863,8 @@ const Chat = () => {
           console.error('Erro ao carregar conversas WhatsApp Oficial:', error);
         }
       } else {
-        for (const instanceId of ids) {
-          try {
+      for (const instanceId of ids) {
+        try {
             if (chatListDiag) {
               console.log('[ChatListDiag] frontend request', {
                 instanceId,
@@ -683,12 +885,12 @@ const Chat = () => {
                 count: data.length,
               });
             }
-            allConversations.push(...data);
-          } catch (error) {
-            console.error(`Erro ao carregar conversas da instância ${instanceId}:`, error);
-          }
+          allConversations.push(...data);
+        } catch (error) {
+          console.error(`Erro ao carregar conversas da instância ${instanceId}:`, error);
         }
-
+      }
+      
         if (origin === 'all') {
           try {
             const officialOnly = await chatService.getConversations({
@@ -706,12 +908,14 @@ const Chat = () => {
       const uniqueConversations = Array.from(
         new Map(allConversations.map((conv) => [conv.id, conv])).values()
       ).sort((a, b) => {
-        const dateA = a.lastMessageAt || a.created_at || a.updated_at;
-        const dateB = b.lastMessageAt || b.created_at || b.updated_at;
-        if (!dateA && !dateB) return 0;
-        if (!dateA) return 1;
-        if (!dateB) return -1;
-        return new Date(dateB).getTime() - new Date(dateA).getTime();
+        const ta = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+        const tb = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+        if (ta && tb) return tb - ta;
+        if (ta && !tb) return -1;
+        if (!ta && tb) return 1;
+        const ca = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const cb = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return cb - ca;
       });
 
       if (chatListDiag) {
@@ -720,7 +924,7 @@ const Chat = () => {
           uniqueCount: uniqueConversations.length,
         });
       }
-
+      
       setConversations(uniqueConversations);
 
       try {
@@ -753,14 +957,30 @@ const Chat = () => {
     searchTerm,
     scheduleOperationsPanelRefresh,
     chatChannelOrigin,
+    whatsappGroupsUiEnabled,
+    chatListConversationFilter,
   ]);
+
+  const handleAfterGroupLeave = useCallback(() => {
+    setContactProfileOpen(false);
+    setSelectedConversationId(null);
+    if (isMobile) {
+      navigate('/chat', { replace: true });
+    }
+    void loadConversations(Array.from(enabledInstanceIdsRef.current));
+  }, [isMobile, navigate, loadConversations]);
 
   /** Ordenação da lista lateral — mesma regra que nos handlers realtime. */
   const sortConversationsByRecent = useCallback((list: ChatConversation[]) => {
     return [...list].sort((a, b) => {
-      const dateA = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
-      const dateB = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
-      return dateB - dateA;
+      const ta = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+      const tb = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+      if (ta && tb) return tb - ta;
+      if (ta && !tb) return -1;
+      if (!ta && tb) return 1;
+      const ca = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const cb = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return cb - ca;
     });
   }, []);
 
@@ -784,25 +1004,25 @@ const Chat = () => {
     async (conversationId: string, opts?: { silent?: boolean }) => {
       const silent = opts?.silent === true;
       if (!silent) {
-        setLoadingMessages(true);
+    setLoadingMessages(true);
       }
-      try {
-        const data = await chatService.getConversationMessages(conversationId);
+    try {
+      const data = await chatService.getConversationMessages(conversationId);
         if (selectedConversationIdRef.current !== conversationId) {
           return;
         }
-        setMessages(data);
-      } catch (error) {
-        console.error('Erro ao carregar mensagens:', error);
+      setMessages(data);
+    } catch (error) {
+      console.error('Erro ao carregar mensagens:', error);
         if (!silent) {
-          toast.error('Erro ao carregar mensagens', {
-            description: error instanceof Error ? error.message : undefined,
-          });
+      toast.error('Erro ao carregar mensagens', {
+        description: error instanceof Error ? error.message : undefined,
+      });
         }
-      } finally {
+    } finally {
         if (!silent) {
-          setLoadingMessages(false);
-        }
+      setLoadingMessages(false);
+    }
       }
     },
     [],
@@ -873,16 +1093,23 @@ const Chat = () => {
     navigate(`${location.pathname}${location.search}`, { replace: true, state: {} });
   }, [location.state, location.pathname, location.search, navigate]);
 
-  const goToClientProfileFromChat = useCallback((clientId: string, conversation: ChatConversation) => {
-    const keys = {
-      id: conversation.id,
-      external_chat_id: conversation.external_chat_id,
-      instance_id: conversation.instance_id,
-    };
-    navigate(buildClientProfileToFromChat(clientId, keys), {
-      state: buildClientProfileStateFromChat(keys),
-    });
-  }, [navigate]);
+  const goToClientProfileFromChat = useCallback(
+    (clientId: string, conversation: ChatConversation) => {
+      if (!commercial.canViewClientNav) {
+        toast.error(commercial.permDenied);
+        return;
+      }
+      const keys = {
+        id: conversation.id,
+        external_chat_id: conversation.external_chat_id,
+        instance_id: conversation.instance_id,
+      };
+      navigate(buildClientProfileToFromChat(clientId, keys), {
+        state: buildClientProfileStateFromChat(keys),
+      });
+    },
+    [navigate, commercial],
+  );
 
   const toggleContactProfilePanel = useCallback(() => {
     if (!selectedConversationId) return;
@@ -1160,12 +1387,22 @@ const Chat = () => {
         if (existingIndex >= 0) {
           // Atualizar conversa existente
           const updated = [...prev];
-          updated[existingIndex] = updatedConversation;
-          // Mover para o topo (conversa mais recente) baseado em lastMessageAt
+          const prevRow = prev[existingIndex];
+          const merged = mergeChatConversationRealtimePatch(prevRow, updatedConversation);
+          updated[existingIndex] = {
+            ...merged,
+            lastMessageAt: updatedConversation.lastMessageAt ?? prevRow.lastMessageAt ?? null,
+            lastMessagePreview: updatedConversation.lastMessagePreview ?? prevRow.lastMessagePreview ?? null,
+          };
           const sorted = updated.sort((a, b) => {
-            const dateA = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
-            const dateB = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
-            return dateB - dateA; // Mais recente primeiro
+            const ta = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+            const tb = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+            if (ta && tb) return tb - ta;
+            if (ta && !tb) return -1;
+            if (!ta && tb) return 1;
+            const ca = a.created_at ? new Date(a.created_at).getTime() : 0;
+            const cb = b.created_at ? new Date(b.created_at).getTime() : 0;
+            return cb - ca;
           });
           console.log('[Chat] Conversation updated and sorted', {
             conversationId: updatedConversation.id,
@@ -1178,11 +1415,15 @@ const Chat = () => {
         }
         // Adicionar nova conversa no topo
         const newList = [updatedConversation, ...prev];
-        // Ordenar por lastMessageAt
         const sorted = newList.sort((a, b) => {
-          const dateA = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
-          const dateB = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
-          return dateB - dateA; // Mais recente primeiro
+          const ta = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+          const tb = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+          if (ta && tb) return tb - ta;
+          if (ta && !tb) return -1;
+          if (!ta && tb) return 1;
+          const ca = a.created_at ? new Date(a.created_at).getTime() : 0;
+          const cb = b.created_at ? new Date(b.created_at).getTime() : 0;
+          return cb - ca;
         });
         console.log('[Chat] New conversation added and sorted', {
           conversationId: updatedConversation.id,
@@ -1236,6 +1477,10 @@ const Chat = () => {
               (conv.last_assignment_reason as string | undefined) ?? c.last_assignment_reason,
             assignee_email: (conv.assignee_email as string | undefined) ?? c.assignee_email,
             assignee_display: (conv.assignee_display as string | undefined) ?? c.assignee_display,
+            assignee_avatar_url:
+              conv.assignee_avatar_url !== undefined
+                ? (conv.assignee_avatar_url as string | null | undefined) ?? null
+                : c.assignee_avatar_url,
             assigned_team_id:
               (conv.assigned_team_id as string | null | undefined) ?? c.assigned_team_id,
             assigned_team_name:
@@ -1365,7 +1610,7 @@ const Chat = () => {
           const updatedConv = {
             ...conv,
             lastMessagePreview: messagePreview,
-            lastMessageAt: normalizedMessage.sentAt || conv.lastMessageAt || conv.created_at || conv.updated_at || null,
+            lastMessageAt: normalizedMessage.sentAt || conv.lastMessageAt || null,
             unreadCount: currentSelectedId === data.conversationId 
               ? conv.unreadCount 
               : (conv.unreadCount || 0) + 1,
@@ -1376,9 +1621,14 @@ const Chat = () => {
           
           // Ordenar por lastMessageAt (mais recente primeiro)
           const sorted = updated.sort((a, b) => {
-            const dateA = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
-            const dateB = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
-            return dateB - dateA;
+            const ta = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+            const tb = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+            if (ta && tb) return tb - ta;
+            if (ta && !tb) return -1;
+            if (!ta && tb) return 1;
+            const ca = a.created_at ? new Date(a.created_at).getTime() : 0;
+            const cb = b.created_at ? new Date(b.created_at).getTime() : 0;
+            return cb - ca;
           });
           
           console.log('[Chat] Conversation updated from new_message, sorted list:', {
@@ -1564,9 +1814,9 @@ const Chat = () => {
       setConversations([]);
       setSelectedConversationId(null);
       setMessages([]);
-      return;
-    }
-
+          return;
+        }
+        
     const enabledIds = instances
       .filter((inst) => (inst.metadata as Record<string, unknown> | null | undefined)?.enabled_in_chat !== false)
       .map((inst) => inst.id);
@@ -1579,13 +1829,13 @@ const Chat = () => {
       setSelectedInstanceId(null);
       return;
     }
-    const enabledArray = Array.from(enabledInstanceIds);
-    setSelectedInstanceId((currentSelected) => {
-      if (!currentSelected || !enabledInstanceIds.has(currentSelected)) {
-        return enabledArray[0] || null;
-      }
-      return currentSelected;
-    });
+      const enabledArray = Array.from(enabledInstanceIds);
+      setSelectedInstanceId((currentSelected) => {
+        if (!currentSelected || !enabledInstanceIds.has(currentSelected)) {
+          return enabledArray[0] || null;
+        }
+        return currentSelected;
+      });
   }, [enabledInstanceIds]);
 
   /** Após seleção automática da primeira instância, prioriza o canal vindo das Configurações. */
@@ -1677,9 +1927,9 @@ const Chat = () => {
       const end = messagesEndRef.current;
       if (!end) return;
       const viewport = end.closest('[data-radix-scroll-area-viewport]') as HTMLElement | null;
-      if (viewport) {
-        viewport.scrollTop = viewport.scrollHeight;
-      } else {
+          if (viewport) {
+            viewport.scrollTop = viewport.scrollHeight;
+            } else {
         end.scrollIntoView({ behavior: 'auto', block: 'end' });
       }
     };
@@ -1732,23 +1982,14 @@ const Chat = () => {
   // Função auxiliar para ordenar conversas por última mensagem (mais recente primeiro)
   const sortConversationsByLastMessage = (convs: ChatConversation[]) => {
     return [...convs].sort((a, b) => {
-      // Priorizar lastMessageAt, depois updated_at, depois created_at
-      const dateA = a.lastMessageAt
-        ? new Date(a.lastMessageAt).getTime()
-        : (a.created_at ? new Date(a.created_at).getTime() : (a.updated_at ? new Date(a.updated_at).getTime() : 0));
-      const dateB = b.lastMessageAt
-        ? new Date(b.lastMessageAt).getTime()
-        : (b.created_at ? new Date(b.created_at).getTime() : (b.updated_at ? new Date(b.updated_at).getTime() : 0));
-      
-      // Se ambas têm data, ordenar por mais recente primeiro
-      if (dateA > 0 && dateB > 0) {
-        return dateB - dateA;
-      }
-      // Se apenas uma tem data, ela vem primeiro
-      if (dateA > 0) return -1;
-      if (dateB > 0) return 1;
-      // Se nenhuma tem data, manter ordem original
-      return 0;
+      const ta = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+      const tb = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+      if (ta && tb) return tb - ta;
+      if (ta && !tb) return -1;
+      if (!ta && tb) return 1;
+      const ca = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const cb = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return cb - ca;
     });
   };
 
@@ -1835,6 +2076,67 @@ const Chat = () => {
   const selectedConversation = conversations.find(
     (conversation) => conversation.id === selectedConversationId,
   );
+  const selectedIsGroupChat =
+    whatsappGroupsUiEnabled &&
+    Boolean(
+      selectedConversation &&
+        (selectedConversation.conversation_type === 'group' ||
+          selectedConversation.external_chat_id?.endsWith('@g.us')),
+    );
+
+  useEffect(() => {
+    if (!selectedConversationId || selectedIsGroupChat) {
+      setConversationKanbanTags([]);
+      return;
+    }
+    let cancelled = false;
+    setConversationKanbanTagsLoading(true);
+    void chatService
+      .getConversationKanbanTags(selectedConversationId)
+      .then((r) => {
+        if (!cancelled) setConversationKanbanTags(r.tags);
+      })
+      .catch(() => {
+        if (!cancelled) setConversationKanbanTags([]);
+      })
+      .finally(() => {
+        if (!cancelled) setConversationKanbanTagsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedConversationId, selectedIsGroupChat]);
+
+  /** Catálogo de tags do tenant para cabeçalho (+) e perfil — carrega com a conversa aberta. */
+  useEffect(() => {
+    if (!user || !selectedConversationId || selectedIsGroupChat) return;
+    let cancelled = false;
+    setTenantKanbanTagsLoading(true);
+    void chatKanbanService
+      .listTenantKanbanTags()
+      .then((rows) => {
+        if (!cancelled) {
+          setTenantKanbanTagsCatalog(
+            rows
+              .map((t) => ({
+                id: t.id,
+                label: t.label,
+                color: t.color?.trim() ? normalizeHexColor(t.color) : DEFAULT_CHAT_TAG_COLOR,
+              }))
+              .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR')),
+          );
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setTenantKanbanTagsCatalog([]);
+      })
+      .finally(() => {
+        if (!cancelled) setTenantKanbanTagsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user, selectedConversationId, selectedIsGroupChat]);
 
   useEffect(() => {
     chatProfileCrmLinkRef.current = {
@@ -1842,6 +2144,10 @@ const Chat = () => {
       leadId: selectedConversation?.leadId ?? null,
     };
   }, [selectedConversation?.client_id, selectedConversation?.leadId]);
+
+  useEffect(() => {
+    setCreateGroupDialogOpen(false);
+  }, [selectedConversationId]);
 
   const scrollToMessageId = useCallback((id: string) => {
     const el = messageRowRefs.current[id];
@@ -2016,39 +2322,66 @@ const Chat = () => {
     );
   }, [selectedConversation, currentClient, currentLead]);
 
+  /** MSISDN do contacto para criar grupo: conversa + CRM + linha de identidade (evita perfil com telefone e botão ausente). */
+  const createGroupClientMsisdn = useMemo(
+    () =>
+      resolveClientMsisdnForCreateGroup(selectedConversation ?? null, {
+        crmPhone: (currentClient?.phone ?? currentLead?.phone) as string | undefined,
+        identityPhoneLine: selectedIdentity?.phoneLine,
+      }),
+    [selectedConversation, currentClient, currentLead, selectedIdentity],
+  );
+
   /** Uma única linha no header mobile: vínculo+estado OU telefone — nunca repetir número. */
   const mobileThreadHeaderSubline = useMemo(() => {
     if (!isMobile || !routeConversationId || !selectedConversation || !selectedIdentity) return null;
     const conv = selectedConversation;
     const phone = selectedIdentity.phoneLine?.trim() || '';
     const att = attendanceStatusLabel(conv.attendance_status);
-    const assignee = conv.assignee_display?.trim() ? shortOperatorName(conv.assignee_display) : '';
+    const skipAttLabel = att === 'Aberto' || att === 'Sem resp.';
+    const assignee =
+      attendanceIsInProgress(conv.attendance_status) && conv.assignee_display?.trim()
+        ? shortOperatorName(conv.assignee_display)
+        : '';
     const team =
       conv.assigned_team_id && conv.assigned_team_name?.trim()
         ? `Fila ${conv.assigned_team_name.trim()}`
         : '';
 
+    const tagPart =
+      conversationKanbanTags.length > 0
+        ? conversationKanbanTags.map((t) => t.label).join(', ')
+        : '';
+
     if (conv.client_id) {
       const parts = ['Cliente'];
-      if (att) parts.push(att);
-      else if (assignee) parts.push(assignee);
+      if (tagPart) parts.push(tagPart);
+      if (assignee) parts.push(assignee);
       else if (team) parts.push(team);
+      else if (att && !skipAttLabel) parts.push(att);
       return parts.join(' · ');
     }
     if (conv.leadId) {
       const parts = ['Lead'];
-      if (att) parts.push(att);
-      else if (assignee) parts.push(assignee);
+      if (tagPart) parts.push(tagPart);
+      if (assignee) parts.push(assignee);
       else if (team) parts.push(team);
+      else if (att && !skipAttLabel) parts.push(att);
       return parts.join(' · ');
     }
     if (conv.link_state === 'review_required') {
-      return att ? `Revisar vínculo · ${att}` : 'Revisar vínculo';
+      const partsRv = ['Revisar vínculo'];
+      if (tagPart) partsRv.push(tagPart);
+      if (assignee) partsRv.push(assignee);
+      else if (att && !skipAttLabel) partsRv.push(att);
+      return partsRv.join(' · ');
     }
     if (phone) return phone;
-    const fallback = [att, assignee, team].filter(Boolean).join(' · ');
+    const fallback = [tagPart || null, att && !skipAttLabel ? att : null, assignee, team]
+      .filter(Boolean)
+      .join(' · ');
     return fallback || null;
-  }, [isMobile, routeConversationId, selectedConversation, selectedIdentity]);
+  }, [isMobile, routeConversationId, selectedConversation, selectedIdentity, conversationKanbanTags]);
 
   const chatContractInitialSigners = useMemo(() => {
     const contact = currentClient || currentLead;
@@ -2082,6 +2415,13 @@ const Chat = () => {
 
   const chatContactProfileModel = useMemo(() => {
     if (!selectedConversation || !user) return null;
+    if (
+      whatsappGroupsUiEnabled &&
+      (selectedConversation.conversation_type === 'group' ||
+        selectedConversation.external_chat_id?.endsWith('@g.us'))
+    ) {
+      return null;
+    }
     const conv = selectedConversation;
     const id = selectedIdentity;
     const displayName = id?.displayName ?? '—';
@@ -2093,7 +2433,9 @@ const Chat = () => {
     if (conv.attendance_status === 'queued') statusParts.push('Na fila');
     if (conv.attendance_status === 'closed') statusParts.push('Encerrado');
     const statusLine = statusParts.length ? statusParts.join(' · ') : null;
-    const lastInteractionLabel = formatRelativeDate(conv.lastMessageAt || conv.updated_at);
+    const lastInteractionLabel = conv.lastMessageAt
+      ? formatRelativeDate(conv.lastMessageAt)
+      : 'Sem mensagens recentes';
     const assigneeDisplay =
       conv.assignee_display?.trim() ||
       (conv.assigned_to_user_id ? 'Atribuído' : null);
@@ -2171,6 +2513,7 @@ const Chat = () => {
 
     const adminBypass = user.is_tenant_admin === true;
     const canTransferProfile =
+      hasPermissionKey('chat.transfer_attendance') &&
       !!user.tenant_id &&
       attendanceIsInProgress(conv.attendance_status) &&
       !!conv.assigned_to_user_id &&
@@ -2189,7 +2532,37 @@ const Chat = () => {
       selectedClientGroupId: currentClient?.group_id ?? null,
       canTransferProfile,
     };
-  }, [selectedConversation, user, selectedIdentity, currentClient, currentLead]);
+  }, [
+    selectedConversation,
+    user,
+    selectedIdentity,
+    currentClient,
+    currentLead,
+    whatsappGroupsUiEnabled,
+    hasPermissionKey,
+  ]);
+
+  const showCreateGroupSectionInProfile = useMemo(() => {
+    if (!hasPermissionKey('chat.create_group')) return false;
+    if (!whatsappGroupsUiEnabled || !selectedConversation || selectedIsGroupChat) return false;
+    if (selectedConversation.whatsapp_official_account_id) return false;
+    const effectiveInstanceId =
+      selectedConversation.instance_id ??
+      (enabledInstanceIds.size === 1 ? Array.from(enabledInstanceIds)[0]! : null);
+    return Boolean(effectiveInstanceId);
+  }, [
+    hasPermissionKey,
+    whatsappGroupsUiEnabled,
+    selectedConversation,
+    selectedIsGroupChat,
+    enabledInstanceIds,
+  ]);
+
+  const createGroupWithClientDisabled = !createGroupClientMsisdn;
+  const createGroupWithClientDisabledHint = createGroupWithClientDisabled
+    ? 'Não foi possível detetar um número WhatsApp válido para incluir este contacto no grupo (ex.: conversa só com identificador @lid). Confirme o telefone no CRM ou na ficha do contacto.'
+    : null;
+
   const activeInstance =
     instances.find((instance) => instance.id === selectedInstanceId) ||
     instances.find((instance) => instance.status === 'connected') ||
@@ -2242,11 +2615,15 @@ const Chat = () => {
           );
         })
         .catch((error) => {
-          console.error('Erro ao marcar conversa como lida:', error);
+        console.error('Erro ao marcar conversa como lida:', error);
         });
     }
 
-    void loadConversationProfile(conversationId);
+    const skipCrm =
+      whatsappGroupsUiEnabled &&
+      !!conversation &&
+      (conversation.conversation_type === 'group' || conversation.external_chat_id?.endsWith('@g.us'));
+    void loadConversationProfile(conversationId, { skipCrm });
   };
 
   const openContactProfileFromList = (conversation: ChatConversation, e: React.MouseEvent) => {
@@ -2257,7 +2634,14 @@ const Chat = () => {
     setContactProfileOpen(true);
   };
 
-  const loadConversationProfile = useCallback(async (conversationId: string) => {
+  const loadConversationProfile = useCallback(async (conversationId: string, opts?: { skipCrm?: boolean }) => {
+    if (opts?.skipCrm) {
+      setCurrentClient(null);
+      setCurrentLead(null);
+      setLoadingClient(false);
+      setLoadingLead(false);
+      return;
+    }
     setLoadingClient(true);
     setLoadingLead(true);
     try {
@@ -2347,6 +2731,77 @@ const Chat = () => {
       }
     },
     [currentClient, queryClient],
+  );
+
+  const handleAddConversationKanbanTag = useCallback(
+    async (opts: { tagId?: string; newLabel?: string; newColor?: string }) => {
+      if (!selectedConversationId) return;
+      setKanbanTagsBusy(true);
+      try {
+        const body = opts.tagId
+          ? { tag_id: opts.tagId }
+          : {
+              label: opts.newLabel?.trim() ?? '',
+              ...(opts.newColor?.trim() ? { color: opts.newColor.trim() } : {}),
+            };
+        const res = await chatService.addConversationKanbanTag(selectedConversationId, body);
+        const tag: ChatKanbanTagUi = res.tag;
+        setConversationKanbanTags((prev) => {
+          if (prev.some((t) => t.id === tag.id)) return prev;
+          return [...prev, tag];
+        });
+        setTenantKanbanTagsCatalog((prev) => {
+          if (prev.some((t) => t.id === tag.id)) return prev;
+          return [...prev, tag].sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
+        });
+        setConversations((prev) => {
+          const idx = prev.findIndex((c) => c.id === selectedConversationId);
+          if (idx < 0) return prev;
+          const row = prev[idx]!;
+          const cur = row.tags ?? [];
+          const merged = cur.some((t) => t.id === tag.id) ? cur : [...cur, tag];
+          patchConversationKanbanTagsEverywhere(queryClient, selectedConversationId, merged);
+          const next = [...prev];
+          next[idx] = { ...row, tags: merged };
+          return next;
+        });
+        toast.success('Tag adicionada');
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Não foi possível adicionar a tag');
+        throw e;
+      } finally {
+        setKanbanTagsBusy(false);
+      }
+    },
+    [selectedConversationId, queryClient],
+  );
+
+  const handleRemoveConversationKanbanTag = useCallback(
+    async (tagId: string) => {
+      if (!selectedConversationId) return;
+      setKanbanTagsBusy(true);
+      try {
+        await chatService.removeConversationKanbanTag(selectedConversationId, tagId);
+        setConversationKanbanTags((prev) => prev.filter((t) => t.id !== tagId));
+        setConversations((prev) => {
+          const idx = prev.findIndex((c) => c.id === selectedConversationId);
+          if (idx < 0) return prev;
+          const row = prev[idx]!;
+          const merged = (row.tags ?? []).filter((t) => t.id !== tagId);
+          patchConversationKanbanTagsEverywhere(queryClient, selectedConversationId, merged);
+          const next = [...prev];
+          next[idx] = { ...row, tags: merged };
+          return next;
+        });
+        toast.success('Tag removida da conversa');
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Não foi possível remover a tag');
+        throw e;
+      } finally {
+        setKanbanTagsBusy(false);
+      }
+    },
+    [selectedConversationId, queryClient],
   );
 
   const handleSelectConversationRef = useRef(handleSelectConversation);
@@ -2914,7 +3369,11 @@ const Chat = () => {
 
   const handleAddLead = async () => {
     if (!selectedConversation) return;
-    
+    if (!commercial.canCreateLeadFromChat) {
+      toast.error(commercial.permDenied);
+      return;
+    }
+
     try {
       const leadData: any = {
         name: selectedConversation.contactName || 
@@ -2960,8 +3419,52 @@ const Chat = () => {
     }
   };
 
+  const handleCreateClientFromConversation = async () => {
+    if (!selectedConversation) return;
+    if (!commercial.canCreateClientFromChat) {
+      toast.error(commercial.permDenied);
+      return;
+    }
+    try {
+      const { addClient } = await import('@/utils/clients-helpers');
+      const created = await addClient({
+        name:
+          selectedConversation.contactName ||
+          selectedConversation.profileName ||
+          selectedConversation.phoneNumber ||
+          selectedConversation.external_chat_id ||
+          'Contato WhatsApp',
+        phone: selectedConversation.phoneNumber || undefined,
+        status: 'Ativo',
+      });
+      const clientId = (created.data as { id?: string } | undefined)?.id;
+      if (!created.success || !clientId) {
+        throw new Error('Cliente criado sem ID retornado');
+      }
+      const updated = await chatService.linkConversation(selectedConversation.id, {
+        type: 'client',
+        id: clientId,
+      });
+      setConversations((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+      if (selectedConversationId === updated.id) {
+        await loadConversationProfile(updated.id);
+      }
+      void queryClient.invalidateQueries({ queryKey: ['clients'] });
+      void queryClient.invalidateQueries({ queryKey: ['leads'] });
+      toast.success('Cliente criado e vinculado com sucesso!');
+    } catch (error) {
+      toast.error('Não foi possível criar cliente', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    }
+  };
+
   const handleConvertToClient = async () => {
     if (!currentLead || !selectedConversation) return;
+    if (!commercial.canConvertLeadToClient) {
+      toast.error(commercial.permDenied);
+      return;
+    }
 
     try {
       // Importar helper de clientes
@@ -3011,7 +3514,58 @@ const Chat = () => {
     }
   };
 
+  /** + no avatar: lead novo ou converter lead → cliente, sem menu nem abrir perfil. */
+  const handleCrmAvatarPlusClick = useCallback(
+    async (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!selectedConversation) return;
+      if (
+        whatsappGroupsUiEnabled &&
+        (selectedConversation.conversation_type === 'group' ||
+          selectedConversation.external_chat_id?.endsWith('@g.us'))
+      ) {
+        return;
+      }
+      if (selectedConversation.client_id) return;
+      if (selectedConversation.leadId) {
+        if (!commercial.canConvertLeadToClient) {
+          toast.error(commercial.permDenied);
+          return;
+        }
+        await handleConvertToClient();
+      } else {
+        if (!commercial.canCreateLeadFromChat) {
+          toast.error(commercial.permDenied);
+          return;
+        }
+        await handleAddLead();
+      }
+    },
+    [
+      selectedConversation,
+      whatsappGroupsUiEnabled,
+      handleConvertToClient,
+      handleAddLead,
+      commercial,
+    ],
+  );
+
   // Função auxiliar para enviar notificação
+  const chatActionNotificationDebugEnabled =
+    String(
+      (
+        (import.meta as unknown as { env?: Record<string, unknown> }).env?.CHAT_ACTION_NOTIFICATION_DEBUG ??
+        (import.meta as unknown as { env?: Record<string, unknown> }).env?.VITE_CHAT_ACTION_NOTIFICATION_DEBUG ??
+        ''
+      ),
+    ).trim() === '1';
+  const debugChatActionNotification = (payload: Record<string, unknown>) => {
+    if (!chatActionNotificationDebugEnabled) return;
+    // eslint-disable-next-line no-console
+    console.log('[chat-action-notification]', payload);
+  };
+
   const sendNotification = async (
     resourceType: string,
     action: string,
@@ -3071,9 +3625,27 @@ const Chat = () => {
           console.error('Erro ao sincronizar mensagens após enviar notificação:', error);
         }
       }
+      debugChatActionNotification({
+        source: 'full_chat',
+        action: resourceType,
+        entityId: resourceId ?? null,
+        conversationId: selectedConversationId ?? null,
+        notificationCreated: true,
+        deduped: false,
+        reason: 'messagesService.send',
+      });
       return true;
     } catch (error) {
       console.error('Erro ao enviar notificação:', error);
+      debugChatActionNotification({
+        source: 'full_chat',
+        action: resourceType,
+        entityId: resourceId ?? null,
+        conversationId: selectedConversationId ?? null,
+        notificationCreated: false,
+        deduped: false,
+        reason: error instanceof Error ? error.message : 'unknown_error',
+      });
       // Não mostrar erro ao usuário, apenas logar
       return false;
     }
@@ -3081,6 +3653,10 @@ const Chat = () => {
 
   const handleCreateProposal = () => {
     if (!selectedConversation?.client_id && !selectedConversation?.leadId) return;
+    if (!commercial.canCreateProposalFromChatFull) {
+      toast.error(commercial.permDenied);
+      return;
+    }
     consumeKanbanProposalColumnContextIfMatch(selectedConversation.id);
     setViewMode('proposal-create');
   };
@@ -3114,31 +3690,20 @@ const Chat = () => {
       console.error('Erro ao registrar timeline da proposta criada no chat:', error);
     }
 
-    const contact = currentClient || currentLead;
-    if (contact) {
-      try {
-        const proposalLink = created.public_link_path
-          ? `${window.location.origin}${created.public_link_path}`
-          : `${window.location.origin}/proposals/${created.id}`;
-        await sendNotification('proposals', 'created', {
-          client_name: contact.name || 'Cliente',
-          proposal_title: created.title,
-          proposal_amount: (created.amount ?? 0).toLocaleString('pt-BR', {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
-          }),
-          proposal_link: proposalLink,
-        }, created.id);
-    } catch (error) {
-        console.error('Erro ao notificar proposta criada no chat:', error);
-      }
-    }
-
     if (mode === 'sent') {
       toast.success('Proposta criada com sucesso');
     } else {
       toast.success('Rascunho de proposta salvo');
     }
+    debugChatActionNotification({
+      source: 'full_chat',
+      action: 'proposal',
+      entityId: created.id,
+      conversationId: selectedConversation?.id ?? null,
+      notificationCreated: false,
+      deduped: true,
+      reason: 'resource_domain_is_source_of_truth',
+    });
   };
 
   const handleChatOpenAgendaComposer = useCallback(() => {
@@ -3342,6 +3907,10 @@ const Chat = () => {
 
   const handleCreateInvoice = () => {
     if (!selectedConversation?.client_id) return;
+    if (!commercial.canCreateInvoiceFromChatFull) {
+      toast.error(commercial.permDenied);
+      return;
+    }
     setViewMode('invoice-create');
   };
 
@@ -3367,16 +3936,7 @@ const Chat = () => {
           },
         });
       }
-      if (invoice?.payment_token) {
-        const dueDate = new Date(invoice.due_date).toLocaleDateString('pt-BR');
-        const sent = await sendNotification('invoices', 'created', {
-          client_name: currentClient?.name || 'Cliente',
-          invoice_number: invoice.invoice_number || invoice.id.slice(0, 8).toUpperCase(),
-          invoice_total: (invoice.amount_cents / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2 }),
-          due_date: dueDate,
-          invoice_link: buildInvoiceLink(invoice.payment_token),
-        }, invoice.id);
-        if (sent && clientIdForTimeline) {
+      if (invoice?.payment_token && clientIdForTimeline) {
           await recordClientTimelineEvent(clientIdForTimeline, {
             event_name: 'chat_invoice_sent',
             source: 'chat',
@@ -3387,19 +3947,32 @@ const Chat = () => {
             metadata: {
               channel: 'whatsapp',
               conversation_id: selectedConversation?.id ?? null,
+            invoice_link: buildInvoiceLink(invoice.payment_token),
             },
           });
-        }
       }
     } catch (error) {
       console.error('Erro ao enviar fatura criada no chat:', error);
     }
+    debugChatActionNotification({
+      source: 'full_chat',
+      action: 'invoice',
+      entityId: invoiceId,
+      conversationId: selectedConversation?.id ?? null,
+      notificationCreated: false,
+      deduped: true,
+      reason: 'resource_domain_is_source_of_truth',
+    });
     toast.success('Fatura criada com sucesso');
   };
 
   const handleCreateContract = () => {
     if (!selectedConversation?.client_id && !selectedConversation?.leadId) return;
     if (!currentClient && !currentLead) return;
+    if (!commercial.canCreateContractFromChatFull) {
+      toast.error(commercial.permDenied);
+      return;
+    }
     setViewMode('contract-create');
   };
 
@@ -3486,6 +4059,10 @@ const Chat = () => {
             raw.assignee_display !== undefined
               ? (raw.assignee_display as string | null | undefined)
               : c.assignee_display,
+          assignee_avatar_url:
+            raw.assignee_avatar_url !== undefined
+              ? (raw.assignee_avatar_url as string | null | undefined)
+              : c.assignee_avatar_url,
           assigned_team_id:
             raw.assigned_team_id !== undefined
               ? (raw.assigned_team_id as string | null | undefined)
@@ -3514,6 +4091,10 @@ const Chat = () => {
         assignee_email: user.email,
         assignee_display:
           [user.first_name, user.last_name].filter(Boolean).join(' ').trim() || user.email,
+        assignee_avatar_url:
+          typeof profile?.avatar_url === 'string' && profile.avatar_url.trim()
+            ? profile.avatar_url.trim()
+            : null,
       });
     } catch (error) {
       toast.error('Não foi possível atender', {
@@ -3522,7 +4103,7 @@ const Chat = () => {
     } finally {
       setAttendingConversation(false);
     }
-  }, [selectedConversationId, user, mergeAttendanceFromPayload]);
+  }, [selectedConversationId, user, profile, mergeAttendanceFromPayload]);
 
   const handleCloseAttendance = useCallback(async () => {
     if (!selectedConversationId) return;
@@ -3539,6 +4120,7 @@ const Chat = () => {
         assigned_team_name: null,
         assignee_email: null,
         assignee_display: null,
+        assignee_avatar_url: null,
       });
     } catch (error) {
       toast.error('Não foi possível encerrar', {
@@ -3634,10 +4216,36 @@ const Chat = () => {
     const identity = resolveConversationIdentity(conversation, linkedClient, linkedLead);
     const showPhoneRow =
       Boolean(identity.phoneLine) && identity.displayName.trim() !== identity.phoneLine.trim();
+    const assigneeBesideCrm =
+      attendanceIsInProgress(conversation.attendance_status) && conversation.assignee_display?.trim() ? (
+        <span className="inline-flex items-center gap-0.5 text-foreground/90">
+          <Headphones className="h-2.5 w-2.5 shrink-0 opacity-85" aria-hidden />
+          {(() => {
+            const src = chatAvatarUrlForImgSrc(conversation.assignee_avatar_url);
+            return src ? (
+              <Avatar className="h-3.5 w-3.5 shrink-0 border border-border/50">
+                <AvatarImage src={src} alt="" className="object-cover" />
+                <AvatarFallback className="text-[6px] font-semibold">
+                  {assigneeInitials(conversation.assignee_display!)}
+                </AvatarFallback>
+              </Avatar>
+            ) : null;
+          })()}
+          <span className="font-medium">{shortOperatorName(conversation.assignee_display)}</span>
+        </span>
+      ) : null;
+    const rawListBadges = selectChatBadges(conversation, slaUiContext);
+    const hideProgBadgeInList =
+      (Boolean(conversation.client_id) || Boolean(conversation.leadId)) &&
+      attendanceIsInProgress(conversation.attendance_status) &&
+      Boolean(conversation.assignee_display?.trim());
+    const listAttendanceBadges = hideProgBadgeInList
+      ? rawListBadges.filter((b) => b.key !== 'prog')
+      : rawListBadges;
 
     return (
       <div
-        key={conversation.id}
+      key={conversation.id}
         role="button"
         tabIndex={0}
         draggable
@@ -3712,10 +4320,23 @@ const Chat = () => {
               >
                 <span>{identity.displayName}</span>
                 {conversation.client_id ? (
-                  <span className="ml-1.5 font-normal text-[10px] text-muted-foreground">· Cliente</span>
+                  <span className="ml-1.5 inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5 font-normal text-[10px] text-muted-foreground">
+                    <span>· Cliente</span>
+                    {assigneeBesideCrm}
+                  </span>
                 ) : null}
                 {!conversation.client_id && conversation.leadId ? (
-                  <span className="ml-1.5 font-normal text-[10px] text-muted-foreground">· Lead</span>
+                  <span className="ml-1.5 inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5 font-normal text-[10px] text-muted-foreground">
+                    <span>· Lead</span>
+                    {assigneeBesideCrm}
+                  </span>
+                ) : null}
+                {whatsappGroupsUiEnabled &&
+                (conversation.conversation_type === 'group' ||
+                  conversation.external_chat_id?.endsWith('@g.us')) ? (
+                  <Badge variant="outline" className="ml-1.5 h-4 shrink-0 px-1 py-0 text-[9px] font-normal">
+                    Grupo
+                  </Badge>
                 ) : null}
               </div>
               {shouldShowCommunicationChannelBadge(conversation.provider) ? (
@@ -3724,7 +4345,7 @@ const Chat = () => {
                 </span>
               ) : null}
               <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-                {formatRelativeDate(conversation.lastMessageAt || conversation.updated_at)}
+                {conversation.lastMessageAt ? formatRelativeDate(conversation.lastMessageAt) : 'Sem mensagens recentes'}
             </span>
           </div>
             {showPhoneRow ? (
@@ -3733,13 +4354,35 @@ const Chat = () => {
             <p className="mt-0.5 line-clamp-1 text-[12px] leading-snug text-muted-foreground md:text-xs">
               {conversation.lastMessagePreview || 'Sem mensagens recentes'}
           </p>
+            {(() => {
+              const tagUi = resolveChatKanbanTagsForUi(conversation);
+              if (tagUi.length === 0) return null;
+              const max = 3;
+              const visible = tagUi.slice(0, max);
+              const more = tagUi.length - visible.length;
+              return (
+                <div className="mt-0.5 flex max-w-full min-w-0 flex-wrap items-center gap-1">
+                  {visible.map((t) => (
+                    <ChatKanbanTagBadge key={t.id} label={t.label} color={t.color} className="max-w-[46%]" />
+                  ))}
+                  {more > 0 ? (
+                    <span className="shrink-0 text-[10px] font-medium tabular-nums text-muted-foreground">
+                      +{more}
+                    </span>
+                  ) : null}
+                </div>
+              );
+            })()}
             <div className="mt-1 flex flex-wrap items-center gap-0.5 md:mt-1 md:gap-1">
-              {selectChatBadges(conversation, slaUiContext).map((b) => (
+              {listAttendanceBadges.map((b) => (
                 <Badge
                   key={b.key}
                   variant={b.variant}
-                  className="h-4 border-border/40 px-1 py-0 text-[10px] font-normal leading-none md:h-4"
+                  className="h-4 gap-0.5 border-border/40 px-1 py-0 text-[10px] font-normal leading-none md:h-4"
                 >
+                  {b.leadingIcon === 'headphones' ? (
+                    <Headphones className="h-2.5 w-2.5 shrink-0 opacity-90" aria-hidden />
+                  ) : null}
                   {b.label}
               </Badge>
               ))}
@@ -3796,7 +4439,7 @@ const Chat = () => {
                       </div>
                       <Popover open={filtersPopoverOpen} onOpenChange={setFiltersPopoverOpen}>
                 <PopoverTrigger asChild>
-                  <Button
+              <Button 
                     type="button"
                             variant={
                               filtersPopoverOpen || chatChannelOrigin !== 'all'
@@ -3865,14 +4508,14 @@ const Chat = () => {
                                             <span className="truncate text-sm font-semibold leading-snug">
                                 {instanceConnectionUi.displayName}
                               </span>
-                              {enabledInstanceIds.size > 1 && (
+                          {enabledInstanceIds.size > 1 && (
                                 <Badge
                                   variant="secondary"
                                                 className="h-4 shrink-0 px-1.5 py-0 text-[10px]"
                                 >
-                                  +{enabledInstanceIds.size - 1}
-                                </Badge>
-                              )}
+                              +{enabledInstanceIds.size - 1}
+                            </Badge>
+                          )}
                             </div>
                             {instanceConnectionUi.phoneDisplay ? (
                                             <p className="mt-0.5 whitespace-nowrap text-[11px] tabular-nums text-muted-foreground">
@@ -3951,15 +4594,15 @@ const Chat = () => {
                                 }`}
                                 aria-hidden
                               />
-                            </div>
+              </div>
                             <div className="min-w-0 flex-1 text-left">
                                             <div className="truncate text-sm font-semibold leading-snug">
                                 {rowUi.displayName}
                               </div>
                                             <div className="truncate text-xs tabular-nums text-muted-foreground">
                                 {rowUi.phoneDisplay || statusLine}
-                              </div>
-                            </div>
+              </div>
+            </div>
                           </div>
                         );
                       })}
@@ -4007,18 +4650,18 @@ const Chat = () => {
                                           className="h-4 min-w-[1.25rem] justify-center px-1.5 py-0 text-[10px]"
                               >
                                 {attendanceCounts.unread > 99 ? '99+' : attendanceCounts.unread}
-                              </Badge>
-                            )}
-                          </TabsTrigger>
+                  </Badge>
+                )}
+              </TabsTrigger>
                                     <TabsTrigger value="leads" className="h-8 px-2.5 py-1.5 text-xs">
                             Leads
                           </TabsTrigger>
                                     <TabsTrigger value="clients" className="h-8 px-2.5 py-1.5 text-xs">
                             Clientes
                           </TabsTrigger>
-                        </TabsList>
-                      </Tabs>
-                    </div>
+            </TabsList>
+              </Tabs>
+            </div>
                     {user?.tenant_id ? (
                       <div className="space-y-1.5">
                                   <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -4036,7 +4679,7 @@ const Chat = () => {
                                       <SelectItem value="tenant">Equipa — toda a empresa</SelectItem>
                           </SelectContent>
                         </Select>
-                      </div>
+        </div>
                     ) : null}
                     <div className="border-t border-border pt-3">
                       <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -4057,7 +4700,31 @@ const Chat = () => {
                           <SelectItem value="official">WhatsApp Oficial (Meta)</SelectItem>
                         </SelectContent>
                       </Select>
-                    </div>
+      </div>
+                    {whatsappGroupsUiEnabled && chatChannelOrigin !== 'official' ? (
+                      <div className="border-t border-border pt-3">
+                        <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          Grupos WhatsApp
+                        </p>
+                        <ToggleGroup
+                          type="single"
+                          value={chatListConversationFilter}
+                          onValueChange={(v) => {
+                            if (v === 'all' || v === 'groups') setChatListConversationFilter(v);
+                          }}
+                          variant="outline"
+                          size="sm"
+                          className="flex w-full flex-wrap justify-stretch gap-1"
+                        >
+                          <ToggleGroupItem value="all" className="h-8 flex-1 text-xs">
+                            Todos
+                          </ToggleGroupItem>
+                          <ToggleGroupItem value="groups" className="h-8 flex-1 text-xs">
+                            Grupos
+                          </ToggleGroupItem>
+                        </ToggleGroup>
+                      </div>
+                    ) : null}
                   </div>
                   </div>
                 </PopoverContent>
@@ -4091,7 +4758,8 @@ const Chat = () => {
                                 </span>
                               )}
                             </ToggleGroupItem>
-                          {user?.tenant_id &&
+                          {canViewAttendanceQueue &&
+                            user?.tenant_id &&
                             chatInboxScope === 'tenant' &&
                             (attendanceCounts.team > 0 || chatAttendanceFilter === 'team') && (
                               <ToggleGroupItem value="team" className="h-7 shrink-0 gap-1 px-2 text-[11px] md:h-7 md:px-2 md:text-[10px]">
@@ -4103,7 +4771,8 @@ const Chat = () => {
                                 )}
                               </ToggleGroupItem>
                             )}
-                          {(attendanceCounts.queue > 0 || chatAttendanceFilter === 'queue') && (
+                          {canViewAttendanceQueue &&
+                            (attendanceCounts.queue > 0 || chatAttendanceFilter === 'queue') && (
                             <ToggleGroupItem value="queue" className="h-7 shrink-0 gap-1 px-2 text-[11px] md:h-7 md:px-2 md:text-[10px]">
                               Fila
                               {attendanceCounts.queue > 0 && (
@@ -4113,6 +4782,7 @@ const Chat = () => {
                             )}
                           </ToggleGroupItem>
                           )}
+                          {canViewAttendanceQueue && (
                           <ToggleGroupItem value="unassigned" className="h-7 shrink-0 gap-1 px-2 text-[11px] md:h-7 md:px-2 md:text-[10px]">
                             Não atribuídas
                             {attendanceCounts.unassigned > 0 && (
@@ -4121,6 +4791,7 @@ const Chat = () => {
                               </span>
                             )}
                           </ToggleGroupItem>
+                          )}
                           <ToggleGroupItem value="closed" className="h-7 shrink-0 gap-1 px-2 text-[11px] md:h-7 md:px-2 md:text-[10px]">
                             Encerradas
                             {attendanceCounts.closed > 0 && (
@@ -4310,21 +4981,24 @@ const Chat = () => {
                                 <ChevronLeft className="h-5 w-5" />
                               </Button>
                             ) : null}
-                            <button
-                              type="button"
+                            <div
                               className={cn(
                                 'flex min-w-0 flex-1 items-center gap-1.5 text-left md:gap-2.5',
-                                'cursor-pointer rounded-md outline-none transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-ring/40',
                               )}
-                              onClick={toggleContactProfilePanel}
-                              aria-expanded={contactProfileOpen}
-                              aria-controls="chat-contact-profile-panel"
-                              title="Abrir ou fechar perfil do contato"
                             >
-                            <Avatar 
-                              className={cn(
-                                'h-7 w-7 shrink-0 md:h-10 md:w-10',
-                              )}
+                              <div className="relative shrink-0">
+                                <button
+                                  type="button"
+                                  className="rounded-full outline-none transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-ring/40"
+                                  onClick={toggleContactProfilePanel}
+                                  aria-expanded={contactProfileOpen}
+                                  aria-controls="chat-contact-profile-panel"
+                                  title="Abrir ou fechar perfil do contato"
+                                >
+                                  <Avatar
+                                    className={cn(
+                                      'h-7 w-7 md:h-10 md:w-10',
+                                    )}
                             >
                               {selectedIdentity?.avatarUrl ? (
                                 <AvatarImage
@@ -4332,16 +5006,53 @@ const Chat = () => {
                                   alt={selectedIdentity.displayName || 'Contato'}
                                 />
                               ) : (
-                                <AvatarFallback className="bg-primary/10 text-primary font-semibold uppercase">
-                                {(selectedIdentity?.initials || '?')}
+                                      <AvatarFallback className="bg-primary/10 font-semibold uppercase text-primary">
+                                        {selectedIdentity?.initials || '?'}
                                 </AvatarFallback>
                               )}
                             </Avatar>
-                            <div 
-                              className={cn(
-                                'min-w-0 flex-1',
-                              )}
-                            >
+                                </button>
+                                {!selectedIsGroupChat && !selectedConversation.client_id ? (
+                                  (selectedConversation.leadId
+                                    ? commercial.canConvertLeadToClient
+                                    : commercial.canCreateLeadFromChat) ? (
+                                    <Button
+                                      type="button"
+                                      variant="default"
+                                      size="icon"
+                                      className="absolute -bottom-1 -left-1 z-[1] h-5 w-5 rounded-full border-2 border-background p-0 shadow-md md:h-6 md:w-6"
+                                      title={
+                                        selectedConversation.leadId
+                                          ? 'Converter para cliente'
+                                          : 'Adicionar como lead'
+                                      }
+                                      aria-label={
+                                        selectedConversation.leadId
+                                          ? 'Converter lead para cliente'
+                                          : 'Adicionar como lead'
+                                      }
+                                      onClick={handleCrmAvatarPlusClick}
+                                    >
+                                      <Plus className="h-2.5 w-2.5 text-primary-foreground md:h-3 md:w-3" />
+                                    </Button>
+                                  ) : null
+                                ) : null}
+                              </div>
+                              <button
+                                type="button"
+                                className={cn(
+                                  'min-w-0 flex-1 cursor-pointer rounded-md text-left outline-none transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-ring/40',
+                                )}
+                                onClick={toggleContactProfilePanel}
+                                aria-expanded={contactProfileOpen}
+                                aria-controls="chat-contact-profile-panel"
+                                title="Abrir ou fechar perfil do contato"
+                              >
+                                <div
+                                  className={cn(
+                                    'min-w-0 w-full',
+                                  )}
+                                >
                               <div className="flex min-w-0 items-center gap-1.5 md:gap-1.5">
                                 <h3 className="truncate text-sm font-semibold leading-tight md:text-[15px] md:leading-snug">
                                 {selectedIdentity?.displayName ?? '—'}
@@ -4354,33 +5065,98 @@ const Chat = () => {
                                     {communicationProviderBadgeLabel(selectedConversation.provider)}
                                   </Badge>
                                 ) : null}
+                                {selectedIsGroupChat ? (
+                                  <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-1">
+                                    <Badge
+                                      variant="secondary"
+                                      className="h-5 shrink-0 px-1.5 text-[10px] font-normal"
+                                    >
+                                      Grupo
+                                    </Badge>
+                                    <ChatHeaderKanbanThreadExtras
+                                      conversation={selectedConversation}
+                                      conversationKanbanTags={conversationKanbanTags}
+                                      tenantOptions={tenantKanbanTagsCatalog}
+                                      tenantLoading={tenantKanbanTagsLoading}
+                                      busy={kanbanTagsBusy}
+                                      showTagPicker={!selectedIsGroupChat && hasPermissionKey('chat.manage_tags')}
+                                      onAddTag={handleAddConversationKanbanTag}
+                                    />
+                                  </span>
+                                ) : null}
                                 {selectedConversation.client_id && (
-                                  <Badge variant="default" className="hidden h-5 shrink-0 px-1.5 text-[10px] md:inline-flex">
+                                  <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-1">
+                                    <Badge variant="default" className="h-5 shrink-0 px-1.5 text-[10px]">
                                     Cliente
                                   </Badge>
+                                    <ChatHeaderKanbanThreadExtras
+                                      conversation={selectedConversation}
+                                      conversationKanbanTags={conversationKanbanTags}
+                                      tenantOptions={tenantKanbanTagsCatalog}
+                                      tenantLoading={tenantKanbanTagsLoading}
+                                      busy={kanbanTagsBusy}
+                                      showTagPicker={!selectedIsGroupChat && hasPermissionKey('chat.manage_tags')}
+                                      onAddTag={handleAddConversationKanbanTag}
+                                    />
+                                  </span>
                                 )}
                                 {!selectedConversation.client_id && selectedConversation.leadId && (
-                                  <Badge className="hidden h-5 shrink-0 border-blue-300/80 bg-blue-500/10 px-1.5 text-[10px] text-blue-900 hover:bg-blue-500/15 dark:border-blue-800/60 dark:bg-blue-950/45 dark:text-blue-200 dark:hover:bg-blue-950/55 md:inline-flex">
+                                  <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-1">
+                                    <Badge className="h-5 shrink-0 border-blue-300/80 bg-blue-500/10 px-1.5 text-[10px] text-blue-900 hover:bg-blue-500/15 dark:border-blue-800/60 dark:bg-blue-950/45 dark:text-blue-200 dark:hover:bg-blue-950/55">
                                     Lead
                                   </Badge>
+                                    <ChatHeaderKanbanThreadExtras
+                                      conversation={selectedConversation}
+                                      conversationKanbanTags={conversationKanbanTags}
+                                      tenantOptions={tenantKanbanTagsCatalog}
+                                      tenantLoading={tenantKanbanTagsLoading}
+                                      busy={kanbanTagsBusy}
+                                      showTagPicker={!selectedIsGroupChat && hasPermissionKey('chat.manage_tags')}
+                                      onAddTag={handleAddConversationKanbanTag}
+                                    />
+                                  </span>
                                 )}
-                                {!selectedConversation.client_id &&
+                                {!selectedIsGroupChat &&
+                                  !selectedConversation.client_id &&
                                   !selectedConversation.leadId &&
                                   selectedConversation.link_state === 'review_required' && (
-                                    <Badge className="hidden h-5 shrink-0 border-amber-300/80 bg-amber-500/10 px-1.5 text-[10px] text-amber-950 hover:bg-amber-500/15 dark:border-amber-800/60 dark:bg-amber-950/45 dark:text-amber-100 dark:hover:bg-amber-950/55 md:inline-flex">
+                                    <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-1">
+                                      <Badge className="h-5 shrink-0 border-amber-300/80 bg-amber-500/10 px-1.5 text-[10px] text-amber-950 hover:bg-amber-500/15 dark:border-amber-800/60 dark:bg-amber-950/45 dark:text-amber-100 dark:hover:bg-amber-950/55">
                                       Revisar vínculo
                                     </Badge>
+                                      <ChatHeaderKanbanThreadExtras
+                                      conversation={selectedConversation}
+                                      conversationKanbanTags={conversationKanbanTags}
+                                      tenantOptions={tenantKanbanTagsCatalog}
+                                      tenantLoading={tenantKanbanTagsLoading}
+                                      busy={kanbanTagsBusy}
+                                      showTagPicker={!selectedIsGroupChat && hasPermissionKey('chat.manage_tags')}
+                                      onAddTag={handleAddConversationKanbanTag}
+                                    />
+                                    </span>
                                   )}
-                                {!selectedConversation.client_id &&
+                                {!selectedIsGroupChat &&
+                                  !selectedConversation.client_id &&
                                   !selectedConversation.leadId &&
                                   (!selectedConversation.link_state ||
                                     selectedConversation.link_state === 'unlinked') && (
-                                    <Badge
-                                      variant="outline"
-                                      className="hidden h-5 shrink-0 bg-muted px-1.5 text-[10px] text-muted-foreground md:inline-flex"
-                                    >
-                                      Sem vínculo
+                                    <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-1">
+                                      <Badge
+                                        variant="outline"
+                                        className="h-5 shrink-0 bg-muted px-1.5 text-[10px] text-muted-foreground"
+                                      >
+                                        Contato WhatsApp
                                     </Badge>
+                                      <ChatHeaderKanbanThreadExtras
+                                      conversation={selectedConversation}
+                                      conversationKanbanTags={conversationKanbanTags}
+                                      tenantOptions={tenantKanbanTagsCatalog}
+                                      tenantLoading={tenantKanbanTagsLoading}
+                                      busy={kanbanTagsBusy}
+                                      showTagPicker={!selectedIsGroupChat && hasPermissionKey('chat.manage_tags')}
+                                      onAddTag={handleAddConversationKanbanTag}
+                                    />
+                                    </span>
                                   )}
                               </div>
                               {isMobile && routeConversationId && mobileThreadHeaderSubline ? (
@@ -4404,41 +5180,11 @@ const Chat = () => {
                                       Fila {selectedConversation.assigned_team_name}
                                     </span>
                                   </span>
-                                ) : attendanceIsInProgress(selectedConversation.attendance_status) &&
-                                selectedConversation.assignee_display ? (
-                                  <span className="inline-flex max-w-[min(160px,28vw)] items-center gap-1 rounded border border-violet-300/80 bg-violet-500/10 px-1.5 py-0 text-[10px] leading-tight text-violet-900 dark:border-violet-700/60 dark:bg-violet-950/40 dark:text-violet-100">
-                                    <Headphones className="h-3 w-3 shrink-0" aria-hidden />
-                                    <span className="truncate font-medium">
-                                      {shortOperatorName(selectedConversation.assignee_display)}
-                                    </span>
-                                  </span>
-                                ) : attendanceStatusLabel(selectedConversation.attendance_status) ? (
-                                  <Badge
-                                    variant="outline"
-                                    className="h-5 border-violet-300/80 bg-violet-500/10 px-1.5 text-[10px] text-violet-900 dark:border-violet-700/60 dark:bg-violet-950/40 dark:text-violet-100"
-                                  >
-                                    {attendanceStatusLabel(selectedConversation.attendance_status)}
-                                  </Badge>
                                 ) : null}
-                                {!(
-                                  attendanceIsInProgress(selectedConversation.attendance_status) &&
-                                  selectedConversation.assignee_display?.trim()
-                                ) &&
-                                  !(
-                                    selectedConversation.assigned_team_id &&
-                                    !selectedConversation.assignee_display &&
-                                    selectedConversation.assigned_team_name
-                                  ) && (
-                                  <span className="text-[10px] text-muted-foreground">
-                                    <span className="font-medium text-foreground/85">Resp.</span>
-                                    {' '}
-                                    {selectedConversation.assignee_display?.trim() ||
-                                      (selectedConversation.assigned_to_user_id ? 'Atribuído' : '—')}
-                                  </span>
-                                )}
-                              </div>
                             </div>
-                            </button>
+                          </div>
+                              </button>
+                            </div>
                           </div>
                           <div className="flex shrink-0 items-center justify-end gap-1 md:gap-2">
                             {user &&
@@ -4460,12 +5206,16 @@ const Chat = () => {
                                   attendanceIsInProgress(selectedConversation.attendance_status) &&
                                   !!selectedConversation.assigned_to_user_id &&
                                   (selectedConversation.assigned_to_user_id === user.id || adminBypass);
+                                const permClose = hasPermissionKey('chat.close_attendance');
+                                const permTake = hasPermissionKey('chat.take_attendance');
+                                const permXfer = hasPermissionKey('chat.transfer_attendance');
+                                const deniedTitle = 'Seu perfil não tem permissão para esta ação.';
                                 return (
                                   <>
                                     {!hideAttendEncerrarSlot && (
                                       <>
                                         {canCloseAttendance ? (
-                                          <Button
+                              <Button
                                             variant="destructive"
                                             size="sm"
                                             className={cn(
@@ -4473,16 +5223,17 @@ const Chat = () => {
                                               isMobileConversationView && 'h-7 w-7 px-0',
                                               isMobile && routeConversationId && 'h-7 w-7 px-0',
                                             )}
+                                            disabled={!permClose}
                                             onClick={() => void handleCloseAttendance()}
-                                            title="Encerrar atendimento"
+                                            title={permClose ? 'Encerrar atendimento' : deniedTitle}
                                           >
                                             <XCircle className={cn('h-3.5 w-3.5', isMobileConversationView && 'h-3.5 w-3.5')} />
                                             <span className={cn((isMobileConversationView || (isMobile && routeConversationId)) && 'sr-only')}>
                                             Encerrar
                                             </span>
-                                          </Button>
+                              </Button>
                                         ) : (
-                                          <Button
+                            <Button
                                             variant="secondary"
                                             size="sm"
                                             className={cn(
@@ -4490,24 +5241,26 @@ const Chat = () => {
                                               isMobileConversationView && 'h-7 w-7 px-0',
                                               isMobile && routeConversationId && 'h-7 w-7 px-0',
                                             )}
-                                            disabled={attendingConversation}
+                                            disabled={attendingConversation || !permTake}
                                             onClick={() => void handleAttendConversation()}
-                                            title="Atender conversa"
+                                            title={permTake ? 'Atender conversa' : deniedTitle}
                                           >
                                             <UserCheck className={cn('h-3.5 w-3.5', isMobileConversationView && 'h-3.5 w-3.5')} />
                                             <span className={cn((isMobileConversationView || (isMobile && routeConversationId)) && 'sr-only')}>
                                             Atender
                                             </span>
-                                          </Button>
+                            </Button>
                                         )}
-                                      </>
-                                    )}
+                                  </>
+                                )}
                                     {canTransferAttendance && (
                                       <Button
                                         variant="outline"
                                         size="sm"
                                         className="hidden h-7 gap-0.5 px-2 text-[11px] md:inline-flex md:h-8 md:gap-1 md:px-3 md:text-sm"
+                                        disabled={!permXfer}
                                         onClick={() => void openTransferDialog()}
+                                        title={permXfer ? 'Transferir atendimento' : deniedTitle}
                                       >
                                         <ArrowRightLeft className="h-3.5 w-3.5" />
                                         Transferir
@@ -4648,12 +5401,15 @@ const Chat = () => {
                                                   <span className="line-clamp-2 opacity-85">{message.reply_preview}</span>
                                                 </button>
                                               ) : null}
-                                      <ChatBubbleContent message={message} />
+                                      <ChatBubbleContent
+                                        message={message}
+                                        groupIncomingFormat={selectedIsGroupChat}
+                                      />
                                       <span
                                         className={`text-[10px] mt-1 flex items-center gap-1 ${
                                           message.direction === 'outgoing'
                                             ? 'text-primary-foreground/80'
-                                            : 'text-muted-foreground'
+                                      : 'text-muted-foreground'
                                         }`}
                                       >
                                         <span>{formatHour(message.sentAt)}</span>
@@ -4828,6 +5584,7 @@ const Chat = () => {
                               </Button>
                             </div>
                           ) : null}
+                          {canChatReply() ? (
                           <div className="flex w-full min-w-0 max-w-full items-end gap-2 md:items-center">
                             <input
                               ref={imageFileInputRef}
@@ -4849,7 +5606,7 @@ const Chat = () => {
                                   type="button"
                                   variant="outline"
                                   size="icon"
-                                  disabled={sendingMessage}
+                            disabled={sendingMessage}
                                   className="pointer-events-auto h-9 w-9 shrink-0 md:h-9 md:w-9"
                                   title="Ações rápidas"
                                   aria-label="Ações rápidas"
@@ -4975,6 +5732,11 @@ const Chat = () => {
                               <Send className="h-4 w-4 md:h-4 md:w-4" />
                             </Button>
                           </div>
+                          ) : (
+                            <p className="px-1 py-2 text-xs text-muted-foreground">
+                              Seu perfil não tem permissão para enviar mensagens.
+                            </p>
+                          )}
                           </form>
                       </CardContent>
                         </>
@@ -4996,7 +5758,10 @@ const Chat = () => {
                   )}
                 </Card>
 
-                {!isMobile && selectedConversation && user && chatContactProfileModel ? (
+                {!isMobile &&
+                selectedConversation &&
+                user &&
+                (selectedIsGroupChat || chatContactProfileModel) ? (
                   <aside
                     className={cn(
                       'hidden min-h-0 shrink-0 overflow-hidden bg-background md:flex md:flex-col md:self-stretch md:border-border/70 md:shadow-[inset_1px_0_0_0_hsl(var(--border)/0.35)]',
@@ -5008,19 +5773,39 @@ const Chat = () => {
                     aria-hidden={!contactProfileOpen}
                   >
                     <div className="flex h-full min-h-0 w-[380px] min-w-[380px] flex-col border-l border-transparent">
-                      {contactProfileOpen ? (
+                      {contactProfileOpen && selectedIsGroupChat ? (
+                        <ChatGroupProfilePanel
+                          open={contactProfileOpen}
+                          onOpenChange={setContactProfileOpen}
+                          isMobile={false}
+                          interactionMode="desktop"
+                          onDesktopClose={() => setContactProfileOpen(false)}
+                          conversationId={selectedConversation.id}
+                          fallbackAvatarUrl={selectedIdentity?.avatarUrl ?? null}
+                          fallbackInitials={selectedIdentity?.initials ?? '?'}
+                          fallbackTitle={selectedIdentity?.displayName ?? selectedConversation.displayName ?? null}
+                          onBackToConversation={() => setContactProfileOpen(false)}
+                          onAfterLeave={handleAfterGroupLeave}
+                          onGroupConversationSynced={handleGroupConversationSynced}
+                          crmAllowManage={crmAllowGroupManage}
+                        />
+                      ) : contactProfileOpen && chatContactProfileModel ? (
                         <ChatContactProfilePanel
                           open={contactProfileOpen}
                           onOpenChange={setContactProfileOpen}
                           isMobile={false}
                           interactionMode="desktop"
                           onDesktopClose={() => setContactProfileOpen(false)}
-                          showOpenFullProfile={Boolean(selectedConversation.client_id && currentClient?.id)}
+                          showOpenFullProfile={Boolean(
+                            selectedConversation.client_id && currentClient?.id && commercial.canViewClientNav,
+                          )}
                           onOpenFullProfile={() => {
                             if (currentClient?.id && selectedConversation) {
                               goToClientProfileFromChat(currentClient.id, selectedConversation);
                             }
                           }}
+                          disableAddLead={!commercial.canCreateLeadFromChat}
+                          addLeadDisabledReason={commercial.permDenied}
                           displayName={chatContactProfileModel.displayName}
                           phoneDisplay={chatContactProfileModel.phoneDisplay}
                           statusLine={chatContactProfileModel.statusLine}
@@ -5034,6 +5819,17 @@ const Chat = () => {
                           profileSavingKey={profileFieldSaving}
                           onSaveProfileField={canEditChatProfileFields ? handleSaveChatProfileField : undefined}
                           tagLabels={chatContactProfileModel.tagLabels}
+                          conversationKanbanTags={conversationKanbanTags}
+                          conversationKanbanTagsLoading={conversationKanbanTagsLoading}
+                          tenantKanbanTagOptions={tenantKanbanTagsCatalog}
+                          tenantKanbanTagsLoading={tenantKanbanTagsLoading}
+                          kanbanTagsBusy={kanbanTagsBusy}
+                          onAddConversationKanbanTag={
+                            selectedIsGroupChat ? undefined : handleAddConversationKanbanTag
+                          }
+                          onRemoveConversationKanbanTag={
+                            selectedIsGroupChat ? undefined : handleRemoveConversationKanbanTag
+                          }
                           clientGroups={clientGroupsList}
                           selectedClientGroupId={chatContactProfileModel.selectedClientGroupId}
                           onClientGroupChange={
@@ -5068,7 +5864,11 @@ const Chat = () => {
                             void handleAddLead();
                           }}
                           onUnlink={() => setUnlinkConfirmOpen(true)}
-                          showConvertLead={Boolean(selectedConversation.leadId && !selectedConversation.client_id)}
+                          showConvertLead={Boolean(
+                            selectedConversation.leadId &&
+                              !selectedConversation.client_id &&
+                              commercial.canConvertLeadToClient,
+                          )}
                           showLinkActions={!selectedConversation.client_id && !selectedConversation.leadId}
                           showUnlink={Boolean(selectedConversation.client_id || selectedConversation.leadId)}
                           linkConversationLabel={
@@ -5084,6 +5884,10 @@ const Chat = () => {
                             setNewCrmNoteOpen(true);
                           }}
                           onOpenNoteInChat={handleOpenCrmNoteInChat}
+                          showCreateGroupWithClient={showCreateGroupSectionInProfile}
+                          createGroupWithClientDisabled={createGroupWithClientDisabled}
+                          createGroupWithClientDisabledHint={createGroupWithClientDisabledHint}
+                          onOpenCreateGroupWithClient={() => setCreateGroupDialogOpen(true)}
                         />
                       ) : null}
                     </div>
@@ -5099,8 +5903,8 @@ const Chat = () => {
             <Button type="button" onClick={handleNavigateToSettings}>
               Abrir Configurações — WhatsApp
             </Button>
-          </CardContent>
-        </Card>
+                  </CardContent>
+                </Card>
       )}
 
       <ChatWhatsappModelPickerDialog
@@ -5225,17 +6029,36 @@ const Chat = () => {
         </DialogContent>
       </Dialog>
 
-      {selectedConversation && user && chatContactProfileModel && isMobile ? (
+      {selectedConversation && user && isMobile && selectedIsGroupChat ? (
+        <ChatGroupProfileSheet
+          open={contactProfileOpen}
+          onOpenChange={setContactProfileOpen}
+          isMobile={isMobile}
+          conversationId={selectedConversation.id}
+          fallbackAvatarUrl={selectedIdentity?.avatarUrl ?? null}
+          fallbackInitials={selectedIdentity?.initials ?? '?'}
+          fallbackTitle={selectedIdentity?.displayName ?? selectedConversation.displayName ?? null}
+          onBackToConversation={() => setContactProfileOpen(false)}
+          onAfterLeave={handleAfterGroupLeave}
+          onGroupConversationSynced={handleGroupConversationSynced}
+          crmAllowManage={crmAllowGroupManage}
+        />
+      ) : null}
+      {selectedConversation && user && chatContactProfileModel && isMobile && !selectedIsGroupChat ? (
         <ChatContactProfileSheet
           open={contactProfileOpen}
           onOpenChange={setContactProfileOpen}
           isMobile={isMobile}
-          showOpenFullProfile={Boolean(selectedConversation.client_id && currentClient?.id)}
+          showOpenFullProfile={Boolean(
+            selectedConversation.client_id && currentClient?.id && commercial.canViewClientNav,
+          )}
           onOpenFullProfile={() => {
             if (currentClient?.id && selectedConversation) {
               goToClientProfileFromChat(currentClient.id, selectedConversation);
             }
           }}
+          disableAddLead={!commercial.canCreateLeadFromChat}
+          addLeadDisabledReason={commercial.permDenied}
           displayName={chatContactProfileModel.displayName}
           phoneDisplay={chatContactProfileModel.phoneDisplay}
           statusLine={chatContactProfileModel.statusLine}
@@ -5249,6 +6072,13 @@ const Chat = () => {
           profileSavingKey={profileFieldSaving}
           onSaveProfileField={canEditChatProfileFields ? handleSaveChatProfileField : undefined}
           tagLabels={chatContactProfileModel.tagLabels}
+          conversationKanbanTags={conversationKanbanTags}
+          conversationKanbanTagsLoading={conversationKanbanTagsLoading}
+          tenantKanbanTagOptions={tenantKanbanTagsCatalog}
+          tenantKanbanTagsLoading={tenantKanbanTagsLoading}
+          kanbanTagsBusy={kanbanTagsBusy}
+          onAddConversationKanbanTag={selectedIsGroupChat ? undefined : handleAddConversationKanbanTag}
+          onRemoveConversationKanbanTag={selectedIsGroupChat ? undefined : handleRemoveConversationKanbanTag}
           clientGroups={clientGroupsList}
           selectedClientGroupId={chatContactProfileModel.selectedClientGroupId}
           onClientGroupChange={chatContactProfileModel.kind === 'client' ? handleChatClientGroupChange : undefined}
@@ -5281,7 +6111,11 @@ const Chat = () => {
             void handleAddLead();
           }}
           onUnlink={() => setUnlinkConfirmOpen(true)}
-          showConvertLead={Boolean(selectedConversation.leadId && !selectedConversation.client_id)}
+          showConvertLead={Boolean(
+            selectedConversation.leadId &&
+              !selectedConversation.client_id &&
+              commercial.canConvertLeadToClient,
+          )}
           showLinkActions={!selectedConversation.client_id && !selectedConversation.leadId}
           showUnlink={Boolean(selectedConversation.client_id || selectedConversation.leadId)}
           linkConversationLabel={
@@ -5297,6 +6131,31 @@ const Chat = () => {
             setNewCrmNoteOpen(true);
           }}
           onOpenNoteInChat={handleOpenCrmNoteInChat}
+          showCreateGroupWithClient={showCreateGroupSectionInProfile}
+          createGroupWithClientDisabled={createGroupWithClientDisabled}
+          createGroupWithClientDisabledHint={createGroupWithClientDisabledHint}
+          onOpenCreateGroupWithClient={() => setCreateGroupDialogOpen(true)}
+        />
+      ) : null}
+
+      {selectedConversationId && selectedConversation ? (
+        <CreateGroupFromConversationDialog
+          open={createGroupDialogOpen}
+          onOpenChange={setCreateGroupDialogOpen}
+          conversationId={selectedConversationId}
+          conversation={selectedConversation}
+          resolvedClientMsisdn={createGroupClientMsisdn}
+          onCreated={(newConv) => {
+            setCreateGroupDialogOpen(false);
+            setContactProfileOpen(false);
+            setConversations((prev) => {
+              const idx = prev.findIndex((c) => c.id === newConv.id);
+              const next =
+                idx >= 0 ? prev.map((c, i) => (i === idx ? newConv : c)) : [newConv, ...prev];
+              return sortConversationsByRecent(next);
+            });
+            handleSelectConversation(newConv.id);
+          }}
         />
       ) : null}
 

@@ -5,6 +5,7 @@
 import type { Response } from 'express';
 import { pool } from '../utils/db.js';
 import type { AuthRequest } from '../middleware/auth.js';
+import { assertPermissionKey, ModulePermissionError } from '../permissions/index.js';
 
 export interface BillingReceiptRow {
   id: string;
@@ -22,6 +23,11 @@ export async function getBillingReceipts(req: AuthRequest, res: Response): Promi
       res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
+    if (!req.userId) {
+      res.status(401).json({ error: 'Usuário não identificado' });
+      return;
+    }
+    await assertPermissionKey(req.userId, 'finance.view_revenue', req);
 
     const { from, to } = req.query;
     const params: unknown[] = [tenantId];
@@ -55,6 +61,10 @@ export async function getBillingReceipts(req: AuthRequest, res: Response): Promi
       }))
     );
   } catch (err) {
+    if (err instanceof ModulePermissionError) {
+      res.status(err.statusCode).json({ error: err.message });
+      return;
+    }
     console.error('[financeController] getBillingReceipts error:', err);
     res.status(500).json({ error: 'Erro ao buscar receitas de cobrança' });
   }

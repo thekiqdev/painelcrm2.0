@@ -39,6 +39,7 @@ export const InstancesList: React.FC<InstancesListProps> = ({ onAddInstance, onI
   const [selectedInstance, setSelectedInstance] = useState<ChatInstance | null>(null);
   const [detailsDialogOpen, setDetailsDialogOpen] = useState(false);
   const [quickSyncingId, setQuickSyncingId] = useState<string | null>(null);
+  const [retryInitialSyncingId, setRetryInitialSyncingId] = useState<string | null>(null);
   const [sheetInstanceId, setSheetInstanceId] = useState<string | null>(null);
   const [webhookStatusByInstance, setWebhookStatusByInstance] = useState<
     Record<
@@ -391,6 +392,29 @@ export const InstancesList: React.FC<InstancesListProps> = ({ onAddInstance, onI
     }
   };
 
+  const handleRetryInitialSync = async (instance: ChatInstance) => {
+    setRetryInitialSyncingId(instance.id);
+    try {
+      const result = await chatService.retryInitialInstanceSync(instance.id);
+      if (result?.skipped && result?.reason === "already_completed") {
+        toast.success("Sincronização inicial já concluída");
+      } else if (result?.skipped && result?.reason === "already_in_progress") {
+        toast.info("Sincronização inicial já está em andamento");
+      } else {
+        toast.success("Sincronização inicial iniciada", {
+          description: "Estamos sincronizando conversas em segundo plano.",
+        });
+      }
+      await loadInstances();
+    } catch (error) {
+      toast.error("Não foi possível tentar novamente", {
+        description: error instanceof Error ? error.message : "Tente novamente em instantes.",
+      });
+    } finally {
+      setRetryInitialSyncingId(null);
+    }
+  };
+
   return (
     <>
       {loading ? (
@@ -428,6 +452,8 @@ export const InstancesList: React.FC<InstancesListProps> = ({ onAddInstance, onI
               onOpenQR={() => handleGenerateQRCode(instance)}
               onDisconnect={() => handleDeleteClick(instance)}
               canOperateConversations={instance.can_operate !== false}
+              onRetryInitialSync={() => handleRetryInitialSync(instance)}
+              retryInitialSyncing={retryInitialSyncingId === instance.id}
             />
           ))}
         </div>

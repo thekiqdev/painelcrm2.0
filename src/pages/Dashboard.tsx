@@ -42,7 +42,7 @@ type PeriodPreset = "current_month" | "last_month" | "ytd";
 const Dashboard = () => {
   const { user } = useAuth();
   const { setShowMobileGlobalHeader } = useMobileShellChrome();
-  const { canView, canCreate, canEdit } = useModulePermissions();
+  const { canView, canCreate, canEdit, hasPermissionKey } = useModulePermissions();
   const hasClients = useFeatureFlag("clients");
   const hasInvoices = useFeatureFlag("invoices");
   const hasProposals = useFeatureFlag("proposals");
@@ -66,8 +66,9 @@ const Dashboard = () => {
   const trialActive = trialEndsAt != null && !Number.isNaN(trialEndsAt.getTime()) && trialEndsAt.getTime() > Date.now();
 
   const { data, isPending, error } = useQuery({
-    queryKey: ["dashboard-overview", preset],
+    queryKey: ["dashboard-overview", user?.tenant_id ?? "", user?.id ?? "", preset],
     queryFn: () => dashboardService.getOverview({ preset }),
+    enabled: Boolean(user?.tenant_id && user?.id),
   });
 
   const overview = data ?? null;
@@ -169,7 +170,24 @@ const Dashboard = () => {
   };
 
   const show = (feature: boolean, moduleId: string) => feature && canView(moduleId);
-  const canManageFinance = show(hasExpenses, "finance") && (canCreate("finance") || canEdit("finance"));
+  const showBillingDash = show(hasInvoices, "billing") && hasPermissionKey("billing.view");
+  const showBillingInvoiceKpis = show(hasInvoices, "billing") && hasPermissionKey("billing.view_invoices");
+  const showFinancePayables = show(hasExpenses, "finance") && hasPermissionKey("finance.view_accounts_payable");
+  const showFinanceExpenses = show(hasExpenses, "finance") && hasPermissionKey("finance.view_expenses");
+  const showFinanceProfit = show(hasExpenses, "finance") && hasPermissionKey("finance.view_profit");
+  const showFinanceCash = show(hasExpenses, "finance") && hasPermissionKey("finance.view");
+  const showFinanceNext7 =
+    show(hasExpenses, "finance") &&
+    show(hasInvoices, "billing") &&
+    (hasPermissionKey("billing.view_invoices") || hasPermissionKey("finance.view_accounts_payable"));
+  const showFinancialKpis =
+    (showBillingDash && hasPermissionKey("dashboard.view_financial_cards")) ||
+    (show(hasExpenses, "finance") && hasPermissionKey("dashboard.view_financial_cards"));
+  const showLeadsDash =
+    show(hasLeads, "leads") && hasPermissionKey("dashboard.view_sales_cards");
+  const canManageFinance =
+    show(hasExpenses, "finance") &&
+    (hasPermissionKey("finance.create_expense") || hasPermissionKey("finance.edit_expense"));
 
   const quickActionCtx = useMemo<DashboardQuickActionContext>(
     () => ({
@@ -228,7 +246,7 @@ const Dashboard = () => {
       ) : null}
 
       <div className="order-4 flex flex-col gap-6 md:hidden">
-      {overview && show(hasDashboard, "dashboard") ? (
+      {overview && show(hasDashboard, "dashboard") && (showFinancialKpis || showLeadsDash) ? (
         <section className="space-y-3 md:hidden">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <h2 className="text-base font-semibold tracking-tight">Indicadores do período</h2>
@@ -244,6 +262,7 @@ const Dashboard = () => {
             </Select>
           </div>
           <div className="grid grid-cols-2 gap-3">
+            {showBillingDash ? (
             <div className="rounded-2xl border border-border bg-card p-3.5 shadow-sm">
               <p className="text-xs text-muted-foreground">Receita recebida</p>
               <p className="mt-1 text-lg font-semibold tabular-nums leading-tight">
@@ -251,6 +270,8 @@ const Dashboard = () => {
               </p>
               <p className="mt-1 text-[11px] text-muted-foreground">{formatPct(overview.sales.received_revenue_change_pct)} vs anterior</p>
             </div>
+            ) : null}
+            {showBillingDash ? (
             <div className="rounded-2xl border border-border bg-card p-3.5 shadow-sm">
               <p className="text-xs text-muted-foreground">Receita futura</p>
               <p className="mt-1 text-lg font-semibold tabular-nums leading-tight">
@@ -258,6 +279,8 @@ const Dashboard = () => {
               </p>
               <p className="mt-1 text-[11px] text-muted-foreground">A receber</p>
             </div>
+            ) : null}
+            {showLeadsDash ? (
             <div className="rounded-2xl border border-border bg-card p-3.5 shadow-sm">
               <p className="text-xs text-muted-foreground">Conversão</p>
               <p className="mt-1 text-lg font-semibold tabular-nums leading-tight">
@@ -265,6 +288,8 @@ const Dashboard = () => {
               </p>
               <p className="mt-1 text-[11px] text-muted-foreground">{formatPct(overview.sales.conversion_rate_change_pct)} vs anterior</p>
             </div>
+            ) : null}
+            {showBillingInvoiceKpis ? (
             <div className="rounded-2xl border border-border bg-card p-3.5 shadow-sm">
               <p className="text-xs text-muted-foreground">Ticket médio</p>
               <p className="mt-1 text-lg font-semibold tabular-nums leading-tight">
@@ -272,11 +297,12 @@ const Dashboard = () => {
               </p>
               <p className="mt-1 text-[11px] text-muted-foreground">Vendas pagas</p>
             </div>
+            ) : null}
           </div>
         </section>
       ) : null}
 
-      {overview && show(hasExpenses, "finance") ? (
+      {overview && showFinancePayables ? (
         <section className="space-y-3 md:hidden">
           <div className="flex items-center justify-between gap-2">
             <div>
@@ -316,10 +342,7 @@ const Dashboard = () => {
         </section>
       ) : null}
 
-      {overview &&
-      show(hasExpenses, "finance") &&
-      show(hasInvoices, "billing") &&
-      overview.next_7_days ? (
+      {overview && showFinanceNext7 && overview.next_7_days ? (
         <section className="space-y-3 md:hidden">
           <div className="flex items-center justify-between gap-2">
             <h2 className="text-base font-semibold tracking-tight">Próximos 7 dias</h2>
@@ -701,7 +724,9 @@ const Dashboard = () => {
       </div>
 
       {/* Linha principal */}
+      {(showBillingDash || showBillingInvoiceKpis || showLeadsDash) ? (
       <div className="hidden gap-6 md:grid md:grid-cols-2 lg:grid-cols-4">
+        {showBillingDash ? (
         <Card className="hover:shadow-md transition-shadow">
             <CardHeader className="pb-2">
             <CardDescription className="flex items-center gap-2"><DollarSign className="h-4 w-4 text-emerald-600" />Receita recebida</CardDescription>
@@ -711,6 +736,8 @@ const Dashboard = () => {
             {formatPct(overview?.sales.received_revenue_change_pct ?? 0)} vs período anterior · <Link to="/customer-invoices" className="underline">Ver faturas</Link>
           </CardContent>
         </Card>
+        ) : null}
+        {showBillingDash ? (
         <Card className="hover:shadow-md transition-shadow">
           <CardHeader className="pb-2">
             <CardDescription className="flex items-center gap-2"><TrendingUp className="h-4 w-4 text-violet-600" />Receita futura</CardDescription>
@@ -720,6 +747,8 @@ const Dashboard = () => {
             Assinaturas e cobranças ainda não pagas · <Link to="/crm-subscriptions" className="underline">Assinaturas</Link>
           </CardContent>
         </Card>
+        ) : null}
+        {showLeadsDash ? (
         <Card>
           <CardHeader className="pb-2">
             <CardDescription className="flex items-center gap-2"><Target className="h-4 w-4 text-sky-600" />Taxa de conversão</CardDescription>
@@ -729,6 +758,8 @@ const Dashboard = () => {
             {formatPct(overview?.sales.conversion_rate_change_pct ?? 0)} vs período anterior
           </CardContent>
         </Card>
+        ) : null}
+        {showBillingInvoiceKpis ? (
         <Card>
             <CardHeader className="pb-2">
             <CardDescription className="flex items-center gap-2"><CreditCard className="h-4 w-4 text-amber-600" />Ticket médio</CardDescription>
@@ -738,10 +769,13 @@ const Dashboard = () => {
           </CardHeader>
           <CardContent className="text-xs text-muted-foreground">Receita recebida / vendas pagas.</CardContent>
         </Card>
+        ) : null}
                 </div>
+      ) : null}
 
       {/* Gráfico receita vs prevista e funil */}
       <div className="hidden gap-6 md:grid md:grid-cols-1 lg:grid-cols-2">
+        {showBillingDash ? (
         <Card>
           <CardHeader className="space-y-3">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -837,6 +871,8 @@ const Dashboard = () => {
               </div>
             </CardContent>
           </Card>
+        ) : null}
+        {show(hasClients, "clients") ? (
         <Card>
           <CardHeader>
             <CardTitle>Funil de vendas</CardTitle>
@@ -864,6 +900,7 @@ const Dashboard = () => {
             )}
           </CardContent>
         </Card>
+        ) : null}
       </div>
 
       <div className="hidden gap-6 md:grid md:grid-cols-1 lg:grid-cols-3">
@@ -1196,33 +1233,48 @@ const Dashboard = () => {
           </CardContent>
         </Card>
 
+        {(show(hasClients, "clients") || showBillingDash) ? (
         <Card>
           <CardHeader>
             <CardTitle>Clientes</CardTitle>
             <CardDescription>Base ativa e riscos de receita</CardDescription>
           </CardHeader>
           <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {show(hasClients, "clients") ? (
             <Link to="/clients" className="rounded-lg border p-3 hover:bg-muted/50 transition-colors">
               <p className="text-xs text-muted-foreground">Clientes ativos</p>
               <p className="text-xl font-semibold">{overview?.clients.active_clients ?? 0}</p>
             </Link>
+            ) : null}
+            {show(hasClients, "clients") ? (
             <Link to="/clients" className="rounded-lg border p-3 hover:bg-muted/50 transition-colors">
               <p className="text-xs text-muted-foreground">Novos no período</p>
               <p className="text-xl font-semibold">{overview?.clients.new_clients ?? 0}</p>
             </Link>
+            ) : null}
+            {showBillingDash ? (
             <Link to="/crm-subscriptions" className="rounded-lg border p-3 hover:bg-muted/50 transition-colors">
               <p className="text-xs text-muted-foreground">Com assinatura ativa</p>
               <p className="text-xl font-semibold">{overview?.clients.active_subscriptions ?? 0}</p>
             </Link>
+            ) : null}
+            {showBillingDash ? (
             <Link to="/customer-invoices?status=overdue" className="rounded-lg border p-3 hover:bg-muted/50 transition-colors">
               <p className="text-xs text-muted-foreground">Com fatura vencida</p>
               <p className="text-xl font-semibold">{overview?.clients.clients_with_overdue_invoices ?? 0}</p>
             </Link>
+            ) : null}
           </CardContent>
         </Card>
+        ) : null}
                     </div>
 
       {/* Financeiro resumido + alertas */}
+      {(showBillingDash ||
+        showFinanceExpenses ||
+        showFinanceProfit ||
+        showFinanceCash ||
+        showFinancePayables) ? (
       <div className="hidden gap-6 md:grid md:grid-cols-1 lg:grid-cols-2">
         <Card>
           <CardHeader>
@@ -1230,33 +1282,44 @@ const Dashboard = () => {
             <CardDescription>Saúde financeira consolidada</CardDescription>
           </CardHeader>
           <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {showBillingDash ? (
             <div className="rounded-lg border p-3">
               <p className="text-xs text-muted-foreground">Receita recebida</p>
               <p className="text-lg font-semibold">{formatCurrency(overview?.finance.income_received ?? 0)}</p>
             </div>
+            ) : null}
+            {showBillingDash ? (
             <div className="rounded-lg border p-3">
               <p className="text-xs text-muted-foreground">Receita futura</p>
               <p className="text-lg font-semibold">{formatCurrency(overview?.finance.income_projected ?? 0)}</p>
                     </div>
+            ) : null}
+            {showFinanceExpenses ? (
             <div className="rounded-lg border p-3">
               <p className="text-xs text-muted-foreground">Despesas</p>
               <p className="text-lg font-semibold">
                 {formatCurrency((overview?.finance.expense_paid ?? 0) + (overview?.finance.expense_projected ?? 0))}
               </p>
                     </div>
+            ) : null}
+            {showFinanceCash ? (
             <div className="rounded-lg border p-3">
               <p className="text-xs text-muted-foreground">Caixa disponível</p>
               <p className="text-lg font-semibold">{formatCurrency(overview?.finance.cash_available ?? 0)}</p>
                   </div>
+            ) : null}
+            {showFinanceProfit ? (
             <div className="rounded-lg border p-3 sm:col-span-2">
               <p className="text-xs text-muted-foreground">Resultado previsto</p>
               <p className={`text-xl font-semibold ${(overview?.finance.result_projected ?? 0) >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
                 {formatCurrency(overview?.finance.result_projected ?? 0)}
               </p>
             </div>
+            ) : null}
           </CardContent>
         </Card>
 
+        {showFinancePayables ? (
         <Card>
           <CardHeader>
             <CardTitle>Contas a pagar</CardTitle>
@@ -1288,7 +1351,9 @@ const Dashboard = () => {
             </div>
           </CardContent>
         </Card>
+        ) : null}
       </div>
+      ) : null}
       </div>
     </div>
   );

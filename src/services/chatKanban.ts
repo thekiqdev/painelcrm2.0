@@ -66,6 +66,14 @@ export type KanbanAutoCreatedProposalPayload = {
 };
 
 /** Cartão com JOIN a `chat_conversations` (listagem do board). */
+/** Tags globais do Kanban por tenant (`chat_kanban_tags`). */
+export type ChatKanbanTenantTag = {
+  id: string;
+  label: string;
+  color?: string | null;
+  created_at?: string;
+};
+
 export interface ChatKanbanBoardCard extends ChatKanbanCard {
   conv_display_name?: string | null;
   conv_contact_name?: string | null;
@@ -95,6 +103,33 @@ export interface ChatKanbanBoardCard extends ChatKanbanCard {
 }
 
 export const chatKanbanService = {
+  async listTenantKanbanTags(): Promise<ChatKanbanTenantTag[]> {
+    const res = await apiClient.get<ChatKanbanTenantTag[]>(`${BASE}/tags`);
+    if (res.error) throw new Error(res.error);
+    const data = res.data as unknown;
+    return Array.isArray(data) ? data : [];
+  },
+
+  async createTenantKanbanTag(label: string, color?: string): Promise<ChatKanbanTenantTag> {
+    const res = await apiClient.post<ChatKanbanTenantTag>(`${BASE}/tags`, {
+      label: label.trim(),
+      ...(color?.trim() ? { color: color.trim() } : {}),
+    });
+    if (res.error) throw new Error(res.error);
+    if (!res.data) throw new Error('Falha ao criar tag');
+    return res.data;
+  },
+
+  async patchTenantKanbanTag(
+    tagId: string,
+    body: { label?: string; color?: string | null },
+  ): Promise<ChatKanbanTenantTag> {
+    const res = await apiClient.patch<ChatKanbanTenantTag>(`${BASE}/tags/${tagId}`, body);
+    if (res.error) throw new Error(res.error);
+    if (!res.data) throw new Error('Falha ao atualizar tag');
+    return res.data;
+  },
+
   async listBoards(includeArchived = false): Promise<ChatKanbanBoard[]> {
     const q = includeArchived ? '?includeArchived=true' : '';
     const res = await apiClient.get<ChatKanbanBoard[]>(`${BASE}/boards${q}`);

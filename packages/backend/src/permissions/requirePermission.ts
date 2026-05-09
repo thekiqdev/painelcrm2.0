@@ -56,6 +56,21 @@ export function requirePermission(descriptor: PermissionDescriptor) {
       action,
     };
     const allowed = await checkPermission(ctx, authReq);
+    if (process.env.PERMISSION_DEBUG === '1') {
+      console.log(
+        '[permission-check]',
+        JSON.stringify({
+          userId,
+          tenantId: authReq.tenantId ?? null,
+          module,
+          action,
+          allowed,
+          source: 'requirePermission',
+          route: req.originalUrl ?? req.url,
+          descriptor,
+        })
+      );
+    }
     if (!allowed) {
       const message = ACTION_MESSAGES[action] ?? 'Sem permissão para esta ação.';
       res.status(403).json({ error: message });

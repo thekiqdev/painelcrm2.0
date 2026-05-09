@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import { pool } from '../utils/db.js';
 import { z } from 'zod';
+import type { AuthRequest } from '../middleware/auth.js';
+import { assertPermissionKey, ModulePermissionError } from '../permissions/index.js';
 
 const expenseSchema = z.object({
   project_id: z.string().uuid().optional().nullable(),
@@ -16,8 +18,17 @@ const expenseSchema = z.object({
 export const getExpenses = async (req: Request, res: Response) => {
   try {
     const tenantId = (req as any).tenantId as string | null | undefined;
+    const auth = req as AuthRequest;
     if (!tenantId) {
       return res.json([]);
+    }
+    try {
+      await assertPermissionKey(auth.userId, 'finance.view_expenses', auth);
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        return res.status(e.statusCode).json({ error: e.message });
+      }
+      throw e;
     }
 
     const { project_id, category, is_paid, start_date, end_date } = req.query;
@@ -82,6 +93,15 @@ export const getExpenses = async (req: Request, res: Response) => {
 export const getExpenseById = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
+    const auth = req as AuthRequest;
+    try {
+      await assertPermissionKey(auth.userId, 'finance.view_expenses', auth);
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        return res.status(e.statusCode).json({ error: e.message });
+      }
+      throw e;
+    }
     const { id } = req.params;
 
     const result = await pool.query(
@@ -113,8 +133,17 @@ export const getExpenseById = async (req: Request, res: Response) => {
 export const createExpense = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
+    const auth = req as AuthRequest;
     if (!userId) {
       return res.status(401).json({ error: 'Não autenticado' });
+    }
+    try {
+      await assertPermissionKey(auth.userId, 'finance.create_expense', auth);
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        return res.status(e.statusCode).json({ error: e.message });
+      }
+      throw e;
     }
 
     const validated = expenseSchema.parse(req.body);
@@ -158,6 +187,15 @@ export const createExpense = async (req: Request, res: Response) => {
 export const updateExpense = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
+    const auth = req as AuthRequest;
+    try {
+      await assertPermissionKey(auth.userId, 'finance.edit_expense', auth);
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        return res.status(e.statusCode).json({ error: e.message });
+      }
+      throw e;
+    }
     const { id } = req.params;
 
     const validated = expenseSchema.partial().parse(req.body);
@@ -232,6 +270,15 @@ export const updateExpense = async (req: Request, res: Response) => {
 export const deleteExpense = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
+    const auth = req as AuthRequest;
+    try {
+      await assertPermissionKey(auth.userId, 'finance.delete_expense', auth);
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        return res.status(e.statusCode).json({ error: e.message });
+      }
+      throw e;
+    }
     const { id } = req.params;
 
     const result = await pool.query(

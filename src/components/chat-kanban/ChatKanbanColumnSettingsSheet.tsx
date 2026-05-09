@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ComponentType } from 'react';
 import { Link } from 'react-router-dom';
 import {
+  ArrowDownToLine,
   Briefcase,
   CalendarClock,
   FileText,
@@ -23,6 +24,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -34,6 +36,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Accordion,
@@ -43,7 +46,7 @@ import {
 } from '@/components/ui/accordion';
 import { cn } from '@/lib/utils';
 import { apiClient } from '@/integrations/api/client';
-import { chatKanbanService, type ChatKanbanColumn } from '@/services/chatKanban';
+import { chatKanbanService, type ChatKanbanBoard, type ChatKanbanColumn } from '@/services/chatKanban';
 import { fetchFunnelById, fetchFunnels } from '@/services/funnels';
 import { getMyTenantUsers } from '@/services/tenantLimits';
 import { KANBAN_COLUMN_COLOR_PRESETS } from '@/components/chat-kanban/kanbanColumnPresets';
@@ -113,12 +116,12 @@ function AccordionSectionHeader({
   subtitle?: string;
 }) {
   return (
-    <span className="flex items-start gap-2.5 text-left">
-      <Icon className="h-4 w-4 shrink-0 text-muted-foreground mt-0.5" aria-hidden />
-      <span className="flex flex-col gap-0.5 min-w-0">
+    <span className="flex items-center gap-2 text-left min-w-0">
+      <Icon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+      <span className="flex flex-col gap-0 min-w-0">
         <span className="text-sm font-medium leading-tight">{title}</span>
         {subtitle ? (
-          <span className="text-[11px] font-normal text-muted-foreground leading-snug">{subtitle}</span>
+          <span className="text-[10px] font-normal text-muted-foreground leading-tight line-clamp-2">{subtitle}</span>
         ) : null}
       </span>
     </span>
@@ -127,15 +130,50 @@ function AccordionSectionHeader({
 
 function FuturePlaceholder({ description }: { description: string }) {
   return (
-    <div className="rounded-md border border-dashed border-border/60 bg-muted/10 px-3 py-3 space-y-2">
-      <p className="text-[11px] text-muted-foreground leading-relaxed">{description}</p>
-      <span className="inline-flex text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/75">
+    <div className="rounded-md border border-dashed border-border/50 bg-muted/5 px-2.5 py-2">
+      <p className="text-[10px] text-muted-foreground leading-snug">{description}</p>
+      <span className="mt-1 inline-flex text-[9px] font-medium uppercase tracking-wide text-muted-foreground/70">
         Em breve
       </span>
     </div>
   );
 }
 
+const ENTRY_TAG_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function parseColumnEntryAutomation(meta: unknown): {
+  enabled: boolean;
+  newConversations: boolean;
+  leads: boolean;
+  clients: boolean;
+  tagIds: string[];
+} {
+  const empty = {
+    enabled: false,
+    newConversations: false,
+    leads: false,
+    clients: false,
+    tagIds: [] as string[],
+  };
+  if (!meta || typeof meta !== 'object') return empty;
+  const raw = (meta as Record<string, unknown>).automation_config;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return empty;
+  const enabled = (raw as Record<string, unknown>).enabled === true;
+  const src = (raw as Record<string, unknown>).sources;
+  if (!src || typeof src !== 'object' || Array.isArray(src)) return { ...empty, enabled };
+  const tags = (src as Record<string, unknown>).tags;
+  const tagIds = Array.isArray(tags)
+    ? [...new Set(tags.map((x) => String(x).trim()).filter((x) => ENTRY_TAG_UUID_RE.test(x)))]
+    : [];
+  return {
+    enabled,
+    newConversations: (src as Record<string, unknown>).new_conversations === true,
+    leads: (src as Record<string, unknown>).leads === true,
+    clients: (src as Record<string, unknown>).clients === true,
+    tagIds,
+  };
+}
 
 type Props = {
   open: boolean;
@@ -168,11 +206,23 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
   const [whatsappModels, setWhatsappModels] = useState<WhatsappMessageTemplateListRow[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(false);
   const [boardColumnsForMove, setBoardColumnsForMove] = useState<ChatKanbanColumn[]>([]);
+  const [autoMoveTargetScope, setAutoMoveTargetScope] = useState<'same' | 'other'>('same');
+  const [tenantBoardsForAutoMove, setTenantBoardsForAutoMove] = useState<ChatKanbanBoard[]>([]);
+  const [tenantBoardsForAutoMoveLoading, setTenantBoardsForAutoMoveLoading] = useState(false);
+  const [autoMoveDestBoardColumns, setAutoMoveDestBoardColumns] = useState<ChatKanbanColumn[]>([]);
+  const [autoMoveDestBoardColumnsLoading, setAutoMoveDestBoardColumnsLoading] = useState(false);
   const [proposalsDisplay, setProposalsDisplay] = useState<KanbanProposalsDisplay>({
     ...EMPTY_KANBAN_PROPOSALS_DISPLAY,
   });
   const [proposalModelRows, setProposalModelRows] = useState<ProposalTemplate[]>([]);
   const [proposalModelsLoading, setProposalModelsLoading] = useState(false);
+  const [entryAutoEnabled, setEntryAutoEnabled] = useState(false);
+  const [entryNewConversations, setEntryNewConversations] = useState(false);
+  const [entryLeads, setEntryLeads] = useState(false);
+  const [entryClients, setEntryClients] = useState(false);
+  const [entryAutoTagIds, setEntryAutoTagIds] = useState<string[]>([]);
+  const [kanbanCatalogTags, setKanbanCatalogTags] = useState<Array<{ id: string; label: string }>>([]);
+  const [kanbanCatalogLoading, setKanbanCatalogLoading] = useState(false);
 
   useEffect(() => {
     if (!open || !column) return;
@@ -180,7 +230,9 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
     setColor(column.color ?? null);
     setUi(parseKanbanColumnUi(column.metadata));
     setRules(parseKanbanColumnRules(column.metadata));
-    setPhase2(parseKanbanPhase2(column.metadata));
+    const p2 = parseKanbanPhase2(column.metadata);
+    setPhase2(p2);
+    setAutoMoveTargetScope(p2.automations.auto_move_by_time.to_board_id ? 'other' : 'same');
     const parsed = parseKanbanProposalsDisplay(column.metadata);
     const hasModel = Boolean(
       parsed.default_proposal_model_id?.trim() || parsed.default_proposal_template_id?.trim(),
@@ -190,11 +242,41 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
         ? { ...parsed, auto_create_proposal_on_enter: true }
         : parsed,
     );
+    const entry = parseColumnEntryAutomation(column.metadata);
+    setEntryAutoEnabled(entry.enabled);
+    setEntryNewConversations(entry.newConversations);
+    setEntryLeads(entry.leads);
+    setEntryClients(entry.clients);
+    setEntryAutoTagIds(entry.tagIds);
     setSelectedFunnelStageId(column.funnel_stage_id ?? null);
     setBoardLinkedFunnelId(null);
     setBoardFunnelName(null);
     setBoardStages([]);
   }, [open, column?.id, column?.updated_at]);
+
+  useEffect(() => {
+    if (!open || !column) return;
+    let cancelled = false;
+    setKanbanCatalogLoading(true);
+    void chatKanbanService
+      .listTenantKanbanTags()
+      .then((rows) => {
+        if (!cancelled) {
+          setKanbanCatalogTags(
+            rows.map((t) => ({ id: t.id, label: t.label })).sort((a, b) => a.label.localeCompare(b.label, 'pt-BR')),
+          );
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setKanbanCatalogTags([]);
+      })
+      .finally(() => {
+        if (!cancelled) setKanbanCatalogLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, column?.id]);
 
   useEffect(() => {
     if (!open || !column) return;
@@ -206,6 +288,57 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
       cancelled = true;
     };
   }, [open, column?.board_id, column?.id]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setTenantBoardsForAutoMoveLoading(true);
+    void chatKanbanService
+      .listBoards(false)
+      .then((boards) => {
+        if (cancelled) return;
+        setTenantBoardsForAutoMove(boards.filter((b) => !b.archived_at && b.is_active !== false));
+      })
+      .catch(() => {
+        if (!cancelled) setTenantBoardsForAutoMove([]);
+      })
+      .finally(() => {
+        if (!cancelled) setTenantBoardsForAutoMoveLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !column || autoMoveTargetScope !== 'other') {
+      setAutoMoveDestBoardColumns([]);
+      setAutoMoveDestBoardColumnsLoading(false);
+      return;
+    }
+    const destBoardId = phase2.automations.auto_move_by_time.to_board_id;
+    if (!destBoardId) {
+      setAutoMoveDestBoardColumns([]);
+      setAutoMoveDestBoardColumnsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setAutoMoveDestBoardColumnsLoading(true);
+    void chatKanbanService
+      .listColumns(destBoardId)
+      .then((cols) => {
+        if (!cancelled) setAutoMoveDestBoardColumns(cols);
+      })
+      .catch(() => {
+        if (!cancelled) setAutoMoveDestBoardColumns([]);
+      })
+      .finally(() => {
+        if (!cancelled) setAutoMoveDestBoardColumnsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, column?.id, autoMoveTargetScope, phase2.automations.auto_move_by_time.to_board_id]);
 
   useEffect(() => {
     if (!open || !column) return;
@@ -375,7 +508,8 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
       }
     }
     if (phase2.automations.auto_move_by_time.enabled) {
-      const dst = phase2.automations.auto_move_by_time.to_column_id;
+      const amt = phase2.automations.auto_move_by_time;
+      const dst = amt.to_column_id;
       if (!dst) {
         toast.error('Movimento automático: escolha a coluna de destino ou desligue a opção.');
         return;
@@ -384,15 +518,35 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
         toast.error('Movimento automático: a coluna de destino não pode ser a mesma coluna.');
         return;
       }
-      const destOk = boardColumnsForMove.some((c) => c.id === dst);
-      if (!destOk) {
-        toast.error('Movimento automático: coluna de destino inválida neste quadro.');
-        return;
-      }
-      const otherCols = boardColumnsForMove.filter((c) => c.id !== column.id);
-      if (otherCols.length === 0) {
-        toast.error('Movimento automático: adicione outra coluna ao quadro para poder definir destino.');
-        return;
+      if (autoMoveTargetScope === 'same') {
+        const destOk = boardColumnsForMove.some((c) => c.id === dst);
+        if (!destOk) {
+          toast.error('Movimento automático: coluna de destino inválida neste quadro.');
+          return;
+        }
+        const otherCols = boardColumnsForMove.filter((c) => c.id !== column.id);
+        if (otherCols.length === 0) {
+          toast.error('Movimento automático: adicione outra coluna ao quadro para poder definir destino.');
+          return;
+        }
+      } else {
+        if (!amt.to_board_id) {
+          toast.error('Movimento automático: escolha o quadro Kanban de destino.');
+          return;
+        }
+        if (amt.to_board_id === column.board_id) {
+          toast.error('Movimento automático: para mover dentro deste quadro use «Coluna deste quadro».');
+          return;
+        }
+        if (autoMoveDestBoardColumnsLoading) {
+          toast.error('Movimento automático: aguarde o carregamento das colunas do quadro destino.');
+          return;
+        }
+        const destOk = autoMoveDestBoardColumns.some((c) => c.id === dst);
+        if (!destOk) {
+          toast.error('Movimento automático: coluna inválida para o quadro destino.');
+          return;
+        }
       }
     }
     if (proposalsDisplay.move_on_proposal_accept) {
@@ -426,14 +580,44 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
         return;
       }
     }
+    const entryHasAnySource =
+      entryNewConversations || entryLeads || entryClients || entryAutoTagIds.length > 0;
+    if (entryAutoEnabled && !entryHasAnySource) {
+      toast.error(
+        'Entrada automática no quadro: escolha pelo menos uma origem (novas conversas, leads, clientes ou tags) ou desative.',
+      );
+      return;
+    }
     setSaving(true);
     try {
       const baseMeta =
         column.metadata && typeof column.metadata === 'object' ? (column.metadata as Record<string, unknown>) : {};
+      const phase2ToSave =
+        phase2.automations.auto_move_by_time.enabled && autoMoveTargetScope === 'same'
+          ? {
+              ...phase2,
+              automations: {
+                ...phase2.automations,
+                auto_move_by_time: {
+                  ...phase2.automations.auto_move_by_time,
+                  to_board_id: null,
+                },
+              },
+            }
+          : phase2;
       const meta = mergeKanbanProposalsIntoMetadata(
-        mergeColumnMetadataFull(baseMeta, ui, rules, phase2),
+        mergeColumnMetadataFull(baseMeta, ui, rules, phase2ToSave),
         proposalsDisplay,
       );
+      meta.automation_config = {
+        enabled: entryAutoEnabled && entryHasAnySource,
+        sources: {
+          new_conversations: entryNewConversations,
+          leads: entryLeads,
+          clients: entryClients,
+          tags: entryAutoTagIds,
+        },
+      };
       const chosenStageId = selectedFunnelStageId ?? null;
       await chatKanbanService.patchColumn(column.id, {
         name: n,
@@ -468,22 +652,22 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
     !proposalModelRows.some((p) => p.id === proposalsDisplay.default_proposal_model_id);
 
   const itemClass =
-    'border border-border/50 rounded-lg bg-card/40 overflow-hidden mb-2 last:mb-0 shadow-sm shadow-black/[0.02]';
+    'border border-border/40 rounded-md bg-card/30 overflow-hidden mb-1.5 last:mb-0';
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="w-full sm:max-w-lg flex flex-col p-0 gap-0">
-        <SheetHeader className="px-6 pt-6 pb-2 space-y-1 shrink-0 text-left">
-          <SheetTitle>Coluna</SheetTitle>
-          <SheetDescription>
-            Configuração contextual. As automações aplicam-se no servidor ao mover um cartão para esta coluna.
+        <SheetHeader className="px-5 pt-5 pb-1.5 space-y-0.5 shrink-0 text-left">
+          <SheetTitle className="text-base">Coluna</SheetTitle>
+          <SheetDescription className="text-xs leading-snug">
+            Nome, visual e regras ao mover cartões para aqui.
           </SheetDescription>
         </SheetHeader>
 
         {!column ? null : (
           <>
-            <ScrollArea className="flex-1 min-h-0 px-6 [&_[data-radix-scroll-area-viewport]]:!block">
-              <div className="pb-6 pr-2 pt-1">
+            <ScrollArea className="flex-1 min-h-0 px-5 [&_[data-radix-scroll-area-viewport]]:!block">
+              <div className="pb-4 pr-1.5 pt-0.5">
                 <Accordion
                   type="multiple"
                   defaultValue={[]}
@@ -492,18 +676,14 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
                   <AccordionItem value="general" className={cn(itemClass, 'border-b-0')}>
                     <AccordionTrigger
                       className={cn(
-                        'px-3 py-3 text-sm hover:no-underline',
-                        'hover:bg-muted/30 rounded-t-lg [&[data-state=open]]:bg-muted/20',
+                        'px-3 py-2 text-sm hover:no-underline',
+                        'hover:bg-muted/25 rounded-t-md [&[data-state=open]]:bg-muted/15',
                       )}
                     >
-                      <AccordionSectionHeader
-                        icon={Settings2}
-                        title="Geral"
-                        subtitle="Nome, cor, terminal, visibilidade no quadro"
-                      />
+                      <AccordionSectionHeader icon={Settings2} title="Geral" subtitle="Nome, cor, visibilidade" />
                     </AccordionTrigger>
-                    <AccordionContent className="px-3 pb-3 pt-0 border-t border-border/40">
-                      <div className="space-y-3 pt-3">
+                    <AccordionContent className="px-3 pb-2.5 pt-0 border-t border-border/30">
+                      <div className="space-y-2.5 pt-2.5">
                         <div className="space-y-1.5">
                           <Label htmlFor="col-set-name">Nome</Label>
                           <Input
@@ -517,7 +697,7 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
                           <span className="text-xs text-muted-foreground">Cor do cabeçalho</span>
                           <ColorPresetPicker value={color} onChange={setColor} disabled={saving} />
                         </div>
-                        <p className="text-[11px] text-muted-foreground">{positionLabel}</p>
+                        <p className="text-[10px] text-muted-foreground/90">{positionLabel}</p>
                         <div className="flex items-center justify-between gap-3">
                           <Label htmlFor="col-terminal" className="text-sm font-normal cursor-pointer">
                             Coluna terminal
@@ -530,14 +710,13 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
                           />
                         </div>
                         <div className="flex items-center justify-between gap-3">
-                          <div className="space-y-0.5">
-                            <Label htmlFor="col-hidden" className="text-sm font-normal cursor-pointer">
-                              Ocultar no quadro
-                            </Label>
-                            <p className="text-[10px] text-muted-foreground leading-snug">
-                              A coluna deixa de aparecer no Kanban; os cartões mantêm-se associados.
-                            </p>
-                          </div>
+                          <Label
+                            htmlFor="col-hidden"
+                            className="text-sm font-normal cursor-pointer"
+                            title="A coluna deixa de aparecer no quadro; os cartões mantêm-se na coluna."
+                          >
+                            Ocultar no quadro
+                          </Label>
                           <Switch
                             id="col-hidden"
                             checked={ui.hidden}
@@ -548,22 +727,138 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
                       </div>
                     </AccordionContent>
                   </AccordionItem>
+                </Accordion>
 
-                  <AccordionItem value="attendance" className={cn(itemClass, 'border-b-0')}>
+                <div className="mt-3 rounded-lg border border-border/40 bg-muted/5 px-2 py-2 space-y-2">
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground px-0.5">
+                    Automações
+                  </p>
+
+                  <Accordion type="multiple" defaultValue={[]} className="w-full">
+                  <AccordionItem value="entry-automation" className={cn(itemClass, 'border-b-0')}>
                     <AccordionTrigger
                       className={cn(
-                        'px-3 py-3 text-sm hover:no-underline',
-                        'hover:bg-muted/30 rounded-t-lg [&[data-state=open]]:bg-muted/20',
+                        'px-3 py-2 text-sm hover:no-underline',
+                        'hover:bg-muted/25 rounded-t-md [&[data-state=open]]:bg-muted/15',
                       )}
                     >
                       <AccordionSectionHeader
-                        icon={Headphones}
-                        title="Atendimento"
-                        subtitle="Encerrar, fila, atribuições, confirmação e motivo"
+                        icon={ArrowDownToLine}
+                        title="Entrada no quadro"
+                        subtitle="Novas conversas, leads, clientes ou tags"
                       />
                     </AccordionTrigger>
-                    <AccordionContent className="px-3 pb-3 pt-0 border-t border-border/40">
-                      <div className="pt-3">
+                    <AccordionContent className="px-3 pb-2.5 pt-0 border-t border-border/30">
+                      <div className="pt-2.5 space-y-2.5">
+                        <div className="flex items-center justify-between gap-3">
+                          <Label htmlFor="col-entry-auto-enabled" className="text-sm font-normal cursor-pointer">
+                            Ativar
+                          </Label>
+                          <Switch
+                            id="col-entry-auto-enabled"
+                            checked={entryAutoEnabled}
+                            onCheckedChange={(v) => {
+                              setEntryAutoEnabled(v);
+                              if (!v) {
+                                setEntryNewConversations(false);
+                                setEntryLeads(false);
+                                setEntryClients(false);
+                                setEntryAutoTagIds([]);
+                              }
+                            }}
+                            disabled={saving}
+                          />
+                        </div>
+                        {entryAutoEnabled ? (
+                          <>
+                            <div className="rounded-md border border-border/40 bg-muted/10 px-2 py-1.5 space-y-1.5">
+                              <Label className="text-[11px] text-muted-foreground">Incluir</Label>
+                              <label className="flex cursor-pointer items-center gap-2 text-xs">
+                                <Checkbox
+                                  checked={entryNewConversations}
+                                  disabled={saving}
+                                  onCheckedChange={(c) => setEntryNewConversations(c === true)}
+                                />
+                                <span>Novas conversas</span>
+                              </label>
+                              <label className="flex cursor-pointer items-center gap-2 text-xs">
+                                <Checkbox
+                                  checked={entryLeads}
+                                  disabled={saving}
+                                  onCheckedChange={(c) => setEntryLeads(c === true)}
+                                />
+                                <span>Leads</span>
+                              </label>
+                              <label className="flex cursor-pointer items-center gap-2 text-xs">
+                                <Checkbox
+                                  checked={entryClients}
+                                  disabled={saving}
+                                  onCheckedChange={(c) => setEntryClients(c === true)}
+                                />
+                                <span>Clientes</span>
+                              </label>
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label className="text-xs">Conversas com tag</Label>
+                              {kanbanCatalogLoading ? (
+                                <p className="text-[11px] text-muted-foreground">A carregar tags…</p>
+                              ) : kanbanCatalogTags.length === 0 ? (
+                                <p className="text-[10px] text-muted-foreground">Sem tags Kanban no tenant.</p>
+                              ) : (
+                                <ScrollArea className="h-[min(220px,40vh)] rounded-md border border-border/50 bg-muted/10 pr-2">
+                                  <div className="space-y-0 p-2">
+                                    {kanbanCatalogTags.map((t) => {
+                                      const checked = entryAutoTagIds.includes(t.id);
+                                      return (
+                                        <label
+                                          key={t.id}
+                                          className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1.5 text-xs hover:bg-muted/50"
+                                        >
+                                          <Checkbox
+                                            checked={checked}
+                                            disabled={saving}
+                                            onCheckedChange={(c) => {
+                                              const on = c === true;
+                                              setEntryAutoTagIds((prev) =>
+                                                on
+                                                  ? prev.includes(t.id)
+                                                    ? prev
+                                                    : [...prev, t.id]
+                                                  : prev.filter((x) => x !== t.id),
+                                              );
+                                            }}
+                                          />
+                                          <span className="min-w-0 flex-1 truncate">{t.label}</span>
+                                        </label>
+                                      );
+                                    })}
+                                  </div>
+                                </ScrollArea>
+                              )}
+                            </div>
+                          </>
+                        ) : null}
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+                  </Accordion>
+
+                  <div className="rounded-md border border-border/35 bg-background/30 px-2 py-2 space-y-1.5">
+                    <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground px-0.5">
+                      Ao entrar na coluna
+                    </p>
+                    <Accordion type="multiple" defaultValue={[]} className="w-full">
+                  <AccordionItem value="attendance" className={cn(itemClass, 'border-b-0')}>
+                    <AccordionTrigger
+                      className={cn(
+                        'px-3 py-2 text-sm hover:no-underline',
+                        'hover:bg-muted/25 rounded-t-md [&[data-state=open]]:bg-muted/15',
+                      )}
+                    >
+                      <AccordionSectionHeader icon={Headphones} title="Atendimento" />
+                    </AccordionTrigger>
+                    <AccordionContent className="px-3 pb-2.5 pt-0 border-t border-border/30">
+                      <div className="pt-2.5">
                         <ChatKanbanColumnRulesForm
                           variant="attendance"
                           rules={rules}
@@ -581,18 +876,14 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
                   <AccordionItem value="organization" className={cn(itemClass, 'border-b-0')}>
                     <AccordionTrigger
                       className={cn(
-                        'px-3 py-3 text-sm hover:no-underline',
-                        'hover:bg-muted/30 rounded-t-lg [&[data-state=open]]:bg-muted/20',
+                        'px-3 py-2 text-sm hover:no-underline',
+                        'hover:bg-muted/25 rounded-t-md [&[data-state=open]]:bg-muted/15',
                       )}
                     >
-                      <AccordionSectionHeader
-                        icon={Tags}
-                        title="Organização"
-                        subtitle="Etiquetas e prioridade na conversa"
-                      />
+                      <AccordionSectionHeader icon={Tags} title="Organização" />
                     </AccordionTrigger>
-                    <AccordionContent className="px-3 pb-3 pt-0 border-t border-border/40">
-                      <div className="pt-3">
+                    <AccordionContent className="px-3 pb-2.5 pt-0 border-t border-border/30">
+                      <div className="pt-2.5">
                         <ChatKanbanColumnRulesForm
                           variant="organization"
                           rules={rules}
@@ -607,24 +898,157 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
                     </AccordionContent>
                   </AccordionItem>
 
-                  <AccordionItem value="automations" className={cn(itemClass, 'border-b-0')}>
+                  <AccordionItem value="commercial" className={cn(itemClass, 'border-b-0')}>
                     <AccordionTrigger
                       className={cn(
-                        'px-3 py-3 text-sm hover:no-underline',
-                        'hover:bg-muted/30 rounded-t-lg [&[data-state=open]]:bg-muted/20',
+                        'px-3 py-2 text-sm hover:no-underline',
+                        'hover:bg-muted/25 rounded-t-md [&[data-state=open]]:bg-muted/15',
                       )}
                     >
-                      <AccordionSectionHeader
-                        icon={Timer}
-                        title="Automações"
-                        subtitle="Mover cartão automaticamente após um tempo nesta coluna"
-                      />
+                      <AccordionSectionHeader icon={Briefcase} title="CRM" subtitle="Lead e cliente" />
                     </AccordionTrigger>
-                    <AccordionContent className="px-3 pb-3 pt-0 border-t border-border/40">
-                      <div className="pt-3 space-y-3">
+                    <AccordionContent className="px-3 pb-2.5 pt-0 border-t border-border/30">
+                      <div className="pt-2.5 space-y-2.5">
+                        <div className="flex items-center justify-between gap-3">
+                          <Label
+                            htmlFor="phase2-ensure-client"
+                            className="text-xs font-normal cursor-pointer leading-snug"
+                            title="Cliente existente mantém-se; lead converte; senão dedupe ou criação."
+                          >
+                            Criar/Converter para cliente
+                          </Label>
+                          <Switch
+                            id="phase2-ensure-client"
+                            checked={phase2.crm.ensure_client_on_column_entry}
+                            onCheckedChange={(v) =>
+                              setPhase2((prev) => ({
+                                ...prev,
+                                crm: {
+                                  ...prev.crm,
+                                  ensure_client_on_column_entry: v,
+                                },
+                              }))
+                            }
+                            disabled={saving}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <Label htmlFor="phase2-auto-lead" className="text-xs font-normal cursor-pointer leading-snug">
+                            Criar/vincular lead automaticamente
+                          </Label>
+                          <Switch
+                            id="phase2-auto-lead"
+                            checked={phase2.crm.auto_link_or_create_lead}
+                            onCheckedChange={(v) =>
+                              setPhase2((prev) => ({
+                                ...prev,
+                                crm: {
+                                  ...prev.crm,
+                                  auto_link_or_create_lead: v,
+                                  allow_create_when_no_dedupe_match: v ? prev.crm.allow_create_when_no_dedupe_match : true,
+                                },
+                              }))
+                            }
+                            disabled={saving}
+                          />
+                        </div>
+                        {phase2.crm.auto_link_or_create_lead ? (
+                          <div className="space-y-1.5 rounded-md border border-border/40 bg-muted/10 px-2 py-1.5">
+                            <div className="flex items-center justify-between gap-3">
+                              <Label
+                                htmlFor="phase2-auto-lead-create"
+                                className="text-xs font-normal cursor-pointer leading-snug"
+                              >
+                                Criar lead se não houver igual
+                              </Label>
+                              <Switch
+                                id="phase2-auto-lead-create"
+                                checked={phase2.crm.allow_create_when_no_dedupe_match}
+                                onCheckedChange={(v) =>
+                                  setPhase2((prev) => ({
+                                    ...prev,
+                                    crm: { ...prev.crm, allow_create_when_no_dedupe_match: v },
+                                  }))
+                                }
+                                disabled={saving}
+                              />
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+
+                  <AccordionItem value="funnel" className={cn(itemClass, 'border-b-0')}>
+                    <AccordionTrigger
+                      className={cn(
+                        'px-3 py-2 text-sm hover:no-underline',
+                        'hover:bg-muted/25 rounded-t-md [&[data-state=open]]:bg-muted/15',
+                      )}
+                    >
+                      <AccordionSectionHeader icon={GitBranch} title="Funil" subtitle="Estágio CRM (board ligado)" />
+                    </AccordionTrigger>
+                    <AccordionContent className="px-3 pb-2.5 pt-0 border-t border-border/30">
+                      <div className="pt-2.5">
+                        <div className="rounded-md border border-border/40 bg-muted/10 p-2 space-y-2 text-sm">
+                          {funnelLoading ? (
+                            <p className="text-[11px] text-muted-foreground">A carregar…</p>
+                          ) : !boardLinkedFunnelId ? (
+                            <p className="text-[11px] text-muted-foreground leading-snug">
+                              Vincule um funil ao quadro no topo do Kanban.
+                            </p>
+                          ) : (
+                            <div className="space-y-2">
+                              <p className="text-[11px] text-muted-foreground truncate" title={boardFunnelName ?? boardLinkedFunnelId}>
+                                <span className="font-medium text-foreground">{boardFunnelName ?? boardLinkedFunnelId}</span>
+                              </p>
+                              <div className="space-y-1">
+                                <Label className="text-[11px]">Estágio</Label>
+                                <Select
+                                  value={(selectedFunnelStageId ?? 'none') as string}
+                                  onValueChange={(v) => {
+                                    const next = v === 'none' ? null : v;
+                                    setSelectedFunnelStageId(next);
+                                  }}
+                                  disabled={saving}
+                                >
+                                  <SelectTrigger className="h-9 text-xs">
+                                    <SelectValue placeholder="Nenhum estágio mapeado" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="none">Nenhum</SelectItem>
+                                    {boardStages.map((s) => (
+                                      <SelectItem key={s.id} value={s.id}>
+                                        {s.name}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+                  </Accordion>
+                  </div>
+
+                  <Accordion type="multiple" defaultValue={[]} className="w-full">
+                    <AccordionItem value="automations" className={cn(itemClass, 'border-b-0')}>
+                    <AccordionTrigger
+                      className={cn(
+                        'px-3 py-2 text-sm hover:no-underline',
+                        'hover:bg-muted/25 rounded-t-md [&[data-state=open]]:bg-muted/15',
+                      )}
+                    >
+                      <AccordionSectionHeader icon={Timer} title="Movimento por tempo" subtitle="Após X, mover de coluna" />
+                    </AccordionTrigger>
+                    <AccordionContent className="px-3 pb-2.5 pt-0 border-t border-border/30">
+                      <div className="pt-2.5 space-y-2.5">
                         <div className="flex items-center justify-between gap-3">
                           <Label htmlFor="auto-move-enabled" className="text-sm font-normal cursor-pointer">
-                            Mover automaticamente
+                            Ativar
                           </Label>
                           <Switch
                             id="auto-move-enabled"
@@ -646,39 +1070,177 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
                         </div>
                         {phase2.automations.auto_move_by_time.enabled ? (
                           <>
-                            <div className="space-y-1.5">
-                              <Label className="text-xs">Coluna de destino</Label>
-                              <Select
-                                value={phase2.automations.auto_move_by_time.to_column_id ?? '__none__'}
-                                onValueChange={(v) =>
-                                  setPhase2((prev) => ({
-                                    ...prev,
-                                    automations: {
-                                      ...prev.automations,
-                                      auto_move_by_time: {
-                                        ...prev.automations.auto_move_by_time,
-                                        to_column_id: v === '__none__' ? null : v,
+                            <div className="space-y-2">
+                              <Label className="text-xs text-muted-foreground">Mover para</Label>
+                              <RadioGroup
+                                value={autoMoveTargetScope}
+                                onValueChange={(v) => {
+                                  const scope = v as 'same' | 'other';
+                                  setAutoMoveTargetScope(scope);
+                                  if (scope === 'same') {
+                                    setPhase2((prev) => ({
+                                      ...prev,
+                                      automations: {
+                                        ...prev.automations,
+                                        auto_move_by_time: {
+                                          ...prev.automations.auto_move_by_time,
+                                          to_board_id: null,
+                                          to_column_id: null,
+                                        },
                                       },
-                                    },
-                                  }))
-                                }
+                                    }));
+                                  } else {
+                                    setPhase2((prev) => ({
+                                      ...prev,
+                                      automations: {
+                                        ...prev.automations,
+                                        auto_move_by_time: {
+                                          ...prev.automations.auto_move_by_time,
+                                          to_column_id: null,
+                                        },
+                                      },
+                                    }));
+                                  }
+                                }}
                                 disabled={saving}
+                                className="gap-2"
                               >
-                                <SelectTrigger className="h-9 text-xs">
-                                  <SelectValue placeholder="Selecionar coluna" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="__none__">Selecionar…</SelectItem>
-                                  {boardColumnsForMove
-                                    .filter((c) => c.id !== column.id)
-                                    .map((c) => (
-                                      <SelectItem key={c.id} value={c.id}>
-                                        {c.name}
-                                      </SelectItem>
-                                    ))}
-                                </SelectContent>
-                              </Select>
+                                <label className="flex items-center gap-2 text-sm font-normal cursor-pointer">
+                                  <RadioGroupItem value="same" id="auto-move-same" />
+                                  Coluna deste quadro
+                                </label>
+                                <label className="flex items-center gap-2 text-sm font-normal cursor-pointer">
+                                  <RadioGroupItem value="other" id="auto-move-other" />
+                                  Outro quadro Kanban
+                                </label>
+                              </RadioGroup>
                             </div>
+                            {autoMoveTargetScope === 'same' ? (
+                              <div className="space-y-1.5">
+                                <Label className="text-xs">Coluna de destino</Label>
+                                <Select
+                                  value={phase2.automations.auto_move_by_time.to_column_id ?? '__none__'}
+                                  onValueChange={(v) =>
+                                    setPhase2((prev) => ({
+                                      ...prev,
+                                      automations: {
+                                        ...prev.automations,
+                                        auto_move_by_time: {
+                                          ...prev.automations.auto_move_by_time,
+                                          to_board_id: null,
+                                          to_column_id: v === '__none__' ? null : v,
+                                        },
+                                      },
+                                    }))
+                                  }
+                                  disabled={saving}
+                                >
+                                  <SelectTrigger className="h-9 text-xs">
+                                    <SelectValue placeholder="Selecionar coluna" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="__none__">Selecionar…</SelectItem>
+                                    {boardColumnsForMove
+                                      .filter((c) => c.id !== column.id)
+                                      .map((c) => (
+                                        <SelectItem key={c.id} value={c.id}>
+                                          {c.name}
+                                        </SelectItem>
+                                      ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            ) : (
+                              <div className="space-y-2">
+                                <div className="space-y-1.5">
+                                  <Label className="text-xs">Quadro destino</Label>
+                                  <Select
+                                    value={phase2.automations.auto_move_by_time.to_board_id ?? '__none__'}
+                                    onValueChange={(v) =>
+                                      setPhase2((prev) => ({
+                                        ...prev,
+                                        automations: {
+                                          ...prev.automations,
+                                          auto_move_by_time: {
+                                            ...prev.automations.auto_move_by_time,
+                                            to_board_id: v === '__none__' ? null : v,
+                                            to_column_id: null,
+                                          },
+                                        },
+                                      }))
+                                    }
+                                    disabled={saving || tenantBoardsForAutoMoveLoading}
+                                  >
+                                    <SelectTrigger className="h-9 text-xs">
+                                      <SelectValue
+                                        placeholder={
+                                          tenantBoardsForAutoMoveLoading ? 'A carregar…' : 'Selecionar quadro'
+                                        }
+                                      />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="__none__">Selecionar…</SelectItem>
+                                      {tenantBoardsForAutoMove
+                                        .filter((b) => b.id !== column.board_id)
+                                        .map((b) => (
+                                          <SelectItem key={b.id} value={b.id}>
+                                            {b.name}
+                                          </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                  </Select>
+                                  {tenantBoardsForAutoMove.filter((b) => b.id !== column.board_id).length === 0 &&
+                                  !tenantBoardsForAutoMoveLoading ? (
+                                    <p className="text-[11px] text-muted-foreground">
+                                      Não há outro quadro ativo. Crie outro Kanban ou reative um existente.
+                                    </p>
+                                  ) : null}
+                                </div>
+                                <div className="space-y-1.5">
+                                  <Label className="text-xs">Coluna no quadro destino</Label>
+                                  <Select
+                                    value={phase2.automations.auto_move_by_time.to_column_id ?? '__none__'}
+                                    onValueChange={(v) =>
+                                      setPhase2((prev) => ({
+                                        ...prev,
+                                        automations: {
+                                          ...prev.automations,
+                                          auto_move_by_time: {
+                                            ...prev.automations.auto_move_by_time,
+                                            to_column_id: v === '__none__' ? null : v,
+                                          },
+                                        },
+                                      }))
+                                    }
+                                    disabled={
+                                      saving ||
+                                      !phase2.automations.auto_move_by_time.to_board_id ||
+                                      autoMoveDestBoardColumnsLoading
+                                    }
+                                  >
+                                    <SelectTrigger className="h-9 text-xs">
+                                      <SelectValue
+                                        placeholder={
+                                          !phase2.automations.auto_move_by_time.to_board_id
+                                            ? 'Escolha primeiro o quadro'
+                                            : autoMoveDestBoardColumnsLoading
+                                              ? 'A carregar…'
+                                              : 'Selecionar coluna'
+                                        }
+                                      />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="__none__">Selecionar…</SelectItem>
+                                      {autoMoveDestBoardColumns.map((c) => (
+                                        <SelectItem key={c.id} value={c.id}>
+                                          {c.name}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              </div>
+                            )}
                             <div className="flex gap-2 items-end">
                               <div className="space-y-1.5 flex-1 min-w-0">
                                 <Label className="text-xs">Após</Label>
@@ -736,139 +1298,35 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
                                 </Select>
                               </div>
                             </div>
-                            <p className="text-[10px] text-muted-foreground leading-snug">
-                              O servidor agenda ao entrar na coluna. Se o cartão sair antes do prazo, o agendamento é
-                              cancelado. Não precisa manter o painel aberto.
-                            </p>
                           </>
                         ) : null}
                       </div>
                     </AccordionContent>
                   </AccordionItem>
+                  </Accordion>
 
-                  <AccordionItem value="commercial" className={cn(itemClass, 'border-b-0')}>
-                    <AccordionTrigger
+                  <div className="mt-2 rounded-md border border-border/35 bg-background/25 px-2 py-1.5 space-y-1.5">
+                    <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground px-0.5">
+                      Propostas
+                    </p>
+                    <Accordion type="multiple" defaultValue={[]} className="w-full">
+                      <AccordionItem value="proposals" className={cn(itemClass, 'border-b-0')}>
+                        <AccordionTrigger
                       className={cn(
-                        'px-3 py-3 text-sm hover:no-underline',
-                        'hover:bg-muted/30 rounded-t-lg [&[data-state=open]]:bg-muted/20',
+                        'px-3 py-2 text-sm hover:no-underline',
+                        'hover:bg-muted/25 rounded-t-md [&[data-state=open]]:bg-muted/15',
                       )}
                     >
-                      <AccordionSectionHeader
-                        icon={Briefcase}
-                        title="Comercial"
-                        subtitle="Leads, oportunidades e CRM"
-                      />
+                      <AccordionSectionHeader icon={FileText} title="Cartão e propostas" />
                     </AccordionTrigger>
-                    <AccordionContent className="px-3 pb-3 pt-0 border-t border-border/40">
-                      <div className="pt-3 space-y-3">
-                        <p className="text-[11px] text-muted-foreground leading-snug">
-                          Garantir cliente: se já houver cliente, ignora. Se houver lead, converte para cliente e
-                          atualiza o vínculo da conversa. Se não houver lead nem cliente, tenta vincular cliente
-                          existente por dedupe conservador (telefone/e-mail) e, sem match, cria cliente novo com os
-                          dados disponíveis da conversa.
-                        </p>
-                        <div className="flex items-center justify-between gap-3">
-                          <Label
-                            htmlFor="phase2-ensure-client"
-                            className="text-xs font-normal cursor-pointer leading-snug"
-                          >
-                            Criar/Converter para cliente
-                          </Label>
-                          <Switch
-                            id="phase2-ensure-client"
-                            checked={phase2.crm.ensure_client_on_column_entry}
-                            onCheckedChange={(v) =>
-                              setPhase2((prev) => ({
-                                ...prev,
-                                crm: {
-                                  ...prev.crm,
-                                  ensure_client_on_column_entry: v,
-                                },
-                              }))
-                            }
-                            disabled={saving}
-                          />
-                        </div>
-                        <div className="flex items-center justify-between gap-3">
-                          <Label htmlFor="phase2-auto-lead" className="text-xs font-normal cursor-pointer leading-snug">
-                            Criar/vincular lead automaticamente
-                          </Label>
-                          <Switch
-                            id="phase2-auto-lead"
-                            checked={phase2.crm.auto_link_or_create_lead}
-                            onCheckedChange={(v) =>
-                              setPhase2((prev) => ({
-                                ...prev,
-                                crm: {
-                                  ...prev.crm,
-                                  auto_link_or_create_lead: v,
-                                  allow_create_when_no_dedupe_match: v ? prev.crm.allow_create_when_no_dedupe_match : true,
-                                },
-                              }))
-                            }
-                            disabled={saving}
-                          />
-                        </div>
-                        {phase2.crm.auto_link_or_create_lead ? (
-                          <div className="space-y-1.5 rounded-md border border-border/50 bg-muted/10 px-2.5 py-2">
-                            <div className="flex items-center justify-between gap-3">
-                              <Label
-                                htmlFor="phase2-auto-lead-create"
-                                className="text-xs font-normal cursor-pointer leading-snug"
-                              >
-                                Criar lead novo quando não houver cadastro igual
-                              </Label>
-                              <Switch
-                                id="phase2-auto-lead-create"
-                                checked={phase2.crm.allow_create_when_no_dedupe_match}
-                                onCheckedChange={(v) =>
-                                  setPhase2((prev) => ({
-                                    ...prev,
-                                    crm: { ...prev.crm, allow_create_when_no_dedupe_match: v },
-                                  }))
-                                }
-                                disabled={saving}
-                              />
-                            </div>
-                            <p className="text-[10px] text-muted-foreground leading-snug">
-                              <span className="font-medium text-foreground/80">Desligado:</span> só associa se já existir
-                              lead com o mesmo telefone ou e-mail.{' '}
-                              <span className="font-medium text-foreground/80">Ligado:</span> também cadastra um lead
-                              quando não encontrar ninguém igual (dados mínimos na conversa).
-                            </p>
-                          </div>
-                        ) : null}
-                      </div>
-                    </AccordionContent>
-                  </AccordionItem>
-
-                  <AccordionItem value="proposals" className={cn(itemClass, 'border-b-0')}>
-                    <AccordionTrigger
-                      className={cn(
-                        'px-3 py-3 text-sm hover:no-underline',
-                        'hover:bg-muted/30 rounded-t-lg [&[data-state=open]]:bg-muted/20',
-                      )}
-                    >
-                      <AccordionSectionHeader
-                        icon={FileText}
-                        title="Propostas"
-                        subtitle="Valores comerciais no cartão (módulo de propostas)"
-                      />
-                    </AccordionTrigger>
-                    <AccordionContent className="px-3 pb-3 pt-0 border-t border-border/40">
-                      <div className="pt-3 space-y-3">
-                        <p className="text-[11px] text-muted-foreground leading-snug">
-                          Pendente = soma das propostas com status <strong>Enviada</strong> (
-                          <code className="text-[10px]">sent</code>). Aceita = soma com status{' '}
-                          <strong>Aceita</strong> (<code className="text-[10px]">accepted</code>). Propostas faturadas (
-                          <code className="text-[10px]">invoiced</code>) não entram nestas linhas.
-                        </p>
+                    <AccordionContent className="px-3 pb-2.5 pt-0 border-t border-border/30">
+                      <div className="pt-2.5 space-y-2.5">
                         <div className="flex items-center justify-between gap-3">
                           <Label
                             htmlFor="kanban-prop-pending"
                             className="text-xs font-normal cursor-pointer leading-snug"
                           >
-                            Mostrar total pendente (enviadas)
+                            Mostrar pendente <span className="text-muted-foreground font-normal">(sent)</span>
                           </Label>
                           <Switch
                             id="kanban-prop-pending"
@@ -884,7 +1342,7 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
                             htmlFor="kanban-prop-accepted"
                             className="text-xs font-normal cursor-pointer leading-snug"
                           >
-                            Mostrar total aceito
+                            Mostrar aceite <span className="text-muted-foreground font-normal">(accepted)</span>
                           </Label>
                           <Switch
                             id="kanban-prop-accepted"
@@ -895,7 +1353,7 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
                             disabled={saving}
                           />
                         </div>
-                        <div className="rounded-md border border-border/50 bg-muted/10 px-2.5 py-2 space-y-2">
+                        <div className="rounded-md border border-border/40 bg-muted/10 px-2 py-1.5 space-y-1.5">
                           <div className="flex items-center justify-between gap-3">
                             <Label
                               htmlFor="kanban-prop-move-accept"
@@ -918,7 +1376,7 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
                           </div>
                           {proposalsDisplay.move_on_proposal_accept ? (
                             <div className="space-y-1.5">
-                              <Label className="text-[11px] text-muted-foreground">Coluna destino</Label>
+                              <Label className="text-[11px] text-muted-foreground">Destino</Label>
                               <Select
                                 value={proposalsDisplay.target_column_id || '__none__'}
                                 onValueChange={(val) =>
@@ -943,27 +1401,18 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
                                     ))}
                                 </SelectContent>
                               </Select>
-                              <p className="text-[10px] text-muted-foreground leading-snug">
-                                Quando uma proposta for aceita (link público ou painel), o cartão desta conversa
-                                passa para a coluna escolhida, se o cartão estiver nesta coluna.
-                              </p>
                             </div>
                           ) : null}
                         </div>
-                        <div className="space-y-2 pt-2 border-t border-border/40">
+                        <div className="space-y-2 pt-1.5 border-t border-border/30">
                           <div className="flex items-center justify-between gap-3">
-                            <div className="space-y-0.5 min-w-0">
-                              <Label
-                                htmlFor="kanban-prop-auto-create"
-                                className="text-xs font-normal cursor-pointer leading-snug"
-                              >
-                                Criar proposta ao entrar na coluna
-                              </Label>
-                              <p className="text-[10px] text-muted-foreground leading-snug">
-                                Ao mover ou adicionar o cartão aqui, o servidor cria a proposta com o modelo escolhido
-                                abaixo (é necessário cliente ou lead na conversa).
-                              </p>
-                            </div>
+                            <Label
+                              htmlFor="kanban-prop-auto-create"
+                              className="text-xs font-normal cursor-pointer leading-snug"
+                              title="Requer lead ou cliente na conversa."
+                            >
+                              Criar proposta ao entrar
+                            </Label>
                             <Switch
                               id="kanban-prop-auto-create"
                               checked={proposalsDisplay.auto_create_proposal_on_enter}
@@ -981,12 +1430,7 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
                           </div>
                           {proposalsDisplay.auto_create_proposal_on_enter ? (
                             <>
-                              <Label className="text-[11px] text-muted-foreground leading-snug">
-                                Modelo de proposta
-                              </Label>
-                              <p className="text-[10px] text-muted-foreground leading-snug">
-                                Modelos em <strong>Propostas → Modelos</strong>. Use um modelo ativo.
-                              </p>
+                              <Label className="text-[11px] text-muted-foreground">Modelo</Label>
                               {proposalsDisplay.default_proposal_template_id &&
                               !proposalsDisplay.default_proposal_model_id ? (
                                 <div
@@ -1048,32 +1492,28 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
                       </div>
                     </AccordionContent>
                   </AccordionItem>
+                    </Accordion>
+                  </div>
 
-                  <AccordionItem value="productivity" className={cn(itemClass, 'border-b-0')}>
+                  <Accordion type="multiple" defaultValue={[]} className="w-full">
+                    <AccordionItem value="productivity" className={cn(itemClass, 'border-b-0')}>
                     <AccordionTrigger
                       className={cn(
-                        'px-3 py-3 text-sm hover:no-underline',
-                        'hover:bg-muted/30 rounded-t-lg [&[data-state=open]]:bg-muted/20',
+                        'px-3 py-2 text-sm hover:no-underline',
+                        'hover:bg-muted/25 rounded-t-md [&[data-state=open]]:bg-muted/15',
                       )}
                     >
-                      <AccordionSectionHeader
-                        icon={CalendarClock}
-                        title="Produtividade"
-                        subtitle="Tarefas, lembretes e follow-up"
-                      />
+                      <AccordionSectionHeader icon={CalendarClock} title="Tarefas" subtitle="Tarefa ao entrar na coluna" />
                     </AccordionTrigger>
-                    <AccordionContent className="px-3 pb-3 pt-0 border-t border-border/40">
-                      <div className="pt-3 space-y-3">
-                        <p className="text-[11px] text-muted-foreground leading-snug">
-                          Ao entrar nesta coluna, cria uma tarefa no módulo de Tarefas ou na ficha do lead (conforme a
-                          conversa). Placeholders no título/descrição:{' '}
-                          <code className="text-[10px] bg-muted px-1 rounded">
-                            {'{{column_name}} {{contact_name}} {{display_name}} {{conversation_id}} {{canonical_phone}}'}
-                          </code>
-                        </p>
+                    <AccordionContent className="px-3 pb-2.5 pt-0 border-t border-border/30">
+                      <div className="pt-2.5 space-y-2.5">
                         <div className="flex items-center justify-between gap-3">
-                          <Label htmlFor="phase2-auto-task" className="text-xs font-normal cursor-pointer">
-                            Criar tarefa automaticamente
+                          <Label
+                            htmlFor="phase2-auto-task"
+                            className="text-xs font-normal cursor-pointer"
+                            title="{{column_name}}, {{contact_name}}, {{display_name}}, {{conversation_id}}, {{canonical_phone}}"
+                          >
+                            Criar tarefa ao entrar
                           </Label>
                           <Switch
                             id="phase2-auto-task"
@@ -1088,7 +1528,7 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
                           />
                         </div>
                         {phase2.productivity.auto_create_task ? (
-                          <div className="space-y-3 rounded-md border border-border/50 bg-muted/10 p-2.5">
+                          <div className="space-y-2.5 rounded-md border border-border/40 bg-muted/10 p-2">
                             <div className="space-y-1.5">
                               <Label className="text-xs">Título da tarefa</Label>
                               <Input
@@ -1243,7 +1683,7 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
                             ) : null}
                           </div>
                         ) : null}
-                        <FuturePlaceholder description="Lembretes, follow-up em calendário e cadências automáticas ficam para as próximas entregas." />
+                        <FuturePlaceholder description="Lembretes e cadências automáticas — em breve." />
                       </div>
                     </AccordionContent>
                   </AccordionItem>
@@ -1251,31 +1691,18 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
                   <AccordionItem value="communication" className={cn(itemClass, 'border-b-0')}>
                     <AccordionTrigger
                       className={cn(
-                        'px-3 py-3 text-sm hover:no-underline',
-                        'hover:bg-muted/30 rounded-t-lg [&[data-state=open]]:bg-muted/20',
+                        'px-3 py-2 text-sm hover:no-underline',
+                        'hover:bg-muted/25 rounded-t-md [&[data-state=open]]:bg-muted/15',
                       )}
                     >
-                      <AccordionSectionHeader
-                        icon={Megaphone}
-                        title="Comunicação"
-                        subtitle="Notificações e mensagens"
-                      />
+                      <AccordionSectionHeader icon={Megaphone} title="Mensagens e webhook" />
                     </AccordionTrigger>
-                    <AccordionContent className="px-3 pb-3 pt-0 border-t border-border/40">
-                      <div className="pt-3 space-y-3">
-                        <div className="rounded-md border border-border/50 bg-muted/15 p-3 space-y-3 text-sm">
-                          <p className="text-[11px] text-muted-foreground leading-snug">
-                            Mensagem automática ao entrar nesta coluna: texto fixo ou modelo da aba «Modelos» em Templates
-                            WhatsApp (várias mensagens, texto/imagem/documento). O envio corre no servidor; falhas não
-                            desfazem o movimento do cartão.
+                    <AccordionContent className="px-3 pb-2.5 pt-0 border-t border-border/30">
+                      <div className="pt-2.5 space-y-2.5">
+                        <div className="rounded-md border border-border/40 bg-muted/10 p-2 space-y-2 text-sm">
+                          <p className="text-[10px] text-amber-900/85 dark:text-amber-100/85 leading-snug">
+                            Mensagem ao cliente: envio automático; falhas não desfazem o movimento do cartão.
                           </p>
-                          <div
-                            className="rounded-md border border-amber-500/35 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-950/90 dark:text-amber-100/90 leading-snug"
-                            role="note"
-                          >
-                            Aviso: mensagem enviada automaticamente ao cliente quando o cartão entra na coluna. Falhas de
-                            envio não impedem o movimento do cartão.
-                          </div>
                           <div className="flex items-center justify-between gap-3">
                             <Label htmlFor="phase2-auto-msg" className="text-xs font-normal cursor-pointer leading-snug">
                               Enviar mensagem automática
@@ -1293,7 +1720,7 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
                             />
                           </div>
                           {phase2.notifications.auto_message_enabled ? (
-                            <div className="space-y-3">
+                            <div className="space-y-2">
                               <div className="space-y-1.5">
                                 <Label className="text-xs">Origem da mensagem</Label>
                                 <Select
@@ -1356,10 +1783,9 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
                                   {templatesLoading ? (
                                     <p className="text-[11px] text-muted-foreground">A carregar modelos…</p>
                                   ) : whatsappModels.length === 0 ? (
-                                    <div className="rounded-md border border-dashed border-border/70 bg-background/50 px-3 py-3 space-y-2">
-                                      <p className="text-[11px] text-muted-foreground leading-snug">
-                                        Não há modelos ativos. Crie na aba «Modelos» em{' '}
-                                        <span className="font-medium text-foreground">Templates WhatsApp</span>.
+                                    <div className="rounded-md border border-dashed border-border/60 bg-background/50 px-2 py-2 space-y-1.5">
+                                      <p className="text-[10px] text-muted-foreground leading-snug">
+                                        Sem modelos ativos. Crie em Templates WhatsApp.
                                       </p>
                                       <Button variant="outline" size="sm" className="h-8 text-xs" asChild>
                                         <Link to="/settings?section=chatTemplates">Abrir configuração</Link>
@@ -1394,10 +1820,6 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
                                           </SelectContent>
                                         </Select>
                                       </div>
-                                      <p className="text-[10px] text-muted-foreground leading-snug">
-                                        O modelo pode incluir várias mensagens (texto, imagem ou PDF por URL pública),
-                                        com atraso entre itens. Um movimento de cartão conta como uma execução completa.
-                                      </p>
                                       {staleWhatsappModelId ? (
                                         <div
                                           className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-950/90 dark:text-amber-100/90"
@@ -1409,17 +1831,9 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
                                         </div>
                                       ) : null}
                                       {selectedWhatsappModel ? (
-                                        <div className="space-y-1">
-                                          <p className="text-[10px] font-medium text-muted-foreground">Resumo</p>
-                                          <div className="rounded-md border border-border/60 bg-background/80 px-2.5 py-2 text-[11px] space-y-1">
-                                            <p>
-                                              <span className="text-muted-foreground">Mensagens:</span>{' '}
-                                              {selectedWhatsappModel.message_count}
-                                            </p>
-                                            <p className="text-muted-foreground">
-                                              Categoria: {selectedWhatsappModel.category_name || '—'}
-                                            </p>
-                                          </div>
+                                        <div className="rounded-md border border-border/50 bg-background/80 px-2 py-1.5 text-[10px] text-muted-foreground">
+                                          {selectedWhatsappModel.message_count} mensagem(ns) ·{' '}
+                                          {selectedWhatsappModel.category_name || '—'}
                                         </div>
                                       ) : null}
                                     </>
@@ -1427,24 +1841,15 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
                                 </div>
                               )}
 
-                              <p className="text-[10px] text-muted-foreground leading-snug">
+                              <p className="text-[9px] text-muted-foreground leading-tight">
                                 Variáveis:{' '}
-                                <code className="bg-muted px-1 rounded text-[10px]">{'{{contact_name}}'}</code>,{' '}
-                                <code className="bg-muted px-1 rounded text-[10px]">{'{{column_name}}'}</code>,{' '}
-                                <code className="bg-muted px-1 rounded text-[10px]">{'{{board_name}}'}</code>,{' '}
-                                <code className="bg-muted px-1 rounded text-[10px]">{'{{company_name}}'}</code>
-                                {', '}
-                                <code className="bg-muted px-1 rounded text-[10px]">{'{{operator_name}}'}</code>,{' '}
-                                <code className="bg-muted px-1 rounded text-[10px]">{'{{team_name}}'}</code>
+                                <code className="bg-muted/80 px-0.5 rounded">{'{{contact_name}} {{column_name}} {{board_name}} …'}</code>
                               </p>
                             </div>
                           ) : null}
                         </div>
 
-                        <div className="rounded-md border border-border/50 bg-muted/15 p-3 space-y-3 text-sm">
-                          <p className="text-[11px] text-muted-foreground leading-snug">
-                            Configure um webhook opcional por coluna. Falhas externas nao impedem o movimento do cartao.
-                          </p>
+                        <div className="rounded-md border border-border/40 bg-muted/10 p-2 space-y-2 text-sm">
                           <div className="flex items-center justify-between gap-3">
                             <Label htmlFor="phase2-webhook-enabled" className="text-xs font-normal cursor-pointer">
                               Ativar webhook
@@ -1462,9 +1867,9 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
                             />
                           </div>
 
-                          <details className="rounded-md border border-border/40 bg-background/40 p-2.5" open={false}>
-                            <summary className="cursor-pointer text-[11px] font-medium text-muted-foreground">
-                              Modo avancado (webhook outbound)
+                          <details className="rounded border border-border/35 bg-background/50 p-2" open={false}>
+                            <summary className="cursor-pointer text-[10px] font-medium text-muted-foreground">
+                              Opções avançadas
                             </summary>
                             <div className="space-y-2 pt-2">
                               <div className="space-y-1.5">
@@ -1540,9 +1945,7 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
                                   disabled={saving}
                                 />
                               </div>
-                              <p className="text-[10px] text-muted-foreground">
-                                Politica fixa da Fase 2A: falha do webhook nao bloqueia o movimento do cartao.
-                              </p>
+                              <p className="text-[9px] text-muted-foreground">Falha do webhook não bloqueia o cartão.</p>
                             </div>
                           </details>
                         </div>
@@ -1553,87 +1956,24 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
                   <AccordionItem value="sla" className={cn(itemClass, 'border-b-0')}>
                     <AccordionTrigger
                       className={cn(
-                        'px-3 py-3 text-sm hover:no-underline',
-                        'hover:bg-muted/30 rounded-t-lg [&[data-state=open]]:bg-muted/20',
+                        'px-3 py-2 text-sm hover:no-underline',
+                        'hover:bg-muted/25 rounded-t-md [&[data-state=open]]:bg-muted/15',
                       )}
                     >
-                      <AccordionSectionHeader
-                        icon={Scale}
-                        title="SLA e validações avançadas"
-                        subtitle="Tempos, bloqueios e regras condicionais"
-                      />
+                      <AccordionSectionHeader icon={Scale} title="SLA e validações" />
                     </AccordionTrigger>
-                    <AccordionContent className="px-3 pb-3 pt-0 border-t border-border/40">
-                      <div className="pt-3">
-                        <FuturePlaceholder description="SLA por etapa, validação de campos obrigatórios, impedir retrocesso e alertas de cartão parado." />
-                      </div>
-                    </AccordionContent>
-                  </AccordionItem>
-
-                  <AccordionItem value="funnel" className={cn(itemClass, 'border-b-0')}>
-                    <AccordionTrigger
-                      className={cn(
-                        'px-3 py-3 text-sm hover:no-underline',
-                        'hover:bg-muted/30 rounded-t-lg [&[data-state=open]]:bg-muted/20',
-                      )}
-                    >
-                      <AccordionSectionHeader
-                        icon={GitBranch}
-                        title="Integração com funil"
-                        subtitle="Funil de vendas existente (opcional)"
-                      />
-                    </AccordionTrigger>
-                    <AccordionContent className="px-3 pb-3 pt-0 border-t border-border/40">
-                      <div className="pt-3">
-                        <div className="rounded-md border border-border/50 bg-muted/15 p-3 space-y-3 text-sm">
-                          <p className="text-[11px] text-muted-foreground leading-snug">
-                            Integração opcional: esta coluna pode atualizar estágio no CRM quando o board estiver vinculado a um funil e a conversa já tiver vínculo (`client_id` ou `lead_id`).
-                          </p>
-                          {funnelLoading ? (
-                            <p className="text-xs text-muted-foreground">Carregando funil do board...</p>
-                          ) : !boardLinkedFunnelId ? (
-                            <p className="text-xs text-muted-foreground">
-                              Este board ainda não está vinculado a um funil. Defina o funil no topo da página do Kanban para liberar o mapeamento de estágio.
-                            </p>
-                          ) : (
-                            <div className="space-y-2">
-                              <p className="text-xs text-muted-foreground">
-                                Funil vinculado ao board: <span className="font-medium text-foreground">{boardFunnelName ?? boardLinkedFunnelId}</span>
-                              </p>
-                              <div className="space-y-1.5">
-                                <Label className="text-xs">Estágio CRM desta coluna</Label>
-                                <Select
-                                  value={(selectedFunnelStageId ?? 'none') as string}
-                                  onValueChange={(v) => {
-                                    const next = v === 'none' ? null : v;
-                                    setSelectedFunnelStageId(next);
-                                  }}
-                                  disabled={saving}
-                                >
-                                  <SelectTrigger className="h-9 text-xs">
-                                    <SelectValue placeholder="Nenhum estágio mapeado" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="none">Nenhum</SelectItem>
-                                    {boardStages.map((s) => (
-                                      <SelectItem key={s.id} value={s.id}>
-                                        {s.name}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              </div>
-                            </div>
-                          )}
-                        </div>
+                    <AccordionContent className="px-3 pb-2.5 pt-0 border-t border-border/30">
+                      <div className="pt-2.5">
+                        <FuturePlaceholder description="SLA, bloqueios e alertas — em breve." />
                       </div>
                     </AccordionContent>
                   </AccordionItem>
                 </Accordion>
+                </div>
               </div>
             </ScrollArea>
 
-            <SheetFooter className="px-6 py-4 border-t border-border/60 shrink-0 gap-2 sm:gap-2">
+            <SheetFooter className="px-5 py-3 border-t border-border/50 shrink-0 gap-2 sm:gap-2">
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
                 Cancelar
               </Button>

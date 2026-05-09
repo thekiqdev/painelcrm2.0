@@ -8,8 +8,11 @@ import { requireTenantId } from '../middleware/auth.js';
 import { getTenantIdOrNull } from '../utils/tenantScope.js';
 import {
   confirmLoggedInPasswordChange,
+  confirmProfileEditVerificationCode,
   requestLoggedInPasswordChangeCode,
+  requestProfileEditVerificationCode,
 } from '../services/loggedInPasswordChangeService.js';
+import { generateMeProfileEditToken, verifyMeProfileEditToken } from '../utils/jwt.js';
 import {
   assertAllowedImageUpload,
   buildCatalogMediaPublicUrl,
@@ -38,6 +41,20 @@ const personalPutSchema = z.object({
 
 const PROFILE_MIGRATION_HINT =
   'Execute database/init/157_profile_personal_and_password_change.sql (perfil completo) ou, no mínimo, database/init/158_users_avatar_url.sql (avatar em users).';
+
+function assertMeProfileEditToken(req: AuthRequest, res: Response): boolean {
+  const userId = req.userId!;
+  const raw = req.get('x-profile-edit-token')?.trim();
+  if (!raw || !verifyMeProfileEditToken(raw, userId)) {
+    res.status(403).json({
+      error:
+        'É necessário confirmar com o código de 6 dígitos enviado ao WhatsApp para editar o perfil. Toque em «Editar perfil» e siga as instruções.',
+      code: 'PROFILE_EDIT_VERIFICATION_REQUIRED',
+    });
+    return false;
+  }
+  return true;
+}
 
 async function getPreviousAvatarUrlForMe(userId: string): Promise<string | null> {
   try {
@@ -183,6 +200,7 @@ export async function getMeProfile(req: AuthRequest, res: Response): Promise<voi
 export async function putMeProfile(req: AuthRequest, res: Response): Promise<void> {
   try {
     const userId = req.userId!;
+    if (!assertMeProfileEditToken(req, res)) return;
     const body = personalPutSchema.parse(req.body);
 
     const existingResult = await pool.query(
@@ -281,6 +299,7 @@ export async function postMeProfileAvatar(req: AuthRequest, res: Response): Prom
       return;
     }
     const userId = req.userId!;
+    if (!assertMeProfileEditToken(req, res)) return;
     const file = req.file;
     if (!file?.buffer) {
       res.status(400).json({ error: 'Arquivo obrigatório (campo file).' });
@@ -470,6 +489,47 @@ export async function putMeBusinessProfile(req: AuthRequest, res: Response): Pro
       return;
     }
     console.error('[me/business-profile] put', e);
+    res.status(500).json({ error: 'Erro interno' });
+  }
+}
+
+export async function postMeProfileEditRequestCode(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId!;
+    const result = await requestProfileEditVerificationCode(pool, userId, req.tenantId ?? null);
+    if (!result.ok) {
+      const status = result.code === 'RATE_LIMIT' ? 429 : result.code === 'NO_WHATSAPP' ? 400 : 503;
+      res.status(status).json({ error: result.error, code: result.code });
+      return;
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[me/profile/edit/request-code]', e);
+    res.status(500).json({ error: 'Erro interno' });
+  }
+}
+
+const profileEditConfirmSchema = z.object({
+  code: z.string().min(4).max(12),
+});
+
+export async function postMeProfileEditConfirmCode(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId!;
+    const body = profileEditConfirmSchema.parse(req.body);
+    const result = await confirmProfileEditVerificationCode(pool, userId, body.code);
+    if (!result.ok) {
+      res.status(400).json({ error: result.error });
+      return;
+    }
+    const profile_edit_token = generateMeProfileEditToken(userId);
+    res.json({ ok: true, profile_edit_token, expires_in: 30 * 60 });
+  } catch (e) {
+    if (e instanceof z.ZodError) {
+      res.status(400).json({ error: 'Dados inválidos', details: e.errors });
+      return;
+    }
+    console.error('[me/profile/edit/confirm-code]', e);
     res.status(500).json({ error: 'Erro interno' });
   }
 }

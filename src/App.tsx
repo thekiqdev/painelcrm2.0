@@ -1,7 +1,8 @@
 import { Suspense } from "react";
 import { lazyWithReload } from "@/lib/lazyWithReload";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { queryClient } from "@/lib/queryClient";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./contexts/AuthContext";
 import { ModulePermissionsProvider } from "./contexts/ModulePermissionsContext";
@@ -162,21 +163,6 @@ const LoadingFallback = () => (
     </div>
   </div>
 );
-
-// Cache agressivo: dados na hora ao voltar; menos refetch e retentativas para evitar lentidão
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 5 * 60 * 1000,       // 5 min – não refetch ao focar/montar
-      gcTime: 15 * 60 * 1000,        // 15 min – dados mantidos em cache
-      refetchOnWindowFocus: false,
-      refetchOnMount: false,          // nunca refetch só por montar – só invalidação manual
-      refetchOnReconnect: false,
-      retry: 1,                      // no máximo 1 retry (evita 3x em 401 e duplicatas)
-      retryDelay: 1000,
-    },
-  },
-});
 
 const App = () => (
   <QueryClientProvider client={queryClient}>

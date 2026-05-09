@@ -54,7 +54,7 @@ export async function hasAssignedTeamColumn(): Promise<boolean> {
 
 let cachedSla: { value: boolean; checkedAt: number } | null = null;
 
-/** Colunas Fase 5: first_response_at, last_customer_message_at, etc. */
+/** Colunas SLA Fase 5 usadas em SELECT/ORDER BY — todas devem existir (evita 500 em BD parcial). */
 export async function hasChatPhase5SlaColumns(): Promise<boolean> {
   const now = Date.now();
   if (cachedSla && now - cachedSla.checkedAt < CHECK_TTL_MS) {
@@ -65,9 +65,13 @@ export async function hasChatPhase5SlaColumns(): Promise<boolean> {
      FROM information_schema.columns
      WHERE table_schema = 'public'
        AND table_name = 'chat_conversations'
-       AND column_name = 'last_customer_message_at'`
+       AND column_name IN (
+         'first_response_at',
+         'last_customer_message_at',
+         'last_agent_message_at'
+       )`
   );
-  const value = (r.rows[0]?.c ?? '0') === '1';
+  const value = (r.rows[0]?.c ?? '0') === '3';
   cachedSla = { value, checkedAt: now };
   return value;
 }

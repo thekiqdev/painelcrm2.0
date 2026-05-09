@@ -10,6 +10,8 @@ router.use(authenticateToken, setCurrentTenant, setRequestDb);
 router.get('/profile', meProfileController.getMeProfile);
 router.put('/profile', meProfileController.putMeProfile);
 router.post('/profile/avatar', catalogMediaUploadSingle, meProfileController.postMeProfileAvatar);
+router.post('/profile/edit/request-code', meProfileController.postMeProfileEditRequestCode);
+router.post('/profile/edit/confirm-code', meProfileController.postMeProfileEditConfirmCode);
 router.post('/profile/password/request-code', meProfileController.postMeProfilePasswordRequestCode);
 router.post('/profile/password/confirm', meProfileController.postMeProfilePasswordConfirm);
 router.get('/business-profile', meProfileController.getMeBusinessProfile);

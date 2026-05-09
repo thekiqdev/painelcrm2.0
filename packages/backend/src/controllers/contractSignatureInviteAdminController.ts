@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { z } from 'zod';
 import { AuthRequest } from '../middleware/auth.js';
-import { assertModulePermission, ModulePermissionError } from '../permissions/index.js';
+import { assertModulePermission, assertPermissionKey, ModulePermissionError } from '../permissions/index.js';
 import { findSignerInTenant } from '../utils/contractAccess.js';
 import {
   getSignatureInviteMetaForSigner,
@@ -63,6 +63,7 @@ export async function issueSignatureInviteHandler(req: AuthRequest, res: Respons
       { ownerId: signer.user_id, assigneeId: signer.responsible_id },
       req
     );
+    await assertPermissionKey(userId, 'contracts.request_signature', req);
 
     const result = await issueSignatureInvite({
       contractId,
@@ -137,6 +138,7 @@ export async function revokeSignatureInviteHandler(req: AuthRequest, res: Respon
       { ownerId: signer.user_id, assigneeId: signer.responsible_id },
       req
     );
+    await assertPermissionKey(userId, 'contracts.request_signature', req);
     await revokeSignatureInvite({
       contractId,
       signerId,

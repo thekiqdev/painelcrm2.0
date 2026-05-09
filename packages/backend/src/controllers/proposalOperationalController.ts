@@ -5,7 +5,7 @@ import type { Response } from 'express';
 import { z } from 'zod';
 import type { AuthRequest } from '../middleware/auth.js';
 import { pool } from '../utils/db.js';
-import { assertModulePermission, ModulePermissionError } from '../permissions/index.js';
+import { assertModulePermission, assertPermissionKey, ModulePermissionError } from '../permissions/index.js';
 import { loadProposalOperationalContext } from '../services/proposalOperationalContextService.js';
 import { buildProposalOperationalSnippets } from '../services/proposalOperationalCopy.js';
 import { listProposalIntegrationEvents } from '../services/proposalIntegrationEventsService.js';
@@ -36,6 +36,7 @@ export async function postProposalOperationalPreview(req: AuthRequest, res: Resp
       return;
     }
     await assertModulePermission(userId, 'proposals', 'view', undefined, req);
+    await assertPermissionKey(userId, 'proposals.send', req);
 
     const body = previewBodySchema.parse(req.body ?? {});
     const publicUrl = (body.public_url || '').trim();

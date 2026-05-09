@@ -13,7 +13,7 @@ const Footer = () => {
             <span className="font-display text-lg font-bold text-foreground">PainelCRM</span>
           </Link>
 
-          <nav className="flex flex-wrap items-center justify-center gap-6 text-sm text-muted-foreground">
+          <nav className="flex flex-wrap items-center justify-center gap-6 font-sans text-sm text-muted-foreground">
             <a href="#recursos" className="transition-colors hover:text-foreground">Recursos</a>
             <a href="#planos" className="transition-colors hover:text-foreground">Preços</a>
             <Link to="/login" className="transition-colors hover:text-foreground">Contato</Link>
@@ -35,7 +35,7 @@ const Footer = () => {
           </nav>
         </div>
 
-        <div className="mt-8 border-t border-border/50 pt-6 text-center text-sm text-muted-foreground">
+        <div className="mt-8 border-t border-border/50 pt-6 text-center font-sans text-sm text-muted-foreground">
           © {new Date().getFullYear()} PainelCRM. Todos os direitos reservados.
         </div>
       </div>

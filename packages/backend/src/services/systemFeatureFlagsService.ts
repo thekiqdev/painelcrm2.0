@@ -6,6 +6,8 @@ import type { Pool } from 'pg';
 const DEFAULT_FLAGS: Record<string, boolean> = {
   whatsapp_official_enabled: true,
   whatsapp_official_tenant_enabled: false,
+  /** Grupos UazAPI (inbox, criar grupo, etc.) — default on até haver linha em `system_feature_flags`. */
+  whatsapp_groups_enabled: true,
 };
 
 let cache: Map<string, boolean> = new Map(Object.entries(DEFAULT_FLAGS));

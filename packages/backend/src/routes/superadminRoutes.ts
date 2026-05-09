@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { superadminAuth } from '../middleware/auth.js';
 import * as superadminController from '../controllers/superadminController.js';
+import * as superadminDashboardController from '../controllers/superadminDashboardController.js';
 import * as auditLogController from '../controllers/auditLogController.js';
 import * as reportsController from '../controllers/reportsController.js';
 import * as exportController from '../controllers/exportController.js';
@@ -33,7 +34,7 @@ const router = Router();
 router.use(...superadminAuth);
 
 router.get('/me', superadminController.getSuperAdminMe);
-router.get('/dashboard', superadminController.getDashboard);
+router.get('/dashboard', superadminDashboardController.getSuperadminDashboard);
 router.get('/audit-log', auditLogController.getAuditLog);
 router.get('/reports', reportsController.getReports);
 

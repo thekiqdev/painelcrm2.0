@@ -181,9 +181,14 @@ export async function setCustomRoleModulePermissions(
   try {
     for (const moduleId of MODULE_IDS) {
       const p = permissions[moduleId];
+      const extrasJson = JSON.stringify(
+        p?.module_extras && typeof p.module_extras === 'object' && !Array.isArray(p.module_extras)
+          ? p.module_extras
+          : {}
+      );
       await client.query(
         `INSERT INTO custom_role_module_permissions (custom_role_id, module, can_view, can_create, can_edit, can_delete, edit_own_only, delete_own_only, module_extras)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{}'::jsonb)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
          ON CONFLICT (custom_role_id, module) DO UPDATE SET
            can_view = EXCLUDED.can_view,
            can_create = EXCLUDED.can_create,
@@ -191,7 +196,7 @@ export async function setCustomRoleModulePermissions(
            can_delete = EXCLUDED.can_delete,
            edit_own_only = EXCLUDED.edit_own_only,
            delete_own_only = EXCLUDED.delete_own_only,
-           module_extras = custom_role_module_permissions.module_extras,
+           module_extras = EXCLUDED.module_extras,
            updated_at = now()`,
         [
           customRoleId,
@@ -202,6 +207,7 @@ export async function setCustomRoleModulePermissions(
           p?.can_delete ?? false,
           p?.edit_own_only ?? false,
           p?.delete_own_only ?? false,
+          extrasJson,
         ]
       );
     }

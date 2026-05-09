@@ -688,7 +688,7 @@ export async function logKanbanLeadAutomationFailureAfterRollback(
 export async function runKanbanLeadAutomationInTransaction(
   client: PoolClient,
   input: KanbanLeadAutomationInput,
-): Promise<{ status: 'success' | 'skipped' }> {
+): Promise<{ status: 'success' | 'skipped'; leadLinked?: boolean }> {
   const cfg = resolveLeadAutomationConfig(input.columnMetadata);
   if (!cfg.enabled) {
     return { status: 'skipped' };
@@ -808,7 +808,7 @@ export async function runKanbanLeadAutomationInTransaction(
       existingId,
       'linked_existing_lead',
     );
-    return { status: 'success' };
+    return { status: 'success', leadLinked: true };
   }
 
   if (!cfg.allowCreateWhenNoDedupeMatch) {
@@ -899,7 +899,7 @@ export async function runKanbanLeadAutomationInTransaction(
     newId,
     'created_new_lead',
   );
-  return { status: 'success' };
+  return { status: 'success', leadLinked: true };
 }
 
 export type KanbanEnsureClientAutomationInput = {
@@ -1193,7 +1193,7 @@ async function linkConversationToClientInTransaction(
 export async function runKanbanEnsureClientAutomationInTransaction(
   client: PoolClient,
   input: KanbanEnsureClientAutomationInput,
-): Promise<{ status: 'success' | 'skipped' }> {
+): Promise<{ status: 'success' | 'skipped'; clientLinked?: boolean }> {
   const cfg = resolveEnsureClientConfig(input.columnMetadata);
   if (!cfg.enabled) return { status: 'skipped' };
 
@@ -1316,7 +1316,7 @@ export async function runKanbanEnsureClientAutomationInTransaction(
       row.lead_id,
       finalClientId,
     );
-    return { status: 'success' };
+    return { status: 'success', clientLinked: true };
   }
 
   const cand = normalizeConversationClientCandidate(row);
@@ -1357,7 +1357,7 @@ export async function runKanbanEnsureClientAutomationInTransaction(
       null,
       existingClientId,
     );
-    return { status: 'success' };
+    return { status: 'success', clientLinked: true };
   }
 
   const ins = await client.query<{ id: string }>(
@@ -1396,7 +1396,7 @@ export async function runKanbanEnsureClientAutomationInTransaction(
     null,
     newClientId,
   );
-  return { status: 'success' };
+  return { status: 'success', clientLinked: true };
 }
 
 // --- Fase 2B PR2: tarefa automática ao entrar na coluna ---

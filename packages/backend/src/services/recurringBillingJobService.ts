@@ -36,7 +36,7 @@ import {
   deletePaymentCustomerForClient,
 } from './paymentCustomersService.js';
 import { isAsaasInvalidCustomerError } from '../modules/gateways/asaas/asaasErrors.js';
-import { calculateInvoiceAmount, type BillingInterval } from './billingService.js';
+import { calculateSaasRenewalInvoiceAmount, type BillingInterval } from './billingService.js';
 import { getActiveGateway } from '../modules/payments/gatewayProvider.js';
 import { getActiveConfig } from './paymentGatewayConfigService.js';
 import { resolveAutomaticInvoicePaymentMethod } from './gatewayPaymentMethodPolicy.js';
@@ -1561,6 +1561,19 @@ export async function processNextBatch(workerId: string): Promise<{ processed: n
               source: 'saas_idempotent_invoice',
               resultInvoiceId: existingInvoice.id,
             });
+            await client.query(
+              `UPDATE subscriptions
+               SET amount_cents = $1::int, updated_at = now()
+               WHERE id = $2::uuid AND tenant_id = $3::uuid`,
+              [existingInvoice.amount_cents, subscription.id, subscription.tenant_id]
+            );
+            billingLog('job', 'saas_idempotent_subscription_amount_sync', {
+              jobId: job.id,
+              subscription_id: subscription.id,
+              tenant_id: subscription.tenant_id,
+              invoice_id: existingInvoice.id,
+              amount_cents: existingInvoice.amount_cents,
+            });
             await completeBillingRecurringJob(client, {
               jobId: job.id,
               resultInvoiceId: existingInvoice.id,
@@ -1693,7 +1706,6 @@ async function processOneRenewalJob(
     plan_type: string | null;
   }>('SELECT name, price_cents, plan_type FROM plans WHERE id = $1', [planId]);
   const planName = planRow.rows[0]?.name ?? null;
-  const planPriceCents = planRow.rows[0]?.price_cents ?? subscription.amount_cents;
   const planType = planRow.rows[0]?.plan_type ?? 'standard';
 
   const tenantSeats = await pool.query<{ max_users_scheduled_next_cycle: number | null }>(
@@ -1707,7 +1719,25 @@ async function processOneRenewalJob(
     usersForRenewal = scheduledNext;
   }
 
-  const amountCents = await calculateInvoiceAmount(planId, interval, usersForRenewal);
+  const renewalPricing = await calculateSaasRenewalInvoiceAmount({
+    planId,
+    billingInterval: interval,
+    planType,
+    planListPriceCents: planRow.rows[0]?.price_cents ?? null,
+    usersForRenewal,
+    contracted_plan_price_cents: subscription.contracted_plan_price_cents,
+    contracted_price_per_user_cents: subscription.contracted_price_per_user_cents,
+  });
+  const amountCents = renewalPricing.amountCents;
+
+  billingLog('job', 'saas_renewal_pricing_source', {
+    jobId: job.id,
+    subscription_id: subscription.id,
+    tenant_id: subscription.tenant_id,
+    amount_cents: amountCents,
+    price_source: renewalPricing.priceSource,
+  });
+
   const dueDate = periodStart;
   const config = await getActiveConfig('saas');
   const gatewayKey = config?.gateway_key ?? 'asaas';
@@ -1726,7 +1756,7 @@ async function processOneRenewalJob(
     period_start: periodStart,
     period_end: periodEnd,
     plan_name_snapshot: planName,
-    plan_price_snapshot: planPriceCents ?? amountCents,
+    plan_price_snapshot: renewalPricing.planPriceSnapshotForInvoice,
   };
 
   const billing = await createInvoice(invoiceData);
@@ -1792,6 +1822,13 @@ async function processOneRenewalJob(
       console.error('[recurringBillingJobService] falha ao aplicar assentos agendados', sync.error);
     }
   }
+
+  await pool.query(
+    `UPDATE subscriptions
+     SET amount_cents = $1::int, updated_at = now()
+     WHERE id = $2::uuid AND tenant_id = $3::uuid`,
+    [amountCents, subscription.id, subscription.tenant_id]
+  );
 
   await completeBillingRecurringJob(client, {
     jobId: job.id,

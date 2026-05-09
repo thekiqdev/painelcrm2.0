@@ -22,6 +22,15 @@ import {
   deleteExpenseEntry,
   type FinanceExpenseStatus,
 } from '../services/financeModuleService.js';
+import { assertModulePermission, assertPermissionKey, ModulePermissionError } from '../permissions/index.js';
+
+function respondPerm(res: Response, e: unknown): boolean {
+  if (e instanceof ModulePermissionError) {
+    res.status(e.statusCode).json({ error: e.message });
+    return true;
+  }
+  return false;
+}
 
 const accountTypeSchema = z.enum(['bank', 'cash', 'wallet', 'digital']);
 const expenseStatusSchema = z.enum(['expected', 'pending', 'paid', 'overdue', 'cancelled']);
@@ -79,7 +88,12 @@ function tenantOr401(req: AuthRequest, res: Response): string | null {
 export async function listFinanceAccountsHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
   if (!tenantId) return;
+  if (!req.userId) {
+    res.status(401).json({ error: 'Usuário não identificado' });
+    return;
+  }
   try {
+    await assertPermissionKey(req.userId, 'finance.view', req);
     const rows = await listAccounts(tenantId);
     const withBalance = await Promise.all(
       rows.map(async (a) => {
@@ -88,7 +102,8 @@ export async function listFinanceAccountsHandler(req: AuthRequest, res: Response
       })
     );
     res.json(withBalance);
-  } catch (e) {
+  } catch (e: unknown) {
+    if (respondPerm(res, e)) return;
     console.error('[financeModule] listFinanceAccountsHandler', e);
     res.status(500).json({ error: 'Erro ao listar contas' });
   }
@@ -97,7 +112,12 @@ export async function listFinanceAccountsHandler(req: AuthRequest, res: Response
 export async function getFinanceAccountHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
   if (!tenantId) return;
+  if (!req.userId) {
+    res.status(401).json({ error: 'Usuário não identificado' });
+    return;
+  }
   try {
+    await assertPermissionKey(req.userId, 'finance.view', req);
     const acc = await getAccount(tenantId, req.params.accountId);
     if (!acc) {
       res.status(404).json({ error: 'Conta não encontrada' });
@@ -105,7 +125,8 @@ export async function getFinanceAccountHandler(req: AuthRequest, res: Response):
     }
     const balance = await getAccountBalanceCents(tenantId, acc.id);
     res.json({ ...acc, current_balance_cents: balance ?? acc.opening_balance_cents });
-  } catch (e) {
+  } catch (e: unknown) {
+    if (respondPerm(res, e)) return;
     console.error('[financeModule] getFinanceAccountHandler', e);
     res.status(500).json({ error: 'Erro ao carregar conta' });
   }
@@ -114,7 +135,12 @@ export async function getFinanceAccountHandler(req: AuthRequest, res: Response):
 export async function getFinanceAccountLedgerHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
   if (!tenantId) return;
+  if (!req.userId) {
+    res.status(401).json({ error: 'Usuário não identificado' });
+    return;
+  }
   try {
+    await assertPermissionKey(req.userId, 'finance.view_revenue', req);
     const { from, to, limit } = req.query;
     const lim = typeof limit === 'string' ? Math.min(500, Math.max(1, parseInt(limit, 10) || 200)) : 200;
     const rows = await getAccountLedger(
@@ -125,7 +151,8 @@ export async function getFinanceAccountLedgerHandler(req: AuthRequest, res: Resp
       lim
     );
     res.json(rows);
-  } catch (e) {
+  } catch (e: unknown) {
+    if (respondPerm(res, e)) return;
     console.error('[financeModule] getFinanceAccountLedgerHandler', e);
     res.status(500).json({ error: 'Erro ao carregar extrato' });
   }
@@ -134,7 +161,12 @@ export async function getFinanceAccountLedgerHandler(req: AuthRequest, res: Resp
 export async function getFinanceAccountPeriodHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
   if (!tenantId) return;
+  if (!req.userId) {
+    res.status(401).json({ error: 'Usuário não identificado' });
+    return;
+  }
   try {
+    await assertPermissionKey(req.userId, 'finance.view_revenue', req);
     const { from, to } = req.query;
     if (typeof from !== 'string' || typeof to !== 'string') {
       res.status(400).json({ error: 'Informe from e to (YYYY-MM-DD)' });
@@ -142,7 +174,8 @@ export async function getFinanceAccountPeriodHandler(req: AuthRequest, res: Resp
     }
     const stats = await getAccountPeriodStats(tenantId, req.params.accountId, from, to);
     res.json(stats);
-  } catch (e) {
+  } catch (e: unknown) {
+    if (respondPerm(res, e)) return;
     console.error('[financeModule] getFinanceAccountPeriodHandler', e);
     res.status(500).json({ error: 'Erro ao calcular período' });
   }
@@ -151,15 +184,21 @@ export async function getFinanceAccountPeriodHandler(req: AuthRequest, res: Resp
 export async function createFinanceAccountHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
   if (!tenantId) return;
+  if (!req.userId) {
+    res.status(401).json({ error: 'Usuário não identificado' });
+    return;
+  }
   const parsed = createAccountBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
   try {
+    await assertModulePermission(req.userId, 'finance', 'create', undefined, req);
     const row = await createAccount(tenantId, parsed.data);
     res.status(201).json(row);
-  } catch (e) {
+  } catch (e: unknown) {
+    if (respondPerm(res, e)) return;
     console.error('[financeModule] createFinanceAccountHandler', e);
     res.status(500).json({ error: 'Erro ao criar conta' });
   }
@@ -168,19 +207,25 @@ export async function createFinanceAccountHandler(req: AuthRequest, res: Respons
 export async function patchFinanceAccountHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
   if (!tenantId) return;
+  if (!req.userId) {
+    res.status(401).json({ error: 'Usuário não identificado' });
+    return;
+  }
   const parsed = patchAccountBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
   try {
+    await assertModulePermission(req.userId, 'finance', 'edit', undefined, req);
     const row = await updateAccount(tenantId, req.params.accountId, parsed.data as Parameters<typeof updateAccount>[2]);
     if (!row) {
       res.status(404).json({ error: 'Conta não encontrada' });
       return;
     }
     res.json(row);
-  } catch (e) {
+  } catch (e: unknown) {
+    if (respondPerm(res, e)) return;
     console.error('[financeModule] patchFinanceAccountHandler', e);
     res.status(500).json({ error: 'Erro ao atualizar conta' });
   }
@@ -189,7 +234,12 @@ export async function patchFinanceAccountHandler(req: AuthRequest, res: Response
 export async function deleteFinanceAccountHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
   if (!tenantId) return;
+  if (!req.userId) {
+    res.status(401).json({ error: 'Usuário não identificado' });
+    return;
+  }
   try {
+    await assertModulePermission(req.userId, 'finance', 'delete', undefined, req);
     const ok = await deleteAccount(tenantId, req.params.accountId);
     if (!ok) {
       res.status(404).json({ error: 'Conta não encontrada' });
@@ -197,6 +247,7 @@ export async function deleteFinanceAccountHandler(req: AuthRequest, res: Respons
     }
     res.status(204).end();
   } catch (e: unknown) {
+    if (respondPerm(res, e)) return;
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes('foreign key') || msg.includes('violates')) {
       res.status(409).json({ error: 'Não é possível excluir: existem lançamentos vinculados.' });
@@ -210,10 +261,16 @@ export async function deleteFinanceAccountHandler(req: AuthRequest, res: Respons
 export async function listFinanceExpenseCategoriesHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
   if (!tenantId) return;
+  if (!req.userId) {
+    res.status(401).json({ error: 'Usuário não identificado' });
+    return;
+  }
   try {
+    await assertPermissionKey(req.userId, 'finance.view_expenses', req);
     const rows = await listExpenseCategories(tenantId);
     res.json(rows);
-  } catch (e) {
+  } catch (e: unknown) {
+    if (respondPerm(res, e)) return;
     console.error('[financeModule] listFinanceExpenseCategoriesHandler', e);
     res.status(500).json({ error: 'Erro ao listar categorias' });
   }
@@ -222,15 +279,21 @@ export async function listFinanceExpenseCategoriesHandler(req: AuthRequest, res:
 export async function createFinanceExpenseCategoryHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
   if (!tenantId) return;
+  if (!req.userId) {
+    res.status(401).json({ error: 'Usuário não identificado' });
+    return;
+  }
   const parsed = createCategoryBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
   try {
+    await assertPermissionKey(req.userId, 'finance.create_expense', req);
     const row = await createExpenseCategory(tenantId, parsed.data.name, parsed.data.sort_order);
     res.status(201).json(row);
   } catch (e: unknown) {
+    if (respondPerm(res, e)) return;
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes('unique') || msg.includes('duplicate')) {
       res.status(409).json({ error: 'Já existe uma categoria com esse nome' });
@@ -244,15 +307,21 @@ export async function createFinanceExpenseCategoryHandler(req: AuthRequest, res:
 export async function listFinanceIncomeEntriesHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
   if (!tenantId) return;
+  if (!req.userId) {
+    res.status(401).json({ error: 'Usuário não identificado' });
+    return;
+  }
   const { from, to, account_id } = req.query;
   try {
+    await assertPermissionKey(req.userId, 'finance.view_revenue', req);
     const rows = await listIncomeEntries(tenantId, {
       from: typeof from === 'string' ? from : undefined,
       to: typeof to === 'string' ? to : undefined,
       account_id: typeof account_id === 'string' ? account_id : undefined,
     });
     res.json(rows);
-  } catch (e) {
+  } catch (e: unknown) {
+    if (respondPerm(res, e)) return;
     console.error('[financeModule] listFinanceIncomeEntriesHandler', e);
     res.status(500).json({ error: 'Erro ao listar entradas' });
   }
@@ -261,15 +330,22 @@ export async function listFinanceIncomeEntriesHandler(req: AuthRequest, res: Res
 export async function createFinanceIncomeEntryHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
   if (!tenantId) return;
+  if (!req.userId) {
+    res.status(401).json({ error: 'Usuário não identificado' });
+    return;
+  }
   const parsed = createIncomeBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
   try {
+    await assertModulePermission(req.userId, 'finance', 'create', undefined, req);
+    await assertPermissionKey(req.userId, 'finance.view_revenue', req);
     const row = await createIncomeEntry(tenantId, parsed.data);
     res.status(201).json(row);
   } catch (e: unknown) {
+    if (respondPerm(res, e)) return;
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes('não encontrada')) {
       res.status(400).json({ error: msg });
@@ -283,12 +359,18 @@ export async function createFinanceIncomeEntryHandler(req: AuthRequest, res: Res
 export async function patchFinanceIncomeEntryHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
   if (!tenantId) return;
+  if (!req.userId) {
+    res.status(401).json({ error: 'Usuário não identificado' });
+    return;
+  }
   const parsed = createIncomeBody.partial().safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
   try {
+    await assertModulePermission(req.userId, 'finance', 'edit', undefined, req);
+    await assertPermissionKey(req.userId, 'finance.view_revenue', req);
     const row = await updateIncomeEntry(tenantId, req.params.id, parsed.data);
     if (!row) {
       res.status(404).json({ error: 'Lançamento não encontrado' });
@@ -296,6 +378,7 @@ export async function patchFinanceIncomeEntryHandler(req: AuthRequest, res: Resp
     }
     res.json(row);
   } catch (e: unknown) {
+    if (respondPerm(res, e)) return;
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes('não encontrada')) {
       res.status(400).json({ error: msg });
@@ -309,14 +392,21 @@ export async function patchFinanceIncomeEntryHandler(req: AuthRequest, res: Resp
 export async function deleteFinanceIncomeEntryHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
   if (!tenantId) return;
+  if (!req.userId) {
+    res.status(401).json({ error: 'Usuário não identificado' });
+    return;
+  }
   try {
+    await assertModulePermission(req.userId, 'finance', 'delete', undefined, req);
+    await assertPermissionKey(req.userId, 'finance.view_revenue', req);
     const ok = await deleteIncomeEntry(tenantId, req.params.id);
     if (!ok) {
       res.status(404).json({ error: 'Lançamento não encontrado' });
       return;
     }
     res.status(204).end();
-  } catch (e) {
+  } catch (e: unknown) {
+    if (respondPerm(res, e)) return;
     console.error('[financeModule] deleteFinanceIncomeEntryHandler', e);
     res.status(500).json({ error: 'Erro ao excluir entrada' });
   }
@@ -325,8 +415,13 @@ export async function deleteFinanceIncomeEntryHandler(req: AuthRequest, res: Res
 export async function listFinanceExpenseEntriesHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
   if (!tenantId) return;
+  if (!req.userId) {
+    res.status(401).json({ error: 'Usuário não identificado' });
+    return;
+  }
   const { from, to, account_id, status } = req.query;
   try {
+    await assertPermissionKey(req.userId, 'finance.view_expenses', req);
     const rows = await listExpenseEntries(tenantId, {
       from: typeof from === 'string' ? from : undefined,
       to: typeof to === 'string' ? to : undefined,
@@ -334,7 +429,8 @@ export async function listFinanceExpenseEntriesHandler(req: AuthRequest, res: Re
       status: typeof status === 'string' ? status : undefined,
     });
     res.json(rows);
-  } catch (e) {
+  } catch (e: unknown) {
+    if (respondPerm(res, e)) return;
     console.error('[financeModule] listFinanceExpenseEntriesHandler', e);
     res.status(500).json({ error: 'Erro ao listar despesas' });
   }
@@ -343,15 +439,21 @@ export async function listFinanceExpenseEntriesHandler(req: AuthRequest, res: Re
 export async function createFinanceExpenseEntryHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
   if (!tenantId) return;
+  if (!req.userId) {
+    res.status(401).json({ error: 'Usuário não identificado' });
+    return;
+  }
   const parsed = createExpenseBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
   try {
+    await assertPermissionKey(req.userId, 'finance.create_expense', req);
     const row = await createExpenseEntry(tenantId, parsed.data);
     res.status(201).json(row);
   } catch (e: unknown) {
+    if (respondPerm(res, e)) return;
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes('não encontrada') || msg.includes('inválida')) {
       res.status(400).json({ error: msg });
@@ -365,12 +467,17 @@ export async function createFinanceExpenseEntryHandler(req: AuthRequest, res: Re
 export async function patchFinanceExpenseEntryHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
   if (!tenantId) return;
+  if (!req.userId) {
+    res.status(401).json({ error: 'Usuário não identificado' });
+    return;
+  }
   const parsed = createExpenseBody.partial().safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
   try {
+    await assertPermissionKey(req.userId, 'finance.edit_expense', req);
     const row = await updateExpenseEntry(tenantId, req.params.id, parsed.data as Partial<{
       finance_account_id: string | null;
       category_id: string | null;
@@ -389,6 +496,7 @@ export async function patchFinanceExpenseEntryHandler(req: AuthRequest, res: Res
     }
     res.json(row);
   } catch (e: unknown) {
+    if (respondPerm(res, e)) return;
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes('não encontrada') || msg.includes('inválida')) {
       res.status(400).json({ error: msg });
@@ -402,14 +510,20 @@ export async function patchFinanceExpenseEntryHandler(req: AuthRequest, res: Res
 export async function deleteFinanceExpenseEntryHandler(req: AuthRequest, res: Response): Promise<void> {
   const tenantId = tenantOr401(req, res);
   if (!tenantId) return;
+  if (!req.userId) {
+    res.status(401).json({ error: 'Usuário não identificado' });
+    return;
+  }
   try {
+    await assertPermissionKey(req.userId, 'finance.delete_expense', req);
     const ok = await deleteExpenseEntry(tenantId, req.params.id);
     if (!ok) {
       res.status(404).json({ error: 'Despesa não encontrada' });
       return;
     }
     res.status(204).end();
-  } catch (e) {
+  } catch (e: unknown) {
+    if (respondPerm(res, e)) return;
     console.error('[financeModule] deleteFinanceExpenseEntryHandler', e);
     res.status(500).json({ error: 'Erro ao excluir despesa' });
   }

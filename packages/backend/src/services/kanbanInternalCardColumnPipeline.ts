@@ -21,6 +21,7 @@ import {
   runKanbanAutoCreateProposalInTransaction,
   type KanbanAutoCreatedProposalPayload,
 } from './kanbanColumnAutoProposalService.js';
+import type { KanbanColumnEntryAutomationReason } from './chatKanbanAutomationService.js';
 
 export type KanbanDestColumnPipelineRow = {
   id: string;
@@ -99,6 +100,12 @@ export async function applyKanbanDestColumnEnterSideEffectsBeforeCardUpdate(
   return { attendancePatch, emitCtx, orgRulesApplied, phase2Ctx };
 }
 
+export type KanbanDestColumnPostUpdateResult = {
+  kanban_auto_created_proposal?: KanbanAutoCreatedProposalPayload;
+  /** Executar após COMMIT — vínculos CRM gravados na mesma TX do cartão. */
+  deferredEntryAutomations?: Extract<KanbanColumnEntryAutomationReason, 'lead_linked' | 'client_linked'>[];
+};
+
 export async function runKanbanDestColumnPostUpdateAutomations(
   client: PoolClient,
   input: {
@@ -110,8 +117,10 @@ export async function runKanbanDestColumnPostUpdateAutomations(
     cardId: string;
     conversationId: string;
   },
-): Promise<{ kanban_auto_created_proposal?: KanbanAutoCreatedProposalPayload }> {
-  await runKanbanEnsureClientAutomationInTransaction(client, {
+): Promise<KanbanDestColumnPostUpdateResult> {
+  const deferred: Extract<KanbanColumnEntryAutomationReason, 'lead_linked' | 'client_linked'>[] = [];
+
+  const ensureRes = await runKanbanEnsureClientAutomationInTransaction(client, {
     tenantId: input.tenantId,
     actorUserId: input.actorUserId,
     boardId: input.boardId,
@@ -121,7 +130,11 @@ export async function runKanbanDestColumnPostUpdateAutomations(
     conversationId: input.conversationId,
     columnMetadata: input.destColumn.metadata,
   });
-  await runKanbanLeadAutomationInTransaction(client, {
+  if (ensureRes.status === 'success' && ensureRes.clientLinked) {
+    deferred.push('client_linked');
+  }
+
+  const leadRes = await runKanbanLeadAutomationInTransaction(client, {
     tenantId: input.tenantId,
     actorUserId: input.actorUserId,
     boardId: input.boardId,
@@ -131,6 +144,9 @@ export async function runKanbanDestColumnPostUpdateAutomations(
     conversationId: input.conversationId,
     columnMetadata: input.destColumn.metadata,
   });
+  if (leadRes.status === 'success' && leadRes.leadLinked) {
+    deferred.push('lead_linked');
+  }
   await runKanbanCrmStageSyncInTransaction(client, {
     tenantId: input.tenantId,
     actorUserId: input.actorUserId,
@@ -162,5 +178,8 @@ export async function runKanbanDestColumnPostUpdateAutomations(
     destColumnMetadata: input.destColumn.metadata,
     boardId: input.boardId,
   });
-  return auto ? { kanban_auto_created_proposal: auto } : {};
+  const out: KanbanDestColumnPostUpdateResult = {};
+  if (auto) out.kanban_auto_created_proposal = auto;
+  if (deferred.length > 0) out.deferredEntryAutomations = deferred;
+  return out;
 }

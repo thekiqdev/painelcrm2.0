@@ -35,7 +35,13 @@ export default function ConnectionsPage() {
   const uaBadgeVariant: 'default' | 'secondary' =
     (ua?.connected_count ?? 0) > 0 ? 'default' : 'secondary';
 
-  const toggleGlobal = async (key: 'whatsapp_official_enabled' | 'whatsapp_official_tenant_enabled', next: boolean) => {
+  const toggleGlobal = async (
+    key:
+      | 'whatsapp_official_enabled'
+      | 'whatsapp_official_tenant_enabled'
+      | 'whatsapp_groups_enabled',
+    next: boolean,
+  ) => {
     try {
       await connectionsService.putFlag(key, next);
       toast({ title: 'Preferência guardada' });
@@ -82,6 +88,16 @@ export default function ConnectionsPage() {
               />
               <Label htmlFor="wa-tenant" className="cursor-pointer">
                 Permitir empresas (tenants) — futuro
+              </Label>
+            </div>
+            <div className="flex items-center gap-3">
+              <Switch
+                id="ua-groups"
+                checked={ua?.groups_feature_enabled ?? true}
+                onCheckedChange={(v) => void toggleGlobal('whatsapp_groups_enabled', v)}
+              />
+              <Label htmlFor="ua-groups" className="cursor-pointer">
+                Grupos WhatsApp (UazAPI) — inbox, sincronização e criar grupo a partir do chat
               </Label>
             </div>
           </div>

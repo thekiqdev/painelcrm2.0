@@ -2,7 +2,8 @@ import { Request, Response } from 'express';
 import type { QueryResult } from 'pg';
 import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
-import { assertModulePermission, ModulePermissionError } from '../permissions/index.js';
+import { assertModulePermission, assertPermissionKey, ModulePermissionError } from '../permissions/index.js';
+import { resolveProposalsGranularFromLegacy } from '../permissions/permissionCatalog.js';
 import { z } from 'zod';
 import { convertAcceptedProposalToInvoice } from '../services/proposalInvoiceConversionService.js';
 import { insertProposalTimelineEvent, listProposalTimelineEvents } from '../services/proposalTimelineService.js';
@@ -345,7 +346,17 @@ export const getProposals = async (req: Request, res: Response) => {
     if (!userId) {
       return res.status(401).json({ error: 'Não autenticado' });
     }
-    await assertModulePermission(userId, 'proposals', 'view', undefined, req as AuthRequest);
+    let permMap;
+    try {
+      permMap = await assertPermissionKey(userId, 'proposals.view', req as AuthRequest);
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        return res.status(e.statusCode).json({ error: e.message });
+      }
+      throw e;
+    }
+    const pg = resolveProposalsGranularFromLegacy(permMap);
+    const proposalScopeOwn = pg.view_own && !pg.view_all;
 
     const status = firstQueryString(req.query.status);
     const client_id = firstQueryString(req.query.client_id);
@@ -380,6 +391,12 @@ export const getProposals = async (req: Request, res: Response) => {
         params.length = 0;
         params.push(...pLocal);
       };
+
+      if (proposalScopeOwn) {
+        pc++;
+        query += ` AND p.user_id = $${pc}`;
+        pLocal.push(userId);
+      }
 
     if (status) {
         pc++;
@@ -513,7 +530,16 @@ export const getProposalById = async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Proposta não encontrada' });
     }
 
-    await assertModulePermission(userId, 'proposals', 'view', undefined, req as AuthRequest);
+    let permMap;
+    try {
+      permMap = await assertPermissionKey(userId, 'proposals.view', req as AuthRequest);
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        return res.status(e.statusCode).json({ error: e.message });
+      }
+      throw e;
+    }
+    const pg = resolveProposalsGranularFromLegacy(permMap);
 
     let result;
     try {
@@ -544,6 +570,11 @@ export const getProposalById = async (req: Request, res: Response) => {
     }
 
     if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Proposta não encontrada' });
+    }
+
+    const head = result.rows[0] as { user_id?: string };
+    if (pg.view_own && !pg.view_all && head.user_id !== userId) {
       return res.status(404).json({ error: 'Proposta não encontrada' });
     }
 
@@ -598,6 +629,10 @@ export const createProposal = async (req: Request, res: Response) => {
         : validated.sent_date ?? null;
 
     await assertModulePermission(userId, 'proposals', 'create', undefined, req as AuthRequest);
+    await assertPermissionKey(userId, 'proposals.create', req as AuthRequest);
+    if (validated.status === 'sent') {
+      await assertPermissionKey(userId, 'proposals.send', req as AuthRequest);
+    }
 
     const cid =
       validated.client_id && String(validated.client_id).trim() ? String(validated.client_id).trim() : null;
@@ -844,6 +879,12 @@ export const updateProposal = async (req: Request, res: Response) => {
         return res.status(409).json({ error: 'Não é possível alterar o status de uma proposta aceita pelo painel.' });
       }
       assertProposalStatusTransition(oldStatus, validated.status);
+      if (validated.status === 'sent' && oldStatus !== 'sent') {
+        await assertPermissionKey(userId, 'proposals.send', req as AuthRequest);
+      }
+      if (validated.status === 'accepted' && oldStatus !== 'accepted') {
+        await assertPermissionKey(userId, 'proposals.approve', req as AuthRequest);
+      }
     }
 
     const tenantId = (req as AuthRequest).tenantId;
@@ -1102,6 +1143,7 @@ export const convertProposalToInvoice = async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Proposta não encontrada' });
     }
 
+    await assertPermissionKey(userId, 'billing.create_invoice', req as AuthRequest);
     await assertModulePermission(userId, 'proposals', 'proposals_convert_invoice', { ownerId: existing.rows[0].user_id }, req as AuthRequest);
 
     const body = convertProposalBodySchema.parse(req.body);

@@ -119,7 +119,7 @@ const ContractDetails = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
-  const { canDeleteRecord } = useModulePermissions();
+  const { canDeleteRecord, canEditRecord, hasPermissionKey } = useModulePermissions();
   const [contract, setContract] = useState<Contract | null>(null);
   const [signers, setSigners] = useState<ContractSigner[]>([]);
   const [events, setEvents] = useState<ContractEvent[]>([]);
@@ -708,6 +708,13 @@ const ContractDetails = () => {
     canDeleteContractStatus(contract.status) &&
     canDeleteRecord("contracts", contract.responsible_id || contract.user_id, user?.id);
 
+  const canEditThisContract =
+    Boolean(user?.id) &&
+    canEditRecord("contracts", contract.responsible_id || contract.user_id, user?.id);
+  const canContractSendOps = canEditThisContract && hasPermissionKey("contracts.send");
+  const canContractSignatureOps = canEditThisContract && hasPermissionKey("contracts.request_signature");
+  const canContractCancelStatus = canEditThisContract && hasPermissionKey("contracts.cancel");
+
   return (
     <div className="space-y-6">
       {chatReturnTo ? (
@@ -784,7 +791,11 @@ const ContractDetails = () => {
               </DropdownMenuItem>
             )}
             {contract.status === 'DRAFT' && id && (
-              <DropdownMenuItem onClick={() => navigate(`/contracts/${id}/edit`)}>
+              <DropdownMenuItem
+                disabled={!canContractSignatureOps}
+                title={!canContractSignatureOps ? "Sem permissão para pedir assinatura." : undefined}
+                onClick={() => navigate(`/contracts/${id}/edit`)}
+              >
                 <Send className="mr-2 h-4 w-4" />
                 Editar e enviar para assinatura
               </DropdownMenuItem>
@@ -812,7 +823,11 @@ const ContractDetails = () => {
               Duplicar
             </DropdownMenuItem>
             {contract.status === 'DRAFT' && (
-              <DropdownMenuItem onClick={() => handleStatusChange('ACTIVE')}>
+              <DropdownMenuItem
+                disabled={!canContractSendOps}
+                title={!canContractSendOps ? "Sem permissão para enviar/ativar o contrato." : undefined}
+                onClick={() => handleStatusChange('ACTIVE')}
+              >
                 <Play className="mr-2 h-4 w-4" />
                 Ativar
               </DropdownMenuItem>
@@ -824,7 +839,11 @@ const ContractDetails = () => {
               </DropdownMenuItem>
             )}
             {contract.status !== 'CANCELLED' && (
-              <DropdownMenuItem onClick={() => handleStatusChange('CANCELLED')}>
+              <DropdownMenuItem
+                disabled={!canContractCancelStatus}
+                title={!canContractCancelStatus ? "Sem permissão para cancelar o contrato." : undefined}
+                onClick={() => handleStatusChange('CANCELLED')}
+              >
                 <XCircle className="mr-2 h-4 w-4" />
                 Cancelar
               </DropdownMenuItem>
@@ -1069,7 +1088,12 @@ const ContractDetails = () => {
                                 size="icon"
                                 className="h-8 w-8 shrink-0"
                                 aria-label="Copiar link de assinatura"
-                                title="Copiar link de assinatura"
+                                title={
+                                  !canContractSignatureOps
+                                    ? "Sem permissão para copiar link de assinatura."
+                                    : "Copiar link de assinatura"
+                                }
+                                disabled={!canContractSignatureOps}
                                 onClick={() => copySignatureInviteUrl(signer.id)}
                               >
                                 <Copy className="h-4 w-4" />
@@ -1080,7 +1104,12 @@ const ContractDetails = () => {
                                 size="icon"
                                 className="h-8 w-8 shrink-0"
                                 aria-label="Abrir página de assinatura"
-                                title="Abrir página de assinatura"
+                                title={
+                                  !canContractSignatureOps
+                                    ? "Sem permissão para abrir o fluxo de assinatura."
+                                    : "Abrir página de assinatura"
+                                }
+                                disabled={!canContractSignatureOps}
                                 onClick={() => {
                                   const tok = lastSignatureTokensBySigner[signer.id];
                                   if (tok)
@@ -1201,7 +1230,8 @@ const ContractDetails = () => {
                     <Button
                       type="button"
                       size="sm"
-                      disabled={!publicViewToken}
+                      disabled={!publicViewToken || !canContractSendOps}
+                      title={!canContractSendOps ? "Sem permissão para copiar o link público." : undefined}
                       onClick={() => publicViewToken && copyPublicViewUrl(publicViewToken)}
                     >
                       <Copy className="mr-2 h-4 w-4" />
@@ -1211,7 +1241,8 @@ const ContractDetails = () => {
                       type="button"
                       size="sm"
                       variant="outline"
-                      disabled={!publicViewToken}
+                      disabled={!publicViewToken || !canContractSendOps}
+                      title={!canContractSendOps ? "Sem permissão para abrir o link público." : undefined}
                       onClick={() => {
                         if (publicViewToken) {
                           window.open(
@@ -1234,7 +1265,8 @@ const ContractDetails = () => {
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="start" className="w-56">
                         <DropdownMenuItem
-                          disabled={issuingPublicLink}
+                          disabled={issuingPublicLink || !canContractSendOps}
+                          title={!canContractSendOps ? "Sem permissão para gerir link público." : undefined}
                           onClick={() => void provisionOrRegeneratePublicViewAndCopy()}
                         >
                           {publicViewBootstrap?.has_active_link ? "Regenerar e copiar" : "Criar link e copiar"}
@@ -1242,7 +1274,10 @@ const ContractDetails = () => {
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
                           className="text-destructive focus:text-destructive"
-                          disabled={issuingPublicLink || !publicViewBootstrap?.has_active_link}
+                          disabled={
+                            issuingPublicLink || !publicViewBootstrap?.has_active_link || !canContractSendOps
+                          }
+                          title={!canContractSendOps ? "Sem permissão para revogar o link público." : undefined}
                           onClick={() => void revokePublicView()}
                         >
                           <XCircle className="mr-2 h-4 w-4" />
@@ -1302,7 +1337,8 @@ const ContractDetails = () => {
                             size="sm"
                             variant="outline"
                             className="w-full sm:w-auto"
-                            disabled={!lastSignatureTokensBySigner[signer.id]}
+                            disabled={!lastSignatureTokensBySigner[signer.id] || !canContractSignatureOps}
+                            title={!canContractSignatureOps ? "Sem permissão para copiar link de assinatura." : undefined}
                             onClick={() => copySignatureInviteUrl(signer.id)}
                           >
                             <Copy className="mr-1 h-3 w-3" />
@@ -1315,7 +1351,8 @@ const ContractDetails = () => {
                             size="sm"
                             variant="outline"
                             className="w-full sm:w-auto"
-                            disabled={!lastSignatureTokensBySigner[signer.id]}
+                            disabled={!lastSignatureTokensBySigner[signer.id] || !canContractSignatureOps}
+                            title={!canContractSignatureOps ? "Sem permissão para abrir assinatura." : undefined}
                             onClick={() => {
                               const t = lastSignatureTokensBySigner[signer.id];
                               if (t) {
@@ -1364,6 +1401,8 @@ const ContractDetails = () => {
                                   </DropdownMenuItem>
                                   <DropdownMenuSeparator />
                                   <DropdownMenuItem
+                                    disabled={!canContractSendOps}
+                                    title={!canContractSendOps ? "Sem permissão para partilhar link de visualização." : undefined}
                                     onClick={() =>
                                       openReadyMessage(
                                         "Mensagem — só visualização",
@@ -1383,14 +1422,20 @@ const ContractDetails = () => {
                               ) : canIssueSignatureInvites ? (
                                 <>
                                   <DropdownMenuItem
-                                    disabled={signInviteBusySignerId === signer.id}
+                                    disabled={
+                                      signInviteBusySignerId === signer.id || !canContractSignatureOps
+                                    }
+                                    title={!canContractSignatureOps ? "Sem permissão para convites de assinatura." : undefined}
                                     onClick={() => void issueSignLink(signer.id, false)}
                                   >
                                     <FileSignature className="mr-2 h-4 w-4" />
                                     Gerar e copiar
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
-                                    disabled={signInviteBusySignerId === signer.id}
+                                    disabled={
+                                      signInviteBusySignerId === signer.id || !canContractSignatureOps
+                                    }
+                                    title={!canContractSignatureOps ? "Sem permissão para convites de assinatura." : undefined}
                                     onClick={() => void issueSignLink(signer.id, true)}
                                   >
                                     <Link2 className="mr-2 h-4 w-4" />
@@ -1398,7 +1443,10 @@ const ContractDetails = () => {
                                   </DropdownMenuItem>
                                   <DropdownMenuSeparator />
                                   <DropdownMenuItem
-                                    disabled={!signer.signature_invite?.has_active}
+                                    disabled={
+                                      !signer.signature_invite?.has_active || !canContractSignatureOps
+                                    }
+                                    title={!canContractSignatureOps ? "Sem permissão para mensagens de assinatura." : undefined}
                                     onClick={() => {
                                       const ctx = buildMessagingContext(signer);
                                       if (!ctx.signatureLink) {
@@ -1424,6 +1472,8 @@ const ContractDetails = () => {
                                   </DropdownMenuItem>
                                   <DropdownMenuSeparator />
                                   <DropdownMenuItem
+                                    disabled={!canContractSignatureOps}
+                                    title={!canContractSignatureOps ? "Sem permissão para mensagens de assinatura." : undefined}
                                     onClick={() =>
                                       openReadyMessage(
                                         "Mensagem — convite inicial",
@@ -1440,6 +1490,8 @@ const ContractDetails = () => {
                                     Texto convite
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
+                                    disabled={!canContractSendOps}
+                                    title={!canContractSendOps ? "Sem permissão para partilhar link de visualização." : undefined}
                                     onClick={() =>
                                       openReadyMessage(
                                         "Mensagem — só visualização",
@@ -1460,8 +1512,10 @@ const ContractDetails = () => {
                                     className="text-destructive focus:text-destructive"
                                     disabled={
                                       signInviteBusySignerId === signer.id ||
-                                      !signer.signature_invite?.has_active
+                                      !signer.signature_invite?.has_active ||
+                                      !canContractSignatureOps
                                     }
+                                    title={!canContractSignatureOps ? "Sem permissão para revogar convite." : undefined}
                                     onClick={() => void revokeSignLink(signer.id)}
                                   >
                                     <XCircle className="mr-2 h-4 w-4" />

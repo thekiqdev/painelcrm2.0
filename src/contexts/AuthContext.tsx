@@ -3,6 +3,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { toast } from '@/components/ui/sonner';
 import { apiClient } from '@/integrations/api/client';
+import { clearAllCachedAppData } from '@/lib/queryClient';
 import { clearAuthState, getCurrentUserProfile } from '@/utils/auth-helpers';
 import { getPostAuthHomePath } from '@/utils/superAdminRedirect';
 import { COMMERCIAL_402_REDIRECT_FLAG } from '@/lib/commercialAccessPaths';
@@ -14,6 +15,8 @@ interface User {
   whatsapp_number?: string;
   first_name?: string;
   last_name?: string;
+  /** Foto de perfil (mesmo campo em GET /api/auth/me — perfil ou utilizador). */
+  avatar_url?: string | null;
   company_name?: string;
   whatsapp_connected?: boolean;
   registration_complete?: boolean;
@@ -131,6 +134,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const status = (response.details as { status?: number } | undefined)?.status;
         if (status === 401) {
           apiClient.setToken(null);
+          clearAllCachedAppData();
           setSession(null);
           setUser(null);
           setProfile(null);
@@ -209,6 +213,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (response.data) {
         apiClient.setToken(response.data.token);
+        clearAllCachedAppData();
         setSession({ token: response.data.token });
         setUser(response.data.user);
         setProfile(response.data.user);
@@ -269,6 +274,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (response.data) {
         apiClient.setToken(response.data.token);
+        clearAllCachedAppData();
         setSession({ token: response.data.token });
         setUser(response.data.user);
         setProfile(response.data.user);
@@ -297,7 +303,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(null);
       setSession(null);
       setFeatures([]);
-      
+      clearAllCachedAppData();
+
       // Limpar armazenamento local relacionado à autenticação
       await clearAuthState();
       apiClient.setToken(null);
@@ -316,6 +323,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(null);
       setSession(null);
       setFeatures([]);
+      clearAllCachedAppData();
       await clearAuthState();
       apiClient.setToken(null);
       try {
@@ -354,6 +362,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const setTokenAndUser = async (token: string, newUser: User) => {
+    clearAllCachedAppData();
     apiClient.setToken(token);
     setSession({ token });
     setUser(newUser);

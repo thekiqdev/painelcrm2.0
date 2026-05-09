@@ -7,7 +7,6 @@ import React, { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -28,7 +27,6 @@ import {
 import {
   CalendarIcon,
   User,
-  CheckSquare,
   X,
   Trash2,
   MessageSquare,
@@ -43,6 +41,7 @@ import {
 } from "lucide-react";
 import { TaskAdvancedFields, unifiedTaskToFormValue, formValueToApiPayload } from "./TaskAdvancedFields";
 import type { TaskAdvancedFormValue } from "./TaskAdvancedFields";
+import { TaskChecklistEditor } from "./TaskChecklistEditor";
 import { Calendar } from "@/components/ui/calendar";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -55,7 +54,6 @@ import type {
 import {
   formatUnifiedDate,
   formatUnifiedTime,
-  getChecklistProgressFromItems,
   getUnifiedStatusLabel,
   getUnifiedPriorityColor,
   getUnifiedPriorityBadgeClass,
@@ -332,7 +330,6 @@ export function TaskSidePanel({
   const [editStatus, setEditStatus] = useState<UnifiedTaskStatus>("todo");
   const [editDueDate, setEditDueDate] = useState<string | null>(null);
   const [editListId, setEditListId] = useState<string | null>(null);
-  const [newChecklistItem, setNewChecklistItem] = useState("");
   const [localChecklist, setLocalChecklist] = useState<UnifiedChecklistItem[]>([]);
   const [panelView, setPanelView] = useState<"main" | "advanced">("main");
   const [advancedFormValue, setAdvancedFormValue] = useState<TaskAdvancedFormValue | null>(null);
@@ -356,9 +353,6 @@ export function TaskSidePanel({
   }, [task]);
 
   const isProject = task?.source === "project";
-  const checklist = localChecklist;
-  const progress = getChecklistProgressFromItems(checklist);
-  const completedCount = checklist.filter((i) => i.completed).length;
 
   const flushTitle = () => {
     if (task && onUpdate && editTitle.trim() !== task.title) {
@@ -379,28 +373,6 @@ export function TaskSidePanel({
   const persistChecklist = (next: UnifiedChecklistItem[]) => {
     setLocalChecklist(next);
     if (onUpdate && task) onUpdate(task.id, { checklist: next });
-  };
-
-  const handleToggleChecklistItem = (itemId: string) => {
-    const next = localChecklist.map((item) =>
-      item.id === itemId ? { ...item, completed: !item.completed } : item
-    );
-    persistChecklist(next);
-  };
-
-  const handleAddChecklistItem = () => {
-    if (!newChecklistItem.trim()) return;
-    const next = [
-      ...localChecklist,
-      { id: `cl-${Date.now()}`, text: newChecklistItem.trim(), completed: false },
-    ];
-    setLocalChecklist(next);
-    setNewChecklistItem("");
-    if (onUpdate && task) onUpdate(task.id, { checklist: next });
-  };
-
-  const handleRemoveChecklistItem = (itemId: string) => {
-    persistChecklist(localChecklist.filter((item) => item.id !== itemId));
   };
 
   const handleDelete = async () => {
@@ -646,85 +618,11 @@ export function TaskSidePanel({
                 )}
               </section>
 
-              {/* Checklist: card, contador, barra, hover */}
               <section className="rounded-lg border bg-card p-3 shadow-sm">
-                <div className="flex items-center justify-between mb-2">
-                  <Label className="text-sm font-semibold flex items-center gap-2">
-                    <CheckSquare className="h-4 w-4 text-muted-foreground" />
-                    Lista de verificação
-                  </Label>
-                  {checklist.length > 0 && (
-                    <span className="text-xs font-medium text-muted-foreground">
-                      {completedCount}/{checklist.length} concluídos
-                    </span>
-                  )}
-                </div>
-                {checklist.length > 0 && (
-                  <div className="w-full h-2 bg-muted rounded-full mb-3">
-                    <div
-                      className="h-2 bg-primary rounded-full transition-all duration-300"
-                      style={{ width: `${progress}%` }}
-                    />
-                  </div>
-                )}
-                <ul className="space-y-0.5 mb-3">
-                  {checklist.map((item) => (
-                    <li
-                      key={item.id}
-                      className={cn(
-                        "flex items-center gap-2 py-1.5 px-2 rounded-md group hover:bg-muted/50 transition-colors",
-                        item.completed && "opacity-80"
-                      )}
-                    >
-                      <Checkbox
-                        checked={item.completed}
-                        onCheckedChange={() => handleToggleChecklistItem(item.id)}
-                        className="shrink-0"
-                      />
-                      <span
-                        className={cn(
-                          "flex-1 text-sm",
-                          item.completed && "line-through text-muted-foreground"
-                        )}
-                      >
-                        {item.text}
-                      </span>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
-                        onClick={() => handleRemoveChecklistItem(item.id)}
-                      >
-                        <X className="h-3 w-3" />
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="Adicionar item"
-                    value={newChecklistItem}
-                    onChange={(e) => setNewChecklistItem(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        handleAddChecklistItem();
-                      }
-                    }}
-                    className="text-sm h-8"
-                  />
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    className="h-8"
-                    onClick={handleAddChecklistItem}
-                    disabled={!newChecklistItem.trim()}
-                  >
-                    Adicionar
-                  </Button>
-                </div>
+                <TaskChecklistEditor
+                  items={localChecklist}
+                  onChange={(next) => persistChecklist(next as UnifiedChecklistItem[])}
+                />
               </section>
 
               {/* Comentários (placeholder) */}
@@ -1027,7 +925,11 @@ export function TaskSidePanel({
                       type="button"
                       onClick={() => {
                         if (task && onUpdate) {
-                          const payload = formValueToApiPayload(advancedFormValue);
+                          const payload = {
+                            ...formValueToApiPayload(advancedFormValue),
+                            checklist: localChecklist,
+                            due_date: editDueDate,
+                          };
                           onUpdate(task.id, payload);
                         }
                       }}

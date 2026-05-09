@@ -25,6 +25,9 @@ export type FloatingChatContextValue = {
   openChatForClient: (clientId: string) => Promise<void>;
   openChatForLead: (leadId: string) => Promise<void>;
   closeMobileConversationOverlay: () => void;
+  compactProfileOpenByConversationId: Record<string, boolean>;
+  toggleCompactProfile: (conversationId: string) => void;
+  setCompactProfileOpen: (conversationId: string, open: boolean) => void;
 };
 
 export const FloatingChatContext = createContext<FloatingChatContextValue | null>(null);

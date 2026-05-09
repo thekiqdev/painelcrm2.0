@@ -2,7 +2,8 @@ import { Response } from 'express';
 import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { z } from 'zod';
-import { assertModulePermission, ModulePermissionError } from '../permissions/index.js';
+import { assertModulePermission, assertPermissionKey, ModulePermissionError } from '../permissions/index.js';
+import { resolveClientsGranularFromLegacy } from '../permissions/permissionCatalog.js';
 import {
   createClientTimelineEvent,
   listClientTimelineEvents,
@@ -95,6 +96,43 @@ async function clientOwnerForTenant(clientId: string, tenantId: string): Promise
   return r.rows[0]?.user_id ?? null;
 }
 
+/** Vista granular (view_own): utilizador só acede a clientes que criou (`clients.user_id`). */
+async function rejectIfClientOutsideViewScope(
+  req: AuthRequest,
+  res: Response,
+  userId: string,
+  tenantId: string,
+  clientId: string,
+): Promise<boolean> {
+  let permMap;
+  try {
+    permMap = await assertPermissionKey(userId, 'clients.view', req);
+  } catch (e) {
+    if (e instanceof ModulePermissionError) {
+      res.status(e.statusCode).json({ error: e.message });
+      return false;
+    }
+    throw e;
+  }
+  const cg = resolveClientsGranularFromLegacy(permMap);
+  const belongs = await clientBelongsToTenant(clientId, tenantId);
+  if (!belongs) {
+    res.status(404).json({ error: 'Client not found' });
+    return false;
+  }
+  if (cg.view_own && !cg.view_all) {
+    const ownerId = await clientOwnerForTenant(clientId, tenantId);
+    if (ownerId !== userId) {
+      res.status(403).json({
+        error: 'Sem permissão para aceder a este cliente.',
+        code: 'CLIENT_VIEW_SCOPE',
+      });
+      return false;
+    }
+  }
+  return true;
+}
+
 /** Grupo existe e pertence ao tenant (via dono do grupo em users). */
 async function clientGroupBelongsToTenant(groupId: string, tenantId: string): Promise<boolean> {
   const r = await pool.query(
@@ -179,6 +217,22 @@ export async function getClients(req: AuthRequest, res: Response): Promise<void>
       res.json([]);
       return;
     }
+    const userId = req.userId;
+    if (!userId) {
+      res.status(401).json({ error: 'Não autenticado' });
+      return;
+    }
+    let permMap;
+    try {
+      permMap = await assertPermissionKey(userId, 'clients.view', req);
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        res.status(e.statusCode).json({ error: e.message });
+        return;
+      }
+      throw e;
+    }
+    const cg = resolveClientsGranularFromLegacy(permMap);
     const { profileId, q } = req.query;
 
     const waAvatarExpr = await clientWhatsappAvatarSelectExpr();
@@ -209,6 +263,12 @@ export async function getClients(req: AuthRequest, res: Response): Promise<void>
     `;
     const params: unknown[] = [tenantId];
     let p = 2;
+
+    if (cg.view_own && !cg.view_all) {
+      query += ` AND c.user_id = $${p}`;
+      params.push(userId);
+      p += 1;
+    }
 
     if (profileId && typeof profileId === 'string') {
       query += ` AND c.profile_id = $${p}`;
@@ -273,6 +333,18 @@ export async function getClientById(req: AuthRequest, res: Response): Promise<vo
     const userId = req.userId!;
     const { id } = req.params;
 
+    let permMap;
+    try {
+      permMap = await assertPermissionKey(userId, 'clients.view', req);
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        res.status(e.statusCode).json({ error: e.message });
+        return;
+      }
+      throw e;
+    }
+    const cg = resolveClientsGranularFromLegacy(permMap);
+
     const waAvatarExpr = await clientWhatsappAvatarSelectExpr();
 
     const result = await pool.query(
@@ -301,7 +373,13 @@ export async function getClientById(req: AuthRequest, res: Response): Promise<vo
       return;
     }
 
-    res.json(result.rows[0]);
+    const row = result.rows[0];
+    if (cg.view_own && !cg.view_all && row.user_id !== userId) {
+      res.status(404).json({ error: 'Client not found' });
+      return;
+    }
+
+    res.json(row);
   } catch (error) {
     console.error('Error fetching client:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -315,6 +393,22 @@ export async function getClientTimeline(req: AuthRequest, res: Response): Promis
       res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
+    const userId = req.userId;
+    if (!userId) {
+      res.status(401).json({ error: 'Não autenticado' });
+      return;
+    }
+    let permMap;
+    try {
+      permMap = await assertPermissionKey(userId, 'clients.view', req);
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        res.status(e.statusCode).json({ error: e.message });
+        return;
+      }
+      throw e;
+    }
+    const cg = resolveClientsGranularFromLegacy(permMap);
     const { id: clientId } = req.params;
     const limit = Number(req.query.limit ?? 50);
     const offset = Number(req.query.offset ?? 0);
@@ -322,6 +416,13 @@ export async function getClientTimeline(req: AuthRequest, res: Response): Promis
     if (!belongs) {
       res.status(404).json({ error: 'Client not found' });
       return;
+    }
+    if (cg.view_own && !cg.view_all) {
+      const ownerId = await clientOwnerForTenant(clientId, tenantId);
+      if (ownerId !== userId) {
+        res.status(404).json({ error: 'Client not found' });
+        return;
+      }
     }
     const events = await listClientTimelineEvents({ tenantId, clientId, limit, offset });
     res.json(events);
@@ -340,12 +441,8 @@ export async function getClientGoogleDriveBrowser(req: AuthRequest, res: Respons
       res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
-    await assertModulePermission(userId, MODULE_CLIENTS, 'view', undefined, req);
-    const belongs = await clientBelongsToTenant(clientId, tenantId);
-    if (!belongs) {
-      res.status(404).json({ error: 'Client not found' });
-      return;
-    }
+    const okScope = await rejectIfClientOutsideViewScope(req, res, userId, tenantId, clientId);
+    if (!okScope) return;
     const folderIdRaw = req.query.folderId;
     const folderId = typeof folderIdRaw === 'string' && folderIdRaw.trim() ? folderIdRaw.trim() : undefined;
     const payload = await getClientGoogleDriveBrowserPayload({ tenantId, clientId, folderId });
@@ -432,12 +529,8 @@ export async function ensureClientGoogleDriveFolders(req: AuthRequest, res: Resp
       res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
-    await assertModulePermission(userId, MODULE_CLIENTS, 'view', undefined, req);
-    const belongs = await clientBelongsToTenant(clientId, tenantId);
-    if (!belongs) {
-      res.status(404).json({ error: 'Client not found' });
-      return;
-    }
+    const okScope = await rejectIfClientOutsideViewScope(req, res, userId, tenantId, clientId);
+    if (!okScope) return;
     const result = await ensureClientGoogleDriveFolderStructure(tenantId, clientId);
     res.json(result);
   } catch (error) {
@@ -465,12 +558,8 @@ export async function getClientGoogleDriveFiles(req: AuthRequest, res: Response)
       res.status(401).json({ error: 'Empresa não identificada' });
       return;
     }
-    await assertModulePermission(userId, MODULE_CLIENTS, 'view', undefined, req);
-    const belongs = await clientBelongsToTenant(clientId, tenantId);
-    if (!belongs) {
-      res.status(404).json({ error: 'Client not found' });
-      return;
-    }
+    const okScope = await rejectIfClientOutsideViewScope(req, res, userId, tenantId, clientId);
+    if (!okScope) return;
     const rows = await listClientGoogleDriveFiles(tenantId, clientId);
     res.json(rows);
   } catch (error) {
@@ -840,6 +929,7 @@ export async function createClient(req: AuthRequest, res: Response): Promise<voi
   try {
     const userId = req.userId!;
     await assertModulePermission(userId, MODULE_CLIENTS, 'create', undefined, req);
+    await assertPermissionKey(userId, 'clients.create', req);
     const clientData = clientSchema.parse(req.body);
 
     // Convert empty strings to null for optional fields
@@ -1209,6 +1299,16 @@ export async function getClientTasks(req: AuthRequest, res: Response): Promise<v
       return;
     }
 
+    try {
+      await assertPermissionKey(userId, 'tasks.view', req);
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        res.status(e.statusCode).json({ error: e.message });
+        return;
+      }
+      throw e;
+    }
+
     const result = await pool.query(
       'SELECT * FROM client_tasks WHERE client_id = $1 ORDER BY created_at DESC',
       [id]
@@ -1216,6 +1316,10 @@ export async function getClientTasks(req: AuthRequest, res: Response): Promise<v
 
     res.json(result.rows);
   } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
     console.error('Error fetching client tasks:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -1224,6 +1328,15 @@ export async function getClientTasks(req: AuthRequest, res: Response): Promise<v
 export async function createClientTask(req: AuthRequest, res: Response): Promise<void> {
   try {
     const userId = req.userId!;
+    try {
+      await assertPermissionKey(userId, 'tasks.create', req);
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        res.status(e.statusCode).json({ error: e.message });
+        return;
+      }
+      throw e;
+    }
     const taskData = clientTaskSchema.parse(req.body);
     const { client_id } = req.body;
 
@@ -1256,6 +1369,10 @@ export async function createClientTask(req: AuthRequest, res: Response): Promise
 
     res.status(201).json(result.rows[0]);
   } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: 'Validation error', details: error.errors });
       return;
@@ -1283,6 +1400,22 @@ export async function updateClientTask(req: AuthRequest, res: Response): Promise
     if (!ok) {
       res.status(404).json({ error: 'Task not found' });
       return;
+    }
+
+    try {
+      await assertModulePermission(
+        userId,
+        'tasks',
+        'edit',
+        { ownerId: taskRow.rows[0].user_id },
+        req
+      );
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        res.status(e.statusCode).json({ error: e.message });
+        return;
+      }
+      throw e;
     }
 
     const updates: string[] = [];
@@ -1323,6 +1456,10 @@ export async function updateClientTask(req: AuthRequest, res: Response): Promise
 
     res.json(result.rows[0]);
   } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: 'Validation error', details: error.errors });
       return;
@@ -1337,7 +1474,10 @@ export async function deleteClientTask(req: AuthRequest, res: Response): Promise
     const userId = req.userId!;
     const { id } = req.params;
 
-    const taskRow = await pool.query<{ client_id: string }>('SELECT client_id FROM client_tasks WHERE id = $1', [id]);
+    const taskRow = await pool.query<{ client_id: string; user_id: string }>(
+      'SELECT client_id, user_id FROM client_tasks WHERE id = $1',
+      [id]
+    );
     if (taskRow.rows.length === 0) {
       res.status(404).json({ error: 'Task not found' });
       return;
@@ -1346,6 +1486,22 @@ export async function deleteClientTask(req: AuthRequest, res: Response): Promise
     if (!ok) {
       res.status(404).json({ error: 'Task not found' });
       return;
+    }
+
+    try {
+      await assertModulePermission(
+        userId,
+        'tasks',
+        'delete',
+        { ownerId: taskRow.rows[0].user_id },
+        req
+      );
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        res.status(e.statusCode).json({ error: e.message });
+        return;
+      }
+      throw e;
     }
 
     const result = await pool.query(
@@ -1362,6 +1518,10 @@ export async function deleteClientTask(req: AuthRequest, res: Response): Promise
 
     res.json({ message: 'Task deleted successfully' });
   } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
     console.error('Error deleting client task:', error);
     res.status(500).json({ error: 'Internal server error' });
   }

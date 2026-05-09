@@ -256,6 +256,19 @@ export function pickDisplayContactName(row: {
     digitsOnlyMsisdn(String(row.phone_number || '')) ||
     digitsOnlyMsisdn(String(row.canonical_phone || ''));
 
+  if (ext.toLowerCase().endsWith('@g.us')) {
+    const tryGroup = (v: string | null | undefined): string | null => {
+      if (typeof v !== 'string' || !v.trim()) return null;
+      return v.trim();
+    };
+    return (
+      tryGroup(row.display_name) ||
+      tryGroup(row.contact_name) ||
+      tryGroup(row.profile_name) ||
+      'Grupo'
+    );
+  }
+
   const tryName = (v: string | null | undefined): string | null => {
     if (typeof v !== 'string' || !v.trim()) return null;
     const t = v.trim();

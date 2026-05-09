@@ -53,11 +53,27 @@ const AvatarImage = React.forwardRef<
     return null;
   }
 
+  /** `crossOrigin="anonymous"` força CORS; para URLs relativas (proxy Vite) ou mesma origem, omitir evita falhas desnecessárias. */
+  const crossOriginProp =
+    typeof displaySrc === 'string' &&
+    (displaySrc.includes('/api/chat/avatar-proxy') ||
+      (displaySrc.startsWith('http') &&
+        typeof window !== 'undefined' &&
+        (() => {
+          try {
+            return new URL(displaySrc).origin !== window.location.origin;
+          } catch {
+            return false;
+          }
+        })()))
+      ? 'anonymous'
+      : undefined;
+
   return (
     <AvatarPrimitive.Image
       ref={ref}
       className={cn("aspect-square h-full w-full", className)}
-      crossOrigin="anonymous"
+      crossOrigin={crossOriginProp}
       referrerPolicy="no-referrer"
       onError={handleError}
       {...props}

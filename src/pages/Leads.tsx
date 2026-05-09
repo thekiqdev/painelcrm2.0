@@ -101,6 +101,8 @@ const Leads = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const { user } = useAuth();
+  const tenantId = user?.tenant_id ?? "";
+  const userId = user?.id ?? "";
   const { canCreate } = useModulePermissions();
   const canCreateProposals = canCreate("proposals");
   const canImportLeads = canCreate("leads");
@@ -120,14 +122,14 @@ const Leads = () => {
 
   // Statuses em cache
   const { data: statusesData } = useQuery({
-    queryKey: ["leadStatuses"],
+    queryKey: ["leadStatuses", tenantId, userId],
     queryFn: async () => {
       const response = await apiClient.get("/api/lead-statuses");
       if (response.error) throw new Error(response.error);
       const data = response.data || [];
       return data?.length > 0 ? data : DEFAULT_LEAD_STATUSES;
     },
-    enabled: !!user,
+    enabled: !!tenantId && !!userId,
   });
   useEffect(() => {
     setLeadStatuses(statusesData ?? DEFAULT_LEAD_STATUSES);
@@ -135,7 +137,7 @@ const Leads = () => {
 
   // Leads em cache – ao voltar na página os dados aparecem na hora
   const { data: leadsData, isPending: leadsLoading } = useQuery({
-    queryKey: ["leads", sortField, sortDirection, activeStatusFilter],
+    queryKey: ["leads", tenantId, userId, sortField, sortDirection, activeStatusFilter],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (activeStatusFilter === "convertidos") {
@@ -158,10 +160,11 @@ const Leads = () => {
       });
       return data;
     },
-    enabled: !!user,
+    enabled: !!tenantId && !!userId,
   });
   const leads = leadsData ?? [];
-  const fetchLeads = () => queryClient.invalidateQueries({ queryKey: ["leads"] });
+  const fetchLeads = () =>
+    queryClient.invalidateQueries({ queryKey: ["leads", tenantId, userId] });
 
   // Fetch tasks for a selected lead
   const fetchLeadTasks = async (leadId: string) => {
@@ -324,7 +327,7 @@ const Leads = () => {
       const response = await apiClient.delete(`/api/leads/${leadToDelete.id}`);
       if (response.error) throw new Error(response.error);
 
-      queryClient.invalidateQueries({ queryKey: ["leads"] });
+      queryClient.invalidateQueries({ queryKey: ["leads", tenantId, userId] });
       // If the deleted lead was selected, clear selection
       if (selectedLead && selectedLead.id === leadToDelete.id) {
         setSelectedLead(null);
@@ -430,7 +433,7 @@ const Leads = () => {
       setIsConvertDialogOpen(false);
       setIsViewDialogOpen(false);
       fetchLeads();
-      void queryClient.invalidateQueries({ queryKey: ["clients", "list"] });
+      void queryClient.invalidateQueries({ queryKey: ["clients", "list", tenantId, userId] });
     } catch (error: any) {
       console.error("Erro ao converter lead:", error.message);
       toast.error("Não foi possível converter o lead para cliente");
@@ -596,7 +599,7 @@ const Leads = () => {
         );
       }
 
-      await queryClient.invalidateQueries({ queryKey: ["leads"] });
+      await queryClient.invalidateQueries({ queryKey: ["leads", tenantId, userId] });
       setLeadsCsvImportSummary({ created, failed, warnings });
 
       if (failed.length > 0 || warnings.length > 0 || created === 0) {

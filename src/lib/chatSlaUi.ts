@@ -71,7 +71,16 @@ export type ChatBadgeUi = {
   key: string;
   label: string;
   variant: 'default' | 'secondary' | 'destructive' | 'outline';
+  /** Ícone à esquerda do rótulo (ex.: operador em atendimento). */
+  leadingIcon?: 'headphones';
 };
+
+/** Primeiro nome / truncado — lista de conversas (badge no lugar de «Em atendimento»). */
+function shortAssigneeNameForList(display?: string | null): string {
+  if (!display?.trim()) return '';
+  const first = display.trim().split(/\s+/)[0];
+  return first.length > 18 ? `${first.slice(0, 16)}…` : first;
+}
 
 /** No máximo 2: (1) estado de atendimento curto (2) SLA só se crítico (risco ou vencido). */
 export function selectChatBadges(conv: ChatConversation, sla: SlaContextForUi | null): ChatBadgeUi[] {
@@ -96,7 +105,7 @@ export function selectChatBadges(conv: ChatConversation, sla: SlaContextForUi | 
         st !== 'archived' &&
         (st === 'pending' || st === 'open' || !st))
     ) {
-      return { key: 'unassigned', label: 'Sem resp.', variant: 'secondary' };
+      return null;
     }
 
     if (st === 'waiting_customer' || customerWaitingOurReply) {
@@ -104,7 +113,13 @@ export function selectChatBadges(conv: ChatConversation, sla: SlaContextForUi | 
     }
 
     if (st === 'in_progress' || st === 'in_service') {
-      return { key: 'prog', label: 'Em atendimento', variant: 'default' };
+      const name = shortAssigneeNameForList(conv.assignee_display);
+      return {
+        key: 'prog',
+        label: name || 'Em atendimento',
+        variant: 'default',
+        leadingIcon: 'headphones',
+      };
     }
 
     if (st === 'queued') {
@@ -112,7 +127,7 @@ export function selectChatBadges(conv: ChatConversation, sla: SlaContextForUi | 
     }
 
     if (st === 'pending' || st === 'open') {
-      return { key: 'aberto', label: 'Aberto', variant: 'outline' };
+      return null;
     }
 
     return null;

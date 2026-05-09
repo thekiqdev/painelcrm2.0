@@ -70,3 +70,31 @@ export function verifyPasswordResetCompletionToken(token: string): PasswordReset
   };
 }
 
+const ME_PROFILE_EDIT_PURPOSE = 'me_profile_edit' as const;
+
+/** JWT curto após confirmar código WhatsApp — obrigatório em PUT /api/me/profile e POST avatar. */
+export function generateMeProfileEditToken(userId: string): string {
+  return jwt.sign(
+    { userId, purpose: ME_PROFILE_EDIT_PURPOSE },
+    JWT_SECRET,
+    { expiresIn: '30m' } as jwt.SignOptions,
+  );
+}
+
+export function verifyMeProfileEditToken(token: string | undefined, expectedUserId: string): boolean {
+  if (!token?.trim()) return false;
+  try {
+    const decoded = jwt.verify(token.trim(), JWT_SECRET) as jwt.JwtPayload & {
+      userId?: string;
+      purpose?: string;
+    };
+    return (
+      decoded.purpose === ME_PROFILE_EDIT_PURPOSE &&
+      typeof decoded.userId === 'string' &&
+      decoded.userId === expectedUserId
+    );
+  } catch {
+    return false;
+  }
+}
+

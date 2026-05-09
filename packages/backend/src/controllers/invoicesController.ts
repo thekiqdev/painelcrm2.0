@@ -1,6 +1,27 @@
 import { Request, Response } from 'express';
 import { pool } from '../utils/db.js';
 import { z } from 'zod';
+import type { AuthRequest } from '../middleware/auth.js';
+import { assertPermissionKey, ModulePermissionError } from '../permissions/index.js';
+import type { PermissionCatalogKey } from '../permissions/permissionCatalog.js';
+
+async function requirePermKey(req: AuthRequest, key: PermissionCatalogKey, res: Response): Promise<boolean> {
+  try {
+    const uid = req.userId;
+    if (!uid) {
+      res.status(401).json({ error: 'Não autenticado' });
+      return false;
+    }
+    await assertPermissionKey(uid, key, req);
+    return true;
+  } catch (e) {
+    if (e instanceof ModulePermissionError) {
+      res.status(e.statusCode).json({ error: e.message });
+      return false;
+    }
+    throw e;
+  }
+}
 
 const invoiceItemSchema = z.object({
   id: z.number().optional(),
@@ -22,9 +43,10 @@ const invoiceSchema = z.object({
   notes: z.string().optional().nullable(),
 });
 
-// GET /api/invoices
+// GET /api/invoices — legado (`invoices` por usuário); alinhado a billing.view_invoices.
 export const getInvoices = async (req: Request, res: Response) => {
   try {
+    if (!(await requirePermKey(req as AuthRequest, 'billing.view_invoices', res))) return;
     const tenantId = (req as any).tenantId as string | null | undefined;
     if (!tenantId) {
       return res.json([]);
@@ -91,6 +113,7 @@ export const getInvoices = async (req: Request, res: Response) => {
 // GET /api/invoices/:id
 export const getInvoiceById = async (req: Request, res: Response) => {
   try {
+    if (!(await requirePermKey(req as AuthRequest, 'billing.view_invoices', res))) return;
     const userId = (req as any).userId;
     const { id } = req.params;
 
@@ -175,6 +198,9 @@ export const updateInvoice = async (req: Request, res: Response) => {
     const { id } = req.params;
 
     const validated = invoiceSchema.partial().parse(req.body);
+    const permKey: PermissionCatalogKey =
+      validated.status === 'paid' ? 'billing.mark_paid' : 'billing.edit_invoice';
+    if (!(await requirePermKey(req as AuthRequest, permKey, res))) return;
 
     const updates: string[] = [];
     const values: any[] = [];
@@ -254,6 +280,7 @@ export const updateInvoice = async (req: Request, res: Response) => {
 // DELETE /api/invoices/:id
 export const deleteInvoice = async (req: Request, res: Response) => {
   try {
+    if (!(await requirePermKey(req as AuthRequest, 'billing.delete_invoice', res))) return;
     const userId = (req as any).userId;
     const { id } = req.params;
 

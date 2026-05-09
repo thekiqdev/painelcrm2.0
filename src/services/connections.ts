@@ -18,6 +18,7 @@ export type ConnectionsSummary = {
     instances_count: number;
     connected_count: number;
     designated_instance_id: string | null;
+    groups_feature_enabled: boolean;
     instances: Array<{ id: string; name: string; status: string; connected_phone?: string | null }>;
   };
 };
@@ -29,7 +30,13 @@ export const connectionsService = {
     return res.data;
   },
 
-  async putFlag(key: 'whatsapp_official_enabled' | 'whatsapp_official_tenant_enabled', value: boolean): Promise<void> {
+  async putFlag(
+    key:
+      | 'whatsapp_official_enabled'
+      | 'whatsapp_official_tenant_enabled'
+      | 'whatsapp_groups_enabled',
+    value: boolean,
+  ): Promise<void> {
     const res = await apiClient.put(`${BASE}/flags`, { key, value });
     if (res.error) throw new Error(res.error);
   },

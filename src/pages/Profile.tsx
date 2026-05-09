@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Building2, Loader2, UserRound } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -29,6 +29,7 @@ import { BusinessAddressCard } from '@/components/profile/BusinessAddressCard';
 import { BusinessLogoCard } from '@/components/profile/BusinessLogoCard';
 import { BusinessProfileHero } from '@/components/profile/BusinessProfileHero';
 import { PasswordChangeDialog } from '@/components/profile/PasswordChangeDialog';
+import { ProfileEditUnlockDialog } from '@/components/profile/ProfileEditUnlockDialog';
 import {
   getMeBusinessProfile,
   postMeProfileAvatar,
@@ -42,6 +43,12 @@ import {
   uploadCatalogImageFile,
 } from '@/services/catalogMediaUpload';
 import { formatPhoneBrDigits } from '@/lib/brazilInputMasks';
+import {
+  clearMeProfileEditToken,
+  isMeProfileEditTokenValid,
+  loadMeProfileEditTokenFromStorage,
+  persistMeProfileEditToken,
+} from '@/lib/meProfileEditVerification';
 
 type TabKey = 'personal' | 'business';
 
@@ -59,6 +66,9 @@ const Profile: React.FC = () => {
 
   const [tab, setTab] = useState<TabKey>('personal');
   const [pwdOpen, setPwdOpen] = useState(false);
+  const [profileEditUnlockOpen, setProfileEditUnlockOpen] = useState(false);
+  const pendingAvatarRef = useRef<FileList | null>(null);
+  const profileUnlockIntentRef = useRef<'edit' | 'avatar' | null>(null);
   const [personalEditing, setPersonalEditing] = useState(false);
   const [editingBusiness, setEditingBusiness] = useState(false);
 
@@ -133,6 +143,78 @@ const Profile: React.FC = () => {
     setPersonalEditing(false);
   };
 
+  const revokeProfileEditSession = useCallback(() => {
+    clearMeProfileEditToken();
+  }, []);
+
+  const openPersonalEditWithVerification = useCallback(() => {
+    const t = loadMeProfileEditTokenFromStorage();
+    if (isMeProfileEditTokenValid(t)) {
+      setPersonalEditing(true);
+      return;
+    }
+    profileUnlockIntentRef.current = 'edit';
+    setProfileEditUnlockOpen(true);
+  }, []);
+
+  const uploadAvatarWithToken = async (file: File, token: string) => {
+    const previousUrl = avatarUrl;
+    const previewUrl = URL.createObjectURL(file);
+    setAvatarUrl(previewUrl);
+    setUploadingAvatar(true);
+    try {
+      const res = await postMeProfileAvatar(file, token);
+      URL.revokeObjectURL(previewUrl);
+      if (res.code === 'PROFILE_EDIT_VERIFICATION_REQUIRED') {
+        revokeProfileEditSession();
+        setAvatarUrl(previousUrl);
+        toast.error('Sua sessão de edição expirou. Confirme novamente com o código do WhatsApp.');
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        pendingAvatarRef.current = dt.files;
+        profileUnlockIntentRef.current = 'avatar';
+        setProfileEditUnlockOpen(true);
+        return;
+      }
+      if (res.error) {
+        setAvatarUrl(previousUrl);
+        toast.error(res.error);
+        return;
+      }
+      if (res.avatar_url) {
+        setAvatarUrl(res.avatar_url);
+        await reload();
+        await refreshUser();
+        toast.success('Foto atualizada.');
+      } else {
+        setAvatarUrl(previousUrl);
+      }
+    } catch {
+      URL.revokeObjectURL(previewUrl);
+      setAvatarUrl(previousUrl);
+      toast.error('Não foi possível enviar a foto.');
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
+  const handleProfileEditVerified = async (token: string) => {
+    persistMeProfileEditToken(token);
+    const intent = profileUnlockIntentRef.current;
+    profileUnlockIntentRef.current = null;
+    if (intent === 'edit') {
+      pendingAvatarRef.current = null;
+      setPersonalEditing(true);
+    } else if (intent === 'avatar') {
+      const pending = pendingAvatarRef.current;
+      pendingAvatarRef.current = null;
+      const file = pending?.[0];
+      if (file) await uploadAvatarWithToken(file, token);
+    } else {
+      pendingAvatarRef.current = null;
+    }
+  };
+
   const onSavePersonal = async () => {
     if (!personal) return;
     if (fullName.trim().length < 2) {
@@ -144,18 +226,35 @@ const Profile: React.FC = () => {
       toast.error('Número de WhatsApp inválido.');
       return;
     }
+    const token = loadMeProfileEditTokenFromStorage();
+    if (!isMeProfileEditTokenValid(token)) {
+      toast.error('Confirme com o código enviado ao WhatsApp para salvar o perfil.');
+      profileUnlockIntentRef.current = 'edit';
+      setProfileEditUnlockOpen(true);
+      return;
+    }
     const { first_name, last_name } = splitFullName(fullName);
     setSavingPersonal(true);
     try {
-      const res = await putMeProfile({
-        first_name,
-        last_name,
-        whatsapp_number: wa || null,
-        job_title: jobTitle.trim() || null,
-        locale: locale.trim() || null,
-        timezone: timezone.trim() || null,
-        avatar_url: avatarUrl,
-      });
+      const res = await putMeProfile(
+        {
+          first_name,
+          last_name,
+          whatsapp_number: wa || null,
+          job_title: jobTitle.trim() || null,
+          locale: locale.trim() || null,
+          timezone: timezone.trim() || null,
+          avatar_url: avatarUrl,
+        },
+        token,
+      );
+      if (res.code === 'PROFILE_EDIT_VERIFICATION_REQUIRED') {
+        revokeProfileEditSession();
+        toast.error('Sua sessão de edição expirou. Confirme novamente com o código do WhatsApp.');
+        profileUnlockIntentRef.current = 'edit';
+        setProfileEditUnlockOpen(true);
+        return;
+      }
       if (res.error) {
         toast.error(res.error);
         return;
@@ -172,22 +271,14 @@ const Profile: React.FC = () => {
   const onAvatarFiles = async (files: FileList | null) => {
     const file = files?.[0];
     if (!file) return;
-    setUploadingAvatar(true);
-    try {
-      const res = await postMeProfileAvatar(file);
-      if (res.error) {
-        toast.error(res.error);
-        return;
-      }
-      if (res.avatar_url) {
-        setAvatarUrl(res.avatar_url);
-        await reload();
-        await refreshUser();
-        toast.success('Foto atualizada.');
-      }
-    } finally {
-      setUploadingAvatar(false);
+    const token = loadMeProfileEditTokenFromStorage();
+    if (!isMeProfileEditTokenValid(token)) {
+      pendingAvatarRef.current = files;
+      profileUnlockIntentRef.current = 'avatar';
+      setProfileEditUnlockOpen(true);
+      return;
     }
+    await uploadAvatarWithToken(file, token);
   };
 
   const persistBusiness = async (partial: Parameters<typeof putMeBusinessProfile>[0], msg: string) => {
@@ -366,7 +457,7 @@ const Profile: React.FC = () => {
                 editing={personalEditing}
                 saving={savingPersonal}
                 onSave={() => void onSavePersonal()}
-                onStartEdit={() => setPersonalEditing(true)}
+                onStartEdit={() => openPersonalEditWithVerification()}
                 onCancelEdit={cancelPersonalEdit}
               />
             </div>
@@ -493,6 +584,12 @@ const Profile: React.FC = () => {
       ) : null}
 
       <PasswordChangeDialog open={pwdOpen} onOpenChange={setPwdOpen} onSuccess={() => signOut()} />
+
+      <ProfileEditUnlockDialog
+        open={profileEditUnlockOpen}
+        onOpenChange={setProfileEditUnlockOpen}
+        onVerified={(tok) => void handleProfileEditVerified(tok)}
+      />
     </div>
   );
 };

@@ -63,27 +63,60 @@ export async function getMeProfile(): Promise<{ data?: MeProfileResponse; error?
   return { data: res.data };
 }
 
-export async function putMeProfile(body: {
-  first_name?: string | null;
-  last_name?: string | null;
-  whatsapp_number?: string | null;
-  job_title?: string | null;
-  locale?: string | null;
-  timezone?: string | null;
-  avatar_url?: string | null;
-}): Promise<{ data?: { personal: MePersonalDto }; error?: string }> {
-  const res = await apiClient.put<{ personal: MePersonalDto }>('/api/me/profile', body);
-  if (res.error) return { error: res.error };
+export async function putMeProfile(
+  body: {
+    first_name?: string | null;
+    last_name?: string | null;
+    whatsapp_number?: string | null;
+    job_title?: string | null;
+    locale?: string | null;
+    timezone?: string | null;
+    avatar_url?: string | null;
+  },
+  profileEditToken?: string | null,
+): Promise<{ data?: { personal: MePersonalDto }; error?: string; code?: string }> {
+  const headers = new Headers();
+  if (profileEditToken?.trim()) {
+    headers.set('X-Profile-Edit-Token', profileEditToken.trim());
+  }
+  const res = await apiClient.put<{ personal: MePersonalDto }>('/api/me/profile', body, { headers });
+  if (res.error) return { error: res.error, code: res.code };
   return { data: res.data };
 }
 
-export async function postMeProfileAvatar(file: File): Promise<{ avatar_url?: string; error?: string }> {
+export async function postMeProfileAvatar(
+  file: File,
+  profileEditToken?: string | null,
+): Promise<{ avatar_url?: string; error?: string; code?: string }> {
   const form = new FormData();
   form.append('file', file);
-  const res = await apiClient.post<{ avatar_url: string }>('/api/me/profile/avatar', form);
-  if (res.error) return { error: res.error };
+  const headers = new Headers();
+  if (profileEditToken?.trim()) {
+    headers.set('X-Profile-Edit-Token', profileEditToken.trim());
+  }
+  const res = await apiClient.post<{ avatar_url: string }>('/api/me/profile/avatar', form, { headers });
+  if (res.error) return { error: res.error, code: res.code };
   const raw = res.data?.avatar_url;
   return { avatar_url: raw ? normalizeCatalogMediaUrlForBrowser(raw) : undefined };
+}
+
+export async function postMeProfileEditRequestCode(): Promise<{ ok?: true; error?: string; code?: string }> {
+  const res = await apiClient.post<{ ok?: boolean }>('/api/me/profile/edit/request-code', {});
+  if (res.error) return { error: res.error, code: res.code };
+  return { ok: true };
+}
+
+export async function postMeProfileEditConfirmCode(
+  code: string,
+): Promise<{ profile_edit_token?: string; error?: string }> {
+  const res = await apiClient.post<{ ok?: boolean; profile_edit_token?: string }>(
+    '/api/me/profile/edit/confirm-code',
+    { code },
+  );
+  if (res.error) return { error: res.error };
+  const tok = res.data?.profile_edit_token;
+  if (typeof tok === 'string' && tok.trim()) return { profile_edit_token: tok.trim() };
+  return { error: 'Resposta inválida do servidor.' };
 }
 
 export async function postMeProfilePasswordRequestCode(): Promise<{ ok?: true; error?: string; code?: string }> {

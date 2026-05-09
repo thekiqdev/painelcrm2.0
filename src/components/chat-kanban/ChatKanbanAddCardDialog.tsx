@@ -39,7 +39,7 @@ export function ChatKanbanAddCardDialog({
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedSearch(search.trim()), 320);
@@ -51,9 +51,18 @@ export function ChatKanbanAddCardDialog({
       setSearch('');
       setDebouncedSearch('');
       setConversations([]);
-      setSelectedId(null);
+      setSelectedIds(new Set());
     }
   }, [open]);
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
 
   const loadList = useCallback(async () => {
     if (!open || !boardId || !column) return;
@@ -82,20 +91,50 @@ export function ChatKanbanAddCardDialog({
   }, [loadList]);
 
   const handleConfirm = async () => {
-    if (!boardId || !column || !selectedId) return;
+    if (!boardId || !column || selectedIds.size === 0) return;
+    const ids = [...selectedIds];
     setCreating(true);
     try {
-      const created = await chatKanbanService.createCard(boardId, {
-        conversation_id: selectedId,
-        column_id: column.id,
-      });
-      const auto = created.kanban_auto_created_proposal;
-      if (auto) {
-        if (auto.public_link_path?.trim()) {
-          setStoredProposalPublicUrl(auto.id, `${window.location.origin}${auto.public_link_path.trim()}`);
+      let ok = 0;
+      const autoProposals: Array<{
+        id: string;
+        title?: string | null;
+        public_link_path?: string | null;
+      }> = [];
+      const errors: string[] = [];
+
+      for (const conversationId of ids) {
+        try {
+          const created = await chatKanbanService.createCard(boardId, {
+            conversation_id: conversationId,
+            column_id: column.id,
+          });
+          ok += 1;
+          const auto = created.kanban_auto_created_proposal;
+          if (auto?.id) {
+            if (auto.public_link_path?.trim()) {
+              setStoredProposalPublicUrl(auto.id, `${window.location.origin}${auto.public_link_path.trim()}`);
+            }
+            autoProposals.push({
+              id: auto.id,
+              title: auto.title,
+              public_link_path: auto.public_link_path ?? null,
+            });
+          }
+        } catch (e) {
+          errors.push(e instanceof Error ? e.message : 'Erro desconhecido');
         }
+      }
+
+      if (ok > 0) {
+        toast.success(
+          ok === 1 ? 'Conversa adicionada ao quadro' : `${ok} conversas adicionadas ao quadro`,
+        );
+      }
+      if (autoProposals.length === 1) {
+        const auto = autoProposals[0];
         toast.success('Proposta criada automaticamente', {
-          description: auto.title,
+          description: auto.title ?? undefined,
           action: auto.public_link_path
             ? {
                 label: 'Abrir link',
@@ -108,12 +147,26 @@ export function ChatKanbanAddCardDialog({
               }
             : undefined,
         });
+      } else if (autoProposals.length > 1) {
+        toast.success(`${autoProposals.length} propostas criadas automaticamente`, {
+          description: 'Abra o quadro ou as propostas para ver os detalhes.',
+        });
       }
-      onCreated();
-      onOpenChange(false);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Falha ao criar card';
-      toast.error(msg);
+      if (errors.length > 0) {
+        toast.error(
+          errors.length === 1
+            ? errors[0]
+            : `${errors.length} conversas não puderam ser adicionadas`,
+          { description: errors.length > 1 ? errors.slice(0, 3).join(' · ') : undefined },
+        );
+      }
+
+      if (ok > 0) {
+        onCreated();
+        if (errors.length === 0) {
+          onOpenChange(false);
+        }
+      }
     } finally {
       setCreating(false);
     }
@@ -121,17 +174,17 @@ export function ChatKanbanAddCardDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>Adicionar conversa</DialogTitle>
           <DialogDescription>
             {column ? (
               <>
                 Coluna <span className="font-medium text-foreground">{column.name}</span>. Só aparecem conversas desta empresa
-                que ainda não estão neste quadro.
+                que ainda não estão neste quadro. Pode selecionar várias de uma vez.
               </>
             ) : (
-              'Escolha uma conversa existente.'
+              'Escolha uma ou mais conversas existentes.'
             )}
           </DialogDescription>
         </DialogHeader>
@@ -140,15 +193,25 @@ export function ChatKanbanAddCardDialog({
           onSearchChange={setSearch}
           conversations={conversations}
           loading={loading}
-          selectedId={selectedId}
-          onSelect={setSelectedId}
+          selectedIds={selectedIds}
+          onToggleSelect={toggleSelect}
         />
         <DialogFooter className="gap-2 sm:gap-0">
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={creating}>
             Cancelar
           </Button>
-          <Button type="button" onClick={() => void handleConfirm()} disabled={!selectedId || creating}>
-            {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Adicionar ao quadro'}
+          <Button
+            type="button"
+            onClick={() => void handleConfirm()}
+            disabled={selectedIds.size === 0 || creating}
+          >
+            {creating ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : selectedIds.size <= 1 ? (
+              'Adicionar ao quadro'
+            ) : (
+              `Adicionar ${selectedIds.size} ao quadro`
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>

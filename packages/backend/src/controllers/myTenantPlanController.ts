@@ -981,6 +981,11 @@ export async function putCustomRolePermissionsHandler(req: AuthRequest, res: Res
     const permissions: ModulePermissionsMap = {};
     for (const moduleId of MODULE_IDS) {
       const p = body.permissions[moduleId];
+      const rawEx = p?.module_extras;
+      const module_extras =
+        rawEx && typeof rawEx === 'object' && !Array.isArray(rawEx)
+          ? (rawEx as Record<string, unknown>)
+          : {};
       permissions[moduleId] = {
         module: moduleId,
         can_view: p?.can_view ?? false,
@@ -989,6 +994,7 @@ export async function putCustomRolePermissionsHandler(req: AuthRequest, res: Res
         can_delete: p?.can_delete ?? false,
         edit_own_only: p?.edit_own_only ?? false,
         delete_own_only: p?.delete_own_only ?? false,
+        module_extras,
       };
     }
     await setCustomRoleModulePermissions(customRoleId, profileId, permissions);
@@ -1020,18 +1026,18 @@ export async function getRolePermissionsHandler(req: AuthRequest, res: Response)
   }
 }
 
+const modulePermissionPayloadSchema = z.object({
+  can_view: z.boolean(),
+  can_create: z.boolean(),
+  can_edit: z.boolean(),
+  can_delete: z.boolean(),
+  edit_own_only: z.boolean(),
+  delete_own_only: z.boolean(),
+  module_extras: z.record(z.unknown()).optional(),
+});
+
 const putRolePermissionsSchema = z.object({
-  permissions: z.record(
-    z.string(),
-    z.object({
-      can_view: z.boolean(),
-      can_create: z.boolean(),
-      can_edit: z.boolean(),
-      can_delete: z.boolean(),
-      edit_own_only: z.boolean(),
-      delete_own_only: z.boolean(),
-    })
-  ),
+  permissions: z.record(z.string(), modulePermissionPayloadSchema),
 });
 
 /** PUT /api/me/tenant/roles/:role/permissions - atualiza permissões por módulo do role. */
@@ -1046,6 +1052,11 @@ export async function putRolePermissionsHandler(req: AuthRequest, res: Response)
     const permissions: ModulePermissionsMap = {};
     for (const moduleId of MODULE_IDS) {
       const p = body.permissions[moduleId];
+      const rawEx = p?.module_extras;
+      const module_extras =
+        rawEx && typeof rawEx === 'object' && !Array.isArray(rawEx)
+          ? (rawEx as Record<string, unknown>)
+          : {};
       permissions[moduleId] = {
         module: moduleId,
         can_view: p?.can_view ?? false,
@@ -1054,6 +1065,7 @@ export async function putRolePermissionsHandler(req: AuthRequest, res: Response)
         can_delete: p?.can_delete ?? false,
         edit_own_only: p?.edit_own_only ?? false,
         delete_own_only: p?.delete_own_only ?? false,
+        module_extras,
       };
     }
     await setRoleModulePermissions(role as AppRole, permissions);

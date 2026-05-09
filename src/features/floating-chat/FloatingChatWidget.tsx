@@ -1,21 +1,24 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { MessageCircle } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { Filter, MoreHorizontal } from 'lucide-react';
 import { useFeatureFlag } from '@/hooks/useFeatureFlag';
 import { useModulePermissions } from '@/contexts/ModulePermissionsContext';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useChatNavUnreadCount } from '@/hooks/useChatNavUnreadCount';
-import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Badge } from '@/components/ui/badge';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { chatService, type ChatConversation } from '@/services/chat';
+import { resolveConversationIdentity } from '@/utils/chatIdentityDisplay';
 import { cn } from '@/lib/utils';
 import { useFloatingChat } from './floatingChatContext';
 import { FloatingConversationList } from './FloatingConversationList';
 import { FloatingConversationWindow } from './FloatingConversationWindow';
 import { MinimizedChatDock } from './MinimizedChatDock';
 import {
+  FLOATING_BUBBLE_DIAMETER_PX,
   FLOATING_LIST_GAP_ABOVE_BUBBLE_PX,
-  FLOATING_LIST_STACK_ABOVE_BUBBLE_PX,
   FLOATING_LIST_WIDTH_PX,
   FLOATING_Z_BUBBLE,
   FLOATING_Z_LIST,
@@ -26,8 +29,44 @@ import { getFloatingChatLayout } from './floatingChatLayout';
 /** Alinha com `--floating-chat-bottom` / `--floating-chat-right` em index.css */
 const bubbleBottom = 'calc(var(--floating-chat-bottom) + env(safe-area-inset-bottom, 0px))';
 const bubbleRight = 'calc(var(--floating-chat-right) + env(safe-area-inset-right, 0px))';
-const listBottom = `calc(var(--floating-chat-bottom) + ${FLOATING_LIST_STACK_ABOVE_BUBBLE_PX}px + ${FLOATING_LIST_GAP_ABOVE_BUBBLE_PX}px + env(safe-area-inset-bottom, 0px))`;
 const listRight = 'calc(var(--floating-chat-right) + env(safe-area-inset-right, 0px))';
+
+/** Até 4 itens: 3 para exibir + 1 sonda para saber se existe “mais” (reticências). */
+async function fetchBubbleRecentConversations(
+  instanceIds: string[],
+  inboxScope: 'tenant' | 'owner',
+): Promise<ChatConversation[]> {
+  const merged: ChatConversation[] = [];
+  for (const instanceId of instanceIds) {
+    const rows = await chatService.getConversations({ instanceId, inboxScope });
+    merged.push(...rows);
+  }
+  try {
+    const officialRows = await chatService.getConversations({
+      includeWhatsAppOfficial: true,
+      inboxScope,
+      channelOrigin: 'official',
+    });
+    merged.push(...officialRows);
+  } catch {
+    /* ignore */
+  }
+  const byId = new Map<string, ChatConversation>();
+  for (const c of merged) {
+    if (!byId.has(c.id)) byId.set(c.id, c);
+  }
+  const list = Array.from(byId.values()).sort((a, b) => {
+    const ta = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+    const tb = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+    if (ta && tb) return tb - ta;
+    if (ta && !tb) return -1;
+    if (!ta && tb) return 1;
+    const ca = a.created_at ? new Date(a.created_at).getTime() : 0;
+    const cb = b.created_at ? new Date(b.created_at).getTime() : 0;
+    return cb - ca;
+  });
+  return list.slice(0, 4);
+}
 
 function useFloatingChatShellEligible(): boolean {
   const { pathname } = useLocation();
@@ -41,7 +80,8 @@ function useFloatingChatShellEligible(): boolean {
 }
 
 function FloatingChatChrome() {
-  const { listOpen, toggleList, panels, activeWindowId, focusWindow } = useFloatingChat();
+  const { listOpen, toggleList, panels, activeWindowId, focusWindow, instanceIds, inboxScope } =
+    useFloatingChat();
 
   const expanded = useMemo(() => panels.filter((p) => !p.minimized), [panels]);
 
@@ -58,10 +98,59 @@ function FloatingChatChrome() {
     setDockWidthPx(w);
   }, []);
 
-  const layout = useMemo(() => getFloatingChatLayout({ dockWidthPx }), [dockWidthPx]);
-
   /** Mesmo agregado operacional do menu Chat (campo `unread` de attendance-counts), não o sininho. */
   const bubbleUnread = useChatNavUnreadCount(true);
+
+  const { data: bubbleRecentRaw = [] } = useQuery({
+    queryKey: ['floating-chat', 'bubble-recent', instanceIds.join(','), inboxScope],
+    enabled: instanceIds.length > 0,
+    queryFn: () => fetchBubbleRecentConversations(instanceIds, inboxScope),
+    staleTime: 15_000,
+  });
+
+  const bubbleRecentPreview = useMemo(() => {
+    const hasMore = bubbleRecentRaw.length >= 4;
+    const slice = bubbleRecentRaw.slice(0, 3);
+    return { slice, hasMore };
+  }, [bubbleRecentRaw]);
+
+  const bubbleButtonRef = useRef<HTMLButtonElement>(null);
+  const [bubbleBox, setBubbleBox] = useState({
+    w: FLOATING_BUBBLE_DIAMETER_PX,
+    h: 48,
+  });
+
+  useLayoutEffect(() => {
+    const el = bubbleButtonRef.current;
+    if (!el) return;
+    const measure = () => {
+      const r = el.getBoundingClientRect();
+      setBubbleBox({
+        w: Math.max(1, Math.ceil(r.width)),
+        h: Math.max(1, Math.ceil(r.height)),
+      });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [
+    bubbleUnread,
+    bubbleRecentPreview.slice.length,
+    bubbleRecentPreview.hasMore,
+    listOpen,
+  ]);
+
+  const layout = useMemo(
+    () => getFloatingChatLayout({ dockWidthPx, bubbleWidthPx: bubbleBox.w }),
+    [dockWidthPx, bubbleBox.w],
+  );
+
+  const listBottom = useMemo(
+    () =>
+      `calc(var(--floating-chat-bottom) + ${bubbleBox.h}px + ${FLOATING_LIST_GAP_ABOVE_BUBBLE_PX}px + env(safe-area-inset-bottom, 0px))`,
+    [bubbleBox.h],
+  );
 
   return (
     <>
@@ -102,27 +191,65 @@ function FloatingChatChrome() {
       >
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button
+            <button
+              ref={bubbleButtonRef}
               type="button"
-              size="icon"
               className={cn(
-                'relative h-14 w-14 rounded-full border border-border/60 bg-primary text-primary-foreground shadow-lg transition hover:scale-[1.03] hover:shadow-xl',
+                'relative flex max-w-[calc(100vw-2rem)] items-center gap-2 rounded-full border-2 border-blue-500 bg-zinc-800 py-2 pl-3 pr-2',
+                'shadow-lg transition hover:bg-zinc-800/95 hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-background',
               )}
               onClick={() => toggleList()}
-              aria-label="Conversas"
+              aria-label="Mensagens, abrir lista de conversas"
             >
-              <MessageCircle className="h-6 w-6" />
-              {bubbleUnread > 0 ? (
-                <Badge
-                  variant="destructive"
-                  className="absolute -right-1 -top-1 flex h-5 min-w-[1.25rem] justify-center px-1 text-[10px] tabular-nums"
-                >
-                  {bubbleUnread > 99 ? '99+' : bubbleUnread}
-                </Badge>
+              <span className="relative shrink-0">
+                <Filter
+                  className="h-5 w-5 text-white"
+                  strokeWidth={2}
+                  aria-hidden
+                />
+                {bubbleUnread > 0 ? (
+                  <Badge
+                    variant="destructive"
+                    className="absolute -right-2 -top-2 flex h-[1.125rem] min-w-[1.125rem] justify-center px-1 text-[10px] font-bold tabular-nums leading-none"
+                  >
+                    {bubbleUnread > 99 ? '99+' : bubbleUnread}
+                  </Badge>
+                ) : null}
+              </span>
+              <span className="hidden text-sm font-bold tracking-tight text-white sm:inline">Mensagens</span>
+              {bubbleRecentPreview.slice.length > 0 ? (
+                <span className="flex shrink-0 items-center pl-0.5" aria-hidden>
+                  {bubbleRecentPreview.slice.map((c, i) => {
+                    const id = resolveConversationIdentity(c, null, null);
+                    return (
+                      <Avatar
+                        key={c.id}
+                        className={cn(
+                          'h-7 w-7 border-2 border-zinc-800 bg-zinc-700',
+                          i > 0 && '-ml-2',
+                        )}
+                        style={{ zIndex: 3 - i }}
+                      >
+                        {id.avatarUrl ? (
+                          <AvatarImage src={id.avatarUrl} alt="" className="object-cover" />
+                        ) : null}
+                        <AvatarFallback className="text-[9px] font-semibold text-white">{id.initials}</AvatarFallback>
+                      </Avatar>
+                    );
+                  })}
+                  {bubbleRecentPreview.hasMore ? (
+                    <span
+                      className="-ml-2 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 border-zinc-800 bg-zinc-700 text-white"
+                      style={{ zIndex: 4 }}
+                    >
+                      <MoreHorizontal className="h-4 w-4 opacity-90" strokeWidth={2.5} />
+                    </span>
+                  ) : null}
+                </span>
               ) : null}
-            </Button>
+            </button>
           </TooltipTrigger>
-          <TooltipContent side="left">Conversas</TooltipContent>
+          <TooltipContent side="left">Mensagens</TooltipContent>
         </Tooltip>
       </div>
     </>

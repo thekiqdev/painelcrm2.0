@@ -55,6 +55,8 @@ export type ParsedKanbanPhase2 = {
     auto_move_by_time: {
       enabled: boolean;
       to_column_id: string | null;
+      /** Quadro destino quando o movimento atravessa Kanbans; null = mesma board do cartão. */
+      to_board_id: string | null;
       delay_value: number;
       delay_unit: 'seconds' | 'minutes' | 'hours' | 'days';
     };
@@ -102,6 +104,7 @@ const DEFAULT_KANBAN_PHASE2: ParsedKanbanPhase2 = {
     auto_move_by_time: {
       enabled: false,
       to_column_id: null,
+      to_board_id: null,
       delay_value: 60,
       delay_unit: 'minutes',
     },
@@ -280,6 +283,10 @@ export function parseKanbanPhase2(metadata: unknown): ParsedKanbanPhase2 {
       if (typeof rawAmt.to_column_id === 'string' && UUID_RE_PHASE2.test(rawAmt.to_column_id)) {
         toCol = rawAmt.to_column_id;
       }
+      let toBoard: string | null = null;
+      if (typeof rawAmt.to_board_id === 'string' && UUID_RE_PHASE2.test(rawAmt.to_board_id)) {
+        toBoard = rawAmt.to_board_id;
+      }
       const dvRaw = Number(rawAmt.delay_value);
       const delayValue = Number.isFinite(dvRaw) ? Math.min(99999, Math.max(1, Math.round(dvRaw))) : 60;
       const duRaw = typeof rawAmt.delay_unit === 'string' ? rawAmt.delay_unit.trim().toLowerCase() : '';
@@ -292,6 +299,7 @@ export function parseKanbanPhase2(metadata: unknown): ParsedKanbanPhase2 {
         auto_move_by_time: {
           enabled,
           to_column_id: toCol,
+          to_board_id: toBoard,
           delay_value: delayValue,
           delay_unit: delayUnit,
         },
@@ -350,6 +358,12 @@ export function validateKanbanPhase2ForSave(metadata: unknown): string[] {
     if (!parsed.automations.auto_move_by_time.to_column_id) {
       issues.push('Movimento automático: selecione a coluna de destino ou desligue a opção.');
     }
+    if (
+      parsed.automations.auto_move_by_time.to_board_id &&
+      !UUID_RE_PHASE2.test(parsed.automations.auto_move_by_time.to_board_id)
+    ) {
+      issues.push('Movimento automático: quadro de destino inválido.');
+    }
   }
   return issues;
 }
@@ -369,6 +383,9 @@ export function validateKanbanAutoMoveAgainstBoard(
   }
   if (columnId && m.to_column_id === columnId) {
     issues.push('Movimento automático: a coluna de destino não pode ser a mesma coluna de origem.');
+  }
+  if (m.to_board_id) {
+    return issues;
   }
   if (!boardColumnIds.has(m.to_column_id)) {
     issues.push('Movimento automático: a coluna de destino deve pertencer ao mesmo quadro.');

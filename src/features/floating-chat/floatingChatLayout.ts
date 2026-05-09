@@ -6,16 +6,19 @@ import {
 } from './constants';
 
 /**
- * Ancora horizontal imediatamente à esquerda da bolha (margem + diâmetro + gap).
- * Borda direita do dock alinha-se aqui quando o dock encosta na bolha.
+ * Distância da borda direita da viewport até a borda direita do dock,
+ * de forma que o dock fique imediatamente à esquerda da pílula/bolha.
+ * `bubbleWidthPx` = largura real do FAB (ex.: botão “Mensagens” em pílula).
  */
-export function getDockAnchorRightPx(): number {
-  return FLOATING_CHAT_RIGHT_PX + FLOATING_BUBBLE_DIAMETER_PX + FLOATING_GAP_PX;
+export function getDockAnchorRightPx(bubbleWidthPx: number = FLOATING_BUBBLE_DIAMETER_PX): number {
+  return FLOATING_CHAT_RIGHT_PX + bubbleWidthPx + FLOATING_GAP_PX;
 }
 
 export type FloatingChatLayoutInput = {
   /** Largura medida do container do dock (0 se não há minimizadas). */
   dockWidthPx: number;
+  /** Largura medida do botão flutuante (FAB), para ancorar dock e janelas à esquerda da pílula. */
+  bubbleWidthPx: number;
 };
 
 export type FloatingChatLayout = {
@@ -33,7 +36,7 @@ export type FloatingChatLayout = {
  * A lista de conversas é `position: fixed` e não entra neste cálculo horizontal.
  */
 export function getFloatingChatLayout(input: FloatingChatLayoutInput): FloatingChatLayout {
-  const dockAnchor = getDockAnchorRightPx();
+  const dockAnchor = getDockAnchorRightPx(input.bubbleWidthPx);
   const dockW = Math.max(0, input.dockWidthPx);
   const gapAfterDock = dockW > 0 ? FLOATING_GAP_PX : 0;
 

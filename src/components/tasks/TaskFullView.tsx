@@ -78,6 +78,12 @@ export interface TaskFullViewClient {
   name: string;
 }
 
+/** Membros do tenant para responsável por `assignee_id` (tarefas globais). */
+export interface TaskFullViewAssigneeOption {
+  id: string;
+  name: string;
+}
+
 export interface TaskFullViewProps {
   task: UnifiedTask | null;
   open: boolean;
@@ -88,6 +94,8 @@ export interface TaskFullViewProps {
   lists?: TaskFullViewList[];
   /** Clientes para select de Cliente (tarefas globais). */
   clients?: TaskFullViewClient[];
+  /** Usuários do tenant para atribuir responsável real (`assignee_id`) em tarefas globais. */
+  assigneeOptions?: TaskFullViewAssigneeOption[];
   /** Atualizar tarefa (payload conforme API: global ou projeto). */
   onUpdate?: (taskId: string, updates: Record<string, unknown>) => void | Promise<void>;
   /** Excluir tarefa. */
@@ -119,6 +127,7 @@ export function TaskFullView({
   listName,
   lists = [],
   clients = [],
+  assigneeOptions = [],
   onUpdate,
   onDelete,
   onToggleStatus,
@@ -136,6 +145,7 @@ export function TaskFullView({
   const [editClientName, setEditClientName] = useState("");
   const [editDeal, setEditDeal] = useState("");
   const [editAssigneeName, setEditAssigneeName] = useState("");
+  const [editAssigneeId, setEditAssigneeId] = useState<string | null>(null);
   const [newTag, setNewTag] = useState("");
   const [newChecklistItem, setNewChecklistItem] = useState("");
   const [localChecklist, setLocalChecklist] = useState<UnifiedChecklistItem[]>([]);
@@ -187,8 +197,16 @@ export function TaskFullView({
       if (!isProject) {
         updates.client_name = editClientName.trim() || null;
         updates.deal = editDeal.trim() || null;
-        updates.assignee_name = editAssigneeName.trim() || null;
         updates.due_time = editDueTime || null;
+        if (assigneeOptions.length > 0) {
+          updates.assignee_id = editAssigneeId;
+          updates.assignee_name =
+            editAssigneeId != null
+              ? assigneeOptions.find((o) => o.id === editAssigneeId)?.name ?? null
+              : null;
+        } else {
+          updates.assignee_name = editAssigneeName.trim() || null;
+        }
       }
       await onUpdate(task.id, updates);
       setEditMode(false);
@@ -572,12 +590,33 @@ export function TaskFullView({
                       </div>
                       <div className="sm:col-span-2">
                         <Label className="text-xs text-muted-foreground">Responsável</Label>
-                        <Input
-                          value={editAssigneeName}
-                          onChange={(e) => setEditAssigneeName(e.target.value)}
-                          placeholder="Responsável pela tarefa"
-                          className="mt-1"
-                        />
+                        {assigneeOptions.length > 0 ? (
+                          <Select
+                            value={editAssigneeId ?? "__none"}
+                            onValueChange={(v) =>
+                              setEditAssigneeId(v === "__none" ? null : v)
+                            }
+                          >
+                            <SelectTrigger className="mt-1">
+                              <SelectValue placeholder="Sem responsável" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__none">Sem responsável</SelectItem>
+                              {assigneeOptions.map((m) => (
+                                <SelectItem key={m.id} value={m.id}>
+                                  {m.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Input
+                            value={editAssigneeName}
+                            onChange={(e) => setEditAssigneeName(e.target.value)}
+                            placeholder="Responsável pela tarefa"
+                            className="mt-1"
+                          />
+                        )}
                       </div>
                     </div>
                   ) : (
@@ -857,6 +896,7 @@ export function TaskFullView({
                     setEditClientName(task.clientName ?? "");
                     setEditDeal(task.deal ?? "");
                     setEditAssigneeName(task.assigneeName ?? "");
+                    setEditAssigneeId(task.assigneeId ?? null);
                   }
                 }}
               >

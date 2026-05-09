@@ -10,6 +10,11 @@ import { ensureTenantOverdueStatusesFresh } from '../services/billingOverdueStat
 import { hasAttendanceColumns } from '../utils/chatAttendanceSchema.js';
 import { getEffectiveModulePermissions, getUserRoleInTenant } from '../services/modulePermissionsService.js';
 import { listAppointmentsScopeForUser } from '../services/appointmentsService.js';
+import { isTenantAdmin } from '../utils/tenant.js';
+import { computeDashboardOverviewGates } from '../services/dashboardOverviewGates.js';
+import { assertPermissionKey, ModulePermissionError } from '../permissions/index.js';
+import { resolveTasksGranularFromLegacy } from '../permissions/permissionCatalog.js';
+import type { FinancialEnterpriseReport } from '../services/financialReportsService.js';
 
 // GET /api/dashboard/kpis
 export async function getKPIs(req: AuthRequest, res: Response): Promise<void> {
@@ -194,6 +199,48 @@ function pct(current: number, previous: number): number {
   return ((current - previous) / previous) * 100;
 }
 
+function stubFinancialReport(range: { from: string; to: string }): FinancialEnterpriseReport {
+  const emptyGeneral = {
+    total_income: 0,
+    received_income: 0,
+    projected_subscription_income: 0,
+    total_income_potential: 0,
+    total_expense: 0,
+    expense_paid: 0,
+    expense_projected: 0,
+    expense_total_potential: 0,
+    total_profit: 0,
+    realized_profit: 0,
+    projected_result: 0,
+    transaction_income: 0,
+    transaction_expense: 0,
+    invoice_income: 0,
+    planned_recurring_expense: 0,
+    planned_credit_card: 0,
+    projected_total_expense: 0,
+    projected_balance: 0,
+    open_credit_card_statements_expected: 0,
+  };
+  return {
+    period: range,
+    previous_period: range,
+    general: emptyGeneral,
+    comparison: { total_income_pct: null, total_expense_pct: null, total_profit_pct: null },
+    previous_general: { total_income: 0, total_expense: 0, total_profit: 0 },
+    monthly: [],
+    subscriptions_projection: {} as FinancialEnterpriseReport['subscriptions_projection'],
+    by_account: [],
+    expenses_by_category: [],
+    income_by_category: [],
+    billing_by_client: [],
+    credit_cards: [],
+    credit_card_bank_payments: 0,
+    recurring_snapshot: { due_in_period_still_open: 0, paid_in_period: 0 },
+  } as FinancialEnterpriseReport;
+}
+
+const zeroCountRow = Promise.resolve({ rows: [{ c: '0' }] });
+
 // GET /api/dashboard/overview
 export async function getExecutiveOverview(req: AuthRequest, res: Response): Promise<void> {
   try {
@@ -201,6 +248,10 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
     const userId = req.userId ?? null;
     if (!tenantId) {
       res.status(401).json({ error: 'Empresa não identificada' });
+      return;
+    }
+    if (!userId) {
+      res.status(401).json({ error: 'Usuário não identificado' });
       return;
     }
     await ensureTenantOverdueStatusesFresh(tenantId).catch((err) =>
@@ -211,51 +262,78 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
     const { from, to, preset } = resolveDashboardRange(q);
     const prev = previousPeriod(from, to);
 
-    const [report, reportPrev] = await Promise.all([
-      getFinancialEnterpriseReport(tenantId, { from, to }),
-      getFinancialEnterpriseReport(tenantId, { from: prev.from, to: prev.to }),
-    ]);
+    const perms = await getEffectiveModulePermissions(userId);
+    const admin = await isTenantAdmin(userId);
+    const gates = computeDashboardOverviewGates(perms, admin);
+    /** Alinhado a `getFinancialSummary` / `invoice_income`: quem vê receita de faturas no overview pode ver ticket e contagem. */
+    const canDashboardPaidInvoiceMetrics =
+      (gates.canFinance || gates.canBilling) && gates.billingView;
+
+    const [report, reportPrev] =
+      gates.canFinance || gates.canBilling
+        ? await Promise.all([
+            getFinancialEnterpriseReport(tenantId, { from, to }),
+            getFinancialEnterpriseReport(tenantId, { from: prev.from, to: prev.to }),
+          ])
+        : [stubFinancialReport({ from, to }), stubFinancialReport({ from: prev.from, to: prev.to })];
 
     const [paidSalesCountR, leadsCreatedR, leadsConvertedR, leadsCreatedPrevR, leadsConvertedPrevR] = await Promise.all([
-      pool.query<{ c: string }>(
-        `SELECT COUNT(*)::text AS c
-         FROM customer_invoices ci
-         WHERE ci.tenant_id = $1
-           AND ci.status = 'paid'
-           AND ci.paid_at IS NOT NULL
-           AND (ci.paid_at::date) >= $2::date AND (ci.paid_at::date) <= $3::date`,
-        [tenantId, from, to]
-      ),
-      pool.query<{ c: string }>(
-        `SELECT COUNT(*)::text AS c
-         FROM leads l
-         INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1
-         WHERE (l.created_at::date) >= $2::date AND (l.created_at::date) <= $3::date`,
-        [tenantId, from, to]
-      ),
-      pool.query<{ c: string }>(
-        `SELECT COUNT(*)::text AS c
-         FROM leads l
-         INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1
-         WHERE lower(COALESCE(l.status, '')) IN ('convertido', 'fechado', 'ganho', 'won')
-           AND (l.created_at::date) >= $2::date AND (l.created_at::date) <= $3::date`,
-        [tenantId, from, to]
-      ),
-      pool.query<{ c: string }>(
-        `SELECT COUNT(*)::text AS c
-         FROM leads l
-         INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1
-         WHERE (l.created_at::date) >= $2::date AND (l.created_at::date) <= $3::date`,
-        [tenantId, prev.from, prev.to]
-      ),
-      pool.query<{ c: string }>(
-        `SELECT COUNT(*)::text AS c
-         FROM leads l
-         INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1
-         WHERE lower(COALESCE(l.status, '')) IN ('convertido', 'fechado', 'ganho', 'won')
-           AND (l.created_at::date) >= $2::date AND (l.created_at::date) <= $3::date`,
-        [tenantId, prev.from, prev.to]
-      ),
+      canDashboardPaidInvoiceMetrics
+        ? pool.query<{ c: string }>(
+            `SELECT COUNT(*)::text AS c
+             FROM customer_invoices ci
+             WHERE ci.tenant_id = $1
+               AND ci.status = 'paid'
+               AND ci.paid_at IS NOT NULL
+               AND (ci.paid_at::date) >= $2::date AND (ci.paid_at::date) <= $3::date
+               AND NOT EXISTS (
+                 SELECT 1 FROM financial_transactions ft
+                 WHERE ft.tenant_id = ci.tenant_id
+                   AND ft.entry_source = 'gateway_payment'
+                   AND ft.reference_type = 'customer_invoice'
+                   AND ft.reference_id = ci.id
+               )`,
+            [tenantId, from, to]
+          )
+        : zeroCountRow,
+      gates.canLeads
+        ? pool.query<{ c: string }>(
+            `SELECT COUNT(*)::text AS c
+             FROM leads l
+             INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1
+             WHERE (l.created_at::date) >= $2::date AND (l.created_at::date) <= $3::date`,
+            [tenantId, from, to]
+          )
+        : zeroCountRow,
+      gates.canLeads
+        ? pool.query<{ c: string }>(
+            `SELECT COUNT(*)::text AS c
+             FROM leads l
+             INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1
+             WHERE lower(COALESCE(l.status, '')) IN ('convertido', 'fechado', 'ganho', 'won')
+               AND (l.created_at::date) >= $2::date AND (l.created_at::date) <= $3::date`,
+            [tenantId, from, to]
+          )
+        : zeroCountRow,
+      gates.canLeads
+        ? pool.query<{ c: string }>(
+            `SELECT COUNT(*)::text AS c
+             FROM leads l
+             INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1
+             WHERE (l.created_at::date) >= $2::date AND (l.created_at::date) <= $3::date`,
+            [tenantId, prev.from, prev.to]
+          )
+        : zeroCountRow,
+      gates.canLeads
+        ? pool.query<{ c: string }>(
+            `SELECT COUNT(*)::text AS c
+             FROM leads l
+             INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1
+             WHERE lower(COALESCE(l.status, '')) IN ('convertido', 'fechado', 'ganho', 'won')
+               AND (l.created_at::date) >= $2::date AND (l.created_at::date) <= $3::date`,
+            [tenantId, prev.from, prev.to]
+          )
+        : zeroCountRow,
     ]);
 
     const paidSalesCount = Number(paidSalesCountR.rows[0]?.c ?? 0);
@@ -267,6 +345,142 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
     const conversionPrev = leadsCreatedPrev > 0 ? (leadsConvertedPrev / leadsCreatedPrev) * 100 : 0;
 
     const attendanceCols = await hasAttendanceColumns();
+
+    const emptyFunnel = Promise.resolve({
+      rows: [] as Array<{ stage_id: string | null; stage_name: string; c: string; amount: string }>,
+    });
+    const emptyTicketsAgg = Promise.resolve({
+      rows: [{ open_c: '0', overdue_c: '0' }] as Array<{ open_c: string; overdue_c: string }>,
+    });
+    const emptyTasksAgg = Promise.resolve({
+      rows: [{ overdue_c: '0', today_c: '0', critical_c: '0' }] as Array<{
+        overdue_c: string;
+        today_c: string;
+        critical_c: string;
+      }>,
+    });
+    const emptyClientsRow = Promise.resolve({
+      rows: [{ active_clients: '0', new_clients: '0', active_subs: '0' }] as Array<{
+        active_clients: string;
+        new_clients: string;
+        active_subs: string;
+      }>,
+    });
+    const emptyPayableRows = Promise.resolve({
+      rows: [] as Array<{
+        id: string;
+        description: string;
+        due_date: string;
+        amount_cents: string;
+        source: 'transaction' | 'recurring';
+        status: 'planned' | 'pending';
+      }>,
+    });
+    const zeroTotalRow = Promise.resolve({ rows: [{ total: '0' }] });
+    const emptyTasksList = Promise.resolve({
+      rows: [] as Array<{
+        id: string;
+        title: string;
+        due_date: string | null;
+        priority: string | null;
+        status: string | null;
+        client_name: string | null;
+        created_at: string;
+      }>,
+    });
+    const emptyProjectsList = Promise.resolve({
+      rows: [] as Array<{
+        id: string;
+        name: string;
+        status: string | null;
+        due_date: string | null;
+        pending_tasks: string;
+      }>,
+    });
+    const emptyChatCounts = Promise.resolve({
+      rows: [{ active_conversations: 0, awaiting_response: 0, unread: 0 }] as Array<{
+        active_conversations: number;
+        awaiting_response: number;
+        unread: number;
+      }>,
+    });
+    const emptyChatList = Promise.resolve({
+      rows: [] as Array<{
+        id: string;
+        contact_name: string | null;
+        phone_number: string | null;
+        unread_count: number;
+        last_message_at: string | null;
+      }>,
+    });
+    const emptyTicketsBreakdown = Promise.resolve({
+      rows: [{ open_excl: '0', in_progress: '0', resolved: '0' }] as Array<{
+        open_excl: string;
+        in_progress: string;
+        resolved: string;
+      }>,
+    });
+    const emptyTicketsRecent = Promise.resolve({
+      rows: [] as Array<{
+        id: string;
+        ticket_number: string;
+        subject: string;
+        status: string;
+        updated_at: string;
+      }>,
+    });
+    const emptyAgentMetrics = Promise.resolve({
+      rows: [] as Array<{ my_in_service: string; my_queued: string; my_closed_7d: string; queue_unassigned: string }>,
+    });
+    const emptyAgentPreview = Promise.resolve({
+      rows: [] as Array<{
+        id: string;
+        contact_name: string | null;
+        phone_number: string | null;
+        attendance_status: string | null;
+        last_message_at: string | null;
+        unread_count: number;
+      }>,
+    });
+
+    const clientsRPromise =
+      gates.canClients && gates.billingViewSubscriptions
+        ? pool.query<{ active_clients: string; new_clients: string; active_subs: string }>(
+            `SELECT
+               COUNT(*) FILTER (WHERE lower(COALESCE(c.status, 'ativo')) IN ('ativo', 'active'))::text AS active_clients,
+               COUNT(*) FILTER (WHERE (c.created_at::date) >= $2::date AND (c.created_at::date) <= $3::date)::text AS new_clients,
+               (
+                 SELECT COUNT(*)::text
+                 FROM subscriptions s
+                 WHERE s.tenant_id = $1 AND COALESCE(s.status, 'active') IN ('active', 'trialing')
+               ) AS active_subs
+             FROM clients c
+             INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1`,
+            [tenantId, from, to]
+          )
+        : gates.canClients
+          ? pool.query<{ active_clients: string; new_clients: string; active_subs: string }>(
+              `SELECT
+                 COUNT(*) FILTER (WHERE lower(COALESCE(c.status, 'ativo')) IN ('ativo', 'active'))::text AS active_clients,
+                 COUNT(*) FILTER (WHERE (c.created_at::date) >= $2::date AND (c.created_at::date) <= $3::date)::text AS new_clients,
+                 '0'::text AS active_subs
+               FROM clients c
+               INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1`,
+              [tenantId, from, to]
+            )
+          : gates.billingViewSubscriptions
+            ? pool.query<{ active_clients: string; new_clients: string; active_subs: string }>(
+                `SELECT
+                   '0'::text AS active_clients,
+                   '0'::text AS new_clients,
+                   (
+                     SELECT COUNT(*)::text
+                     FROM subscriptions s
+                     WHERE s.tenant_id = $1 AND COALESCE(s.status, 'active') IN ('active', 'trialing')
+                   ) AS active_subs`,
+                [tenantId]
+              )
+            : emptyClientsRow;
 
     const [
       funnelR,
@@ -288,233 +502,251 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
       agentMetricsR,
       agentQueuePreviewR,
     ] = await Promise.all([
-      pool.query<{ stage_id: string | null; stage_name: string; c: string; amount: string }>(
-        `SELECT 
-           COALESCE(fs.id::text, c.funnel_stage) AS stage_id,
-           COALESCE(NULLIF(trim(fs.name), ''), NULLIF(trim(c.funnel_stage), ''), 'Sem etapa') AS stage_name,
-           COUNT(*)::text AS c,
-           0::text AS amount
-         FROM clients c
-         INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1
-         LEFT JOIN funnel_stages fs ON fs.id::text = c.funnel_stage OR lower(fs.name) = lower(c.funnel_stage)
-         GROUP BY COALESCE(fs.id::text, c.funnel_stage), COALESCE(NULLIF(trim(fs.name), ''), NULLIF(trim(c.funnel_stage), ''), 'Sem etapa')
-         ORDER BY COUNT(*) DESC`,
-        [tenantId]
-      ),
-      pool.query<{ c: string }>(
-        `SELECT COUNT(*)::text AS c
-         FROM leads l
-         INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1
-         WHERE (l.created_at::date) >= $2::date AND (l.created_at::date) <= $3::date
-           AND l.updated_at <= l.created_at + interval '1 hour'
-           AND NOT EXISTS (SELECT 1 FROM lead_tasks lt WHERE lt.lead_id = l.id)`,
-        [tenantId, from, to]
-      ),
-      pool.query<{ open_c: string; overdue_c: string }>(
-        `SELECT
-           COUNT(*) FILTER (WHERE t.status IN ('new', 'open', 'pending', 'waiting_customer', 'in_progress'))::text AS open_c,
-           COUNT(*) FILTER (WHERE t.status IN ('new', 'open', 'pending', 'waiting_customer', 'in_progress')
-                            AND (t.created_at::date) < (CURRENT_DATE - INTERVAL '3 day'))::text AS overdue_c
-         FROM tickets t
-         INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1`,
-        [tenantId]
-      ),
-      pool.query<{ overdue_c: string; today_c: string; critical_c: string }>(
-        `SELECT
-           COUNT(*) FILTER (WHERE t.status = 'pending' AND t.due_date IS NOT NULL AND t.due_date < CURRENT_DATE)::text AS overdue_c,
-           COUNT(*) FILTER (WHERE t.status = 'pending' AND t.due_date = CURRENT_DATE)::text AS today_c,
-           COUNT(*) FILTER (WHERE t.status = 'pending' AND t.priority IN ('high', 'medium'))::text AS critical_c
-         FROM tasks t
-         INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1`,
-        [tenantId]
-      ),
-      pool.query<{ active_clients: string; new_clients: string; active_subs: string }>(
-        `SELECT
-           COUNT(*) FILTER (WHERE lower(COALESCE(c.status, 'ativo')) IN ('ativo', 'active'))::text AS active_clients,
-           COUNT(*) FILTER (WHERE (c.created_at::date) >= $2::date AND (c.created_at::date) <= $3::date)::text AS new_clients,
-           (
-             SELECT COUNT(*)::text
-             FROM subscriptions s
-             WHERE s.tenant_id = $1 AND COALESCE(s.status, 'active') IN ('active', 'trialing')
-           ) AS active_subs
-         FROM clients c
-         INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1`,
-        [tenantId, from, to]
-      ),
-      pool.query<{ c: string }>(
-        `SELECT COUNT(DISTINCT ci.client_id)::text AS c
-         FROM customer_invoices ci
-         WHERE ci.tenant_id = $1
-           AND ci.status IN ('pending', 'overdue')
-           AND ci.due_date < CURRENT_DATE`,
-        [tenantId]
-      ),
-      pool.query<{ c: string }>(
-        `SELECT COUNT(*)::text AS c
-         FROM leads l
-         INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1
-         WHERE (l.created_at::date) < (CURRENT_DATE - INTERVAL '15 day')
-           AND lower(COALESCE(l.status, '')) NOT IN ('convertido', 'fechado', 'ganho', 'won')`,
-        [tenantId]
-      ),
-      pool.query<{ id: string; description: string; due_date: string; amount_cents: string; source: 'transaction' | 'recurring'; status: 'planned' | 'pending' }>(
-        `SELECT * FROM (
-           SELECT
-             ft.id::text AS id,
-             ft.description AS description,
-             ft.transaction_date::text AS due_date,
-             ft.amount_cents::text AS amount_cents,
-             'transaction'::text AS source,
-             CASE WHEN ft.status = 'pending' THEN 'pending' ELSE 'planned' END::text AS status
-           FROM financial_transactions ft
-           WHERE ft.tenant_id = $1
-             AND ft.type = 'expense'
-             AND ft.status IN ('pending')
-             AND COALESCE(ft.transaction_kind, 'regular') = 'regular'
-             AND ft.transaction_date <= (CURRENT_DATE + INTERVAL '7 day')
-           UNION ALL
-           SELECT
-             fro.id::text AS id,
-             fre.description AS description,
-             fro.due_date::text AS due_date,
-             fro.amount_cents::text AS amount_cents,
-             'recurring'::text AS source,
-             fro.status::text AS status
-           FROM financial_recurring_expense_occurrences fro
-           INNER JOIN financial_recurring_expenses fre
-             ON fre.id = fro.recurring_expense_id AND fre.tenant_id = fro.tenant_id
-           WHERE fro.tenant_id = $1
-             AND fro.status IN ('planned', 'pending')
-             AND fro.due_date <= (CURRENT_DATE + INTERVAL '7 day')
-         ) p
-         ORDER BY p.due_date::date ASC, p.amount_cents::bigint DESC
-         LIMIT 5`,
-        [tenantId]
-      ),
-      pool.query<{ total: string }>(
-        `SELECT COALESCE(SUM(amount_cents), 0)::text AS total
-         FROM (
-           SELECT ft.amount_cents
-           FROM financial_transactions ft
-           WHERE ft.tenant_id = $1
-             AND ft.type = 'expense'
-             AND ft.status IN ('pending')
-             AND COALESCE(ft.transaction_kind, 'regular') = 'regular'
-             AND ft.transaction_date <= (CURRENT_DATE + INTERVAL '7 day')
-           UNION ALL
-           SELECT fro.amount_cents
-           FROM financial_recurring_expense_occurrences fro
-           INNER JOIN financial_recurring_expenses fre
-             ON fre.id = fro.recurring_expense_id AND fre.tenant_id = fro.tenant_id
-           WHERE fro.tenant_id = $1
-             AND fro.status IN ('planned', 'pending')
-             AND fro.due_date <= (CURRENT_DATE + INTERVAL '7 day')
-         ) s`,
-        [tenantId]
-      ),
-      pool.query<{ total: string }>(
-        `SELECT COALESCE(SUM(ci.amount_cents), 0)::text AS total
-         FROM customer_invoices ci
-         WHERE ci.tenant_id = $1
-           AND ci.status IN ('pending', 'overdue')
-           AND ci.due_date >= CURRENT_DATE
-           AND ci.due_date <= (CURRENT_DATE + INTERVAL '7 day')`,
-        [tenantId]
-      ),
-      pool.query<{ id: string; title: string; due_date: string | null; priority: string | null; status: string | null; client_name: string | null; created_at: string }>(
-        `SELECT
-           t.id::text,
-           t.title,
-           t.due_date::text,
-           t.priority,
-           t.status,
-           t.client_name,
-           t.created_at::text
-         FROM tasks t
-         INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1
-         WHERE t.status = 'pending'
-           AND ($2::uuid IS NULL OR t.assignee_id = $2::uuid OR t.user_id = $2::uuid)
-         ORDER BY
-           CASE
-             WHEN t.due_date IS NOT NULL AND t.due_date < CURRENT_DATE THEN 0
-             WHEN t.due_date = CURRENT_DATE THEN 1
-             WHEN t.due_date IS NOT NULL AND t.due_date > CURRENT_DATE THEN 2
-             ELSE 3
-           END,
-           t.due_date ASC NULLS LAST,
-           t.created_at DESC
-         LIMIT 20`,
-        [tenantId, userId]
-      ),
-      pool.query<{ id: string; name: string; status: string | null; due_date: string | null; pending_tasks: string }>(
-        `SELECT
-           p.id::text,
-           p.name,
-           p.status,
-           p.due_date::text,
-           COALESCE((
-             SELECT COUNT(*)::int
-             FROM project_tasks pt
-             WHERE pt.project_id = p.id
-               AND lower(COALESCE(pt.status, 'todo')) NOT IN ('done', 'completed', 'concluido', 'concluído')
-           ), 0)::text AS pending_tasks
-         FROM projects p
-         INNER JOIN users owner ON owner.id = p.user_id
-         WHERE owner.tenant_id = $1
-           AND lower(COALESCE(p.status, 'active')) NOT IN ('done', 'completed', 'cancelled', 'cancelado')
-           AND (
-             $2::uuid IS NULL
-             OR p.user_id = $2::uuid
-             OR COALESCE(p.responsible_ids, '[]'::jsonb) @> to_jsonb(ARRAY[$2::text]::text[])
-           )
-         ORDER BY p.updated_at DESC
-         LIMIT 5`,
-        [tenantId, userId]
-      ),
-      pool.query<{ active_conversations: number; awaiting_response: number; unread: number }>(
-        `SELECT
-           COUNT(*) FILTER (WHERE c.attendance_status IS DISTINCT FROM 'closed')::int AS active_conversations,
-           COUNT(*) FILTER (
-             WHERE c.attendance_status IS NULL OR c.attendance_status IN ('pending', 'open')
-           )::int AS awaiting_response,
-           COUNT(*) FILTER (WHERE COALESCE(c.unread_count, 0) > 0)::int AS unread
-         FROM chat_conversations c
-         INNER JOIN users u ON u.id = c.user_id
-         WHERE u.tenant_id = $1`,
-        [tenantId]
-      ),
-      pool.query<{ id: string; contact_name: string | null; phone_number: string | null; unread_count: number; last_message_at: string | null }>(
-        `SELECT
-           c.id::text,
-           c.contact_name,
-           c.phone_number,
-           COALESCE(c.unread_count, 0)::int AS unread_count,
-           c.last_message_at::text
-         FROM chat_conversations c
-         INNER JOIN users u ON u.id = c.user_id
-         WHERE u.tenant_id = $1
-         ORDER BY COALESCE(c.unread_count, 0) DESC, c.last_message_at DESC NULLS LAST
-         LIMIT 3`,
-        [tenantId]
-      ),
-      pool.query<{ open_excl: string; in_progress: string; resolved: string }>(
-        `SELECT
-           COUNT(*) FILTER (WHERE t.status IN ('new', 'open', 'pending', 'waiting_customer'))::text AS open_excl,
-           COUNT(*) FILTER (WHERE t.status = 'in_progress')::text AS in_progress,
-           COUNT(*) FILTER (WHERE t.status IN ('resolved', 'closed'))::text AS resolved
-         FROM tickets t
-         INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1`,
-        [tenantId]
-      ),
-      pool.query<{ id: string; ticket_number: string; subject: string; status: string; updated_at: string }>(
-        `SELECT t.id::text, t.ticket_number, t.subject, t.status, t.updated_at::text
-         FROM tickets t
-         INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1
-         ORDER BY t.updated_at DESC NULLS LAST
-         LIMIT 5`,
-        [tenantId]
-      ),
-      attendanceCols && userId
+      gates.canClients
+        ? pool.query<{ stage_id: string | null; stage_name: string; c: string; amount: string }>(
+            `SELECT 
+               COALESCE(fs.id::text, c.funnel_stage) AS stage_id,
+               COALESCE(NULLIF(trim(fs.name), ''), NULLIF(trim(c.funnel_stage), ''), 'Sem etapa') AS stage_name,
+               COUNT(*)::text AS c,
+               0::text AS amount
+             FROM clients c
+             INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1
+             LEFT JOIN funnel_stages fs ON fs.id::text = c.funnel_stage OR lower(fs.name) = lower(c.funnel_stage)
+             GROUP BY COALESCE(fs.id::text, c.funnel_stage), COALESCE(NULLIF(trim(fs.name), ''), NULLIF(trim(c.funnel_stage), ''), 'Sem etapa')
+             ORDER BY COUNT(*) DESC`,
+            [tenantId]
+          )
+        : emptyFunnel,
+      gates.canLeads
+        ? pool.query<{ c: string }>(
+            `SELECT COUNT(*)::text AS c
+             FROM leads l
+             INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1
+             WHERE (l.created_at::date) >= $2::date AND (l.created_at::date) <= $3::date
+               AND l.updated_at <= l.created_at + interval '1 hour'
+               AND NOT EXISTS (SELECT 1 FROM lead_tasks lt WHERE lt.lead_id = l.id)`,
+            [tenantId, from, to]
+          )
+        : zeroCountRow,
+      gates.canTickets
+        ? pool.query<{ open_c: string; overdue_c: string }>(
+            `SELECT
+               COUNT(*) FILTER (WHERE t.status IN ('new', 'open', 'pending', 'waiting_customer', 'in_progress'))::text AS open_c,
+               COUNT(*) FILTER (WHERE t.status IN ('new', 'open', 'pending', 'waiting_customer', 'in_progress')
+                                AND (t.created_at::date) < (CURRENT_DATE - INTERVAL '3 day'))::text AS overdue_c
+             FROM tickets t
+             INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1`,
+            [tenantId]
+          )
+        : emptyTicketsAgg,
+      gates.dashboardViewTasksCards && gates.canTasks
+        ? pool.query<{ overdue_c: string; today_c: string; critical_c: string }>(
+            `SELECT
+               COUNT(*) FILTER (WHERE t.status = 'pending' AND t.due_date IS NOT NULL AND t.due_date < CURRENT_DATE)::text AS overdue_c,
+               COUNT(*) FILTER (WHERE t.status = 'pending' AND t.due_date = CURRENT_DATE)::text AS today_c,
+               COUNT(*) FILTER (WHERE t.status = 'pending' AND t.priority IN ('high', 'medium'))::text AS critical_c
+             FROM tasks t
+             INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1`,
+            [tenantId]
+          )
+        : emptyTasksAgg,
+      clientsRPromise,
+      gates.billingViewInvoices
+        ? pool.query<{ c: string }>(
+            `SELECT COUNT(DISTINCT ci.client_id)::text AS c
+             FROM customer_invoices ci
+             WHERE ci.tenant_id = $1
+               AND ci.status IN ('pending', 'overdue')
+               AND ci.due_date < CURRENT_DATE`,
+            [tenantId]
+          )
+        : zeroCountRow,
+      gates.canLeads
+        ? pool.query<{ c: string }>(
+            `SELECT COUNT(*)::text AS c
+             FROM leads l
+             INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1
+             WHERE (l.created_at::date) < (CURRENT_DATE - INTERVAL '15 day')
+               AND lower(COALESCE(l.status, '')) NOT IN ('convertido', 'fechado', 'ganho', 'won')`,
+            [tenantId]
+          )
+        : zeroCountRow,
+      gates.financeViewAccountsPayable
+        ? pool.query<{ id: string; description: string; due_date: string; amount_cents: string; source: 'transaction' | 'recurring'; status: 'planned' | 'pending' }>(
+            `SELECT * FROM (
+               SELECT
+                 ft.id::text AS id,
+                 ft.description AS description,
+                 ft.transaction_date::text AS due_date,
+                 ft.amount_cents::text AS amount_cents,
+                 'transaction'::text AS source,
+                 CASE WHEN ft.status = 'pending' THEN 'pending' ELSE 'planned' END::text AS status
+               FROM financial_transactions ft
+               WHERE ft.tenant_id = $1
+                 AND ft.type = 'expense'
+                 AND ft.status IN ('pending')
+                 AND COALESCE(ft.transaction_kind, 'regular') = 'regular'
+                 AND ft.transaction_date <= (CURRENT_DATE + INTERVAL '7 day')
+               UNION ALL
+               SELECT
+                 fro.id::text AS id,
+                 fre.description AS description,
+                 fro.due_date::text AS due_date,
+                 fro.amount_cents::text AS amount_cents,
+                 'recurring'::text AS source,
+                 fro.status::text AS status
+               FROM financial_recurring_expense_occurrences fro
+               INNER JOIN financial_recurring_expenses fre
+                 ON fre.id = fro.recurring_expense_id AND fre.tenant_id = fro.tenant_id
+               WHERE fro.tenant_id = $1
+                 AND fro.status IN ('planned', 'pending')
+                 AND fro.due_date <= (CURRENT_DATE + INTERVAL '7 day')
+             ) p
+             ORDER BY p.due_date::date ASC, p.amount_cents::bigint DESC
+             LIMIT 5`,
+            [tenantId]
+          )
+        : emptyPayableRows,
+      gates.financeViewAccountsPayable
+        ? pool.query<{ total: string }>(
+            `SELECT COALESCE(SUM(amount_cents), 0)::text AS total
+             FROM (
+               SELECT ft.amount_cents
+               FROM financial_transactions ft
+               WHERE ft.tenant_id = $1
+                 AND ft.type = 'expense'
+                 AND ft.status IN ('pending')
+                 AND COALESCE(ft.transaction_kind, 'regular') = 'regular'
+                 AND ft.transaction_date <= (CURRENT_DATE + INTERVAL '7 day')
+               UNION ALL
+               SELECT fro.amount_cents
+               FROM financial_recurring_expense_occurrences fro
+               INNER JOIN financial_recurring_expenses fre
+                 ON fre.id = fro.recurring_expense_id AND fre.tenant_id = fro.tenant_id
+               WHERE fro.tenant_id = $1
+                 AND fro.status IN ('planned', 'pending')
+                 AND fro.due_date <= (CURRENT_DATE + INTERVAL '7 day')
+             ) s`,
+            [tenantId]
+          )
+        : zeroTotalRow,
+      gates.billingViewInvoices
+        ? pool.query<{ total: string }>(
+            `SELECT COALESCE(SUM(ci.amount_cents), 0)::text AS total
+             FROM customer_invoices ci
+             WHERE ci.tenant_id = $1
+               AND ci.status IN ('pending', 'overdue')
+               AND ci.due_date >= CURRENT_DATE
+               AND ci.due_date <= (CURRENT_DATE + INTERVAL '7 day')`,
+            [tenantId]
+          )
+        : zeroTotalRow,
+      gates.dashboardViewTasksCards && gates.canTasks
+        ? pool.query<{ id: string; title: string; due_date: string | null; priority: string | null; status: string | null; client_name: string | null; created_at: string }>(
+            `SELECT
+               t.id::text,
+               t.title,
+               t.due_date::text,
+               t.priority,
+               t.status,
+               t.client_name,
+               t.created_at::text
+             FROM tasks t
+             INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1
+             WHERE t.status = 'pending'
+               AND ($2::uuid IS NULL OR t.assignee_id = $2::uuid OR t.user_id = $2::uuid)
+             ORDER BY
+               CASE
+                 WHEN t.due_date IS NOT NULL AND t.due_date < CURRENT_DATE THEN 0
+                 WHEN t.due_date = CURRENT_DATE THEN 1
+                 WHEN t.due_date IS NOT NULL AND t.due_date > CURRENT_DATE THEN 2
+                 ELSE 3
+               END,
+               t.due_date ASC NULLS LAST,
+               t.created_at DESC
+             LIMIT 20`,
+            [tenantId, userId]
+          )
+        : emptyTasksList,
+      gates.dashboardViewProjectsCards && gates.canProjects
+        ? pool.query<{ id: string; name: string; status: string | null; due_date: string | null; pending_tasks: string }>(
+            `SELECT
+               p.id::text,
+               p.name,
+               p.status,
+               p.due_date::text,
+               COALESCE((
+                 SELECT COUNT(*)::int
+                 FROM project_tasks pt
+                 WHERE pt.project_id = p.id
+                   AND lower(COALESCE(pt.status, 'todo')) NOT IN ('done', 'completed', 'concluido', 'concluído')
+               ), 0)::text AS pending_tasks
+             FROM projects p
+             INNER JOIN users owner ON owner.id = p.user_id
+             WHERE owner.tenant_id = $1
+               AND lower(COALESCE(p.status, 'active')) NOT IN ('done', 'completed', 'cancelled', 'cancelado')
+               AND (
+                 $2::uuid IS NULL
+                 OR p.user_id = $2::uuid
+                 OR COALESCE(p.responsible_ids, '[]'::jsonb) @> to_jsonb(ARRAY[$2::text]::text[])
+               )
+             ORDER BY p.updated_at DESC
+             LIMIT 5`,
+            [tenantId, userId]
+          )
+        : emptyProjectsList,
+      gates.dashboardViewAttendanceCards && gates.canChat
+        ? pool.query<{ active_conversations: number; awaiting_response: number; unread: number }>(
+            `SELECT
+               COUNT(*) FILTER (WHERE c.attendance_status IS DISTINCT FROM 'closed')::int AS active_conversations,
+               COUNT(*) FILTER (
+                 WHERE c.attendance_status IS NULL OR c.attendance_status IN ('pending', 'open')
+               )::int AS awaiting_response,
+               COUNT(*) FILTER (WHERE COALESCE(c.unread_count, 0) > 0)::int AS unread
+             FROM chat_conversations c
+             INNER JOIN users u ON u.id = c.user_id
+             WHERE u.tenant_id = $1`,
+            [tenantId]
+          )
+        : emptyChatCounts,
+      gates.dashboardViewAttendanceCards && gates.canChat
+        ? pool.query<{ id: string; contact_name: string | null; phone_number: string | null; unread_count: number; last_message_at: string | null }>(
+            `SELECT
+               c.id::text,
+               c.contact_name,
+               c.phone_number,
+               COALESCE(c.unread_count, 0)::int AS unread_count,
+               c.last_message_at::text
+             FROM chat_conversations c
+             INNER JOIN users u ON u.id = c.user_id
+             WHERE u.tenant_id = $1
+             ORDER BY COALESCE(c.unread_count, 0) DESC, c.last_message_at DESC NULLS LAST
+             LIMIT 3`,
+            [tenantId]
+          )
+        : emptyChatList,
+      gates.canTickets
+        ? pool.query<{ open_excl: string; in_progress: string; resolved: string }>(
+            `SELECT
+               COUNT(*) FILTER (WHERE t.status IN ('new', 'open', 'pending', 'waiting_customer'))::text AS open_excl,
+               COUNT(*) FILTER (WHERE t.status = 'in_progress')::text AS in_progress,
+               COUNT(*) FILTER (WHERE t.status IN ('resolved', 'closed'))::text AS resolved
+             FROM tickets t
+             INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1`,
+            [tenantId]
+          )
+        : emptyTicketsBreakdown,
+      gates.canTickets
+        ? pool.query<{ id: string; ticket_number: string; subject: string; status: string; updated_at: string }>(
+            `SELECT t.id::text, t.ticket_number, t.subject, t.status, t.updated_at::text
+             FROM tickets t
+             INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1
+             ORDER BY t.updated_at DESC NULLS LAST
+             LIMIT 5`,
+            [tenantId]
+          )
+        : emptyTicketsRecent,
+      gates.dashboardViewAttendanceCards && gates.canChat && attendanceCols && userId
         ? pool.query<{
             my_in_service: string;
             my_queued: string;
@@ -541,8 +773,8 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
              INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1`,
             [tenantId, userId]
           )
-        : Promise.resolve({ rows: [] as Array<{ my_in_service: string; my_queued: string; my_closed_7d: string; queue_unassigned: string }> }),
-      attendanceCols && userId
+        : emptyAgentMetrics,
+      gates.dashboardViewAttendanceCards && gates.canChat && attendanceCols && userId
         ? pool.query<{
             id: string;
             contact_name: string | null;
@@ -566,33 +798,39 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
              LIMIT 7`,
             [tenantId, userId]
           )
-        : Promise.resolve({
-            rows: [] as Array<{
-              id: string;
-              contact_name: string | null;
-              phone_number: string | null;
-              attendance_status: string | null;
-              last_message_at: string | null;
-              unread_count: number;
-            }>,
-          }),
+        : emptyAgentPreview,
     ]);
 
-    const futureRevenue = report.general.projected_subscription_income;
-    const receivedRevenue = report.general.received_income;
-    const averageTicket = paidSalesCount > 0 ? receivedRevenue / paidSalesCount : 0;
-    const expensePaid = report.general.expense_paid ?? report.general.total_expense;
-    const expenseProjected =
-      report.general.expense_projected ??
-      Math.max(0, (report.general.projected_total_expense ?? report.general.total_expense) - report.general.total_expense);
-    const resultProjected =
-      report.general.projected_result ??
-      receivedRevenue + futureRevenue - (report.general.expense_total_potential ?? report.general.projected_total_expense);
-    const cashAvailable = report.by_account.reduce((acc, r) => acc + (r.estimated_balance ?? 0), 0);
+    const futureRevenue = gates.billingView ? report.general.projected_subscription_income : 0;
+    const receivedRevenue = gates.billingView ? report.general.received_income : 0;
+    const invoiceIncomeForTicket = canDashboardPaidInvoiceMetrics ? report.general.invoice_income : 0;
+    const averageTicket =
+      canDashboardPaidInvoiceMetrics && paidSalesCount > 0
+        ? invoiceIncomeForTicket / paidSalesCount
+        : 0;
+    const expensePaid = gates.financeViewExpenses
+      ? report.general.expense_paid ?? report.general.total_expense
+      : 0;
+    const expenseProjected = gates.financeViewExpenses
+      ? report.general.expense_projected ??
+        Math.max(
+          0,
+          (report.general.projected_total_expense ?? report.general.total_expense) - report.general.total_expense
+        )
+      : 0;
+    const resultProjected = gates.financeViewProfit
+      ? report.general.projected_result ??
+        receivedRevenue +
+          futureRevenue -
+          (report.general.expense_total_potential ?? report.general.projected_total_expense)
+      : 0;
+    const cashAvailable = gates.financeView
+      ? report.by_account.reduce((acc, r) => acc + (r.estimated_balance ?? 0), 0)
+      : 0;
 
     const alerts: Array<{ type: string; severity: 'warning' | 'critical'; title: string; description: string; href: string }> = [];
     const overdueInvoicesCount = Number(overdueInvoicesR.rows[0]?.c ?? 0);
-    if (overdueInvoicesCount > 0) {
+    if (gates.billingViewInvoices && overdueInvoicesCount > 0) {
       alerts.push({
         type: 'overdue_invoices',
         severity: 'warning',
@@ -601,7 +839,7 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
         href: '/customer-invoices?status=overdue',
       });
     }
-    if (resultProjected < 0) {
+    if (gates.financeViewProfit && resultProjected < 0) {
       alerts.push({
         type: 'projected_negative_result',
         severity: 'critical',
@@ -611,7 +849,7 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
       });
     }
     const stalledLeadsCount = Number(stalledLeadsR.rows[0]?.c ?? 0);
-    if (stalledLeadsCount > 0) {
+    if (gates.canLeads && stalledLeadsCount > 0) {
       alerts.push({
         type: 'stalled_leads',
         severity: 'warning',
@@ -621,7 +859,7 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
       });
     }
     const ticketsOverdue = Number(ticketsR.rows[0]?.overdue_c ?? 0);
-    if (ticketsOverdue > 0) {
+    if (gates.canTickets && ticketsOverdue > 0) {
       alerts.push({
         type: 'overdue_tickets',
         severity: 'warning',
@@ -631,7 +869,7 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
       });
     }
     const tasksOverdue = Number(tasksR.rows[0]?.overdue_c ?? 0);
-    if (tasksOverdue > 0) {
+    if (gates.dashboardViewTasksCards && gates.canTasks && tasksOverdue > 0) {
       alerts.push({
         type: 'overdue_tasks',
         severity: 'warning',
@@ -735,7 +973,7 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
 
     const am = agentMetricsR.rows[0];
     const agent_attendance =
-      attendanceCols && userId
+      gates.dashboardViewAttendanceCards && gates.canChat && attendanceCols && userId
         ? {
             my_in_service: Number(am?.my_in_service ?? 0),
             my_queued: Number(am?.my_queued ?? 0),
@@ -766,10 +1004,8 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
       task_created: boolean;
       task_href: string | null;
     }> = [];
-    if (userId) {
-      const perms = await getEffectiveModulePermissions(userId);
-      if (perms['agenda']?.can_view !== false) {
-        const role = await getUserRoleInTenant(userId);
+    if (userId && gates.canAgenda) {
+      const role = await getUserRoleInTenant(userId);
         const { ownOnly } = listAppointmentsScopeForUser(userId, role, perms['agenda']);
         const uar = ownOnly
           ? await pool.query<{
@@ -864,22 +1100,31 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
                LIMIT 3`,
               [tenantId],
             );
-        appointments_needing_reschedule = nrr.rows;
-      }
+      appointments_needing_reschedule = nrr.rows;
     }
+
+    const emptyTasksOverview = {
+      overdue: [] as (typeof tasksBuckets)['overdue'],
+      due_today: [] as (typeof tasksBuckets)['due_today'],
+      upcoming: [] as (typeof tasksBuckets)['upcoming'],
+      recent_assigned: [] as (typeof tasksBuckets)['recent_assigned'],
+    };
 
     res.json({
       period: { from, to, preset },
       sales: {
         received_revenue: receivedRevenue,
         future_revenue: futureRevenue,
-        conversion_rate: conversionRate,
-        conversion_rate_prev: conversionPrev,
-        conversion_rate_change_pct: pct(conversionRate, conversionPrev),
-        average_ticket: paidSalesCount > 0 ? averageTicket : null,
-        paid_sales_count: paidSalesCount,
-        received_revenue_prev: reportPrev.general.received_income,
-        received_revenue_change_pct: pct(receivedRevenue, reportPrev.general.received_income),
+        conversion_rate: gates.dashboardViewSalesCards && gates.canLeads ? conversionRate : 0,
+        conversion_rate_prev: gates.dashboardViewSalesCards && gates.canLeads ? conversionPrev : 0,
+        conversion_rate_change_pct: gates.dashboardViewSalesCards && gates.canLeads ? pct(conversionRate, conversionPrev) : 0,
+        average_ticket:
+          canDashboardPaidInvoiceMetrics && paidSalesCount > 0 ? averageTicket : null,
+        paid_sales_count: canDashboardPaidInvoiceMetrics ? paidSalesCount : 0,
+        received_revenue_prev: gates.billingView ? reportPrev.general.received_income : 0,
+        received_revenue_change_pct: gates.billingView
+          ? pct(receivedRevenue, reportPrev.general.received_income)
+          : 0,
       },
       funnel: funnelR.rows.map((r) => ({
         stage_id: r.stage_id ?? '',
@@ -888,58 +1133,81 @@ export async function getExecutiveOverview(req: AuthRequest, res: Response): Pro
         amount: Number(r.amount ?? 0),
       })),
       operations: {
-        leads_without_response: Number(leadNoResponseR.rows[0]?.c ?? 0),
-        open_tickets: Number(ticketsR.rows[0]?.open_c ?? 0),
-        overdue_tickets: ticketsOverdue,
-        overdue_tasks: tasksOverdue,
-        today_tasks: Number(tasksR.rows[0]?.today_c ?? 0),
-        critical_tasks: Number(tasksR.rows[0]?.critical_c ?? 0),
+        leads_without_response: gates.canLeads ? Number(leadNoResponseR.rows[0]?.c ?? 0) : 0,
+        open_tickets: gates.canTickets ? Number(ticketsR.rows[0]?.open_c ?? 0) : 0,
+        overdue_tickets: gates.canTickets ? ticketsOverdue : 0,
+        overdue_tasks: gates.dashboardViewTasksCards && gates.canTasks ? tasksOverdue : 0,
+        today_tasks: gates.dashboardViewTasksCards && gates.canTasks ? Number(tasksR.rows[0]?.today_c ?? 0) : 0,
+        critical_tasks: gates.dashboardViewTasksCards && gates.canTasks ? Number(tasksR.rows[0]?.critical_c ?? 0) : 0,
       },
       clients: {
-        active_clients: Number(clientsR.rows[0]?.active_clients ?? 0),
-        new_clients: Number(clientsR.rows[0]?.new_clients ?? 0),
-        active_subscriptions: Number(clientsR.rows[0]?.active_subs ?? 0),
-        clients_with_overdue_invoices: overdueInvoicesCount,
+        active_clients: gates.canClients ? Number(clientsR.rows[0]?.active_clients ?? 0) : 0,
+        new_clients: gates.canClients ? Number(clientsR.rows[0]?.new_clients ?? 0) : 0,
+        active_subscriptions: gates.billingViewSubscriptions ? Number(clientsR.rows[0]?.active_subs ?? 0) : 0,
+        clients_with_overdue_invoices: gates.billingViewInvoices ? overdueInvoicesCount : 0,
       },
       finance: {
-        income_received: receivedRevenue,
-        income_projected: futureRevenue,
+        income_received: gates.billingView ? receivedRevenue : 0,
+        income_projected: gates.billingView ? futureRevenue : 0,
         expense_paid: expensePaid,
         expense_projected: expenseProjected,
         result_projected: resultProjected,
         cash_available: cashAvailable,
       },
-      monthly: report.monthly.map((m) => ({
-        month: m.month,
-        revenue_received: m.income_received ?? m.income ?? 0,
-        revenue_projected: m.income_projected ?? m.income_projected_subscriptions ?? 0,
-        expenses_paid: m.expense_paid ?? m.expense ?? 0,
-        expenses_projected: m.expense_projected ?? Math.max(0, (m.expense_total_potential ?? m.projected_expense ?? m.expense) - (m.expense_paid ?? m.expense ?? 0)),
-      })),
+      monthly:
+        gates.billingView || gates.financeView
+          ? report.monthly.map((m) => ({
+              month: m.month,
+              revenue_received: gates.billingView ? m.income_received ?? m.income ?? 0 : 0,
+              revenue_projected: gates.billingView
+                ? m.income_projected ?? m.income_projected_subscriptions ?? 0
+                : 0,
+              expenses_paid: gates.financeViewExpenses ? m.expense_paid ?? m.expense ?? 0 : 0,
+              expenses_projected: gates.financeViewExpenses
+                ? m.expense_projected ??
+                  Math.max(
+                    0,
+                    (m.expense_total_potential ?? m.projected_expense ?? m.expense) -
+                      (m.expense_paid ?? m.expense ?? 0)
+                  )
+                : 0,
+            }))
+          : [],
       alerts,
-      accounts_payable_next_7_days: accountsPayableItems,
-      accounts_payable_total_cents: accountsPayableTotalCents,
+      accounts_payable_next_7_days: gates.financeViewAccountsPayable ? accountsPayableItems : [],
+      accounts_payable_total_cents: gates.financeViewAccountsPayable ? accountsPayableTotalCents : 0,
       next_7_days: {
-        receivable_cents: next7ReceivableCents,
-        payable_cents: accountsPayableTotalCents,
-        balance_cents: next7ReceivableCents - accountsPayableTotalCents,
+        receivable_cents: gates.billingViewInvoices ? next7ReceivableCents : 0,
+        payable_cents: gates.financeViewAccountsPayable ? accountsPayableTotalCents : 0,
+        balance_cents:
+          (gates.billingViewInvoices ? next7ReceivableCents : 0) -
+          (gates.financeViewAccountsPayable ? accountsPayableTotalCents : 0),
       },
-      tasks_overview: tasksBuckets,
-      projects_overview: projectsOverview,
-      chat_overview: {
-        active_conversations: Number(chatCounts.active_conversations ?? 0),
-        awaiting_response: Number(chatCounts.awaiting_response ?? 0),
-        unread: Number(chatCounts.unread ?? 0),
-        list: chatListR.rows.map((row) => ({
-          id: row.id,
-          contact_name: row.contact_name,
-          phone_number: row.phone_number,
-          unread_count: Number(row.unread_count ?? 0),
-          last_message_at: row.last_message_at,
-        })),
-      },
-      tickets_overview,
-      agent_attendance,
+      tasks_overview: gates.dashboardViewTasksCards && gates.canTasks ? tasksBuckets : emptyTasksOverview,
+      projects_overview: gates.dashboardViewProjectsCards && gates.canProjects ? projectsOverview : [],
+      chat_overview: gates.dashboardViewAttendanceCards && gates.canChat
+        ? {
+            active_conversations: Number(chatCounts.active_conversations ?? 0),
+            awaiting_response: Number(chatCounts.awaiting_response ?? 0),
+            unread: Number(chatCounts.unread ?? 0),
+            list: chatListR.rows.map((row) => ({
+              id: row.id,
+              contact_name: row.contact_name,
+              phone_number: row.phone_number,
+              unread_count: Number(row.unread_count ?? 0),
+              last_message_at: row.last_message_at,
+            })),
+          }
+        : {
+            active_conversations: 0,
+            awaiting_response: 0,
+            unread: 0,
+            list: [],
+          },
+      tickets_overview: gates.canTickets
+        ? tickets_overview
+        : { open: 0, in_progress: 0, resolved: 0, recent: [] },
+      agent_attendance: gates.dashboardViewAttendanceCards && gates.canChat ? agent_attendance : null,
       upcoming_appointments,
       appointments_needing_reschedule,
     });
@@ -1174,23 +1442,50 @@ export async function getRecentActivities(req: AuthRequest, res: Response): Prom
 export async function getUpcomingTasks(req: AuthRequest, res: Response): Promise<void> {
   try {
     const tenantId = req.tenantId ?? null;
+    const userId = req.userId;
     if (!tenantId) {
       res.json([]);
       return;
     }
+    if (!userId) {
+      res.status(401).json({ error: 'Não autenticado' });
+      return;
+    }
+
+    let permMap;
+    try {
+      permMap = await assertPermissionKey(userId, 'tasks.view', req);
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        res.status(e.statusCode).json({ error: e.message });
+        return;
+      }
+      throw e;
+    }
+
+    const tg = resolveTasksGranularFromLegacy(permMap);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+    const todayStr = today.toISOString().split('T')[0];
+
+    const params: unknown[] = [tenantId, todayStr];
+    let scopeClause = '';
+    if (tg.view_own && !tg.view_all) {
+      scopeClause = ` AND (t.user_id = $3 OR t.assignee_id = $3)`;
+      params.push(userId);
+    }
 
     const tasks = await pool.query(
       `SELECT t.id, t.title, t.due_date, t.due_time, t.priority, t.status
        FROM tasks t
        INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1
        WHERE t.status = 'pending' AND (t.due_date >= $2 OR t.due_date IS NULL)
+       ${scopeClause}
        ORDER BY 
          CASE WHEN t.due_date = $2::date THEN 0 WHEN t.due_date IS NULL THEN 2 ELSE 1 END,
          t.due_time ASC NULLS LAST, t.created_at ASC
        LIMIT 10`,
-      [tenantId, today.toISOString().split('T')[0]]
+      params
     );
 
     const priorityColors: { [key: string]: string } = {

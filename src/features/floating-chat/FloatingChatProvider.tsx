@@ -54,6 +54,9 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
   const [activeWindowId, setActiveWindowId] = useState<string | null>(null);
   const [pulseUntil, setPulseUntil] = useState<Record<string, number>>({});
   const [composerDrafts, setComposerDraftsState] = useState<Record<string, string>>({});
+  const [compactProfileOpenByConversationId, setCompactProfileOpenByConversationId] = useState<Record<string, boolean>>(
+    {},
+  );
   const [instanceIds, setInstanceIds] = useState<string[]>([]);
   const [mobileOverlayConversationId, setMobileOverlayConversationId] = useState<string | null>(null);
   const mobileOverlayConversationIdRef = useRef<string | null>(null);
@@ -498,9 +501,24 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
       const { [conversationId]: _, ...rest } = prev;
       return rest;
     });
+    setCompactProfileOpenByConversationId((prev) => {
+      const { [conversationId]: _omit, ...rest } = prev;
+      return rest;
+    });
     setActiveWindowId((prev) => (prev === conversationId ? null : prev));
     clearPulseFor(conversationId);
   }, [clearPulseFor]);
+
+  const setCompactProfileOpen = useCallback((conversationId: string, open: boolean) => {
+    setCompactProfileOpenByConversationId((prev) => ({ ...prev, [conversationId]: open }));
+  }, []);
+
+  const toggleCompactProfile = useCallback((conversationId: string) => {
+    setCompactProfileOpenByConversationId((prev) => ({
+      ...prev,
+      [conversationId]: !prev[conversationId],
+    }));
+  }, []);
 
   const value = useMemo<FloatingChatContextValue>(
     () => ({
@@ -524,6 +542,9 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
       openChatForClient,
       openChatForLead,
       closeMobileConversationOverlay,
+      compactProfileOpenByConversationId,
+      toggleCompactProfile,
+      setCompactProfileOpen,
     }),
     [
       listOpen,
@@ -544,6 +565,9 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
       openChatForClient,
       openChatForLead,
       closeMobileConversationOverlay,
+      compactProfileOpenByConversationId,
+      toggleCompactProfile,
+      setCompactProfileOpen,
     ],
   );
 

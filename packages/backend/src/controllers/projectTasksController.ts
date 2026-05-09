@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { pool } from '../utils/db.js';
 import { z } from 'zod';
 import { AuthRequest } from '../middleware/auth.js';
-import { assertModulePermission, ModulePermissionError } from '../permissions/index.js';
+import { assertModulePermission, assertPermissionKey, ModulePermissionError } from '../permissions/index.js';
 const MODULE_TASKS = 'tasks';
 
 /** Valor para coluna jsonb: null, string JSON como está, objeto stringificado. */
@@ -80,6 +80,19 @@ function mapTaskRow(row: any) {
 // GET /api/projects/lists/:listId/tasks?areaId=uuid (areaId opcional: filtra por área)
 export const getProjectTasks = async (req: Request, res: Response) => {
   try {
+    const userId = (req as AuthRequest).userId;
+    if (!userId) {
+      return res.status(401).json({ error: 'Não autenticado' });
+    }
+    try {
+      await assertPermissionKey(userId, 'tasks.view', req as AuthRequest);
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        return res.status(e.statusCode).json({ error: e.message });
+      }
+      throw e;
+    }
+
     const tenantId = (req as any).tenantId ?? null;
     const { listId } = req.params;
     const areaId = (req.query.areaId as string) || null;
@@ -140,6 +153,18 @@ const TASK_ACCESS_WHERE = `
 export const getProjectTaskById = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
+    if (!userId) {
+      return res.status(401).json({ error: 'Não autenticado' });
+    }
+    try {
+      await assertPermissionKey(userId, 'tasks.view', req as AuthRequest);
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        return res.status(e.statusCode).json({ error: e.message });
+      }
+      throw e;
+    }
+
     const { taskId } = req.params;
 
     const taskCheck = await pool.query(
@@ -414,6 +439,19 @@ export const deleteProjectTask = async (req: Request, res: Response) => {
 // GET /api/projects/:projectId/areas/:areaId/tasks — tarefas da área (para painel contextual)
 export const getTasksByArea = async (req: Request, res: Response) => {
   try {
+    const userId = (req as AuthRequest).userId;
+    if (!userId) {
+      return res.status(401).json({ error: 'Não autenticado' });
+    }
+    try {
+      await assertPermissionKey(userId, 'tasks.view', req as AuthRequest);
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        return res.status(e.statusCode).json({ error: e.message });
+      }
+      throw e;
+    }
+
     const tenantId = (req as any).tenantId ?? null;
     const { projectId, areaId } = req.params;
 
