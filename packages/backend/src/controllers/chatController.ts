@@ -15,7 +15,7 @@ import { AuthRequest } from '../middleware/auth.js';
 import { uazapiService } from '../services/uazapi.js';
 import { resolveOutgoingMediaPayload } from '../services/outgoingMediaPayloadResolver.js';
 import { buildWhatsappTemplateMediaPublicUrlFromStoragePath } from '../services/whatsappTemplateMediaStorageService.js';
-import { randomBytes, randomUUID, timingSafeEqual } from 'crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
 import * as notificationService from '../services/notifications.js';
 import {
   emitConversationUpdate,
@@ -2481,7 +2481,7 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
     }
 
     const webhookResponse = await uazapiService.configureWebhook(instance.instance_token, webhookBody);
-    
+
     logUazChat('info', {
       ...baseLog,
       phase: 'uazapi_response',
@@ -2493,15 +2493,93 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
       response: JSON.stringify(webhookResponse).substring(0, 500),
     });
 
+    /**
+     * Fonte de verdade: `chat_instances.webhook_secret` + URL com `?secret=`.
+     * O provedor pode normalizar/alterar o secret na URL registada (GET /webhook ≠ valor gerado localmente).
+     * Se detetarmos mismatch, atualizamos a coluna e voltamos a configurar o webhook para alinhar entrega real.
+     */
+    let effectiveSecret = secretTrim;
+    let finalResolvedUrl = resolvedUrl;
     let uazDeliverySecrets: string[] = [];
+
     try {
       const remote = await uazapiService.getWebhook(instance.instance_token);
       uazDeliverySecrets = extractWebhookDeliverySecretsFromUazRemote(remote);
+
+      const authoritativeMismatch = pickAuthoritativeSecretFromUazWebhookRemote(remote, instance.id, effectiveSecret);
+      if (authoritativeMismatch) {
+        logUazChat('info', {
+          ...baseLog,
+          event_type: 'webhook_secret_reconciled_from_provider',
+          phase: 'webhook_secret_reconciled_from_provider',
+          saved_secret_length: effectiveSecret.length,
+          provider_secret_length: authoritativeMismatch.length,
+          saved_fp: webhookSecretFingerprint(effectiveSecret),
+          provider_fp: webhookSecretFingerprint(authoritativeMismatch),
+          detail:
+            'GET /webhook devolveu secret na URL diferente do valor local; alinhar BD e reconfigurar POST /webhook',
+        });
+        await pool.query(
+          `UPDATE chat_instances
+           SET webhook_secret = $1,
+               metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+               updated_at = now()
+           WHERE id = $3`,
+          [authoritativeMismatch, JSON.stringify({ webhook_secret: authoritativeMismatch }), instance.id]
+        );
+        effectiveSecret = authoritativeMismatch.trim();
+        const rebuilt = buildInstanceWebhookUrl(instance.id, effectiveSecret);
+        if (rebuilt) finalResolvedUrl = rebuilt;
+
+        const webhookBodyRetry: Record<string, any> = {
+          enabled: true,
+          url: finalResolvedUrl,
+          events: defaultEvents,
+          excludeMessages: defaultExcludeMessages,
+          addUrlEvents: true,
+          AddUrlTypesMessages: true,
+        };
+        if (effectiveSecret) webhookBodyRetry.secret = effectiveSecret;
+        await uazapiService.configureWebhook(instance.instance_token, webhookBodyRetry);
+
+        const remote2 = await uazapiService.getWebhook(instance.instance_token);
+        uazDeliverySecrets = extractWebhookDeliverySecretsFromUazRemote(remote2);
+      }
+
+      uazDeliverySecrets = dedupeNormalizedSecrets([effectiveSecret, ...uazDeliverySecrets]);
+
+      let urlSecretLen = 0;
+      try {
+        urlSecretLen = new URL(finalResolvedUrl).searchParams.get('secret')?.length ?? 0;
+      } catch {
+        urlSecretLen = 0;
+      }
+
+      logUazChat('info', {
+        ...baseLog,
+        event_type: 'webhook_configure_audit',
+        phase: 'webhook_configure_audit',
+        saved_secret_length: effectiveSecret.length,
+        webhook_url_has_secret: finalResolvedUrl.includes('secret='),
+        webhook_url_secret_length: urlSecretLen,
+        saved_secret_fp: webhookSecretFingerprint(effectiveSecret),
+        lengths_match: urlSecretLen > 0 && urlSecretLen === effectiveSecret.length,
+        provider_webhook_configured: true,
+        uaz_delivery_secret_count: uazDeliverySecrets.length,
+        detail: 'auditoria pós-configuração (sem secret em claro)',
+      });
     } catch (syncErr: any) {
       console.warn('[Auto-Webhook] getWebhook após configurar falhou (uazDeliverySecrets não sincronizados)', {
         instanceId: instance.id,
         message: syncErr?.message,
       });
+      logUazChat('warn', {
+        ...baseLog,
+        phase: 'provider_webhook_config_error',
+        webhook_result: 'failed',
+        detail: syncErr?.message || String(syncErr),
+      });
+      uazDeliverySecrets = dedupeNormalizedSecrets([effectiveSecret]);
     }
 
     await pool.query(
@@ -2514,9 +2592,9 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
       [
         JSON.stringify({
           webhook: {
-            url: resolvedUrl,
-            webhookSecretInQuery: !!secretTrim,
-            webhookSecretMask: maskSecretForLogs(secretTrim),
+            url: finalResolvedUrl,
+            webhookSecretInQuery: !!effectiveSecret,
+            webhookSecretMask: maskSecretForLogs(effectiveSecret),
             events: defaultEvents,
             excludeMessages: defaultExcludeMessages,
             configuredAt: new Date().toISOString(),
@@ -2540,7 +2618,7 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
            metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
            updated_at = now()
        WHERE id = $2`,
-      [JSON.stringify({ webhook_url: resolvedUrl, webhook_secret: secretTrim }), instance.id]
+      [JSON.stringify({ webhook_url: finalResolvedUrl, webhook_secret: effectiveSecret }), instance.id]
     );
 
     logUazChat('info', {
@@ -2551,8 +2629,8 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
     });
     console.log('Webhook auto-configured successfully', {
       instance: instance.external_instance_name,
-      url: webhookUrl.split('?')[0],
-      secretInQuery: !!secretTrim,
+      url: finalResolvedUrl.split('?')[0],
+      secretInQuery: !!effectiveSecret,
     });
   } catch (error: any) {
     const wr = classifyWebhookError(error);
@@ -10192,6 +10270,100 @@ function maskSecretForLogs(secret: string | null | undefined): string | null {
   return `${t.slice(0, 2)}***${t.slice(-2)}`;
 }
 
+/** SHA-256 hex curto para correlacionar logs sem expor o secret. */
+function webhookSecretFingerprint(secret: string | null | undefined): string | null {
+  const n = normalizeIncomingWebhookSecret(secret);
+  if (!n) return null;
+  return createHash('sha256').update(n, 'utf8').digest('hex').slice(0, 12);
+}
+
+function collectHttpUrlsFromRemote(node: unknown, depth = 0, out?: string[]): string[] {
+  const acc = out ?? [];
+  if (depth > 14 || node == null) return acc;
+  if (typeof node === 'string') {
+    const t = node.trim();
+    if (/^https?:\/\//i.test(t)) acc.push(t);
+    return acc;
+  }
+  if (Array.isArray(node)) {
+    for (const x of node) collectHttpUrlsFromRemote(x, depth + 1, acc);
+    return acc;
+  }
+  if (typeof node === 'object') {
+    for (const v of Object.values(node as Record<string, unknown>)) {
+      collectHttpUrlsFromRemote(v, depth + 1, acc);
+    }
+  }
+  return acc;
+}
+
+function extractWebhookSecretParamsFromUrls(urls: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const urlStr of urls) {
+    try {
+      const u = new URL(urlStr);
+      for (const key of ['secret', 'webhookSecret', 'token']) {
+        const raw = u.searchParams.get(key);
+        const n = normalizeIncomingWebhookSecret(raw);
+        if (n && isSecretStrongEnough(n) && !seen.has(n)) {
+          seen.add(n);
+          out.push(n);
+        }
+      }
+    } catch {
+      /* ignore malformed URLs */
+    }
+  }
+  return out;
+}
+
+/** Prefere URL que contenha `instanceId` igual ao nosso registo (fonte de verdade do provedor). */
+function pickAuthoritativeSecretFromUazWebhookRemote(
+  remote: unknown,
+  instanceId: string,
+  localSecret: string
+): string | undefined {
+  const urls = collectHttpUrlsFromRemote(remote);
+  const matchInstance = urls.filter((u) => {
+    try {
+      const x = new URL(u);
+      const id = x.searchParams.get('instanceId') ?? x.searchParams.get('instance_id');
+      return id === instanceId;
+    } catch {
+      return false;
+    }
+  });
+  const ordered = matchInstance.length > 0 ? matchInstance : urls;
+  for (const urlStr of ordered) {
+    try {
+      const u = new URL(urlStr);
+      const n = normalizeIncomingWebhookSecret(u.searchParams.get('secret'));
+      if (n && isSecretStrongEnough(n) && !webhookSecretsEqual(n, localSecret)) return n;
+    } catch {
+      /* */
+    }
+  }
+  const fromParams = extractWebhookSecretParamsFromUrls(ordered);
+  for (const n of fromParams) {
+    if (!webhookSecretsEqual(n, localSecret)) return n;
+  }
+  return undefined;
+}
+
+function dedupeNormalizedSecrets(secrets: (string | undefined)[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const s of secrets) {
+    const n = normalizeIncomingWebhookSecret(s);
+    if (n && !seen.has(n)) {
+      seen.add(n);
+      out.push(n);
+    }
+  }
+  return out;
+}
+
 function extractMetadataWebhookSecret(metadata: unknown): string | null {
   const m =
     metadata && typeof metadata === 'object' && !Array.isArray(metadata)
@@ -10351,8 +10523,13 @@ function collectWebhookSecretCandidates(req: Request): string[] {
     bearerSecret,
     req.body?.secret,
     req.body?.webhookSecret,
+    req.body?.signingSecret,
     req.body?.data?.secret,
     req.body?.data?.webhookSecret,
+    req.body?.data?.signingSecret,
+    req.body?.webhook?.secret,
+    req.body?.event?.secret,
+    req.body?.payload?.secret,
   ];
   const out: string[] = [];
   const seen = new Set<string>();
@@ -10383,7 +10560,15 @@ function extractWebhookDeliverySecretsFromUazRemote(remote: unknown): string[] {
   const visitObject = (obj: unknown) => {
     if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return;
     const o = obj as Record<string, unknown>;
-    for (const key of ['secret', 'webhookSecret', 'querySecret', 'signingSecret'] as const) {
+    for (const key of [
+      'secret',
+      'webhookSecret',
+      'querySecret',
+      'signingSecret',
+      'deliverySecret',
+      'hmacSecret',
+      'serverSecret',
+    ] as const) {
       if (typeof o[key] === 'string') push(o[key]);
     }
     if (typeof o.url === 'string') {
@@ -10416,6 +10601,9 @@ function extractWebhookDeliverySecretsFromUazRemote(remote: unknown): string[] {
     }
   };
   walk(remote, 0);
+  for (const s of extractWebhookSecretParamsFromUrls(collectHttpUrlsFromRemote(remote))) {
+    push(s);
+  }
   return out;
 }
 
@@ -10545,7 +10733,11 @@ export async function handleWebhook(req: Request, res: Response) {
       resolutionReason = 'instance_id';
     }
     if (instanceRows.length === 0 && externalKeyEarly) {
-      const r = await pool.query<ChatInstanceRow>('SELECT * FROM chat_instances WHERE external_instance_name = $1', [externalKeyEarly]);
+      const r = await pool.query<ChatInstanceRow>(
+        `SELECT * FROM chat_instances
+         WHERE lower(trim(COALESCE(external_instance_name,''))) = lower(trim($1))`,
+        [externalKeyEarly]
+      );
       instanceRows = r.rows;
       resolutionReason = 'external_instance_name';
     }
@@ -10553,10 +10745,13 @@ export async function handleWebhook(req: Request, res: Response) {
       const providerCandidates = extractProviderInstanceIdCandidates(payload);
       if (providerCandidates.length > 0) {
         const r = await pool.query<ChatInstanceRow>(
-          `SELECT * FROM chat_instances
-           WHERE external_instance_name = ANY($1::text[])
-              OR COALESCE(metadata->>'provider_instance_id','') = ANY($1::text[])
-              OR COALESCE(phone_key,'') = ANY($1::text[])`,
+          `SELECT * FROM chat_instances ci
+           WHERE EXISTS (
+             SELECT 1 FROM unnest($1::text[]) AS pc(val)
+             WHERE lower(trim(COALESCE(ci.external_instance_name,''))) = lower(trim(pc.val))
+                OR lower(trim(COALESCE(ci.metadata->>'provider_instance_id',''))) = lower(trim(pc.val))
+                OR lower(trim(COALESCE(ci.phone_key,''))) = lower(trim(pc.val))
+           )`,
           [providerCandidates]
         );
         instanceRows = r.rows;
