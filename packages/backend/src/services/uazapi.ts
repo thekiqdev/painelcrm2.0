@@ -1,4 +1,13 @@
+import { createHash } from 'crypto';
 import { isUazIntegrationVerboseLogs } from '../utils/chatObservability.js';
+
+function instanceTokenFingerprintForProviderLog(token: string): string {
+  const t = token.trim();
+  if (!t) return 'missing';
+  const tail = t.length <= 4 ? '****' : `***${t.slice(-4)}`;
+  const fp = createHash('sha256').update(t, 'utf8').digest('hex').slice(0, 10);
+  return `${tail}|sha256:${fp}`;
+}
 
 interface RequestOptions {
   method?: string;
@@ -169,6 +178,11 @@ export class UazapiService {
   }> {
     const token = instanceToken?.trim();
     if (!token) return { ok: false, note: 'missing_token' };
+
+    console.log('[UazAPI] deleteInstanceAtProvider', {
+      token_fp: instanceTokenFingerprintForProviderLog(token),
+      note: 'DELETE /instance ou POST /instance/delete com header token desta instância',
+    });
 
     const tryOnce = async (
       method: string,

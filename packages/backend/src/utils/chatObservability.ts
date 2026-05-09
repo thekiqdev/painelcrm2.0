@@ -31,6 +31,12 @@ export function isUazIntegrationVerboseLogs(): boolean {
   return process.env.NODE_ENV !== 'production' || process.env.UAZAPI_VERBOSE_LOGS === '1';
 }
 
+/** Log extra do payload/headers do webhook (candidatos truncados) — UAZAPI_WEBHOOK_PAYLOAD_DEBUG=1 */
+export function isUazWebhookPayloadDebugEnabled(): boolean {
+  const v = process.env.UAZAPI_WEBHOOK_PAYLOAD_DEBUG?.trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes' || v === 'on';
+}
+
 /**
  * Logs por mensagem em `saveMessage` (volume muito alto em sync/webhook). Opt-in: CHAT_VERBOSE_SAVE=1.
  */

@@ -52,6 +52,7 @@ import {
   type UazChatLogFields,
   isUazIntegrationVerboseLogs,
   isChatSaveVerboseLogs,
+  isUazWebhookPayloadDebugEnabled,
 } from '../utils/chatObservability.js';
 import {
   buildWaLastMsgTimestampFilter,
@@ -2443,11 +2444,12 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
         phase: 'already_configured',
         detail: resolvedUrl,
       });
-      console.log('[Auto-Webhook] Already configured, skipping', {
+      console.log('[Auto-Webhook] Already configured — verificando snapshot no provedor', {
         instance: instance.external_instance_name,
         url: resolvedUrl,
         tokenChanged,
       });
+      await mergeWebhookSecretsFromProviderSkipPath(instance, tenantId);
       return;
     }
 
@@ -2503,71 +2505,141 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
     let uazDeliverySecrets: string[] = [];
 
     try {
-      const remote = await uazapiService.getWebhook(instance.instance_token);
-      uazDeliverySecrets = extractWebhookDeliverySecretsFromUazRemote(remote);
+      const maxRounds = 3;
+      let lastRemote: unknown = null;
 
-      const authoritativeMismatch = pickAuthoritativeSecretFromUazWebhookRemote(remote, instance.id, effectiveSecret);
-      if (authoritativeMismatch) {
-        logUazChat('info', {
-          ...baseLog,
-          event_type: 'webhook_secret_reconciled_from_provider',
-          phase: 'webhook_secret_reconciled_from_provider',
-          saved_secret_length: effectiveSecret.length,
-          provider_secret_length: authoritativeMismatch.length,
-          saved_fp: webhookSecretFingerprint(effectiveSecret),
-          provider_fp: webhookSecretFingerprint(authoritativeMismatch),
-          detail:
-            'GET /webhook devolveu secret na URL diferente do valor local; alinhar BD e reconfigurar POST /webhook',
-        });
-        await pool.query(
-          `UPDATE chat_instances
-           SET webhook_secret = $1,
-               metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
-               updated_at = now()
-           WHERE id = $3`,
-          [authoritativeMismatch, JSON.stringify({ webhook_secret: authoritativeMismatch }), instance.id]
+      for (let round = 0; round < maxRounds; round++) {
+        const remote = await uazapiService.getWebhook(instance.instance_token);
+        lastRemote = remote;
+
+        logSanitizedUazGetWebhookAudit(
+          {
+            ...baseLog,
+            phase: `webhook_reconcile_round_${round}`,
+          },
+          remote,
+          instance.id,
+          instance.external_instance_name,
+          effectiveSecret,
         );
-        effectiveSecret = authoritativeMismatch.trim();
-        const rebuilt = buildInstanceWebhookUrl(instance.id, effectiveSecret);
-        if (rebuilt) finalResolvedUrl = rebuilt;
 
-        const webhookBodyRetry: Record<string, any> = {
-          enabled: true,
-          url: finalResolvedUrl,
-          events: defaultEvents,
-          excludeMessages: defaultExcludeMessages,
-          addUrlEvents: true,
-          AddUrlTypesMessages: true,
-        };
-        if (effectiveSecret) webhookBodyRetry.secret = effectiveSecret;
-        await uazapiService.configureWebhook(instance.instance_token, webhookBodyRetry);
+        const canonical = extractCanonicalWebhookUrlSecretForInstance(remote, instance.id);
+        const authoritativeMismatch = pickAuthoritativeSecretFromUazWebhookRemote(remote, instance.id, effectiveSecret);
 
-        const remote2 = await uazapiService.getWebhook(instance.instance_token);
-        uazDeliverySecrets = extractWebhookDeliverySecretsFromUazRemote(remote2);
+        let nextFromProvider: string | undefined;
+        if (canonical && !webhookSecretsEqual(canonical, effectiveSecret)) {
+          nextFromProvider = canonical;
+        } else if (authoritativeMismatch && !webhookSecretsEqual(authoritativeMismatch, effectiveSecret)) {
+          nextFromProvider = authoritativeMismatch;
+        }
+
+        if (nextFromProvider) {
+          logUazChat('info', {
+            ...baseLog,
+            event_type: 'webhook_secret_reconciled_from_provider',
+            phase: 'webhook_secret_reconciled_from_provider',
+            saved_secret_length: effectiveSecret.length,
+            provider_secret_length: nextFromProvider.length,
+            saved_fp: webhookSecretFingerprint(effectiveSecret),
+            provider_fp: webhookSecretFingerprint(nextFromProvider),
+            reconcile_round: round,
+            token_fp: instanceTokenFingerprintForLogs(instance.instance_token),
+            detail: 'GET /webhook: secret difere do valor local — atualizar BD e repetir POST /webhook',
+          });
+          await pool.query(
+            `UPDATE chat_instances
+             SET webhook_secret = $1,
+                 metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+                 updated_at = now()
+             WHERE id = $3`,
+            [nextFromProvider, JSON.stringify({ webhook_secret: nextFromProvider }), instance.id]
+          );
+          effectiveSecret = nextFromProvider.trim();
+          const rebuilt = buildInstanceWebhookUrl(instance.id, effectiveSecret);
+          if (rebuilt) finalResolvedUrl = rebuilt;
+
+          await uazapiService.configureWebhook(instance.instance_token, {
+            enabled: true,
+            url: finalResolvedUrl,
+            events: defaultEvents,
+            excludeMessages: defaultExcludeMessages,
+            addUrlEvents: true,
+            AddUrlTypesMessages: true,
+            ...(effectiveSecret ? { secret: effectiveSecret } : {}),
+          });
+          continue;
+        }
+
+        uazDeliverySecrets = dedupeNormalizedSecrets([
+          effectiveSecret,
+          ...extractWebhookDeliverySecretsFromUazRemote(remote),
+          ...extractWebhookSecretParamsFromUrls(collectHttpUrlsFromRemote(remote)),
+        ]);
+
+        let urlSecretLen = 0;
+        try {
+          urlSecretLen = new URL(finalResolvedUrl).searchParams.get('secret')?.length ?? 0;
+        } catch {
+          urlSecretLen = 0;
+        }
+
+        const lengthsMatch = urlSecretLen > 0 && urlSecretLen === effectiveSecret.length;
+
+        if (lengthsMatch) {
+          logUazChat('info', {
+            ...baseLog,
+            event_type: 'webhook_configure_audit',
+            phase: 'webhook_configure_audit',
+            saved_secret_length: effectiveSecret.length,
+            webhook_url_has_secret: finalResolvedUrl.includes('secret='),
+            webhook_url_secret_length: urlSecretLen,
+            saved_secret_fp: webhookSecretFingerprint(effectiveSecret),
+            lengths_match: true,
+            reconcile_round: round,
+            provider_webhook_configured: true,
+            uaz_delivery_secret_count: uazDeliverySecrets.length,
+            token_fp: instanceTokenFingerprintForLogs(instance.instance_token),
+            detail: 'auditoria pós-configuração (sem secret em claro)',
+          });
+          break;
+        }
+
+        if (round < maxRounds - 1) {
+          await uazapiService.configureWebhook(instance.instance_token, {
+            enabled: true,
+            url: finalResolvedUrl,
+            events: defaultEvents,
+            excludeMessages: defaultExcludeMessages,
+            addUrlEvents: true,
+            AddUrlTypesMessages: true,
+            ...(effectiveSecret ? { secret: effectiveSecret } : {}),
+          });
+          continue;
+        }
+
+        logUazChat('warn', {
+          ...baseLog,
+          event_type: 'webhook_configure_mismatch',
+          phase: 'webhook_configure_mismatch',
+          webhook_result: 'failed',
+          saved_secret_length: effectiveSecret.length,
+          webhook_url_secret_length: urlSecretLen,
+          lengths_match: false,
+          reconcile_round: round,
+          token_fp: instanceTokenFingerprintForLogs(instance.instance_token),
+          detail:
+            'secret na URL local vs comprimento efetivo não coincidiram com GET /webhook após várias tentativas',
+        });
+        break;
       }
 
-      uazDeliverySecrets = dedupeNormalizedSecrets([effectiveSecret, ...uazDeliverySecrets]);
-
-      let urlSecretLen = 0;
-      try {
-        urlSecretLen = new URL(finalResolvedUrl).searchParams.get('secret')?.length ?? 0;
-      } catch {
-        urlSecretLen = 0;
+      if (uazDeliverySecrets.length === 0 && lastRemote) {
+        uazDeliverySecrets = dedupeNormalizedSecrets([
+          effectiveSecret,
+          ...extractWebhookDeliverySecretsFromUazRemote(lastRemote),
+          ...extractWebhookSecretParamsFromUrls(collectHttpUrlsFromRemote(lastRemote)),
+        ]);
       }
-
-      logUazChat('info', {
-        ...baseLog,
-        event_type: 'webhook_configure_audit',
-        phase: 'webhook_configure_audit',
-        saved_secret_length: effectiveSecret.length,
-        webhook_url_has_secret: finalResolvedUrl.includes('secret='),
-        webhook_url_secret_length: urlSecretLen,
-        saved_secret_fp: webhookSecretFingerprint(effectiveSecret),
-        lengths_match: urlSecretLen > 0 && urlSecretLen === effectiveSecret.length,
-        provider_webhook_configured: true,
-        uaz_delivery_secret_count: uazDeliverySecrets.length,
-        detail: 'auditoria pós-configuração (sem secret em claro)',
-      });
     } catch (syncErr: any) {
       console.warn('[Auto-Webhook] getWebhook após configurar falhou (uazDeliverySecrets não sincronizados)', {
         instanceId: instance.id,
@@ -10351,6 +10423,23 @@ function pickAuthoritativeSecretFromUazWebhookRemote(
   return undefined;
 }
 
+/** Secret na query da URL registada no provedor cuja instanceId coincide com a nossa linha (fonte de verdade na Uaz). */
+function extractCanonicalWebhookUrlSecretForInstance(remote: unknown, instanceId: string): string | undefined {
+  const urls = collectHttpUrlsFromRemote(remote);
+  for (const urlStr of urls) {
+    try {
+      const u = new URL(urlStr);
+      const id = u.searchParams.get('instanceId') ?? u.searchParams.get('instance_id');
+      if (id !== instanceId) continue;
+      const n = normalizeIncomingWebhookSecret(u.searchParams.get('secret'));
+      if (n && isSecretStrongEnough(n)) return n;
+    } catch {
+      /* */
+    }
+  }
+  return undefined;
+}
+
 function dedupeNormalizedSecrets(secrets: (string | undefined)[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -10392,35 +10481,47 @@ function extractInstanceIdCandidate(req: Request, payload: Record<string, any>):
 }
 
 function extractProviderInstanceIdCandidates(payload: Record<string, any>): string[] {
-  const out: string[] = [];
+  const detailed = extractProviderInstanceIdCandidatesWithSources(payload);
+  return detailed.map((d) => d.value);
+}
+
+function extractProviderInstanceIdCandidatesWithSources(
+  payload: Record<string, any>,
+): { source: string; value: string }[] {
+  const out: { source: string; value: string }[] = [];
   const seen = new Set<string>();
-  const push = (v: unknown) => {
+  const push = (src: string, v: unknown) => {
     if (typeof v !== 'string') return;
     const t = v.trim();
     if (!t || seen.has(t)) return;
     seen.add(t);
-    out.push(t);
+    out.push({ source: src, value: t });
   };
-  push(payload.instance);
-  push(payload.instanceName);
-  push(payload.instance_name);
-  push(payload.instanceKey);
-  push(payload.externalInstanceName);
-  push(payload.data?.instance);
-  push(payload.data?.instanceName);
-  push(payload.data?.instance_name);
-  push(payload.data?.instanceKey);
-  push(payload.data?.externalInstanceName);
-  push(payload.instance?.name);
-  push(payload.instance?.instanceName);
-  push(payload.instance?.instance_name);
-  push(payload.data?.instance?.name);
-  push(payload.data?.instance?.instanceName);
-  push(payload.data?.instance?.instance_name);
-  push(payload.instance_id);
-  push(payload.data?.instance_id);
-  push(payload.instanceId);
-  push(payload.data?.instanceId);
+  push('instance', payload.instance);
+  push('instanceName', payload.instanceName);
+  push('instance_name', payload.instance_name);
+  push('instanceKey', payload.instanceKey);
+  push('key', payload.key);
+  push('externalInstanceName', payload.externalInstanceName);
+  push('data.instance', payload.data?.instance);
+  push('data.instanceName', payload.data?.instanceName);
+  push('data.instance_name', payload.data?.instance_name);
+  push('data.instanceKey', payload.data?.instanceKey);
+  push('data.key', payload.data?.key);
+  push('data.externalInstanceName', payload.data?.externalInstanceName);
+  push('instance.name', payload.instance?.name);
+  push('instance.instanceName', payload.instance?.instanceName);
+  push('instance.instance_name', payload.instance?.instance_name);
+  push('data.instance.name', payload.data?.instance?.name);
+  push('data.instance.instanceName', payload.data?.instance?.instanceName);
+  push('data.instance.instance_name', payload.data?.instance?.instance_name);
+  push('instance_id', payload.instance_id);
+  push('data.instance_id', payload.data?.instance_id);
+  push('instanceId', payload.instanceId);
+  push('data.instanceId', payload.data?.instanceId);
+  push('meta.instance', payload.meta?.instance);
+  push('connection.instance', payload.connection?.instance);
+  push('connection.instanceName', payload.connection?.instanceName);
   return out;
 }
 
@@ -10482,24 +10583,38 @@ function webhookSecretsEqual(a: string, b: string): boolean {
 }
 
 /**
- * Extrai o identificador de instância no payload/header/query (mesma regra que o restante do handler).
+ * Nome/label de instância no payload Uaz (prioridade: header → query → campos mais específicos do body).
+ * Evita usar só o primeiro candidato da lista (ordem variável podia favorecer label antigo/stale).
  */
 function extractUazWebhookInstanceExternalKey(payload: Record<string, any>, req: Request): string | null {
-    const providerCandidates = extractProviderInstanceIdCandidates(payload);
-    const rawInstanceId =
-      providerCandidates[0] ||
-      req.query.instance ||
-      req.query.instanceName ||
-      req.query.instance_name ||
-      req.headers['x-uazapi-instance'];
-    const instanceName = typeof rawInstanceId === 'string'
-        ? rawInstanceId
-        : Array.isArray(rawInstanceId) && typeof rawInstanceId[0] === 'string'
-          ? rawInstanceId[0]
-          : null;
-  if (!instanceName || typeof instanceName !== 'string') return null;
-  const externalKey = instanceName.trim();
-  return externalKey || null;
+  const hdr = req.headers['x-uazapi-instance'];
+  if (typeof hdr === 'string' && hdr.trim()) return hdr.trim();
+
+  const qInst =
+    (typeof req.query?.instance === 'string' && req.query.instance.trim()) ||
+    (typeof req.query?.instanceName === 'string' && req.query.instanceName.trim()) ||
+    (typeof req.query?.instance_name === 'string' && req.query.instance_name.trim());
+  if (qInst) return qInst;
+
+  const priority: unknown[] = [
+    payload.data?.instanceName,
+    payload.data?.instance_name,
+    payload.instanceName,
+    payload.instance_name,
+    typeof payload.instance === 'string' ? payload.instance : undefined,
+    payload.data?.instance,
+    payload.key,
+    payload.data?.key,
+  ];
+  for (const p of priority) {
+    if (typeof p === 'string' && p.trim()) return p.trim();
+  }
+
+  const rest = extractProviderInstanceIdCandidates(payload);
+  for (const r of rest) {
+    if (r.trim()) return r.trim();
+  }
+  return null;
 }
 
 /**
@@ -10588,7 +10703,7 @@ function extractWebhookDeliverySecretsFromUazRemote(remote: unknown): string[] {
     }
   };
   const walk = (node: unknown, depth: number) => {
-    if (depth > 8 || node == null) return;
+    if (depth > 14 || node == null) return;
     if (Array.isArray(node)) {
       for (const x of node) walk(x, depth + 1);
       return;
@@ -10699,6 +10814,289 @@ function isUazWebhookTrustedProviderIp(req: Request): boolean {
   return allowed.some((a) => ip === a || ip.endsWith(a));
 }
 
+function truncateWebhookDebugLabel(s: string, max = 36): string {
+  const t = String(s).trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, max)}…`;
+}
+
+function instanceTokenFingerprintForLogs(token: string | null | undefined): string | null {
+  const t = typeof token === 'string' ? token.trim() : '';
+  if (!t) return null;
+  const tail = t.length <= 4 ? '****' : `***${t.slice(-4)}`;
+  const fp = createHash('sha256').update(t, 'utf8').digest('hex').slice(0, 10);
+  return `${tail}|sha256:${fp}`;
+}
+
+function evaluateInstanceWebhookSecretMatch(
+  instance: ChatInstanceRow,
+  secretCandidates: string[],
+  configuredSecrets: string[],
+  legacyEnvEnabled: boolean,
+): {
+  matchedSource:
+    | 'instance_column'
+    | 'metadata'
+    | 'metadata_delivery'
+    | 'instance_token'
+    | 'legacy_env'
+    | 'none';
+  secretValid: boolean;
+} {
+  const instanceColumnSecret = normalizeIncomingWebhookSecret((instance as any).webhook_secret);
+  const metadataSecret = extractMetadataWebhookSecret(instance.metadata);
+  const metadataDeliverySecrets = collectMetadataWebhookSecretCandidates(instance.metadata);
+  const instanceTokenVariants = instance.instance_token ? instanceTokenSecretVariants(instance.instance_token) : [];
+
+  const secretMatchesInstanceColumn =
+    !!instanceColumnSecret && secretCandidates.some((c) => webhookSecretsEqual(c, instanceColumnSecret));
+  const secretMatchesMetadata =
+    !!metadataSecret && secretCandidates.some((c) => webhookSecretsEqual(c, metadataSecret));
+  const secretMatchesMetadataDelivery =
+    metadataDeliverySecrets.length > 0 &&
+    secretCandidatesMatchAnyVariantCaseRelaxed(secretCandidates, metadataDeliverySecrets);
+  const secretMatchesInstanceToken =
+    instanceTokenVariants.length > 0 &&
+    secretCandidatesMatchAnyVariantCaseRelaxed(secretCandidates, instanceTokenVariants);
+  const secretMatchesLegacyEnv =
+    legacyEnvEnabled &&
+    configuredSecrets.length > 0 &&
+    secretCandidates.some((c) => configuredSecrets.some((cfg) => webhookSecretsEqual(c, cfg)));
+
+  let matchedSource:
+    | 'instance_column'
+    | 'metadata'
+    | 'metadata_delivery'
+    | 'instance_token'
+    | 'legacy_env'
+    | 'none' = 'none';
+  if (secretMatchesInstanceColumn) matchedSource = 'instance_column';
+  else if (secretMatchesMetadata) matchedSource = 'metadata';
+  else if (secretMatchesMetadataDelivery) matchedSource = 'metadata_delivery';
+  else if (secretMatchesInstanceToken) matchedSource = 'instance_token';
+  else if (secretMatchesLegacyEnv) matchedSource = 'legacy_env';
+
+  return { matchedSource, secretValid: matchedSource !== 'none' };
+}
+
+async function tryReconcileWebhookSecretFromProviderOnReceive(
+  instance: ChatInstanceRow,
+  tenantIdForLog: string | null,
+  secretCandidates: string[],
+): Promise<boolean> {
+  const token = instance.instance_token?.trim();
+  if (!token || !secretCandidates.length) return false;
+
+  logUazChat('info', {
+    event_type: 'webhook_secret_reconcile_on_receive_attempt',
+    instance_id: instance.id,
+    tenant_id: tenantIdForLog,
+    external_instance_name: instance.external_instance_name,
+    candidate_secret_lengths: secretCandidates.map((c) => c.length),
+    token_fp: instanceTokenFingerprintForLogs(instance.instance_token),
+  });
+
+  try {
+    const remote = await uazapiService.getWebhook(token);
+    const fromUrls = extractWebhookSecretParamsFromUrls(collectHttpUrlsFromRemote(remote));
+    const fromWalk = extractWebhookDeliverySecretsFromUazRemote(remote);
+    const canonical = extractCanonicalWebhookUrlSecretForInstance(remote, instance.id);
+    const providerSet = dedupeNormalizedSecrets(
+      [canonical, ...fromUrls, ...fromWalk].filter(Boolean) as string[],
+    );
+
+    for (const cand of secretCandidates) {
+      const n = normalizeIncomingWebhookSecret(cand);
+      if (!n) continue;
+      const ok = providerSet.some((p) => webhookSecretsEqual(n, p));
+      if (ok) {
+        await pool.query(
+          `UPDATE chat_instances
+           SET webhook_secret = $1,
+               metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+               updated_at = now()
+           WHERE id = $3`,
+          [
+            n,
+            JSON.stringify({
+              webhook_secret: n,
+              webhook: {
+                uazDeliverySecrets: providerSet,
+                uazDeliverySecretsSyncedAt: new Date().toISOString(),
+                reconcileOnReceiveAt: new Date().toISOString(),
+              },
+            }),
+            instance.id,
+          ]
+        );
+        logUazChat('info', {
+          event_type: 'webhook_secret_reconcile_on_receive_success',
+          instance_id: instance.id,
+          tenant_id: tenantIdForLog,
+          saved_secret_length: n.length,
+          saved_fp: webhookSecretFingerprint(n),
+          detail: 'candidate confirmado via GET /webhook do mesmo instance_token',
+        });
+        return true;
+      }
+    }
+
+    logUazChat('warn', {
+      event_type: 'webhook_secret_reconcile_on_receive_failed',
+      instance_id: instance.id,
+      tenant_id: tenantIdForLog,
+      detail: 'nenhum candidate coincide com secrets devolvidos pelo GET /webhook',
+    });
+    return false;
+  } catch (e: any) {
+    logUazChat('warn', {
+      event_type: 'webhook_secret_reconcile_on_receive_failed',
+      instance_id: instance.id,
+      tenant_id: tenantIdForLog,
+      detail: e?.message || String(e),
+    });
+    return false;
+  }
+}
+
+async function mergeWebhookSecretsFromProviderSkipPath(instance: ChatInstanceRow, tenantId: string | null): Promise<void> {
+  try {
+    const remote = await uazapiService.getWebhook(instance.instance_token);
+    const colRaw = normalizeIncomingWebhookSecret((instance as any).webhook_secret) ?? '';
+    logSanitizedUazGetWebhookAudit(
+      {
+        event_type: 'webhook_get_snapshot_audit',
+        tenant_id: tenantId,
+        user_id: instance.user_id,
+        instance_id: instance.id,
+        external_instance_name: instance.external_instance_name,
+      },
+      remote,
+      instance.id,
+      instance.external_instance_name,
+      colRaw,
+    );
+    const canonical = extractCanonicalWebhookUrlSecretForInstance(remote, instance.id);
+    const col = normalizeIncomingWebhookSecret((instance as any).webhook_secret);
+    if (canonical && col && !webhookSecretsEqual(canonical, col)) {
+      await pool.query(
+        `UPDATE chat_instances
+         SET webhook_secret = $1,
+             metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+             updated_at = now()
+         WHERE id = $3`,
+        [canonical, JSON.stringify({ webhook_secret: canonical }), instance.id]
+      );
+      logUazChat('info', {
+        event_type: 'webhook_skip_path_secret_corrected',
+        tenant_id: tenantId,
+        instance_id: instance.id,
+        detail: 'canonical URL secret diferente da coluna — corrigido em already_configured',
+      });
+    }
+
+    const merged = dedupeNormalizedSecrets([
+      ...(canonical ? [canonical] : []),
+      ...(col ? [col] : []),
+      ...extractWebhookDeliverySecretsFromUazRemote(remote),
+      ...extractWebhookSecretParamsFromUrls(collectHttpUrlsFromRemote(remote)),
+    ]);
+
+    await pool.query(
+      `UPDATE chat_instances
+       SET metadata = jsonb_set(
+         COALESCE(metadata, '{}'::jsonb),
+         '{webhook}',
+         COALESCE(metadata->'webhook', '{}'::jsonb) || $1::jsonb
+       ),
+       updated_at = now()
+       WHERE id = $2`,
+      [
+        JSON.stringify({
+          uazDeliverySecrets: merged,
+          uazDeliverySecretsSyncedAt: new Date().toISOString(),
+          skipPathVerifiedAt: new Date().toISOString(),
+        }),
+        instance.id,
+      ]
+    );
+
+    logUazChat('info', {
+      event_type: 'webhook_provider_snapshot_skip_path',
+      tenant_id: tenantId,
+      instance_id: instance.id,
+      external_instance_name: instance.external_instance_name,
+      detail: 'already_configured: snapshot GET /webhook aplicado',
+    });
+  } catch {
+    /* não bloquear fluxo already_configured */
+  }
+}
+
+function logSanitizedUazGetWebhookAudit(
+  fields: UazChatLogFields,
+  remote: unknown,
+  instanceId: string,
+  externalName: string | null | undefined,
+  effectiveSecret: string,
+): void {
+  const urls = collectHttpUrlsFromRemote(remote);
+  const samples = urls.slice(0, 8).map((u) => {
+    try {
+      const x = new URL(u);
+      const host = x.host;
+      const path = truncateWebhookDebugLabel(x.pathname, 48);
+      const iid = x.searchParams.get('instanceId') ?? x.searchParams.get('instance_id');
+      const sec = x.searchParams.get('secret');
+      const secLen = sec?.length ?? 0;
+      const secFp = webhookSecretFingerprint(sec);
+      const hay = `${host}${path}${u}`;
+      const ext = externalName ? String(externalName) : '';
+      const mentionsExternal =
+        ext.length > 0 && hay.toLowerCase().includes(ext.toLowerCase().slice(0, Math.min(12, ext.length)));
+      return {
+        host,
+        path_hint: path,
+        instance_id_in_url: iid === instanceId,
+        secret_length: secLen,
+        secret_fp: secFp,
+        url_mentions_saved_external: Boolean(mentionsExternal),
+      };
+    } catch {
+      return { raw_trunc: truncateWebhookDebugLabel(u, 80) };
+    }
+  });
+
+  let lengthsMatchHint: boolean | null = null;
+  try {
+    const matchUrl = urls.find((urlStr) => {
+      try {
+        const x = new URL(urlStr);
+        return (x.searchParams.get('instanceId') ?? x.searchParams.get('instance_id')) === instanceId;
+      } catch {
+        return false;
+      }
+    });
+    if (matchUrl) {
+      const secLen = new URL(matchUrl).searchParams.get('secret')?.length ?? 0;
+      lengthsMatchHint = secLen > 0 && secLen === effectiveSecret.trim().length;
+    }
+  } catch {
+    lengthsMatchHint = null;
+  }
+
+  logUazChat('info', {
+    ...fields,
+    event_type: 'webhook_get_snapshot_audit',
+    phase: 'webhook_get_snapshot_audit',
+    urls_found: urls.length,
+    url_audit_samples: samples,
+    saved_secret_length: effectiveSecret.trim().length,
+    saved_fp: webhookSecretFingerprint(effectiveSecret),
+    lengths_match_hint: lengthsMatchHint,
+  });
+}
+
 /**
  * Handler principal para webhooks da UazAPI
  * Responde rapidamente e processa eventos de forma assíncrona
@@ -10792,7 +11190,66 @@ export async function handleWebhook(req: Request, res: Response) {
       res.status(409).json({ error: 'Ambiguous instance resolution' });
       return;
     }
-    const instance = instanceRows[0];
+    let instance = instanceRows[0];
+    const tenantIdForLog = await resolveTenantIdForUser(instance.user_id);
+
+    if (isUazWebhookPayloadDebugEnabled()) {
+      const detailed = extractProviderInstanceIdCandidatesWithSources(payload);
+      logUazChat('info', {
+        event_type: 'webhook_payload_debug',
+        webhook_id: webhookId,
+        tenant_id: tenantIdForLog,
+        resolution_reason: resolutionReason,
+        query_instance_id: requestedInstanceId ?? null,
+        external_key_early: externalKeyEarly ? truncateWebhookDebugLabel(externalKeyEarly, 48) : null,
+        provider_candidates: detailed.slice(0, 14).map((d) => ({
+          source: d.source,
+          value: truncateWebhookDebugLabel(d.value, 44),
+        })),
+        secret_candidate_lengths: secretCandidates.map((c) => c.length),
+        secret_candidate_fps: secretCandidates.map((c) => webhookSecretFingerprint(c)),
+        query_secret_length: normalizeIncomingWebhookSecret(req.query?.secret)?.length ?? 0,
+        query_secret_fp: webhookSecretFingerprint(normalizeIncomingWebhookSecret(req.query?.secret)),
+        payload_event: truncateWebhookDebugLabel(String(payload.event ?? payload.type ?? payload.action ?? ''), 48),
+        resolved_local_instance_id: instance.id,
+        resolved_external_saved: instance.external_instance_name,
+        token_fp: instanceTokenFingerprintForLogs(instance.instance_token),
+      });
+    }
+
+    if (
+      requestedInstanceId &&
+      externalKeyEarly &&
+      instance.external_instance_name &&
+      externalKeyEarly.trim().toLowerCase() !== String(instance.external_instance_name).trim().toLowerCase()
+    ) {
+      logUazChat('warn', {
+        event_type: 'webhook_provider_label_differs_from_db',
+        webhook_id: webhookId,
+        instance_id: instance.id,
+        tenant_id: tenantIdForLog,
+        payload_label: truncateWebhookDebugLabel(externalKeyEarly, 48),
+        db_external_instance_name: instance.external_instance_name,
+        detail: 'Resolução por instanceId na query; label textual do payload pode ser stale/outra instância no provedor.',
+      });
+    }
+
+    let ev = evaluateInstanceWebhookSecretMatch(instance, secretCandidates, configuredSecrets, legacyEnvEnabled);
+    if (!ev.secretValid && secretCandidates.length > 0) {
+      const healed = await tryReconcileWebhookSecretFromProviderOnReceive(instance, tenantIdForLog, secretCandidates);
+      if (healed) {
+        const refetch = await pool.query<ChatInstanceRow>('SELECT * FROM chat_instances WHERE id = $1 LIMIT 1', [
+          instance.id,
+        ]);
+        if (refetch.rows[0]) {
+          instance = refetch.rows[0];
+          ev = evaluateInstanceWebhookSecretMatch(instance, secretCandidates, configuredSecrets, legacyEnvEnabled);
+        }
+      }
+    }
+
+    const matchedSource = ev.matchedSource;
+    const secretValid = ev.secretValid;
 
     const instanceColumnSecret = normalizeIncomingWebhookSecret((instance as any).webhook_secret);
     const metadataSecret = extractMetadataWebhookSecret(instance.metadata);
@@ -10808,37 +11265,7 @@ export async function handleWebhook(req: Request, res: Response) {
       ...configuredSecrets.map((s) => s.length),
     ];
 
-    const secretMatchesInstanceColumn =
-      !!instanceColumnSecret && secretCandidates.some((c) => webhookSecretsEqual(c, instanceColumnSecret));
-    const secretMatchesMetadata =
-      !!metadataSecret && secretCandidates.some((c) => webhookSecretsEqual(c, metadataSecret));
-    const secretMatchesMetadataDelivery =
-      metadataDeliverySecrets.length > 0 &&
-      secretCandidatesMatchAnyVariantCaseRelaxed(secretCandidates, metadataDeliverySecrets);
-    const secretMatchesInstanceToken =
-      instanceTokenVariants.length > 0 &&
-      secretCandidatesMatchAnyVariantCaseRelaxed(secretCandidates, instanceTokenVariants);
-    const secretMatchesLegacyEnv =
-      legacyEnvEnabled &&
-      configuredSecrets.length > 0 &&
-      secretCandidates.some((c) => configuredSecrets.some((cfg) => webhookSecretsEqual(c, cfg)));
-
-    let matchedSource:
-      | 'instance_column'
-      | 'metadata'
-      | 'metadata_delivery'
-      | 'instance_token'
-      | 'legacy_env'
-      | 'none' = 'none';
-    if (secretMatchesInstanceColumn) matchedSource = 'instance_column';
-    else if (secretMatchesMetadata) matchedSource = 'metadata';
-    else if (secretMatchesMetadataDelivery) matchedSource = 'metadata_delivery';
-    else if (secretMatchesInstanceToken) matchedSource = 'instance_token';
-    else if (secretMatchesLegacyEnv) matchedSource = 'legacy_env';
-
-    const secretValid = matchedSource !== 'none';
     if (!secretValid || secretCandidates.length === 0) {
-      const tenantIdForLog = await resolveTenantIdForUser(instance.user_id);
       console.warn(`[Webhook ${webhookId}] production_webhook_secret_rejected`, {
         webhookId,
         hasInstanceId: Boolean(requestedInstanceId),
