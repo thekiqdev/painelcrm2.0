@@ -16,6 +16,9 @@ import {
   getConversationProfile,
   getClientMessages,
   sendMessage,
+  prepareLeadConversation,
+  resolveConversationForClient,
+  patchPreparedConversationInstance,
   configureInstanceWebhook,
   getInstanceWebhook,
   forceConfigureWebhook,
@@ -27,6 +30,7 @@ import {
   markConversationRead,
   linkConversation,
   unlinkConversation,
+  systemDeleteConversation,
   getCrmWhatsappIdentity,
   getChatTenantUsersForGroupInvite,
   postChatCreateGroupFromConversation,
@@ -82,6 +86,12 @@ import {
   postChatConversationCreateMeetNow,
   postChatConversationScheduleAppointment,
 } from '../controllers/chatAppointmentsController.js';
+import {
+  getConversationScheduledMessages,
+  patchChatScheduledMessage,
+  postChatScheduledMessageCancel,
+  postConversationScheduledMessages,
+} from '../controllers/chatScheduledMessagesController.js';
 import { getChatAvatarProxy } from '../controllers/chatAvatarProxyController.js';
 import {
   deleteCrmNote,
@@ -150,6 +160,9 @@ router.get('/queues', getChatQueues);
 router.post('/queues', postChatQueue);
 router.patch('/queues/:id', patchChatQueue);
 router.get('/conversations', getConversations);
+router.post('/conversations/prepare', prepareLeadConversation);
+router.post('/conversations/resolve-for-client', resolveConversationForClient);
+router.patch('/conversations/:id/prepared-instance', patchPreparedConversationInstance);
 router.post('/conversations/:id/attend', attendConversation);
 router.post('/conversations/:id/transfer', transferConversation);
 router.patch('/conversations/:id/assign', patchConversationAssign);
@@ -182,6 +195,7 @@ router.post('/conversations/:id/group/create-from-conversation', postChatCreateG
 router.get('/conversations/:id/profile', getConversationProfile);
 router.post('/conversations/:id/link', linkConversation);
 router.delete('/conversations/:id/link', unlinkConversation);
+router.delete('/conversations/:id/system-delete', systemDeleteConversation);
 router.get('/conversations/:id/kanban-tags', getConversationKanbanTags);
 router.post('/conversations/:id/kanban-tags', postConversationKanbanTag);
 router.delete('/conversations/:id/kanban-tags/:tagId', deleteConversationKanbanTag);
@@ -208,6 +222,10 @@ router.post(
   requireFeature('agenda'),
   postChatConversationScheduleAppointment,
 );
+router.post('/conversations/:id/scheduled-messages', postConversationScheduledMessages);
+router.get('/conversations/:id/scheduled-messages', getConversationScheduledMessages);
+router.post('/scheduled-messages/:id/cancel', postChatScheduledMessageCancel);
+router.patch('/scheduled-messages/:id', patchChatScheduledMessage);
 
 export default router;
 

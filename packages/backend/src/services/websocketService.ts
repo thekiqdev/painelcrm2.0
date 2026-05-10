@@ -299,6 +299,22 @@ export function emitConversationUpdatedToTenant(tenantId: string, payload: { id:
   io.to(`tenant:${tenantId}`).emit('conversation_updated', payload);
 }
 
+export function emitConversationDeletedToTenant(
+  tenantId: string,
+  payload: { id: string; conversation_id: string; external_chat_id?: string | null }
+): void {
+  if (!io) return;
+  const body = {
+    v: 1 as const,
+    type: 'conversation_deleted' as const,
+    conversation_id: payload.conversation_id,
+    id: payload.id,
+    external_chat_id: payload.external_chat_id ?? null,
+    ts: new Date().toISOString(),
+  };
+  io.to(`tenant:${tenantId}`).emit('conversation_deleted', body);
+}
+
 export function emitConversationUpdate(userId: string, conversation: any): void {
   if (!io) {
     console.warn('[WebSocket] Cannot emit conversation update: WebSocket server not initialized');

@@ -258,6 +258,12 @@ export const chatKanbanService = {
     return res.data as ChatKanbanBoardCard;
   },
 
+  /** Remove o cartão do quadro (a conversa permanece; só some desta coluna). */
+  async deleteCard(cardId: string): Promise<void> {
+    const res = await apiClient.delete(`${BASE}/cards/${cardId}`);
+    if (res.error) throw new Error(res.error);
+  },
+
   /**
    * Cria cartão no quadro ou move o existente (uma conversa por board).
    * Erros com `code` KANBAN_MOVE_* devem ser tratados na UI (motivo / confirmação).

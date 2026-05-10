@@ -32,6 +32,8 @@ type Props = {
   cardIds: string[];
   cardMap: Map<string, ChatKanbanBoardCard>;
   onCardClick: (card: ChatKanbanBoardCard) => void;
+  /** Remove só o cartão desta coluna (API delete do kanban card). */
+  onRemoveCard?: (card: ChatKanbanBoardCard) => void;
   onAddCard: () => void;
   onConfigureColumn: (column: ChatKanbanColumn) => void;
   /** Drop nativo de conversa (chat / flutuante) → coluna. */
@@ -45,6 +47,7 @@ export function ChatKanbanBoardColumn({
   cardIds,
   cardMap,
   onCardClick,
+  onRemoveCard,
   onAddCard,
   onConfigureColumn,
   nativeDrop,
@@ -212,6 +215,7 @@ export function ChatKanbanBoardColumn({
                       card={c}
                       columnMetadata={column.metadata}
                       onCardClick={onCardClick}
+                      onRemoveCard={onRemoveCard}
                       pulseUnreadHighlight={pulseUnreadHighlight}
                     />
                   );

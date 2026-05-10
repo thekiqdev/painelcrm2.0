@@ -8,11 +8,13 @@ import { parseStickyNotesFromStored, stickyNotesToStoredJson } from "@/utils/sti
 interface LeadStickyNotesTabProps {
   notesRaw: string | null | undefined;
   onSaveNotesJson: (notesJson: string) => void | Promise<void>;
+  canEditNotes?: boolean;
 }
 
 const LeadStickyNotesTab: React.FC<LeadStickyNotesTabProps> = ({
   notesRaw,
   onSaveNotesJson,
+  canEditNotes = true,
 }) => {
   const [notes, setNotes] = useState<StickyNoteData[]>(() => parseStickyNotesFromStored(notesRaw));
 
@@ -53,34 +55,44 @@ const LeadStickyNotesTab: React.FC<LeadStickyNotesTabProps> = ({
 
   return (
     <TabsContent value="notes">
-      <div className="space-y-4">
-        <div className="flex justify-between items-center">
-          <h3 className="text-lg font-medium">Notas autoadesivas</h3>
-          <Button onClick={handleAddNote} size="sm" type="button">
+      <div className="space-y-3 md:space-y-4">
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-base font-semibold tracking-tight md:text-lg md:font-medium">Notas autoadesivas</h3>
+          {canEditNotes ? (
+          <Button onClick={handleAddNote} size="sm" type="button" className="h-8 shrink-0 text-xs md:h-9 md:text-sm">
             <Plus className="mr-2 h-4 w-4" />
             Nova nota
           </Button>
+          ) : null}
         </div>
-        <div className="relative min-h-[320px] max-h-[min(480px,55vh)] overflow-y-auto p-4 bg-muted/40 rounded-lg border border-border/60">
+        <div className="relative max-h-[min(480px,55vh)] min-h-[260px] overflow-y-auto rounded-xl border border-border/55 bg-muted/35 p-3 md:min-h-[320px] md:rounded-lg md:bg-muted/40 md:p-4">
           {notes.length > 0 ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {notes.map((note) => (
-                <StickyNote
-                  key={note.id}
-                  note={note}
-                  onUpdate={handleUpdateNote}
-                  onDelete={handleDeleteNote}
-                  onColorChange={handleColorChange}
-                />
+                canEditNotes ? (
+                  <StickyNote
+                    key={note.id}
+                    note={note}
+                    onUpdate={handleUpdateNote}
+                    onDelete={handleDeleteNote}
+                    onColorChange={handleColorChange}
+                  />
+                ) : (
+                  <div key={note.id} className={`${note.color || "bg-yellow-200"} rounded-lg border p-4 text-sm text-zinc-950 [color-scheme:light]`}>
+                    <p className="whitespace-pre-wrap break-words">{note.content || "Nota vazia"}</p>
+                  </div>
+                )
               ))}
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center min-h-[240px] text-center">
               <p className="text-muted-foreground mb-4">Nenhuma nota cadastrada</p>
+              {canEditNotes ? (
               <Button onClick={handleAddNote} variant="outline" type="button">
                 <Plus className="mr-2 h-4 w-4" />
                 Criar primeira nota
               </Button>
+              ) : null}
             </div>
           )}
         </div>

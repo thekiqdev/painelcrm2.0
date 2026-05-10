@@ -1,4 +1,5 @@
 import { apiClient } from '@/integrations/api/client';
+import { normalizeClientFinancialSummary } from '@/utils/clientFinancialSummary';
 import { recordClientTimelineEvent } from './clientTimeline';
 
 export interface Client {
@@ -28,6 +29,23 @@ export interface ClientGroup {
   clientCount?: number;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface ClientFinancialSummary {
+  invoices_count: number;
+  open_amount_cents: number;
+  paid_amount_cents: number;
+  overdue_amount_cents: number;
+  average_ticket_cents: number | null;
+  last_invoice_amount_cents: number | null;
+  last_invoice_status: string | null;
+  /** Propostas aceitas ou faturadas (CRM). */
+  proposals_accepted_count: number;
+  proposals_accepted_amount_cents: number;
+  /** Propostas em rascunho ou enviadas (ainda não aceitas). */
+  proposals_pending_count: number;
+  proposals_pending_amount_cents: number;
+  currency: string;
 }
 
 export interface ClientTask {
@@ -128,6 +146,36 @@ export class ClientsService {
     const response = await apiClient.get<Client>(`/api/clients/${id}`);
     if (response.error) throw new Error(response.error);
     return response.data || null;
+  }
+
+  async getClientFinancialSummary(clientId: string): Promise<ClientFinancialSummary> {
+    const response = await apiClient.get<ClientFinancialSummary>(
+      `/api/clients/${encodeURIComponent(clientId)}/financial-summary`,
+    );
+
+    if (!response.error && response.data != null) {
+      return normalizeClientFinancialSummary(response.data);
+    }
+
+    const status =
+      response.details && typeof response.details === 'object' && response.details !== null && 'status' in response.details
+        ? Number((response.details as { status?: unknown }).status)
+        : NaN;
+
+    /** Sem permissão ou cliente não encontrado: não propagar como falha da query — UI usa valores zerados. */
+    if (status === 404 || status === 403 || status === 401) {
+      return normalizeClientFinancialSummary(null);
+    }
+
+    if (!response.error && response.data == null) {
+      return normalizeClientFinancialSummary(null);
+    }
+
+    if (response.error) {
+      throw new Error(response.error);
+    }
+
+    return normalizeClientFinancialSummary(null);
   }
 
   async getClientTimeline(clientId: string, params?: { limit?: number; offset?: number }): Promise<ClientTimelineEvent[]> {

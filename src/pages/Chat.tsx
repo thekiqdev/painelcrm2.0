@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState, useRef } from 'react';
 import { useNavigate, useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { useQueryClient, useQuery } from '@tanstack/react-query';
-import { addMinutes, format, parse } from 'date-fns';
+import { addMinutes, format, parse, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from '@/components/ui/sonner';
 import {
@@ -15,7 +15,6 @@ import {
   FileText,
   Users,
   CalendarIcon,
-  Image as ImageIcon,
   LayoutTemplate,
   UserCheck,
   XCircle,
@@ -29,6 +28,16 @@ import {
   Copy,
   X,
   StickyNote,
+  Receipt,
+  Repeat,
+  FileSignature,
+  ListTodo,
+  Tag,
+  UserCircle,
+  Link2,
+  Ticket,
+  Clock,
+  Paperclip,
 } from 'lucide-react';
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -48,7 +57,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -120,6 +128,7 @@ import { DEFAULT_CHAT_TAG_COLOR, normalizeHexColor } from '@/lib/chatKanbanTagSt
 import { ChatKanbanTagBadge } from '@/components/chat/ChatKanbanTagBadge';
 import { ChatKanbanTagQuickPicker } from '@/components/chat/ChatKanbanTagQuickPicker';
 import { patchConversationKanbanTagsEverywhere } from '@/features/floating-chat/conversationKanbanTagsCache';
+import { REALTIME_WINDOW_EVENTS } from '@/services/realtimeClient';
 import { io, Socket } from 'socket.io-client';
 import { apiClient } from '@/integrations/api/client';
 import ProposalCreateForm, {
@@ -151,6 +160,7 @@ import { MobileCommerceScreenLayout } from '@/components/mobile/MobileCommerceSc
 import { resolveConversationIdentity } from '@/utils/chatIdentityDisplay';
 import { CrmIdentityListRow } from '@/components/crm/CrmIdentityListRow';
 import {
+  buildClientFinanceHubFromChat,
   buildClientProfileStateFromChat,
   buildClientProfileToFromChat,
   resolveRestoreConversationId,
@@ -176,6 +186,21 @@ import {
 import { emitChatNavUnreadRefresh } from '@/lib/chatNavUnreadEvents';
 import { ChatBubbleContent } from '@/components/chat/ChatBubbleContent';
 import { MessageStatusIndicator } from '@/components/chat/MessageStatusIndicator';
+import {
+  ChatComposerQuickActionsPanel,
+  type ChatComposerQuickActionSection,
+} from '@/components/chat/ChatComposerQuickActionsPanel';
+import { ChatComposerDropZone } from '@/components/chat/ChatComposerDropZone';
+import {
+  ChatScheduledMessagesStrip,
+  chatScheduledMessagesQueryKey,
+} from '@/components/chat/ChatScheduledMessagesStrip';
+import { ScheduleChatMessageDialog } from '@/components/chat/ScheduleChatMessageDialog';
+import {
+  classifyChatOutgoingFile,
+  inferDocumentMimeForSend,
+  validateChatOutgoingFileSize,
+} from '@/utils/chatComposerOutgoingFile';
 import { useChatOutboundQueue } from '@/hooks/useChatOutboundQueue';
 import { getMyTenantUsers, type TenantUser } from '@/services/tenantLimits';
 import { teamsService, type Team } from '@/services/teams';
@@ -565,6 +590,8 @@ const Chat = () => {
   const [schedDuration, setSchedDuration] = useState(60);
   const [schedCreateMeet, setSchedCreateMeet] = useState(true);
   const [schedNote, setSchedNote] = useState('');
+  const [schedTitle, setSchedTitle] = useState('');
+  const [scheduleChatDlgOpen, setScheduleChatDlgOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'leads' | 'clients'>('all');
   /** Etapa 5 — inbox partilhada por defeito quando há tenant (evita lista vazia com escopo “equipa”). */
   const [chatInboxScope, setChatInboxScope] = useState<'owner' | 'tenant'>('tenant');
@@ -618,6 +645,7 @@ const Chat = () => {
   const [transferSubmitting, setTransferSubmitting] = useState(false);
   const [contactProfileOpen, setContactProfileOpen] = useState(false);
   const [createGroupDialogOpen, setCreateGroupDialogOpen] = useState(false);
+  const [invoiceBillingPreset, setInvoiceBillingPreset] = useState<'one_off' | 'subscription'>('one_off');
   const contactProfileOpenRef = useRef(contactProfileOpen);
   useEffect(() => {
     contactProfileOpenRef.current = contactProfileOpen;
@@ -659,8 +687,7 @@ const Chat = () => {
   const messagesScrollContainerRef = useRef<HTMLDivElement>(null);
   /** Mobile: última rota `chat_conversations` da URL (`/chat/:id`) para detectar volta lista → não reabrir por query stale. */
   const mobileChatRouteConversationPrevRef = useRef<string | null>(null);
-  const imageFileInputRef = useRef<HTMLInputElement>(null);
-  const documentFileInputRef = useRef<HTMLInputElement>(null);
+  const attachComboInputRef = useRef<HTMLInputElement>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
   const socketRef = useRef<Socket | null>(null);
   // Refs para evitar closure stale nos handlers do Socket.IO
@@ -1105,6 +1132,24 @@ const Chat = () => {
         instance_id: conversation.instance_id,
       };
       navigate(buildClientProfileToFromChat(clientId, keys), {
+        state: buildClientProfileStateFromChat(keys),
+      });
+    },
+    [navigate, commercial],
+  );
+
+  const goToClientFinanceFromChat = useCallback(
+    (clientId: string, conversation: ChatConversation) => {
+      if (!commercial.canViewClientNav) {
+        toast.error(commercial.permDenied);
+        return;
+      }
+      const keys = {
+        id: conversation.id,
+        external_chat_id: conversation.external_chat_id,
+        instance_id: conversation.instance_id,
+      };
+      navigate(buildClientFinanceHubFromChat(clientId, keys), {
         state: buildClientProfileStateFromChat(keys),
       });
     },
@@ -1650,6 +1695,31 @@ const Chat = () => {
       scheduleOperationsPanelRefresh();
     };
 
+    const handleConversationDeleted = (payload: any) => {
+      const cid =
+        typeof payload?.conversation_id === 'string'
+          ? payload.conversation_id
+          : typeof payload?.id === 'string'
+          ? payload.id
+          : null;
+      if (!cid) return;
+      setConversations((prev) => prev.filter((conversation) => conversation.id !== cid));
+      if (selectedConversationIdRef.current === cid) {
+        setSelectedConversationId(null);
+        setMessages([]);
+        setContactProfileOpen(false);
+        setCurrentClient(null);
+        setCurrentLead(null);
+        if (isMobile) {
+          navigate('/chat', { replace: true });
+        }
+      }
+      void queryClient.invalidateQueries({ queryKey: ['floating-chat'] });
+      void queryClient.invalidateQueries({ queryKey: ['chat-conversations'] });
+      emitChatNavUnreadRefresh();
+      scheduleOperationsPanelRefresh();
+    };
+
     if (preferRealtimeV2) {
       socket.on('conversation.updated', (evt: any) => {
         if (!evt || typeof evt !== 'object') return;
@@ -1692,10 +1762,12 @@ const Chat = () => {
           'v2',
         );
       });
+      socket.on('conversation.deleted', handleConversationDeleted);
     }
 
     if (!preferRealtimeV2 || enableLegacyFallback) {
       socket.on('conversation_updated', (raw: any) => handleConversationUpdated(raw, 'legacy'));
+      socket.on('conversation_deleted', handleConversationDeleted);
       socket.on('new_message', (payload: { message: any; conversationId: string }) =>
         handleNewMessage(payload, 'legacy'),
       );
@@ -2507,10 +2579,6 @@ const Chat = () => {
       editable: false,
     });
 
-    const tagLabels: string[] = [];
-    if (currentClient?.funnel_stage) tagLabels.push(String(currentClient.funnel_stage));
-    if (currentClient?.client_groups?.name) tagLabels.push(currentClient.client_groups.name);
-
     const adminBypass = user.is_tenant_admin === true;
     const canTransferProfile =
       hasPermissionKey('chat.transfer_attendance') &&
@@ -2518,6 +2586,11 @@ const Chat = () => {
       attendanceIsInProgress(conv.attendance_status) &&
       !!conv.assigned_to_user_id &&
       (conv.assigned_to_user_id === user.id || adminBypass);
+    const clientSinceLabel =
+      kind === 'client' && currentClient?.created_at
+        ? format(parseISO(currentClient.created_at), "d 'de' MMM 'de' yyyy", { locale: ptBR })
+        : null;
+
     return {
       displayName,
       phoneDisplay,
@@ -2528,9 +2601,10 @@ const Chat = () => {
       assigneeDisplay,
       teamName,
       profileFields,
-      tagLabels,
       selectedClientGroupId: currentClient?.group_id ?? null,
       canTransferProfile,
+      crmClientId: conv.client_id ?? null,
+      clientSinceLabel,
     };
   }, [
     selectedConversation,
@@ -3118,11 +3192,14 @@ const Chat = () => {
     }
   };
 
-  const handleImageFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file || !selectedConversationId) return;
-    if (!file.type.startsWith('image/')) {
+  const sendChatImageFile = async (file: File) => {
+    if (!selectedConversationId) return;
+    const sizeOk = validateChatOutgoingFileSize(file);
+    if (!sizeOk.ok) {
+      toast.error(sizeOk.message);
+      return;
+    }
+    if (classifyChatOutgoingFile(file) !== 'image') {
       toast.error('Selecione um arquivo de imagem');
       return;
     }
@@ -3138,13 +3215,6 @@ const Chat = () => {
       });
       const comma = dataUrl.indexOf(',');
       const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
-      console.log('[Chat] Enviando imagem', {
-        fileName: file.name,
-        mimeType: file.type,
-        sizeBytes: file.size,
-        base64Length: base64.length,
-        hasCaption: Boolean(caption),
-      });
       await chatService.sendImageMessage(selectedConversationId, {
         fileBase64: base64,
         mimeType: file.type || 'image/jpeg',
@@ -3167,13 +3237,15 @@ const Chat = () => {
     }
   };
 
-  const handleDocumentFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file || !selectedConversationId) return;
-    const mime = (file.type || '').toLowerCase();
-    if (mime !== 'application/pdf') {
-      toast.error('Selecione um documento PDF');
+  const sendChatDocumentFile = async (file: File) => {
+    if (!selectedConversationId) return;
+    const sizeOk = validateChatOutgoingFileSize(file);
+    if (!sizeOk.ok) {
+      toast.error(sizeOk.message);
+      return;
+    }
+    if (classifyChatOutgoingFile(file) !== 'document') {
+      toast.error('Tipo de documento não suportado');
       return;
     }
     const caption = newMessage.trim();
@@ -3188,9 +3260,10 @@ const Chat = () => {
       });
       const comma = dataUrl.indexOf(',');
       const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+      const mimeType = inferDocumentMimeForSend(file);
       await chatService.sendDocumentMessage(selectedConversationId, {
         fileBase64: base64,
-        mimeType: 'application/pdf',
+        mimeType,
         fileName: file.name,
         caption: caption || undefined,
       });
@@ -3209,6 +3282,16 @@ const Chat = () => {
     } finally {
       setSendingMessage(false);
     }
+  };
+
+  const handleAttachComboChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !selectedConversationId) return;
+    const kind = classifyChatOutgoingFile(file);
+    if (kind === 'image') await sendChatImageFile(file);
+    else if (kind === 'document') await sendChatDocumentFile(file);
+    else toast.error('Tipo de arquivo não suportado para envio pelo WhatsApp.');
   };
 
   const handleSyncConversations = async () => {
@@ -3364,6 +3447,47 @@ const Chat = () => {
       toast.error('Não foi possível remover o vínculo', {
         description: error instanceof Error ? error.message : undefined,
       });
+    }
+  };
+
+  const handleSystemDeleteConversation = async () => {
+    if (!selectedConversation) return;
+    const conversationId = selectedConversation.id;
+    try {
+      await chatService.systemDeleteConversation(conversationId);
+      setConversations((prev) => prev.filter((conversation) => conversation.id !== conversationId));
+      setSelectedConversationId(null);
+      setMessages([]);
+      setContactProfileOpen(false);
+      setCurrentClient(null);
+      setCurrentLead(null);
+      window.dispatchEvent(
+        new CustomEvent(REALTIME_WINDOW_EVENTS.conversationDeleted, {
+          detail: {
+            id: conversationId,
+            conversation_id: conversationId,
+            external_chat_id: selectedConversation.external_chat_id,
+          },
+        }),
+      );
+      void queryClient.invalidateQueries({ queryKey: ['floating-chat'] });
+      void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'conversations'] });
+      void queryClient.invalidateQueries({ queryKey: ['chat-conversations'] });
+      void queryClient.invalidateQueries({ queryKey: ['lead-conversations'] });
+      void queryClient.invalidateQueries({ queryKey: ['client-conversations'] });
+      void queryClient.invalidateQueries({ queryKey: ['clients'] });
+      void queryClient.invalidateQueries({ queryKey: ['leads'] });
+      emitChatNavUnreadRefresh();
+      toast.success('Conversa removida do sistema.');
+      if (isMobile) {
+        navigate('/chat', { replace: true });
+      }
+    } catch (error) {
+      console.error('Erro ao deletar conversa do sistema:', error);
+      toast.error('Não foi possível deletar a conversa', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+      throw error;
     }
   };
 
@@ -3706,23 +3830,6 @@ const Chat = () => {
     });
   };
 
-  const handleChatOpenAgendaComposer = useCallback(() => {
-    if (!selectedConversation) return;
-    if (!selectedConversation.client_id && !selectedConversation.leadId) {
-      toast.error('Vincule um cliente a esta conversa para agendar um compromisso.');
-      return;
-    }
-    const label = selectedIdentity?.displayName?.trim() || 'cliente';
-    const title = encodeURIComponent(`Atendimento com ${label}`);
-    if (selectedConversation.client_id) {
-      navigate(`/agenda?new=1&client_id=${selectedConversation.client_id}&title=${title}`);
-      return;
-    }
-    if (selectedConversation.leadId) {
-      navigate(`/agenda?new=1&lead_id=${selectedConversation.leadId}&title=${title}`);
-    }
-  }, [navigate, selectedConversation, selectedIdentity?.displayName]);
-
   const handleChatMeetNowConfirmed = useCallback(async () => {
     if (!selectedConversationId) return;
     setMeetNowConfirmOpen(false);
@@ -3753,13 +3860,20 @@ const Chat = () => {
       toast.error('Vincule um cliente a esta conversa para agendar um compromisso.');
       return;
     }
+    const label = selectedIdentity?.displayName?.trim() || 'cliente';
     setSchedDay(new Date());
     setSchedTime('10:00');
     setSchedDuration(60);
     setSchedCreateMeet(true);
     setSchedNote('');
+    setSchedTitle(`Atendimento com ${label}`);
     setScheduleLaterOpen(true);
-  }, [selectedConversation]);
+  }, [selectedConversation, selectedIdentity?.displayName]);
+
+  /** Mesmo fluxo que «Reunião depois», sem navegar para /agenda (CRM contextual no chat). */
+  const handleChatOpenAgendaComposer = useCallback(() => {
+    handleChatOpenScheduleLater();
+  }, [handleChatOpenScheduleLater]);
 
   const handleChatScheduleLaterSubmit = useCallback(async () => {
     if (!selectedConversationId || !selectedConversation) return;
@@ -3774,7 +3888,7 @@ const Chat = () => {
     setScheduleLaterBusy(true);
     try {
       const r = await chatService.scheduleAppointmentFromChat(selectedConversationId, {
-        title: `Atendimento com ${label}`,
+        title: schedTitle.trim() || `Atendimento com ${label}`,
         starts_at: startLocal.toISOString(),
         ends_at: endLocal.toISOString(),
         type: 'meeting',
@@ -3806,6 +3920,7 @@ const Chat = () => {
     schedDuration,
     schedCreateMeet,
     schedNote,
+    schedTitle,
     selectedIdentity?.displayName,
     loadMessages,
   ]);
@@ -3905,16 +4020,23 @@ const Chat = () => {
     }
   };
 
-  const handleCreateInvoice = () => {
-    if (!selectedConversation?.client_id) return;
-    if (!commercial.canCreateInvoiceFromChatFull) {
-      toast.error(commercial.permDenied);
-      return;
-    }
-    setViewMode('invoice-create');
-  };
+  const openInvoiceFlow = useCallback(
+    (preset: 'one_off' | 'subscription') => {
+      if (!selectedConversation?.client_id) return;
+      if (!commercial.canCreateInvoiceFromChatFull) {
+        toast.error(commercial.permDenied);
+        return;
+      }
+      setInvoiceBillingPreset(preset);
+      setViewMode('invoice-create');
+    },
+    [selectedConversation?.client_id, commercial],
+  );
+
+  const handleCreateInvoice = useCallback(() => openInvoiceFlow('one_off'), [openInvoiceFlow]);
 
   const handleBackFromInvoiceCreate = () => {
+    setInvoiceBillingPreset('one_off');
     setViewMode('conversation');
   };
 
@@ -4158,6 +4280,337 @@ const Chat = () => {
       });
     }
   }, [user?.id, user?.tenant_id]);
+
+  const composerQuickActionSections = useMemo((): ChatComposerQuickActionSection[] => {
+    const conv = selectedConversation;
+    const crmLinked = Boolean(conv?.client_id || conv?.leadId);
+    const isGroup =
+      conv?.conversation_type === 'group' || Boolean(conv?.external_chat_id?.endsWith('@g.us'));
+    const canTransferThisConv =
+      Boolean(
+        hasPermissionKey('chat.transfer_attendance') &&
+          user?.tenant_id &&
+          conv &&
+          attendanceIsInProgress(conv.attendance_status) &&
+          conv.assigned_to_user_id &&
+          (conv.assigned_to_user_id === user.id || user?.is_tenant_admin === true),
+      );
+    const showTags =
+      !isGroup && hasPermissionKey('chat.manage_tags');
+    const agendaDisabled = sendingMessage || meetNowSubmitting || !selectedConversationId;
+    const meetLaterDisabled = sendingMessage || scheduleLaterBusy || !selectedConversationId;
+
+    const messages: ChatComposerQuickActionSection['items'] = [
+      ...(isMobile
+        ? [
+            {
+              id: 'attach-file',
+              label: 'Anexar arquivo',
+              description: 'Imagem ou documento',
+              icon: Paperclip,
+              onSelect: () => attachComboInputRef.current?.click(),
+              disabled: sendingMessage || !selectedConversationId,
+              disabledReason: !selectedConversationId
+                ? 'Selecione uma conversa'
+                : sendingMessage
+                  ? 'Aguarde o envio da mensagem'
+                  : undefined,
+              searchAliases: ['anexo', 'arquivo', 'pdf', 'foto'],
+            },
+          ]
+        : []),
+      ...(hasPermissionKey('chat.send_message')
+        ? [
+            {
+              id: 'schedule-message',
+              label: 'Agendar mensagem',
+              description: 'Envio automático futuro',
+              icon: Clock,
+              onSelect: () => setScheduleChatDlgOpen(true),
+              disabled: sendingMessage || !selectedConversationId,
+              disabledReason: !selectedConversationId
+                ? 'Selecione uma conversa'
+                : sendingMessage
+                  ? 'Aguarde o envio da mensagem'
+                  : undefined,
+              searchAliases: ['agendar texto', 'programar', 'lembrar'],
+            },
+          ]
+        : []),
+      {
+        id: 'template',
+        label: 'Usar template',
+        description: 'Modelos WhatsApp aprovados',
+        icon: LayoutTemplate,
+        onSelect: () => setWhatsappModelPickerOpen(true),
+        disabled: sendingMessage || !selectedConversationId,
+        disabledReason: !selectedConversationId
+          ? 'Selecione uma conversa'
+          : sendingMessage
+            ? 'Aguarde o envio da mensagem'
+            : undefined,
+        searchAliases: ['modelo', 'whatsapp', 'hsm'],
+      },
+    ];
+
+    const financeiro: ChatComposerQuickActionSection['items'] = [];
+    if (!isGroup && conv?.client_id && canCreateInvoicesInChat) {
+      financeiro.push(
+        {
+          id: 'invoice-one',
+          label: 'Criar fatura',
+          description: 'Cobrança avulsa',
+          icon: Receipt,
+          onSelect: () => openInvoiceFlow('one_off'),
+          searchAliases: ['fatura', 'billing', 'pagamento', 'cobrança'],
+        },
+        {
+          id: 'invoice-sub',
+          label: 'Cobrança recorrente',
+          description: 'Assinatura com renovações',
+          icon: Repeat,
+          onSelect: () => openInvoiceFlow('subscription'),
+          searchAliases: ['assinatura', 'subscription', 'mensal', 'recorrente'],
+        },
+      );
+    }
+    if (!isGroup && (conv?.client_id || conv?.leadId) && canCreateProposalsInChat) {
+      financeiro.push({
+        id: 'proposal',
+        label: 'Proposta',
+        description: 'Orçamento comercial',
+        icon: FileText,
+        onSelect: () => handleCreateProposal(),
+        searchAliases: ['orçamento', 'proposta comercial', 'quote'],
+      });
+    }
+    if (!isGroup && (conv?.client_id || conv?.leadId) && canCreateContractsInChat) {
+      financeiro.push({
+        id: 'contract',
+        label: 'Contrato',
+        description: 'Formalize acordos',
+        icon: FileSignature,
+        onSelect: () => handleCreateContract(),
+        disabled: !(conv?.client_id || conv?.leadId) || !(currentClient || currentLead),
+        disabledReason: !(currentClient || currentLead) ? 'Carregue o vínculo CRM' : undefined,
+        searchAliases: ['contratos', 'assinatura digital'],
+      });
+    }
+
+    const atendimento: ChatComposerQuickActionSection['items'] = [];
+    if (canCreateAgendaInChat && crmLinked) {
+      atendimento.push(
+        {
+          id: 'agenda',
+          label: 'Agendar compromisso',
+          description: 'Sem sair da conversa',
+          icon: CalendarIcon,
+          onSelect: () => handleChatOpenAgendaComposer(),
+          disabled: agendaDisabled,
+          disabledReason: agendaDisabled ? 'Aguarde ou selecione conversa' : undefined,
+          searchAliases: ['calendário', 'compromisso', 'agenda'],
+        },
+        {
+          id: 'meet-now',
+          label: 'Reunião agora',
+          description: 'Google Meet e link no chat',
+          icon: Video,
+          onSelect: () => {
+            if (!conv?.client_id && !conv?.leadId) {
+              toast.error('Vincule um cliente a esta conversa para agendar um compromisso.');
+              return;
+            }
+            setMeetNowConfirmOpen(true);
+          },
+          disabled: agendaDisabled,
+          disabledReason: agendaDisabled ? 'Aguarde ou selecione conversa' : undefined,
+          searchAliases: ['meet', 'google meet', 'videochamada', 'agora'],
+        },
+        {
+          id: 'meet-later',
+          label: 'Reunião depois',
+          description: 'Escolher data e hora',
+          icon: CalendarIcon,
+          onSelect: () => handleChatOpenScheduleLater(),
+          disabled: meetLaterDisabled,
+          disabledReason: meetLaterDisabled ? 'Aguarde ou selecione conversa' : undefined,
+          searchAliases: ['agendar', 'depois', 'marcar'],
+        },
+      );
+    }
+    atendimento.push({
+      id: 'task',
+      label: 'Criar tarefa',
+      description: 'Seguimento interno',
+      icon: ListTodo,
+      onSelect: () => handleCreateTask(),
+      searchAliases: ['tarefa', 'todo', 'follow-up'],
+    });
+    if (showCreateGroupSectionInProfile && conv) {
+      atendimento.push({
+        id: 'wa-group',
+        label: 'Grupo WhatsApp',
+        description: 'Criar com este contacto',
+        icon: Users,
+        onSelect: () => setCreateGroupDialogOpen(true),
+        disabled: createGroupWithClientDisabled,
+        disabledReason: createGroupWithClientDisabled ? createGroupWithClientDisabledHint ?? undefined : undefined,
+      });
+    }
+    if (isGroup && crmAllowGroupManage) {
+      atendimento.push({
+        id: 'group-manage',
+        label: 'Gerenciar grupo',
+        description: 'Definições do grupo',
+        icon: Users,
+        onSelect: () => {
+          setContactProfileOpen(true);
+        },
+      });
+    }
+
+    const crm: ChatComposerQuickActionSection['items'] = [];
+
+    if (!isGroup && conv?.client_id && commercial.canViewClientNav) {
+      crm.push({
+        id: 'open-client',
+        label: 'Abrir cliente',
+        description: 'Ficha completa no CRM',
+        icon: UserCircle,
+        onSelect: () => {
+          if (!currentClient?.id || !conv) return;
+          goToClientProfileFromChat(currentClient.id, conv);
+        },
+        disabled: !currentClient?.id,
+        disabledReason: !currentClient?.id ? 'A carregar dados do cliente…' : undefined,
+        searchAliases: ['crm', 'perfil', 'ficha', 'cliente'],
+      });
+    }
+    if (!isGroup && crmLinked && showTags) {
+      crm.push({
+        id: 'tags',
+        label: 'Tags Kanban',
+        description: 'Organizar no quadro',
+        icon: Tag,
+        onSelect: () => setContactProfileOpen(true),
+      });
+    }
+    if (!isGroup && crmLinked) {
+      crm.push({
+        id: 'note',
+        label: 'Anotação',
+        description: 'Registar no CRM',
+        icon: StickyNote,
+        onSelect: () => {
+          setNewCrmNoteText('');
+          setNewCrmNoteOpen(true);
+        },
+      });
+    }
+    if (!isGroup && !crmLinked) {
+      crm.push({
+        id: 'link-crm',
+        label: 'Vincular ao CRM',
+        description: conv?.link_state === 'review_required' ? 'Escolher vínculo' : 'Cliente ou lead',
+        icon: Link2,
+        onSelect: () => openLinkDialog(),
+      });
+    }
+    if (!isGroup && conv?.leadId && !conv?.client_id && commercial.canConvertLeadToClient) {
+      crm.push({
+        id: 'convert-lead',
+        label: 'Converter para cliente',
+        description: 'Promover o lead',
+        icon: UserCheck,
+        onSelect: () => void handleConvertToClient(),
+      });
+    }
+    if (!isGroup && !conv?.client_id && !conv?.leadId && commercial.canCreateClientFromChat) {
+      crm.push({
+        id: 'create-client',
+        label: 'Criar cliente',
+        description: 'Novo registo e vínculo',
+        icon: UserCircle,
+        onSelect: () => void handleCreateClientFromConversation(),
+      });
+    }
+
+    if (!isGroup && !conv?.client_id && !conv?.leadId && commercial.canCreateLeadFromChat) {
+      crm.push({
+        id: 'create-lead',
+        label: 'Criar lead',
+        description: 'Qualificar contacto',
+        icon: UserCircle,
+        onSelect: () => void handleAddLead(),
+      });
+    }
+
+    if (canTransferThisConv) {
+      crm.push({
+        id: 'transfer',
+        label: 'Transferir',
+        description: 'Operador ou equipa',
+        icon: ArrowRightLeft,
+        onSelect: () => void openTransferDialog(),
+      });
+    }
+    crm.push({
+      id: 'sync',
+      label: 'Sincronizar',
+      description: 'Atualizar mensagens',
+      icon: RefreshCw,
+      onSelect: () => void handleSyncConversation(),
+    });
+    crm.push({
+      id: 'ticket',
+      label: 'Ticket',
+      description: 'Pedido de suporte',
+      icon: Ticket,
+      onSelect: () => handleOpenTicket(),
+    });
+
+    const sections: ChatComposerQuickActionSection[] = [
+      { id: 'mensagens', title: 'Mensagens', items: messages },
+    ];
+    if (financeiro.length) sections.push({ id: 'financeiro', title: 'Financeiro', items: financeiro });
+    if (atendimento.length) sections.push({ id: 'atendimento', title: 'Atendimento', items: atendimento });
+    if (crm.length) sections.push({ id: 'crm', title: 'CRM', items: crm });
+    return sections;
+  }, [
+    commercial,
+    selectedConversation,
+    selectedConversationId,
+    sendingMessage,
+    meetNowSubmitting,
+    scheduleLaterBusy,
+    isMobile,
+    canCreateAgendaInChat,
+    canCreateInvoicesInChat,
+    canCreateProposalsInChat,
+    canCreateContractsInChat,
+    crmAllowGroupManage,
+    hasPermissionKey,
+    user,
+    currentClient,
+    currentLead,
+    showCreateGroupSectionInProfile,
+    createGroupWithClientDisabled,
+    createGroupWithClientDisabledHint,
+    openInvoiceFlow,
+    handleCreateProposal,
+    handleCreateContract,
+    handleCreateTask,
+    handleChatOpenAgendaComposer,
+    handleChatOpenScheduleLater,
+    handleConvertToClient,
+    handleAddLead,
+    handleCreateClientFromConversation,
+    openTransferDialog,
+    handleSyncConversation,
+    handleOpenTicket,
+    goToClientProfileFromChat,
+    openLinkDialog,
+  ]);
 
   const handleConfirmTransfer = useCallback(async () => {
     if (!selectedConversationId) return;
@@ -4863,7 +5316,9 @@ const Chat = () => {
                           </div>
                           ) : null}
                           <CustomerInvoiceNew
+                            key={`inv-${invoiceBillingPreset}`}
                             embedded
+                            embeddedBillingPreset={invoiceBillingPreset}
                             initialClientId={selectedConversation.client_id ?? null}
                             onBack={handleBackFromInvoiceCreate}
                             onCreated={(invoiceId) => {
@@ -5291,6 +5746,12 @@ const Chat = () => {
                         </div>
                       </CardHeader>
                       <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
+                        <ChatComposerDropZone
+                          disabled={!selectedConversationId || !canChatReply() || isMobile}
+                          className="flex min-h-0 flex-1 flex-col"
+                          onSendImageFile={(f) => void sendChatImageFile(f)}
+                          onSendDocumentFile={(f) => void sendChatDocumentFile(f)}
+                        >
                         <div
                           ref={messagesScrollContainerRef}
                           className={cn(
@@ -5586,121 +6047,25 @@ const Chat = () => {
                           ) : null}
                           {canChatReply() ? (
                           <div className="flex w-full min-w-0 max-w-full items-end gap-2 md:items-center">
-                            <input
-                              ref={imageFileInputRef}
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              onChange={handleImageFileChange}
+                            {isMobile ? (
+                              <input
+                                ref={attachComboInputRef}
+                                type="file"
+                                accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip,.rar,.ppt,.pptx"
+                                className="hidden"
+                                onChange={handleAttachComboChange}
+                              />
+                            ) : null}
+                            <ChatComposerQuickActionsPanel
+                              sections={composerQuickActionSections}
+                              sendBlocked={sendingMessage}
+                              triggerLabel="Ações rápidas"
+                              headerTitle="Ações rápidas"
+                              density={isMobile ? 'compact' : 'default'}
+                              contentClassName={cn(isMobile ? 'z-[220]' : 'z-[80]')}
+                              side="top"
+                              align="start"
                             />
-                            <input
-                              ref={documentFileInputRef}
-                              type="file"
-                              accept="application/pdf"
-                              className="hidden"
-                              onChange={handleDocumentFileChange}
-                            />
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="icon"
-                            disabled={sendingMessage}
-                                  className="pointer-events-auto h-9 w-9 shrink-0 md:h-9 md:w-9"
-                                  title="Ações rápidas"
-                                  aria-label="Ações rápidas"
-                                >
-                                  <Plus className="h-4 w-4 md:h-3.5 md:w-3.5" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent
-                                side="top"
-                                align="start"
-                                className="z-[80] w-56"
-                              >
-                                <DropdownMenuItem
-                                  disabled={sendingMessage}
-                                  onSelect={(ev) => {
-                                    ev.preventDefault();
-                                    imageFileInputRef.current?.click();
-                                  }}
-                                >
-                                  <ImageIcon className="mr-2 h-4 w-4" />
-                                  Enviar imagem
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  disabled={sendingMessage}
-                                  onSelect={(ev) => {
-                                    ev.preventDefault();
-                                    documentFileInputRef.current?.click();
-                                  }}
-                                >
-                                  <FileText className="mr-2 h-4 w-4" />
-                                  Enviar documento
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  disabled={sendingMessage || !selectedConversationId}
-                                  onSelect={(ev) => {
-                                    ev.preventDefault();
-                                    setWhatsappModelPickerOpen(true);
-                                  }}
-                                >
-                                  <LayoutTemplate className="mr-2 h-4 w-4" />
-                                  Usar template
-                                </DropdownMenuItem>
-                                {canCreateAgendaInChat ? (
-                                  <>
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem
-                                      disabled={
-                                        sendingMessage || meetNowSubmitting || !selectedConversationId
-                                      }
-                                      onSelect={(ev) => {
-                                        ev.preventDefault();
-                                        handleChatOpenAgendaComposer();
-                                      }}
-                                    >
-                                      <CalendarIcon className="mr-2 h-4 w-4" />
-                                      Agendar compromisso
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                      disabled={
-                                        sendingMessage || meetNowSubmitting || !selectedConversationId
-                                      }
-                                      onSelect={(ev) => {
-                                        ev.preventDefault();
-                                        if (
-                                          !selectedConversation?.client_id &&
-                                          !selectedConversation?.leadId
-                                        ) {
-                                          toast.error(
-                                            'Vincule um cliente a esta conversa para agendar um compromisso.',
-                                          );
-                                          return;
-                                        }
-                                        setMeetNowConfirmOpen(true);
-                                      }}
-                                    >
-                                      <Video className="mr-2 h-4 w-4" />
-                                      Criar reunião para agora
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                      disabled={
-                                        sendingMessage || scheduleLaterBusy || !selectedConversationId
-                                      }
-                                      onSelect={(ev) => {
-                                        ev.preventDefault();
-                                        handleChatOpenScheduleLater();
-                                      }}
-                                    >
-                                      <CalendarIcon className="mr-2 h-4 w-4" />
-                                      Criar reunião para depois
-                                    </DropdownMenuItem>
-                                  </>
-                                ) : null}
-                              </DropdownMenuContent>
-                            </DropdownMenu>
                             <Textarea
                               ref={composerTextareaRef}
                               rows={1}
@@ -5738,6 +6103,7 @@ const Chat = () => {
                             </p>
                           )}
                           </form>
+                        </ChatComposerDropZone>
                       </CardContent>
                         </>
                       )}
@@ -5788,6 +6154,11 @@ const Chat = () => {
                           onAfterLeave={handleAfterGroupLeave}
                           onGroupConversationSynced={handleGroupConversationSynced}
                           crmAllowManage={crmAllowGroupManage}
+                          scheduledMessagesSection={
+                            hasPermissionKey('chat.send_message') ? (
+                              <ChatScheduledMessagesStrip conversationId={selectedConversation.id} />
+                            ) : undefined
+                          }
                         />
                       ) : contactProfileOpen && chatContactProfileModel ? (
                         <ChatContactProfilePanel
@@ -5804,6 +6175,11 @@ const Chat = () => {
                               goToClientProfileFromChat(currentClient.id, selectedConversation);
                             }
                           }}
+                          onOpenClientFinance={
+                            currentClient?.id && selectedConversation && commercial.canViewClientNav
+                              ? () => goToClientFinanceFromChat(currentClient.id, selectedConversation)
+                              : undefined
+                          }
                           disableAddLead={!commercial.canCreateLeadFromChat}
                           addLeadDisabledReason={commercial.permDenied}
                           displayName={chatContactProfileModel.displayName}
@@ -5812,13 +6188,14 @@ const Chat = () => {
                           avatarUrl={chatContactProfileModel.avatarUrl}
                           initials={chatContactProfileModel.initials}
                           kind={chatContactProfileModel.kind}
+                          crmClientId={chatContactProfileModel.crmClientId}
+                          clientSinceLabel={chatContactProfileModel.clientSinceLabel}
                           assigneeDisplay={chatContactProfileModel.assigneeDisplay}
                           teamName={chatContactProfileModel.teamName}
                           profileFields={chatContactProfileModel.profileFields}
                           canEditProfileFields={canEditChatProfileFields}
                           profileSavingKey={profileFieldSaving}
                           onSaveProfileField={canEditChatProfileFields ? handleSaveChatProfileField : undefined}
-                          tagLabels={chatContactProfileModel.tagLabels}
                           conversationKanbanTags={conversationKanbanTags}
                           conversationKanbanTagsLoading={conversationKanbanTagsLoading}
                           tenantKanbanTagOptions={tenantKanbanTagsCatalog}
@@ -5864,6 +6241,7 @@ const Chat = () => {
                             void handleAddLead();
                           }}
                           onUnlink={() => setUnlinkConfirmOpen(true)}
+                          onSystemDelete={handleSystemDeleteConversation}
                           showConvertLead={Boolean(
                             selectedConversation.leadId &&
                               !selectedConversation.client_id &&
@@ -5871,6 +6249,10 @@ const Chat = () => {
                           )}
                           showLinkActions={!selectedConversation.client_id && !selectedConversation.leadId}
                           showUnlink={Boolean(selectedConversation.client_id || selectedConversation.leadId)}
+                          showSystemDelete={
+                            !modulePermLoading &&
+                            (hasPermissionKey('chat.delete') || hasPermissionKey('chat.manage_queues'))
+                          }
                           linkConversationLabel={
                             selectedConversation.link_state === 'review_required'
                               ? 'Escolher vínculo'
@@ -5888,6 +6270,11 @@ const Chat = () => {
                           createGroupWithClientDisabled={createGroupWithClientDisabled}
                           createGroupWithClientDisabledHint={createGroupWithClientDisabledHint}
                           onOpenCreateGroupWithClient={() => setCreateGroupDialogOpen(true)}
+                          scheduledMessagesSection={
+                            selectedConversationId && hasPermissionKey('chat.send_message') ? (
+                              <ChatScheduledMessagesStrip conversationId={selectedConversationId} />
+                            ) : undefined
+                          }
                         />
                       ) : null}
                     </div>
@@ -5947,15 +6334,37 @@ const Chat = () => {
         </AlertDialogContent>
       </AlertDialog>
 
+      <ScheduleChatMessageDialog
+        open={scheduleChatDlgOpen}
+        onOpenChange={setScheduleChatDlgOpen}
+        conversationId={selectedConversationId}
+        onSuccess={() => {
+          void queryClient.invalidateQueries({
+            queryKey: chatScheduledMessagesQueryKey(selectedConversationId),
+          });
+        }}
+      />
+
       <Dialog open={scheduleLaterOpen} onOpenChange={setScheduleLaterOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Reunião para depois</DialogTitle>
+            <DialogTitle>Agendar compromisso</DialogTitle>
             <DialogDescription>
-              Cliente ou lead já vinculado à conversa. Confirme data, horário e se deseja Google Meet.
+              Cliente ou lead já vinculado à conversa. Defina o título, data e horário; opcionalmente crie evento no
+              Google com Meet e envie confirmação no chat.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 py-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="chat-sched-title">Título</Label>
+              <Input
+                id="chat-sched-title"
+                value={schedTitle}
+                onChange={(e) => setSchedTitle(e.target.value)}
+                placeholder="Ex.: Atendimento com Maria Silva"
+                autoComplete="off"
+              />
+            </div>
             <div className="space-y-1.5">
               <Label>Data</Label>
               <Popover>
@@ -6042,6 +6451,11 @@ const Chat = () => {
           onAfterLeave={handleAfterGroupLeave}
           onGroupConversationSynced={handleGroupConversationSynced}
           crmAllowManage={crmAllowGroupManage}
+          scheduledMessagesSection={
+            hasPermissionKey('chat.send_message') ? (
+              <ChatScheduledMessagesStrip conversationId={selectedConversation.id} />
+            ) : undefined
+          }
         />
       ) : null}
       {selectedConversation && user && chatContactProfileModel && isMobile && !selectedIsGroupChat ? (
@@ -6057,6 +6471,11 @@ const Chat = () => {
               goToClientProfileFromChat(currentClient.id, selectedConversation);
             }
           }}
+          onOpenClientFinance={
+            currentClient?.id && selectedConversation && commercial.canViewClientNav
+              ? () => goToClientFinanceFromChat(currentClient.id, selectedConversation)
+              : undefined
+          }
           disableAddLead={!commercial.canCreateLeadFromChat}
           addLeadDisabledReason={commercial.permDenied}
           displayName={chatContactProfileModel.displayName}
@@ -6065,13 +6484,14 @@ const Chat = () => {
           avatarUrl={chatContactProfileModel.avatarUrl}
           initials={chatContactProfileModel.initials}
           kind={chatContactProfileModel.kind}
+          crmClientId={chatContactProfileModel.crmClientId}
+          clientSinceLabel={chatContactProfileModel.clientSinceLabel}
           assigneeDisplay={chatContactProfileModel.assigneeDisplay}
           teamName={chatContactProfileModel.teamName}
           profileFields={chatContactProfileModel.profileFields}
           canEditProfileFields={canEditChatProfileFields}
           profileSavingKey={profileFieldSaving}
           onSaveProfileField={canEditChatProfileFields ? handleSaveChatProfileField : undefined}
-          tagLabels={chatContactProfileModel.tagLabels}
           conversationKanbanTags={conversationKanbanTags}
           conversationKanbanTagsLoading={conversationKanbanTagsLoading}
           tenantKanbanTagOptions={tenantKanbanTagsCatalog}
@@ -6111,6 +6531,7 @@ const Chat = () => {
             void handleAddLead();
           }}
           onUnlink={() => setUnlinkConfirmOpen(true)}
+          onSystemDelete={handleSystemDeleteConversation}
           showConvertLead={Boolean(
             selectedConversation.leadId &&
               !selectedConversation.client_id &&
@@ -6118,6 +6539,10 @@ const Chat = () => {
           )}
           showLinkActions={!selectedConversation.client_id && !selectedConversation.leadId}
           showUnlink={Boolean(selectedConversation.client_id || selectedConversation.leadId)}
+          showSystemDelete={
+            !modulePermLoading &&
+            (hasPermissionKey('chat.delete') || hasPermissionKey('chat.manage_queues'))
+          }
           linkConversationLabel={
             selectedConversation.link_state === 'review_required'
               ? 'Escolher vínculo'
@@ -6135,6 +6560,11 @@ const Chat = () => {
           createGroupWithClientDisabled={createGroupWithClientDisabled}
           createGroupWithClientDisabledHint={createGroupWithClientDisabledHint}
           onOpenCreateGroupWithClient={() => setCreateGroupDialogOpen(true)}
+          scheduledMessagesSection={
+            selectedConversationId && hasPermissionKey('chat.send_message') ? (
+              <ChatScheduledMessagesStrip conversationId={selectedConversationId} />
+            ) : undefined
+          }
         />
       ) : null}
 

@@ -14,18 +14,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -41,10 +33,7 @@ import {
   chatKanbanService,
   type ChatKanbanBoardVisibilityMode,
 } from '@/services/chatKanban';
-import { fetchFunnels } from '@/services/funnels';
 import { getMyTenantUsers, type TenantUser } from '@/services/tenantLimits';
-
-type FunnelOption = { id: string; name: string };
 type TeamRow = { id: string; name: string };
 
 type Props = {
@@ -62,8 +51,6 @@ export function ChatKanbanBoardSettingsSheet({ open, onOpenChange, boardId, onSa
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [isActive, setIsActive] = useState(true);
-  const [funnelId, setFunnelId] = useState<string>('none');
-  const [funnels, setFunnels] = useState<FunnelOption[]>([]);
   const [visibilityMode, setVisibilityMode] = useState<ChatKanbanBoardVisibilityMode>('tenant_all');
   const [userIds, setUserIds] = useState<Set<string>>(() => new Set());
   const [teamIds, setTeamIds] = useState<Set<string>>(() => new Set());
@@ -76,9 +63,8 @@ export function ChatKanbanBoardSettingsSheet({ open, onOpenChange, boardId, onSa
     if (!boardId) return;
     setLoading(true);
     try {
-      const [settings, funnelsRes, users, teamsRes] = await Promise.all([
+      const [settings, users, teamsRes] = await Promise.all([
         chatKanbanService.getBoardSettings(boardId),
-        fetchFunnels(),
         getMyTenantUsers().catch(() => [] as TenantUser[]),
         apiClient.get<TeamRow[]>('/api/teams'),
       ]);
@@ -86,18 +72,12 @@ export function ChatKanbanBoardSettingsSheet({ open, onOpenChange, boardId, onSa
       setName(b.name ?? '');
       setDescription(b.description ?? '');
       setIsActive(b.is_active !== false);
-      setFunnelId(b.linked_sales_funnel_id ? b.linked_sales_funnel_id : 'none');
       const vm =
         b.visibility_mode === 'restricted' ? 'restricted' : ('tenant_all' as ChatKanbanBoardVisibilityMode);
       setVisibilityMode(vm);
       setUserIds(new Set(settings.allowed_user_ids ?? []));
       setTeamIds(new Set(settings.allowed_team_ids ?? []));
       setTenantUsers(users);
-      if (funnelsRes.success && Array.isArray(funnelsRes.data)) {
-        setFunnels(funnelsRes.data.map((f) => ({ id: String(f.id), name: String(f.name) })));
-      } else {
-        setFunnels([]);
-      }
       if (!teamsRes.error && Array.isArray(teamsRes.data)) {
         setTeams(teamsRes.data);
       } else {
@@ -149,7 +129,6 @@ export function ChatKanbanBoardSettingsSheet({ open, onOpenChange, boardId, onSa
         name: trimmed,
         description: description.trim() ? description.trim() : null,
         is_active: isActive,
-        linked_sales_funnel_id: funnelId === 'none' ? null : funnelId,
         visibility_mode: visibilityMode,
         allowed_user_ids: visibilityMode === 'restricted' ? uids : [],
         allowed_team_ids: visibilityMode === 'restricted' ? tids : [],
@@ -181,9 +160,6 @@ export function ChatKanbanBoardSettingsSheet({ open, onOpenChange, boardId, onSa
     }
   };
 
-  const linkedFunnelName =
-    funnelId !== 'none' ? funnels.find((f) => f.id === funnelId)?.name ?? '—' : 'Nenhum';
-
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-full sm:max-w-xl flex flex-col gap-0 p-0">
@@ -191,8 +167,8 @@ export function ChatKanbanBoardSettingsSheet({ open, onOpenChange, boardId, onSa
           <SheetHeader>
             <SheetTitle>Configuração do quadro</SheetTitle>
             <SheetDescription>
-              Nome, funil e quem pode ver este Kanban. Apenas o criador do quadro ou administrador da empresa pode
-              alterar estas opções.
+              Nome, estado do quadro e quem pode ver este Kanban. Apenas o criador do quadro ou administrador da
+              empresa pode alterar estas opções.
             </SheetDescription>
           </SheetHeader>
         </div>
@@ -205,9 +181,8 @@ export function ChatKanbanBoardSettingsSheet({ open, onOpenChange, boardId, onSa
         ) : (
           <>
             <Tabs defaultValue="geral" className="flex flex-1 flex-col min-h-0 px-6">
-              <TabsList className="grid w-full grid-cols-3 shrink-0">
+              <TabsList className="grid w-full grid-cols-2 shrink-0">
                 <TabsTrigger value="geral">Geral</TabsTrigger>
-                <TabsTrigger value="funil">Funil</TabsTrigger>
                 <TabsTrigger value="perm">Permissões</TabsTrigger>
               </TabsList>
               <TabsContent value="geral" className="space-y-4 py-4">
@@ -291,32 +266,6 @@ export function ChatKanbanBoardSettingsSheet({ open, onOpenChange, boardId, onSa
                     </div>
                   </>
                 ) : null}
-              </TabsContent>
-              <TabsContent value="funil" className="space-y-4 py-4">
-                <p className="text-sm text-muted-foreground">
-                  Ligue um funil de vendas ao quadro para mapear colunas a estágios do funil (opcional).
-                </p>
-                <div className="space-y-2">
-                  <Label>Funil vinculado</Label>
-                  <Select value={funnelId} onValueChange={setFunnelId} disabled={saving}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Escolher funil" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Sem funil vinculado</SelectItem>
-                      {funnels.map((f) => (
-                        <SelectItem key={f.id} value={f.id}>
-                          {f.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <Separator />
-                <div className="rounded-md bg-muted/40 px-3 py-2 text-sm">
-                  <span className="text-muted-foreground">Estado atual: </span>
-                  <span className="font-medium">{linkedFunnelName}</span>
-                </div>
               </TabsContent>
               <TabsContent value="perm" className="flex min-h-0 flex-1 flex-col gap-4 py-4">
                 <p className="text-sm text-muted-foreground">

@@ -18,6 +18,7 @@ import { buildWhatsappTemplateMediaPublicUrlFromStoragePath } from '../services/
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
 import * as notificationService from '../services/notifications.js';
 import {
+  emitConversationDeletedToTenant,
   emitConversationUpdate,
   emitMessageUpdated,
   emitNewMessage,
@@ -104,6 +105,7 @@ import {
   type ChatMessageKind,
 } from '../utils/chatMessageContract.js';
 import { SQL_CHAT_ACCESS_PREDICATE, sqlChatAccessPredicate } from '../utils/chatConversationAccess.js';
+import { assertPermissionKey, ModulePermissionError } from '../permissions/index.js';
 import { isWhatsappGroupsEnabled } from '../config/whatsappGroupsEnv.js';
 import {
   deriveConversationTypeFromNormalized,
@@ -255,6 +257,22 @@ const sendMessageSchema = z
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Arquivo muito grande' });
       }
     }
+});
+
+const prepareLeadConversationSchema = z.object({
+  lead_id: z.string().uuid(),
+  instance_id: z.string().uuid(),
+});
+
+const resolveConversationForClientSchema = z.object({
+  client_id: z.string().uuid(),
+  instance_id: z.string().uuid(),
+  /** Sobrescreve o telefone do CRM (opcional). */
+  phone: z.string().optional(),
+});
+
+const patchPreparedConversationInstanceSchema = z.object({
+  instance_id: z.string().uuid(),
 });
 
 const linkConversationSchema = z.object({
@@ -7284,6 +7302,232 @@ export async function unlinkConversation(req: AuthRequest, res: Response) {
   }
 }
 
+export async function systemDeleteConversation(req: AuthRequest, res: Response) {
+  const userId = req.userId!;
+  const tenantId = req.tenantId ?? null;
+  if (!tenantId) {
+    res.status(401).json({ error: 'Empresa não identificada' });
+    return;
+  }
+
+  const canDelete =
+    (await canChatAction(userId, 'delete', req)) ||
+    (await canChatAction(userId, 'manage_queues', req));
+  if (!canDelete) {
+    res.status(403).json({ error: 'Sem permissão para deletar conversas do sistema' });
+    return;
+  }
+
+  const { id: conversationId } = req.params;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const convResult = await client.query<{
+      id: string;
+      user_id: string;
+      instance_id: string | null;
+      external_chat_id: string | null;
+      client_id: string | null;
+      lead_id: string | null;
+      provider: string | null;
+      owner_tenant_id: string | null;
+      instance_owner_tenant_id: string | null;
+    }>(
+      `
+      SELECT
+        c.id,
+        c.user_id,
+        c.instance_id,
+        c.external_chat_id,
+        c.client_id,
+        c.lead_id,
+        c.provider,
+        owner.tenant_id AS owner_tenant_id,
+        inst_owner.tenant_id AS instance_owner_tenant_id
+      FROM chat_conversations c
+      INNER JOIN users owner ON owner.id = c.user_id
+      LEFT JOIN chat_instances i ON i.id = c.instance_id
+      LEFT JOIN users inst_owner ON inst_owner.id = i.user_id
+      WHERE c.id = $1::uuid
+        AND ${SQL_CHAT_ACCESS_PREDICATE}
+      FOR UPDATE OF c
+      `,
+      [conversationId, userId]
+    );
+
+    if ((convResult.rowCount ?? 0) === 0) {
+      await client.query('ROLLBACK');
+      res.status(404).json({ error: 'Conversa não encontrada' });
+      return;
+    }
+
+    const conversation = convResult.rows[0];
+    if (conversation.owner_tenant_id !== tenantId) {
+      await client.query('ROLLBACK');
+      res.status(403).json({ error: 'Conversa pertence a outra empresa' });
+      return;
+    }
+    if (conversation.instance_id && conversation.instance_owner_tenant_id !== tenantId) {
+      await client.query('ROLLBACK');
+      res.status(403).json({ error: 'Instância da conversa pertence a outra empresa' });
+      return;
+    }
+
+    const messageRows = await client.query<{ id: string }>(
+      `SELECT id FROM chat_messages WHERE conversation_id = $1::uuid`,
+      [conversationId]
+    );
+    const messageIds = messageRows.rows.map((row) => row.id);
+    const deletedMessagesCount = messageIds.length;
+
+    const hasTable = async (schemaQualifiedName: string): Promise<boolean> => {
+      const r = await client.query<{ exists: boolean }>(
+        `SELECT to_regclass($1) IS NOT NULL AS exists`,
+        [schemaQualifiedName]
+      );
+      return r.rows[0]?.exists === true;
+    };
+
+    if (await hasTable('public.media_assets')) {
+      if (messageIds.length > 0) {
+        await client.query(
+          `
+          DELETE FROM public.media_assets
+          WHERE owner_type IN ('chat_message', 'chat-message', 'chat.messages', 'chat_message_media')
+            AND owner_id = ANY($1::uuid[])
+          `,
+          [messageIds]
+        );
+      }
+      await client.query(
+        `
+        DELETE FROM public.media_assets
+        WHERE owner_type IN ('chat_conversation', 'chat-conversation', 'chat.conversations')
+          AND owner_id = $1::uuid
+        `,
+        [conversationId]
+      );
+    }
+
+    await client.query(
+      `
+      DELETE FROM notifications
+      WHERE COALESCE(data->>'conversation_id', data->>'conversationId') = $1
+      `,
+      [conversationId]
+    );
+
+    if (await hasTable('public.crm_notes')) {
+      await client.query(`DELETE FROM public.crm_notes WHERE conversation_id = $1::uuid`, [conversationId]);
+    }
+    if (await hasTable('public.client_timeline_events')) {
+      await client.query(
+        `
+        DELETE FROM public.client_timeline_events
+        WHERE tenant_id = $2::uuid
+          AND (
+            (reference_type = 'chat_conversation' AND reference_id::text = $1)
+            OR metadata->>'conversation_id' = $1
+            OR metadata->>'conversationId' = $1
+          )
+        `,
+        [conversationId, tenantId]
+      );
+    }
+
+    await client.query(`DELETE FROM chat_messages WHERE conversation_id = $1::uuid`, [conversationId]);
+    await client.query(`DELETE FROM chat_conversations WHERE id = $1::uuid`, [conversationId]);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.chat_conversation_system_delete_audit (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID REFERENCES public.tenants(id) ON DELETE SET NULL,
+        actor_user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
+        conversation_id UUID NOT NULL,
+        external_chat_id TEXT,
+        linked_client_id UUID,
+        linked_lead_id UUID,
+        deleted_messages_count INTEGER NOT NULL DEFAULT 0,
+        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+
+    await client.query(
+      `
+      INSERT INTO public.chat_conversation_system_delete_audit (
+        tenant_id,
+        actor_user_id,
+        conversation_id,
+        external_chat_id,
+        linked_client_id,
+        linked_lead_id,
+        deleted_messages_count,
+        payload
+      )
+      VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5::uuid, $6::uuid, $7, $8::jsonb)
+      `,
+      [
+        tenantId,
+        userId,
+        conversation.id,
+        conversation.external_chat_id,
+        conversation.client_id,
+        conversation.lead_id,
+        deletedMessagesCount,
+        JSON.stringify({
+          event: 'chat_conversation_deleted',
+          provider: conversation.provider ?? 'whatsapp_uazapi',
+          external_chat_id: conversation.external_chat_id,
+          deleted_at: new Date().toISOString(),
+        }),
+      ]
+    );
+
+    await client.query('COMMIT');
+
+    const payload = {
+      id: conversation.id,
+      conversation_id: conversation.id,
+      external_chat_id: conversation.external_chat_id,
+    };
+    try {
+      emitConversationDeletedToTenant(tenantId, payload);
+      emitToTenant(tenantId, 'conversation.deleted', {
+        v: 1,
+        type: 'conversation.deleted',
+        conversation_id: conversation.id,
+        id: conversation.id,
+        external_chat_id: conversation.external_chat_id,
+        ts: new Date().toISOString(),
+      });
+    } catch (eventError) {
+      console.warn('[chat.system_delete] Falha ao emitir realtime', eventError);
+    }
+
+    res.json({
+      ok: true,
+      conversation_id: conversation.id,
+      deleted_messages_count: deletedMessagesCount,
+    });
+  } catch (error: any) {
+    try {
+      await client.query('ROLLBACK');
+    } catch {
+      /* noop */
+    }
+    if (error?.code === '22P02') {
+      res.status(404).json({ error: 'Conversa não encontrada' });
+      return;
+    }
+    console.error('[chat.system_delete] error', error);
+    res.status(500).json({ error: 'Falha ao deletar conversa do sistema' });
+  } finally {
+    client.release();
+  }
+}
+
 /**
  * Busca todas as mensagens de conversas vinculadas a um cliente
  * GET /api/chat/clients/:id/messages
@@ -7329,17 +7573,15 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
     );
 
     if ((conversationsResult.rowCount ?? 0) === 0) {
-      res.json([]);
+      res.json({
+        messages: [],
+        conversationId: null,
+        conversationIds: [],
+      });
       return;
     }
 
     const conversationIds = conversationsResult.rows.map((row) => row.id);
-
-    // Se não há conversas, retornar array vazio
-    if (conversationIds.length === 0) {
-      res.json([]);
-      return;
-    }
 
     // Buscar todas as mensagens dessas conversas
     // Usar ANY com array UUID para melhor performance
@@ -7996,6 +8238,306 @@ function toUazRecipientNumber(phone: string | null | undefined, externalChatId: 
   return raw;
 }
 
+function normalizeLeadPhoneToWhatsappDigits(raw: unknown): string | null {
+  let digits = digitsOnlyMsisdn(String(raw ?? ''));
+  while (digits.startsWith('00')) digits = digits.slice(2);
+  if (digits.startsWith('5555') && digits.length > 13) {
+    digits = digits.slice(2);
+  }
+  if (!digits.startsWith('55') && (digits.length === 10 || digits.length === 11)) {
+    digits = `55${digits}`;
+  }
+  if (digits.length < 10 || digits.length > 15) return null;
+  return digits;
+}
+
+function whatsappDirectJidFromDigits(digits: string): string {
+  return `${digits}@s.whatsapp.net`;
+}
+
+async function findLeadConversationForManualStart(params: {
+  tenantId: string;
+  leadId: string;
+  instanceId: string;
+  digits: string;
+  jid: string;
+}): Promise<AnyObject | null> {
+  const candidates = [
+    params.jid.toLowerCase(),
+    params.jid.replace(/@s\.whatsapp\.net$/i, '@c.us').toLowerCase(),
+    params.digits,
+  ];
+
+  const r = await pool.query(
+    `
+    SELECT c.*
+    FROM chat_conversations c
+    INNER JOIN users owner ON owner.id = c.user_id
+    WHERE owner.tenant_id = $1
+      AND COALESCE(c.conversation_type, 'direct') = 'direct'
+      AND (
+        c.lead_id = $2::uuid
+        OR (
+          c.instance_id = $3::uuid
+          AND (
+            lower(c.external_chat_id) = ANY($4::text[])
+            OR lower(COALESCE(c.canonical_chat_id, '')) = ANY($4::text[])
+            OR lower(COALESCE(c.provider_conversation_id, '')) = ANY($4::text[])
+            OR NULLIF(regexp_replace(COALESCE(c.phone_number, ''), '[^0-9]', '', 'g'), '') = $5
+            OR NULLIF(regexp_replace(COALESCE(c.canonical_phone, ''), '[^0-9]', '', 'g'), '') = $5
+          )
+        )
+      )
+    ORDER BY
+      CASE WHEN c.lead_id = $2::uuid THEN 0 ELSE 1 END,
+      COALESCE(c.last_message_at, c.created_at) DESC NULLS LAST
+    LIMIT 1
+    `,
+    [params.tenantId, params.leadId, params.instanceId, candidates, params.digits]
+  );
+  return (r.rows[0] as AnyObject | undefined) ?? null;
+}
+
+async function ensureLeadConversationForManualStart(params: {
+  actorUserId: string;
+  tenantId: string;
+  lead: AnyObject;
+  instance: ChatInstanceRow;
+  digits: string;
+  jid: string;
+  messagePreview?: string;
+}): Promise<{ conversationId: string; reused: boolean; isNew: boolean }> {
+  const found = await findLeadConversationForManualStart({
+    tenantId: params.tenantId,
+    leadId: params.lead.id,
+    instanceId: params.instance.id,
+    digits: params.digits,
+    jid: params.jid,
+  });
+
+  if (found?.id) {
+    if (!found.lead_id && !found.client_id) {
+      await pool.query(
+        `
+        UPDATE chat_conversations
+        SET lead_id = $1::uuid,
+            metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+            updated_at = now()
+        WHERE id = $3::uuid
+        `,
+        [
+          params.lead.id,
+          JSON.stringify({
+            link_source: 'manual',
+            link_confidence: 'manual',
+            link_state: 'lead_linked',
+            manual_start_linked_at: new Date().toISOString(),
+          }),
+          found.id,
+        ]
+      );
+      void applyKanbanAutomationForConversation({
+        tenantId: params.tenantId,
+        actorUserId: params.actorUserId,
+        conversationId: String(found.id),
+        reason: 'lead_linked',
+      }).catch((err) => console.error('[kanban-entry-automation] lead_linked (manual start)', err));
+    }
+    return { conversationId: String(found.id), reused: true, isNew: false };
+  }
+
+  const leadName = String(params.lead.name || '').trim() || params.digits;
+  const metadata = {
+    source: 'outbound/manual_start',
+    link_source: 'manual',
+    link_confidence: 'manual',
+    link_state: 'lead_linked',
+    phone_normalized: params.digits,
+    created_by_manual_start_at: new Date().toISOString(),
+    ...(params.messagePreview ? { first_message_preview: params.messagePreview.slice(0, 160) } : {}),
+    // TODO timeline: registrar lead_conversation_started quando houver timeline de lead.
+  };
+  const displayName = leadName;
+  const inserted = await pool.query(
+    `
+    INSERT INTO chat_conversations (
+      user_id, instance_id, external_chat_id, contact_name, profile_name, phone_number,
+      status, last_message_at, unread_count, metadata, client_id, lead_id,
+      canonical_chat_id, canonical_phone, display_name, identity_source, identity_strength,
+      identity_state, history_sync_status, last_history_sync_reason, provider,
+      provider_conversation_id, conversation_type, attendance_status
+    )
+    VALUES (
+      $1, $2, $3, $4, $4, $5,
+      'open', NULL, 0, $6::jsonb, NULL, $7,
+      $3, $5, $4, 'phone_derived', 'medium',
+      'resolved', 'ready', 'manual_start',
+      'whatsapp_uazapi', $3, 'direct', $8
+    )
+    RETURNING *
+    `,
+    [
+      params.instance.user_id,
+      params.instance.id,
+      params.jid,
+      displayName,
+      params.digits,
+      JSON.stringify(metadata),
+      params.lead.id,
+      normalizeAttendanceStatusForDb(undefined),
+    ]
+  );
+
+  const conversationId = String(inserted.rows[0].id);
+  void applyKanbanAutomationForConversation({
+    tenantId: params.tenantId,
+    actorUserId: params.actorUserId,
+    conversationId,
+    reason: 'lead_linked',
+  }).catch((err) => console.error('[kanban-entry-automation] lead_linked (manual start insert)', err));
+  return { conversationId, reused: false, isNew: true };
+}
+
+async function findClientConversationForManualStart(params: {
+  tenantId: string;
+  clientId: string;
+  instanceId: string;
+  digits: string;
+  jid: string;
+}): Promise<AnyObject | null> {
+  const candidates = [
+    params.jid.toLowerCase(),
+    params.jid.replace(/@s\.whatsapp\.net$/i, '@c.us').toLowerCase(),
+    params.digits,
+  ];
+
+  const r = await pool.query(
+    `
+    SELECT c.*
+    FROM chat_conversations c
+    INNER JOIN users owner ON owner.id = c.user_id
+    WHERE owner.tenant_id = $1
+      AND COALESCE(c.conversation_type, 'direct') = 'direct'
+      AND (
+        c.client_id = $2::uuid
+        OR (
+          c.instance_id = $3::uuid
+          AND (
+            lower(c.external_chat_id) = ANY($4::text[])
+            OR lower(COALESCE(c.canonical_chat_id, '')) = ANY($4::text[])
+            OR lower(COALESCE(c.provider_conversation_id, '')) = ANY($4::text[])
+            OR NULLIF(regexp_replace(COALESCE(c.phone_number, ''), '[^0-9]', '', 'g'), '') = $5
+            OR NULLIF(regexp_replace(COALESCE(c.canonical_phone, ''), '[^0-9]', '', 'g'), '') = $5
+          )
+        )
+      )
+    ORDER BY
+      CASE WHEN c.client_id = $2::uuid THEN 0 ELSE 1 END,
+      COALESCE(c.last_message_at, c.created_at) DESC NULLS LAST
+    LIMIT 1
+    `,
+    [params.tenantId, params.clientId, params.instanceId, candidates, params.digits]
+  );
+  return (r.rows[0] as AnyObject | undefined) ?? null;
+}
+
+async function ensureClientConversationForManualStart(params: {
+  actorUserId: string;
+  tenantId: string;
+  client: AnyObject;
+  instance: ChatInstanceRow;
+  digits: string;
+  jid: string;
+}): Promise<{ conversationId: string; reused: boolean; isNew: boolean }> {
+  const found = await findClientConversationForManualStart({
+    tenantId: params.tenantId,
+    clientId: params.client.id,
+    instanceId: params.instance.id,
+    digits: params.digits,
+    jid: params.jid,
+  });
+
+  if (found?.id) {
+    if (!found.client_id) {
+      await pool.query(
+        `
+        UPDATE chat_conversations
+        SET client_id = $1::uuid,
+            metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+            updated_at = now()
+        WHERE id = $3::uuid
+        `,
+        [
+          params.client.id,
+          JSON.stringify({
+            link_source: 'manual',
+            link_confidence: 'manual',
+            link_state: 'client_linked',
+            manual_start_linked_at: new Date().toISOString(),
+          }),
+          found.id,
+        ]
+      );
+      void applyKanbanAutomationForConversation({
+        tenantId: params.tenantId,
+        actorUserId: params.actorUserId,
+        conversationId: String(found.id),
+        reason: 'client_linked',
+      }).catch((err) => console.error('[kanban-entry-automation] client_linked (manual start)', err));
+    }
+    return { conversationId: String(found.id), reused: true, isNew: false };
+  }
+
+  const clientName = String(params.client.name || '').trim() || params.digits;
+  const metadata = {
+    source: 'outbound/manual_start',
+    link_source: 'manual',
+    link_confidence: 'manual',
+    link_state: 'client_linked',
+    phone_normalized: params.digits,
+    created_by_manual_start_at: new Date().toISOString(),
+  };
+  const displayName = clientName;
+  const inserted = await pool.query(
+    `
+    INSERT INTO chat_conversations (
+      user_id, instance_id, external_chat_id, contact_name, profile_name, phone_number,
+      status, last_message_at, unread_count, metadata, client_id, lead_id,
+      canonical_chat_id, canonical_phone, display_name, identity_source, identity_strength,
+      identity_state, history_sync_status, last_history_sync_reason, provider,
+      provider_conversation_id, conversation_type, attendance_status
+    )
+    VALUES (
+      $1, $2, $3, $4, $4, $5,
+      'open', NULL, 0, $6::jsonb, $7, NULL,
+      $3, $5, $4, 'phone_derived', 'medium',
+      'resolved', 'ready', 'manual_start',
+      'whatsapp_uazapi', $3, 'direct', $8
+    )
+    RETURNING *
+    `,
+    [
+      params.instance.user_id,
+      params.instance.id,
+      params.jid,
+      displayName,
+      params.digits,
+      JSON.stringify(metadata),
+      params.client.id,
+      normalizeAttendanceStatusForDb(undefined),
+    ]
+  );
+
+  const conversationId = String(inserted.rows[0].id);
+  void applyKanbanAutomationForConversation({
+    tenantId: params.tenantId,
+    actorUserId: params.actorUserId,
+    conversationId,
+    reason: 'client_linked',
+  }).catch((err) => console.error('[kanban-entry-automation] client_linked (manual start insert)', err));
+  return { conversationId, reused: false, isNew: true };
+}
+
 function absolutizeOutgoingMediaUrl(candidate: unknown): string | null {
   if (typeof candidate !== 'string') return null;
   const raw = candidate.trim();
@@ -8152,6 +8694,266 @@ async function loadReplyContextForSend(params: {
     replyMessageType: messageType,
     uazReplyId,
   };
+}
+
+export async function resolveConversationForClient(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.userId!;
+    const tenantId = req.tenantId ?? (await resolveTenantIdForUser(userId));
+    if (!tenantId) {
+      res.status(403).json({ error: 'Tenant não identificado' });
+      return;
+    }
+
+    const data = resolveConversationForClientSchema.parse(req.body);
+    if (!(await canChatAction(userId, 'view', req))) {
+      res.status(403).json({ error: 'Sem permissão para visualizar o chat' });
+      return;
+    }
+    await assertPermissionKey(userId, 'clients.view', req);
+
+    const clientResult = await pool.query<AnyObject>(
+      `
+      SELECT c.*
+      FROM clients c
+      INNER JOIN users owner ON owner.id = c.user_id AND owner.tenant_id = $1
+      WHERE c.id = $2::uuid
+      LIMIT 1
+      `,
+      [tenantId, data.client_id]
+    );
+    const clientRow = clientResult.rows[0];
+    if (!clientRow) {
+      res.status(404).json({ error: 'Cliente não encontrado' });
+      return;
+    }
+
+    const phoneRaw = String(data.phone?.trim() || clientRow.phone || '').trim();
+    const digits = normalizeLeadPhoneToWhatsappDigits(phoneRaw);
+    if (!digits) {
+      res.status(400).json({ error: 'Cliente sem telefone WhatsApp válido' });
+      return;
+    }
+    const jid = whatsappDirectJidFromDigits(digits);
+
+    const instance = await fetchInstanceForOperate(userId, data.instance_id);
+    if (!instance) {
+      res.status(404).json({ error: 'Instância WhatsApp não encontrada' });
+      return;
+    }
+    const instanceStatus = String(instance.status || '').toLowerCase();
+    if (!['connected', 'open'].includes(instanceStatus)) {
+      res.status(400).json({ error: 'Instância WhatsApp desconectada' });
+      return;
+    }
+
+    const prepared = await ensureClientConversationForManualStart({
+      actorUserId: userId,
+      tenantId,
+      client: clientRow,
+      instance: instance as ChatInstanceRow,
+      digits,
+      jid,
+    });
+
+    const fresh = await pool.query(
+      `
+      SELECT c.*, COALESCE(i.name, 'WhatsApp') AS instance_name
+      FROM chat_conversations c
+      LEFT JOIN chat_instances i ON i.id = c.instance_id
+      WHERE c.id = $1::uuid
+      LIMIT 1
+      `,
+      [prepared.conversationId]
+    );
+
+    res.status(201).json({
+      conversation: fresh.rows[0] ? conversationRowForClientApi(fresh.rows[0] as Record<string, unknown>) : null,
+      is_new: prepared.isNew,
+      reused: prepared.reused,
+    });
+  } catch (error: any) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Dados inválidos', details: error.errors });
+      return;
+    }
+    console.error('resolveConversationForClient:', error);
+    res.status(500).json({ error: error?.message || 'Não foi possível resolver a conversa' });
+  }
+}
+
+export async function prepareLeadConversation(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.userId!;
+    const tenantId = req.tenantId ?? (await resolveTenantIdForUser(userId));
+    if (!tenantId) {
+      res.status(403).json({ error: 'Tenant não identificado para preparar conversa' });
+      return;
+    }
+
+    const data = prepareLeadConversationSchema.parse(req.body);
+    if (!(await canChatAction(userId, 'view', req))) {
+      res.status(403).json({ error: 'Sem permissão para visualizar o chat' });
+      return;
+    }
+    await assertPermissionKey(userId, 'leads.view', req);
+
+    const leadColumnAvailable = await hasLeadIdColumn();
+    if (!leadColumnAvailable) {
+      res.status(503).json({ error: 'Banco sem suporte para vínculo de conversa com lead' });
+      return;
+    }
+
+    const leadResult = await pool.query<AnyObject>(
+      `
+      SELECT l.*
+      FROM leads l
+      INNER JOIN users owner ON owner.id = l.user_id
+      WHERE l.id = $1::uuid
+        AND owner.tenant_id = $2
+      LIMIT 1
+      `,
+      [data.lead_id, tenantId]
+    );
+    const lead = leadResult.rows[0];
+    if (!lead) {
+      res.status(404).json({ error: 'Lead não encontrado' });
+      return;
+    }
+
+    const digits = normalizeLeadPhoneToWhatsappDigits(lead.phone);
+    if (!digits) {
+      res.status(400).json({ error: 'Lead sem telefone WhatsApp válido' });
+      return;
+    }
+    const jid = whatsappDirectJidFromDigits(digits);
+
+    const instance = await fetchInstanceForOperate(userId, data.instance_id);
+    if (!instance) {
+      res.status(404).json({ error: 'Instância WhatsApp não encontrada' });
+      return;
+    }
+    const instanceStatus = String(instance.status || '').toLowerCase();
+    if (!['connected', 'open'].includes(instanceStatus)) {
+      res.status(400).json({ error: 'Instância WhatsApp desconectada' });
+      return;
+    }
+
+    const prepared = await ensureLeadConversationForManualStart({
+      actorUserId: userId,
+      tenantId,
+      lead,
+      instance: instance as ChatInstanceRow,
+      digits,
+      jid,
+    });
+
+    const fresh = await pool.query(
+      `
+      SELECT c.*, COALESCE(i.name, 'WhatsApp') AS instance_name
+      FROM chat_conversations c
+      LEFT JOIN chat_instances i ON i.id = c.instance_id
+      WHERE c.id = $1::uuid
+      LIMIT 1
+      `,
+      [prepared.conversationId]
+    );
+
+    res.status(201).json({
+      conversation: fresh.rows[0] ? conversationRowForClientApi(fresh.rows[0] as Record<string, unknown>) : null,
+      is_new: prepared.isNew,
+      reused: prepared.reused,
+    });
+  } catch (error: any) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Dados inválidos para preparar conversa', details: error.errors });
+      return;
+    }
+    console.error('Error preparing lead conversation:', error);
+    res.status(500).json({ error: error?.message || 'Não foi possível preparar a conversa' });
+  }
+}
+
+export async function patchPreparedConversationInstance(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.userId!;
+    const tenantId = req.tenantId ?? (await resolveTenantIdForUser(userId));
+    const conversationId = String(req.params.id || '').trim();
+    const data = patchPreparedConversationInstanceSchema.parse(req.body);
+    if (!tenantId) {
+      res.status(403).json({ error: 'Tenant não identificado' });
+      return;
+    }
+    if (!(await canChatAction(userId, 'view', req))) {
+      res.status(403).json({ error: 'Sem permissão para visualizar o chat' });
+      return;
+    }
+
+    const instance = await fetchInstanceForOperate(userId, data.instance_id);
+    if (!instance) {
+      res.status(404).json({ error: 'Instância WhatsApp não encontrada' });
+      return;
+    }
+    const instanceStatus = String(instance.status || '').toLowerCase();
+    if (!['connected', 'open'].includes(instanceStatus)) {
+      res.status(400).json({ error: 'Instância WhatsApp desconectada' });
+      return;
+    }
+
+    const msgCount = await pool.query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM chat_messages WHERE conversation_id = $1::uuid`,
+      [conversationId]
+    );
+    if (Number(msgCount.rows[0]?.n ?? 0) > 0) {
+      res.status(409).json({ error: 'A instância só pode ser alterada antes da primeira mensagem' });
+      return;
+    }
+
+    const updated = await pool.query(
+      `
+      UPDATE chat_conversations c
+      SET instance_id = $1::uuid,
+          metadata = COALESCE(c.metadata, '{}'::jsonb) || $2::jsonb,
+          updated_at = now()
+      FROM users owner
+      WHERE c.id = $3::uuid
+        AND owner.id = c.user_id
+        AND owner.tenant_id = $4
+        AND c.lead_id IS NOT NULL
+      RETURNING c.*
+      `,
+      [
+        data.instance_id,
+        JSON.stringify({ prepared_instance_changed_at: new Date().toISOString() }),
+        conversationId,
+        tenantId,
+      ]
+    );
+    if (updated.rowCount === 0) {
+      res.status(404).json({ error: 'Conversa preparada não encontrada' });
+      return;
+    }
+    res.json({ conversation: conversationRowForClientApi(updated.rows[0] as Record<string, unknown>) });
+  } catch (error: any) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Dados inválidos para alterar instância', details: error.errors });
+      return;
+    }
+    if (String(error?.code) === '23505') {
+      res.status(409).json({ error: 'Já existe conversa para este contato na instância selecionada' });
+      return;
+    }
+    console.error('Error patching prepared conversation instance:', error);
+    res.status(500).json({ error: error?.message || 'Não foi possível alterar a instância' });
+  }
 }
 
 export async function sendMessage(req: AuthRequest, res: Response) {
@@ -11572,6 +12374,274 @@ export async function handleWebhook(req: Request, res: Response) {
         webhookId,
       });
     }
+  }
+}
+
+/**
+ * Worker de mensagens agendadas: envia texto na conversa (UazAPI), reutilizando saveMessage + persistência.
+ */
+export async function executeScheduledChatMessageDelivery(row: {
+  id: string;
+  tenant_id: string;
+  conversation_id: string;
+  message_text: string;
+}): Promise<{ ok: true; externalId: string | null } | { ok: false; reason: string }> {
+  const text = row.message_text.trim();
+  if (!text) return { ok: false, reason: 'empty_message' };
+
+  const conversationResult = await pool.query(
+    `
+    SELECT c.*, i.instance_token, i.status AS instance_status,
+           u.tenant_id AS owner_tenant_id
+    FROM chat_conversations c
+    LEFT JOIN chat_instances i ON i.id = c.instance_id
+    INNER JOIN users u ON u.id = c.user_id
+    WHERE c.id = $1::uuid AND u.tenant_id = $2::uuid
+    `,
+    [row.conversation_id, row.tenant_id],
+  );
+  if (!conversationResult.rowCount) {
+    return { ok: false, reason: 'conversation_not_found' };
+  }
+  const conversation = conversationResult.rows[0] as AnyObject;
+  if (String(conversation.owner_tenant_id || '') !== row.tenant_id) {
+    return { ok: false, reason: 'tenant_mismatch' };
+  }
+
+  const isOfficial =
+    String(conversation.provider || '') === 'whatsapp_official' ||
+    Boolean(conversation.whatsapp_official_account_id);
+  if (isOfficial) {
+    return { ok: false, reason: 'whatsapp_official_not_supported' };
+  }
+
+  const token = String(conversation.instance_token || '').trim();
+  const instStatus = String(conversation.instance_status || '').toLowerCase();
+  if (!token || !['connected', 'open'].includes(instStatus)) {
+    console.log(
+      JSON.stringify({
+        event: 'scheduled_message_skipped_instance_unavailable',
+        scheduled_message_id: row.id,
+        conversation_id: row.conversation_id,
+        instance_status: instStatus,
+      }),
+    );
+    return { ok: false, reason: 'instance_unavailable' };
+  }
+
+  const ownerUserId = String(conversation.user_id);
+  const tenantId = row.tenant_id;
+  const localTrackId = `track_sched_${randomUUID()}`;
+  const provisionalExternalId = `local:${randomUUID()}`;
+  let savedRowId: string | null = null;
+
+  try {
+    const saveResult = await saveMessage(conversation.id, 'outgoing', {
+      externalMessageId: provisionalExternalId,
+      body: text,
+      media: [],
+      messageKind: 'text',
+      status: 'queued',
+      sentAt: new Date(),
+      metadata: {
+        source: 'scheduled_message',
+        scheduled_message_id: row.id,
+        provisional: true,
+      },
+    });
+    savedRowId = saveResult.rowId;
+
+    const numberTo = toUazRecipientNumber(
+      (conversation.canonical_phone as string | null | undefined) || conversation.phone_number,
+      conversation.external_chat_id,
+    );
+
+    const messageResponse = (await uazapiService.sendTextMessage(token, {
+      number: numberTo,
+      text,
+      track_source: 'painelcrm_scheduled',
+      track_id: localTrackId,
+    })) as AnyObject;
+
+    const extId = extractUazOutgoingMessageId(messageResponse);
+
+    if (savedRowId) {
+      const nextStatus = pickBestOutgoingStatus('queued', 'provider_sent') ?? 'provider_sent';
+      await pool.query(
+        `
+            UPDATE chat_messages
+            SET
+              external_message_id = COALESCE($1, external_message_id),
+              status = $2,
+              metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+              sent_at = COALESCE(sent_at, $4::timestamptz)
+            WHERE id = $5
+            `,
+        [extId, nextStatus, JSON.stringify({ ...messageResponse, track_id: localTrackId }), new Date(), savedRowId],
+      );
+    }
+
+    const savedMessageResult = savedRowId
+      ? await pool.query(`SELECT * FROM chat_messages WHERE id = $1`, [savedRowId])
+      : { rows: [] as any[] };
+
+    const leadColumnAvailableWs = await hasLeadIdColumn();
+    const updatedConversationResult = await pool.query(
+      `
+          SELECT
+            c.id,
+            c.user_id,
+            c.instance_id,
+            c.provider,
+            c.external_chat_id,
+            c.external_fast_id,
+            c.contact_name,
+            c.profile_name,
+            c.phone_number,
+            c.display_name,
+            c.avatar_url,
+            c.status,
+            c.last_message_preview,
+            c.last_message_at,
+            c.unread_count,
+            c.metadata,
+            c.created_at,
+            c.updated_at,
+            c.client_id,
+            ${leadColumnAvailableWs ? 'c.lead_id,' : 'NULL::uuid as lead_id,'}
+            c.phone_key,
+            c.assigned_to_user_id,
+            c.assigned_team_id,
+            COALESCE(i.name, wa.display_phone_number, wa.verified_name, 'WhatsApp Oficial') as instance_name,
+            CASE
+              WHEN c.client_id IS NOT NULL THEN 'client_linked'
+              WHEN ${leadColumnAvailableWs ? 'c.lead_id IS NOT NULL' : 'false'} THEN 'lead_linked'
+              WHEN COALESCE((c.metadata->>'link_confidence'), '') = 'review' THEN 'review_required'
+              ELSE 'unlinked'
+            END as link_state,
+            COALESCE(c.metadata->>'link_source', 'system') as link_source,
+            COALESCE(c.metadata->>'link_confidence', 'review') as link_confidence,
+            CASE
+              WHEN ${leadColumnAvailableWs ? 'c.lead_id IS NOT NULL' : 'false'} THEN (
+                SELECT l2.status FROM leads l2 WHERE l2.id = c.lead_id AND l2.user_id = c.user_id LIMIT 1
+              )
+              ELSE NULL
+            END as lead_status
+          FROM chat_conversations c
+          LEFT JOIN chat_instances i ON i.id = c.instance_id
+          LEFT JOIN whatsapp_official_accounts wa ON wa.id = c.whatsapp_official_account_id
+          WHERE c.id = $1
+        `,
+      [row.conversation_id],
+    );
+
+    if (updatedConversationResult.rows.length > 0) {
+      const updatedConversation = updatedConversationResult.rows[0];
+      try {
+        emitConversationUpdate(ownerUserId, updatedConversation);
+        const rowProv = (updatedConversation as { provider?: string }).provider;
+        emitToTenant(
+          tenantId,
+          'conversation.updated',
+          buildConversationUpdatedPayload({
+            provider: (rowProv as typeof DEFAULT_COMMUNICATION_PROVIDER) ?? DEFAULT_COMMUNICATION_PROVIDER,
+            conversation_id: updatedConversation.id,
+            last_message_preview: updatedConversation.last_message_preview ?? null,
+            last_message_at: updatedConversation.last_message_at ?? null,
+            unread_count: updatedConversation.unread_count ?? 0,
+            status: updatedConversation.status ?? null,
+            assigned_user_id: updatedConversation.assigned_to_user_id ?? null,
+            assigned_team_id: updatedConversation.assigned_team_id ?? null,
+            display_name: updatedConversation.display_name ?? null,
+            avatar_url: updatedConversation.avatar_url ?? null,
+          }),
+        );
+      } catch (wsError: any) {
+        console.warn('[scheduled-send] conversation ws emit failed:', wsError?.message);
+      }
+    }
+
+    if (savedMessageResult.rows.length > 0) {
+      const rrow: any = savedMessageResult.rows[0];
+      try {
+        const contract = contractFromDbRow(rrow);
+        emitNewMessage(
+          ownerUserId,
+          {
+            id: rrow.id,
+            conversation_id: conversation.id,
+            direction: rrow.direction,
+            body: rrow.body,
+            sent_at: rrow.sent_at || new Date(),
+            status: rrow.status,
+            external_message_id: rrow.external_message_id,
+            media: rrow.media,
+            message_contract: contract,
+            reply_to_message_id: rrow.reply_to_message_id ?? null,
+            reply_to_external_message_id: rrow.reply_to_external_message_id ?? null,
+            reply_preview: rrow.reply_preview ?? null,
+            reply_sender_name: rrow.reply_sender_name ?? null,
+            reply_message_type: rrow.reply_message_type ?? null,
+          },
+          conversation.id,
+        );
+        const media = Array.isArray(rrow.media) ? (rrow.media as Array<Record<string, unknown>>) : [];
+        const mediaUrlRaw = media.find((m) => typeof m?.url === 'string' && m.url)?.url;
+        const mediaUrl = typeof mediaUrlRaw === 'string' ? mediaUrlRaw : null;
+        const convProv = (conversation as { provider?: string }).provider;
+        emitToTenant(
+          tenantId,
+          'message.created',
+          buildMessageCreatedPayload({
+            provider: (convProv as typeof DEFAULT_COMMUNICATION_PROVIDER) ?? DEFAULT_COMMUNICATION_PROVIDER,
+            conversation_id: conversation.id,
+            message_id: rrow.id != null ? String(rrow.id) : null,
+            direction: String(rrow.direction ?? ''),
+            body: rrow.body == null ? null : String(rrow.body),
+            message_type: String(contract.kind ?? 'text'),
+            media_url: mediaUrl,
+            sent_at: rrow.sent_at || new Date(),
+            provider_message_id:
+              rrow.external_message_id == null ? null : String(rrow.external_message_id),
+            reply_to_message_id:
+              rrow.reply_to_message_id == null ? null : String(rrow.reply_to_message_id),
+            reply_preview: rrow.reply_preview == null ? null : String(rrow.reply_preview),
+            reply_sender_name:
+              rrow.reply_sender_name == null ? null : String(rrow.reply_sender_name),
+            reply_message_type:
+              rrow.reply_message_type == null ? null : String(rrow.reply_message_type),
+          }),
+        );
+      } catch (wsError: any) {
+        console.warn('[scheduled-send] message ws emit failed:', wsError?.message);
+      }
+    }
+
+    return { ok: true, externalId: extId };
+  } catch (error: any) {
+    if (savedRowId) {
+      try {
+        await pool.query(
+          `
+          UPDATE chat_messages
+          SET status = 'failed',
+              metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb
+          WHERE id = $2
+          `,
+          [JSON.stringify({ send_error: error?.message || String(error) }), savedRowId],
+        );
+      } catch {
+        /* ignore */
+      }
+    }
+    console.log(
+      JSON.stringify({
+        event: 'scheduled_message_failed',
+        scheduled_message_id: row.id,
+        reason: error?.message || String(error),
+      }),
+    );
+    return { ok: false, reason: error?.message || 'send_failed' };
   }
 }
 

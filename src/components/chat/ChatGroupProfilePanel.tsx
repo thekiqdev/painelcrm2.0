@@ -79,6 +79,8 @@ export type ChatGroupProfilePanelProps = {
   onGroupConversationSynced?: () => void;
   /** Quando false, o CRM bloqueia gestão mesmo sendo administrador no WhatsApp. */
   crmAllowManage?: boolean;
+  /** Secção opcional ex.: mensagens agendadas para esta conversa */
+  scheduledMessagesSection?: React.ReactNode;
 };
 
 function participantPrimaryLabel(
@@ -138,6 +140,7 @@ export function ChatGroupProfilePanel(props: ChatGroupProfilePanelProps) {
     onAfterLeave,
     onGroupConversationSynced,
     crmAllowManage = true,
+    scheduledMessagesSection,
   } = props;
 
   const [group, setGroup] = React.useState<ChatGroupDetails | null>(null);
@@ -410,6 +413,8 @@ export function ChatGroupProfilePanel(props: ChatGroupProfilePanelProps) {
               O seu perfil no CRM não tem permissão para gerir grupos neste painel.
             </p>
           ) : null}
+
+          {scheduledMessagesSection ? <div className="space-y-2">{scheduledMessagesSection}</div> : null}
 
           <div className="flex flex-col items-center text-center">
             <Avatar className="h-16 w-16 border border-border/80 shadow-sm">

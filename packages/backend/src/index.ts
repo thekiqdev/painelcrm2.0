@@ -109,6 +109,7 @@ import { processAnnouncementSendRecipientsBatch } from './services/announcements
 import { runAppointmentRemindersOnce } from './services/appointmentReminderWorkerService.js';
 import { runPendingConfirmationAutomationOnce } from './services/appointmentAutomationService.js';
 import { runChatSlaAutomationTick } from './services/chatSlaWorkerService.js';
+import { processChatScheduledMessagesWorkerTick } from './services/chatScheduledMessagesWorker.js';
 import { getChatAutomationWorkerPollMs } from './config/chatAutomationEnv.js';
 import { logGoogleCalendarBootDiagnostics } from './config/googleCalendarEnv.js';
 import { logGoogleDriveBootDiagnostics } from './config/googleDriveEnv.js';
@@ -582,6 +583,13 @@ void (async () => {
   setInterval(() => {
     void runChatSlaAutomationTick().catch((err) => console.error('[chat-sla-automation] tick error', err));
   }, chatAutomationMs);
+
+  const chatSchedMsgPollMs = Math.max(15_000, parseInt(process.env.CHAT_SCHEDULED_MESSAGES_POLL_MS || '30000', 10));
+  setInterval(() => {
+    void processChatScheduledMessagesWorkerTick(15).catch((err) =>
+      console.error('[chat-scheduled-messages] tick error', err),
+    );
+  }, chatSchedMsgPollMs);
 
   if (isWhatsappOfficialCampaignWorkerEnabled()) {
     const waCampPoll = getWhatsappOfficialCampaignWorkerPollMs();

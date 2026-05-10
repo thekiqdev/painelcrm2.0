@@ -108,6 +108,7 @@ export type PermissionCatalogKey =
   | 'chat.reopen_attendance'
   | 'chat.assign_to_user'
   | 'chat.manage_tags'
+  | 'chat.delete'
   | 'chat.create_invoice_from_chat'
   | 'chat.create_proposal_from_chat'
   | 'chat.create_contract_from_chat'
@@ -147,6 +148,7 @@ export interface ChatGranularResolved {
   reopen_attendance: boolean;
   assign_to_user: boolean;
   manage_tags: boolean;
+  delete: boolean;
   create_invoice_from_chat: boolean;
   create_proposal_from_chat: boolean;
   create_contract_from_chat: boolean;
@@ -185,6 +187,7 @@ export function resolveChatGranularFromLegacy(map: ModulePermissionsMap): ChatGr
     reopen_attendance: canEdit && extraFlag(ex, 'chat_reopen', true),
     assign_to_user: canEdit && extraFlag(ex, 'chat_assign', true),
     manage_tags: canEdit && extraFlag(ex, 'chat_manage_tags', true),
+    delete: canEdit && extraFlag(ex, 'chat_delete', false),
     create_invoice_from_chat:
       canEdit &&
       resolveBillingGranularFromLegacy(map).create_invoice &&
@@ -771,6 +774,8 @@ export function hasPermissionKey(
       return g.assign_to_user;
     case 'chat.manage_tags':
       return g.manage_tags;
+    case 'chat.delete':
+      return g.delete;
     case 'chat.create_invoice_from_chat':
       return g.create_invoice_from_chat;
     case 'chat.create_proposal_from_chat':

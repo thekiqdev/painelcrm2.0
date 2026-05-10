@@ -1,22 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEventHandler } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChatOutboundQueue } from '@/hooks/useChatOutboundQueue';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import {
-  CalendarIcon,
-  FileText,
-  Headphones,
-  Image as ImageIcon,
-  Info,
-  LayoutTemplate,
-  Minus,
-  Plus,
-  Send,
-  Video,
-  X,
-} from 'lucide-react';
+import { Headphones, Info, Minus, Plus, Send, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { ChatBubbleContent } from '@/components/chat/ChatBubbleContent';
 import { MessageStatusIndicator } from '@/components/chat/MessageStatusIndicator';
@@ -37,13 +26,17 @@ import { useFloatingConversationIdentity } from './useFloatingConversationIdenti
 import { FLOATING_WINDOW_WIDTH_PX, FLOATING_Z_WINDOWS } from './constants';
 import { floatingAttendanceRowModel } from './attendanceUi';
 import { Badge } from '@/components/ui/badge';
+import { ChatComposerDropZone } from '@/components/chat/ChatComposerDropZone';
+import { ChatComposerQuickActionsPanel } from '@/components/chat/ChatComposerQuickActionsPanel';
+import { chatScheduledMessagesQueryKey } from '@/components/chat/ChatScheduledMessagesStrip';
+import { ScheduleChatMessageDialog } from '@/components/chat/ScheduleChatMessageDialog';
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+  classifyChatOutgoingFile,
+  inferDocumentMimeForSend,
+  validateChatOutgoingFileSize,
+} from '@/utils/chatComposerOutgoingFile';
+import { useIsMobile } from '@/hooks/use-mobile';
+import { buildFloatingComposerQuickSections } from './buildFloatingComposerQuickSections';
 import { beginConversationDragSession, endConversationDragSession } from '@/lib/chatKanbanConversationDrag';
 import {
   applyConversationDragPreview,
@@ -103,9 +96,10 @@ export function FloatingConversationWindow({
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const imageFileInputRef = useRef<HTMLInputElement>(null);
-  const documentFileInputRef = useRef<HTMLInputElement>(null);
+  const attachComboInputRef = useRef<HTMLInputElement>(null);
   const floatingDraftRef = useRef('');
+  const isMobile = useIsMobile();
+  const [scheduleChatDlgOpen, setScheduleChatDlgOpen] = useState(false);
   const pendingWsFifoRef = useRef<string[]>([]);
   const {
     minimizePanel,
@@ -144,10 +138,16 @@ export function FloatingConversationWindow({
     });
   }, []);
 
-  const onPickImage: ChangeEventHandler<HTMLInputElement> = async (ev) => {
-    const file = ev.target.files?.[0];
-    ev.target.value = '';
-    if (!file) return;
+  const sendFloatingImageFile = async (file: File) => {
+    const sizeOk = validateChatOutgoingFileSize(file);
+    if (!sizeOk.ok) {
+      toast.error(sizeOk.message);
+      return;
+    }
+    if (classifyChatOutgoingFile(file) !== 'image') {
+      toast.error('Arquivo inválido para imagem');
+      return;
+    }
     try {
       const dataUrl = await readFileAsDataUrl(file);
       const comma = dataUrl.indexOf(',');
@@ -163,17 +163,23 @@ export function FloatingConversationWindow({
     }
   };
 
-  const onPickDocument: ChangeEventHandler<HTMLInputElement> = async (ev) => {
-    const file = ev.target.files?.[0];
-    ev.target.value = '';
-    if (!file) return;
+  const sendFloatingDocumentFile = async (file: File) => {
+    const sizeOk = validateChatOutgoingFileSize(file);
+    if (!sizeOk.ok) {
+      toast.error(sizeOk.message);
+      return;
+    }
+    if (classifyChatOutgoingFile(file) !== 'document') {
+      toast.error('Tipo de documento não suportado');
+      return;
+    }
     try {
       const dataUrl = await readFileAsDataUrl(file);
       const comma = dataUrl.indexOf(',');
       const fileBase64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
       await chatService.sendDocumentMessage(conversationId, {
         fileBase64,
-        mimeType: file.type || 'application/pdf',
+        mimeType: inferDocumentMimeForSend(file),
         fileName: file.name,
       });
       void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'messages', conversationId] });
@@ -183,6 +189,15 @@ export function FloatingConversationWindow({
     }
   };
 
+  const handleAttachComboChange = async (ev: React.ChangeEvent<HTMLInputElement>) => {
+    const file = ev.target.files?.[0];
+    ev.target.value = '';
+    if (!file) return;
+    const kind = classifyChatOutgoingFile(file);
+    if (kind === 'image') await sendFloatingImageFile(file);
+    else if (kind === 'document') await sendFloatingDocumentFile(file);
+    else toast.error('Tipo de arquivo não suportado.');
+  };
 
   const messagesQueryKey = useMemo(
     () => ['floating-chat', 'messages', conversationId] as const,
@@ -244,6 +259,19 @@ export function FloatingConversationWindow({
     staleTime: 5_000,
   });
 
+  const { data: connectedInstances = [] } = useQuery({
+    queryKey: ['floating-chat', 'connected-instances'],
+    queryFn: async () => {
+      const rows = await chatService.listInstances();
+      return rows.filter((instance) => {
+        const status = String(instance.status || '').toLowerCase();
+        const enabled = (instance.metadata as Record<string, unknown> | null | undefined)?.enabled_in_chat !== false;
+        return enabled && (status === 'connected' || status === 'open');
+      });
+    },
+    staleTime: 30_000,
+  });
+
   useEffect(() => {
     const onMsg = (e: Event) => {
       const d = (e as CustomEvent<Record<string, unknown>>).detail;
@@ -277,8 +305,54 @@ export function FloatingConversationWindow({
 
   const identity = useFloatingConversationIdentity(conversationId, conversation);
   const headerTags = resolveChatKanbanTagsForUi(conversation);
+  const isEmptyLeadConversation = !isLoading && messages.length === 0 && Boolean(conversation?.leadId);
+  const selectedInstanceId = conversation?.instance_id ?? '';
   const isGroupHeader =
     conversation?.conversation_type === 'group' || Boolean(conversation?.external_chat_id?.endsWith('@g.us'));
+
+  const floatingComposerSections = useMemo(
+    () =>
+      buildFloatingComposerQuickSections({
+        conversation,
+        commercial,
+        canCreateInvoice: Boolean(conversation?.client_id && commercial.canCreateInvoiceFromChatFull),
+        canCreateProposal: Boolean(
+          (conversation?.client_id || conversation?.leadId) && commercial.canCreateProposalFromChatFull,
+        ),
+        canCreateContract: Boolean(conversation?.client_id && commercial.canCreateContractFromChatFull),
+        hasSchedulePermission: hasPermissionKey('chat.schedule_from_chat'),
+        canManageGroupUi: hasPermissionKey('chat.manage_groups'),
+        canManageKanbanTags: hasPermissionKey('chat.manage_tags'),
+        permDenied,
+        isMobile,
+        canScheduleChatMessage: hasPermissionKey('chat.send_message'),
+        onAttachFile: () => attachComboInputRef.current?.click(),
+        onScheduleMessage: () => setScheduleChatDlgOpen(true),
+        onTemplate: () =>
+          toast.info('Templates no floating entram na próxima etapa. Use o chat completo para modelos.'),
+        dispatchAction: dispatchCompactAction,
+        onOpenProfileForTags: () => {
+          if (!compactProfileOpen) toggleCompactProfile(conversationId);
+        },
+        onOpenClient: () => {
+          if (conversation?.client_id && commercial.canViewClientNav) {
+            navigate(`/clients/${conversation.client_id}`);
+          }
+        },
+      }),
+    [
+      conversation,
+      commercial,
+      compactProfileOpen,
+      toggleCompactProfile,
+      conversationId,
+      dispatchCompactAction,
+      navigate,
+      hasPermissionKey,
+      permDenied,
+      isMobile,
+    ],
+  );
 
   const [tenantKanbanTagsCatalog, setTenantKanbanTagsCatalog] = useState<ChatKanbanTagUi[]>([]);
   const [tenantKanbanTagsLoading, setTenantKanbanTagsLoading] = useState(false);
@@ -478,6 +552,20 @@ export function FloatingConversationWindow({
     enqueueText(t, null);
   }, [conversationId, setComposerDraft, enqueueText]);
 
+  const changePreparedInstance = useCallback(
+    async (nextInstanceId: string) => {
+      if (!nextInstanceId || nextInstanceId === selectedInstanceId || messages.length > 0) return;
+      try {
+        const updated = await chatService.patchPreparedConversationInstance(conversationId, nextInstanceId);
+        queryClient.setQueryData(['floating-chat', 'conversation-meta', conversationId], updated);
+        void queryClient.invalidateQueries({ queryKey: ['floating-chat'] });
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Não foi possível alterar a instância');
+      }
+    },
+    [conversationId, messages.length, queryClient, selectedInstanceId],
+  );
+
   const rightCss = `calc(${rightPx}px + env(safe-area-inset-right, 0px))`;
 
   return (
@@ -658,6 +746,12 @@ export function FloatingConversationWindow({
       {compactProfileOpen ? (
         <FloatingCompactProfile conversationId={conversationId} conversation={conversation} />
       ) : null}
+      <ChatComposerDropZone
+        disabled={!canChatReply() || isMobile}
+        className="flex min-h-0 min-w-0 flex-1 flex-col"
+        onSendImageFile={(f) => void sendFloatingImageFile(f)}
+        onSendDocumentFile={(f) => void sendFloatingDocumentFile(f)}
+      >
       <div
         ref={scrollRef}
         draggable
@@ -684,6 +778,33 @@ export function FloatingConversationWindow({
         <div className="space-y-1.5 px-2 py-1.5">
           {isLoading ? (
             <p className="py-8 text-center text-xs text-muted-foreground">Carregando mensagens…</p>
+          ) : isEmptyLeadConversation ? (
+            <div className="flex min-h-[210px] flex-col items-center justify-center px-4 py-8 text-center">
+              <Avatar className="mb-3 h-12 w-12 border border-border/70">
+                {identity.avatarUrl ? <AvatarImage src={identity.avatarUrl} alt="" /> : null}
+                <AvatarFallback>{identity.initials}</AvatarFallback>
+              </Avatar>
+              <Badge variant="secondary" className="mb-2">Lead</Badge>
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Nova conversa com Lead</p>
+              <p className="mt-1 text-sm font-semibold text-foreground">Conversa ainda não iniciada</p>
+              <p className="mt-1 max-w-[240px] text-xs text-muted-foreground">
+                Envie a primeira mensagem pelo WhatsApp para iniciar o atendimento.
+              </p>
+              {connectedInstances.length === 0 ? (
+                <div className="mt-4 rounded-lg border border-dashed border-border bg-background p-3 text-xs text-muted-foreground">
+                  <p>Nenhuma instância WhatsApp conectada.</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-2 h-8"
+                    onClick={() => navigate('/superadmin/conexoes/uazapi')}
+                  >
+                    Conectar WhatsApp
+                  </Button>
+                </div>
+              ) : null}
+            </div>
           ) : messages.length === 0 ? (
             <p className="py-8 text-center text-xs text-muted-foreground">Sem mensagens.</p>
           ) : (
@@ -734,168 +855,43 @@ export function FloatingConversationWindow({
         </div>
       </div>
       <div className="floating-chat-window-composer shrink-0 border-t border-neutral-200 bg-white px-2 py-1.5 dark:border-slate-800 dark:bg-slate-950">
+        {isEmptyLeadConversation && connectedInstances.length > 1 ? (
+          <div className="mb-1.5 flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="shrink-0">Enviar por:</span>
+            <Select value={selectedInstanceId} onValueChange={(v) => void changePreparedInstance(v)}>
+              <SelectTrigger className="h-7 flex-1 text-xs">
+                <SelectValue placeholder="Instância WhatsApp" />
+              </SelectTrigger>
+              <SelectContent>
+                {connectedInstances.map((instance) => (
+                  <SelectItem key={instance.id} value={instance.id}>
+                    {instance.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        ) : null}
         {canChatReply() ? (
         <div className="flex items-end gap-1.5">
-          <input
-            ref={imageFileInputRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={onPickImage}
+          {isMobile ? (
+            <input
+              ref={attachComboInputRef}
+              type="file"
+              accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip,.rar,.ppt,.pptx"
+              className="hidden"
+              onChange={handleAttachComboChange}
+            />
+          ) : null}
+          <ChatComposerQuickActionsPanel
+            sections={floatingComposerSections}
+            density="compact"
+            triggerLabel="Ações rápidas"
+            headerTitle="Ações rápidas"
+            contentClassName="z-[95]"
+            side="top"
+            align="start"
           />
-          <input
-            ref={documentFileInputRef}
-            type="file"
-            accept="application/pdf"
-            className="hidden"
-            onChange={onPickDocument}
-          />
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                className="h-9 w-9 shrink-0 rounded-xl"
-                title="Ações rápidas"
-                aria-label="Ações rápidas"
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent side="top" align="start" className="z-[90] w-56">
-              <DropdownMenuItem
-                onSelect={(e) => {
-                  e.preventDefault();
-                  imageFileInputRef.current?.click();
-                }}
-              >
-                <ImageIcon className="mr-2 h-4 w-4" />
-                Enviar imagem
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onSelect={(e) => {
-                  e.preventDefault();
-                  documentFileInputRef.current?.click();
-                }}
-              >
-                <FileText className="mr-2 h-4 w-4" />
-                Enviar documento
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onSelect={(e) => {
-                  e.preventDefault();
-                  toast.info('Templates no floating entram na próxima etapa. Use o chat completo para modelos.');
-                }}
-              >
-                <LayoutTemplate className="mr-2 h-4 w-4" />
-                Usar template
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                disabled={!hasPermissionKey('chat.schedule_from_chat')}
-                title={hasPermissionKey('chat.schedule_from_chat') ? undefined : permDenied}
-                onSelect={(e) => { e.preventDefault(); dispatchCompactAction('schedule'); }}
-              >
-                <CalendarIcon className="mr-2 h-4 w-4" />
-                Agendar compromisso
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={!hasPermissionKey('chat.schedule_from_chat')}
-                title={hasPermissionKey('chat.schedule_from_chat') ? undefined : permDenied}
-                onSelect={(e) => { e.preventDefault(); dispatchCompactAction('meet_now'); }}
-              >
-                <Video className="mr-2 h-4 w-4" />
-                Criar reunião para agora
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={!hasPermissionKey('chat.schedule_from_chat')}
-                title={hasPermissionKey('chat.schedule_from_chat') ? undefined : permDenied}
-                onSelect={(e) => { e.preventDefault(); dispatchCompactAction('meet_later'); }}
-              >
-                <CalendarIcon className="mr-2 h-4 w-4" />
-                Criar reunião para depois
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              {conversation?.conversation_type === 'group' || conversation?.external_chat_id?.endsWith('@g.us') ? (
-                <DropdownMenuItem
-                  disabled={!hasPermissionKey('chat.manage_groups')}
-                  title={hasPermissionKey('chat.manage_groups') ? undefined : permDenied}
-                  onSelect={(e) => { e.preventDefault(); dispatchCompactAction('group_manage'); }}
-                >
-                  <Info className="mr-2 h-4 w-4" />
-                  Gerenciar grupo
-                </DropdownMenuItem>
-              ) : (
-                <>
-                  {conversation?.leadId && !conversation?.client_id ? (
-                    <DropdownMenuItem
-                      disabled={!commercial.canConvertLeadToClient}
-                      title={commercial.canConvertLeadToClient ? undefined : permDenied}
-                      onSelect={(e) => { e.preventDefault(); dispatchCompactAction('convert_lead'); }}
-                    >
-                      <Info className="mr-2 h-4 w-4" />
-                      Converter para cliente
-                    </DropdownMenuItem>
-                  ) : null}
-                  {!conversation?.client_id && !conversation?.leadId ? (
-                    <>
-                      <DropdownMenuItem
-                        disabled={!commercial.canCreateClientFromChat}
-                        title={commercial.canCreateClientFromChat ? undefined : permDenied}
-                        onSelect={(e) => { e.preventDefault(); dispatchCompactAction('create_client'); }}
-                      >
-                        <Info className="mr-2 h-4 w-4" />
-                        Criar cliente
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        disabled={!commercial.canCreateLeadFromChat}
-                        title={commercial.canCreateLeadFromChat ? undefined : permDenied}
-                        onSelect={(e) => { e.preventDefault(); dispatchCompactAction('create_lead'); }}
-                      >
-                        <Info className="mr-2 h-4 w-4" />
-                        Criar lead
-                      </DropdownMenuItem>
-                    </>
-                  ) : null}
-                  {conversation?.client_id ? (
-                    <>
-                      <DropdownMenuItem
-                        disabled={!commercial.canCreateInvoiceFromChatFull}
-                        title={commercial.canCreateInvoiceFromChatFull ? undefined : permDenied}
-                        onSelect={(e) => { e.preventDefault(); dispatchCompactAction('invoice'); }}
-                      >
-                        <FileText className="mr-2 h-4 w-4" />
-                        Enviar fatura
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        disabled={!commercial.canCreateContractFromChatFull}
-                        title={commercial.canCreateContractFromChatFull ? undefined : permDenied}
-                        onSelect={(e) => { e.preventDefault(); dispatchCompactAction('contract'); }}
-                      >
-                        <FileText className="mr-2 h-4 w-4" />
-                        Enviar contrato
-                      </DropdownMenuItem>
-                    </>
-                  ) : null}
-                  {conversation?.client_id || conversation?.leadId ? (
-                    <DropdownMenuItem
-                      disabled={!commercial.canCreateProposalFromChatFull}
-                      title={commercial.canCreateProposalFromChatFull ? undefined : permDenied}
-                      onSelect={(e) => { e.preventDefault(); dispatchCompactAction('proposal'); }}
-                    >
-                      <FileText className="mr-2 h-4 w-4" />
-                      Criar proposta
-                    </DropdownMenuItem>
-                  ) : null}
-                </>
-              )}
-              <DropdownMenuItem onSelect={(e) => { e.preventDefault(); dispatchCompactAction('task'); }}>
-                <FileText className="mr-2 h-4 w-4" />
-                Criar tarefa
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
           <Textarea
             draggable={false}
             value={draft}
@@ -911,7 +907,7 @@ export function FloatingConversationWindow({
                 submitFloating();
               }
             }}
-            placeholder="Mensagem…"
+            placeholder={isEmptyLeadConversation ? "Digite a primeira mensagem..." : "Mensagem…"}
             rows={2}
             className="min-h-[44px] flex-1 resize-none border-neutral-200 bg-white text-sm dark:border-slate-700 dark:bg-slate-950"
           />
@@ -922,7 +918,7 @@ export function FloatingConversationWindow({
             title="Enviar"
             aria-label="Enviar"
             draggable={false}
-            disabled={!draft.trim()}
+            disabled={!draft.trim() || (isEmptyLeadConversation && connectedInstances.length === 0)}
             onClick={() => submitFloating()}
           >
             <Send className="h-4 w-4" />
@@ -932,6 +928,18 @@ export function FloatingConversationWindow({
           <p className="px-2 py-2 text-xs text-muted-foreground dark:text-slate-400">{permDenied}</p>
         )}
       </div>
+      </ChatComposerDropZone>
+      <ScheduleChatMessageDialog
+        open={scheduleChatDlgOpen}
+        onOpenChange={setScheduleChatDlgOpen}
+        conversationId={conversationId}
+        density="compact"
+        onSuccess={() => {
+          void queryClient.invalidateQueries({
+            queryKey: chatScheduledMessagesQueryKey(conversationId),
+          });
+        }}
+      />
     </div>
   );
 }

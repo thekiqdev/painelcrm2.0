@@ -28,6 +28,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ChatKanbanToolbar } from '@/components/chat-kanban/ChatKanbanToolbar';
@@ -61,6 +70,7 @@ import {
 } from '@/lib/chatKanbanConversationDrag';
 import { useFloatingChatOptional } from '@/features/floating-chat';
 import { setStoredProposalPublicUrl } from '@/utils/proposalPublicLinkSession';
+import { kanbanCardTitle } from '@/utils/chatKanbanCardDisplay';
 
 type FunnelOption = { id: string; name: string };
 
@@ -101,6 +111,9 @@ const ChatKanbanPage = () => {
     convId: string;
     columnName: string;
   } | null>(null);
+
+  const [removeCardConfirm, setRemoveCardConfirm] = useState<ChatKanbanBoardCard | null>(null);
+  const [removingCard, setRemovingCard] = useState(false);
 
   const requestMoveReason = useCallback((args: { columnName: string }) => {
     return new Promise<string | null>((resolve) => {
@@ -230,6 +243,26 @@ const ChatKanbanPage = () => {
       toast.error(e instanceof Error ? e.message : 'Erro ao atualizar cartões');
     }
   }, [selectedBoardId]);
+
+  const handleRemoveCardRequest = useCallback((card: ChatKanbanBoardCard) => {
+    setRemoveCardConfirm(card);
+  }, []);
+
+  const confirmRemoveCardFromColumn = useCallback(async () => {
+    const target = removeCardConfirm;
+    if (!target) return;
+    setRemovingCard(true);
+    try {
+      await chatKanbanService.deleteCard(target.id);
+      toast.success('Cartão removido desta coluna. A conversa continua no chat.');
+      setRemoveCardConfirm(null);
+      await refreshCardsOnly();
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Não foi possível remover o cartão');
+    } finally {
+      setRemovingCard(false);
+    }
+  }, [removeCardConfirm, refreshCardsOnly]);
 
   useKanbanAttendanceSocketRefresh(
     session?.token,
@@ -650,6 +683,7 @@ const ChatKanbanPage = () => {
                         cardIds={boardDnd.dndItems[col.id] ?? []}
                         cardMap={cardMap}
                         onCardClick={openKanbanCardInFloating}
+                        onRemoveCard={handleRemoveCardRequest}
                         onAddCard={() => setAddCardColumnId(col.id)}
                         onConfigureColumn={(c) => setSettingsColumn(c)}
                         nativeDrop={buildNativeDropForColumn(col.id)}
@@ -743,6 +777,42 @@ const ChatKanbanPage = () => {
         onCancel={() => finishMoveConfirm(false)}
         onConfirm={() => finishMoveConfirm(true)}
       />
+
+      <AlertDialog
+        open={removeCardConfirm !== null}
+        onOpenChange={(open) => {
+          if (!open && !removingCard) setRemoveCardConfirm(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remover cartão desta coluna?</AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              <span>
+                O cartão de{' '}
+                <strong className="text-foreground">
+                  {removeCardConfirm ? kanbanCardTitle(removeCardConfirm) : ''}
+                </strong>{' '}
+                será retirado apenas desta etapa do quadro.
+              </span>
+              <span className="block">
+                A conversa não é apagada e pode voltar a ser adicionada ao Kanban ou permanece acessível no chat.
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={removingCard}>Cancelar</AlertDialogCancel>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={removingCard}
+              onClick={() => void confirmRemoveCardFromColumn()}
+            >
+              {removingCard ? 'Removendo…' : 'Remover'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <ChatKanbanMoveReasonDialog
         open={attachMoveReason !== null}

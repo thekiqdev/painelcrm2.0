@@ -63,6 +63,8 @@ import { applyUrlPatch } from "@/lib/listFiltersUrl";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { CommercialListingPageShell } from "@/components/listing/CommercialListingPageShell";
+import { fetchFunnels } from "@/services/funnels";
+import type { SalesFunnel } from "@/components/funnel/types";
 import { MobilePageHeader } from "@/components/mobile/MobilePageHeader";
 import {
   COMMERCIAL_FILTERS_PANEL,
@@ -172,7 +174,7 @@ function ValidadeTableCell({ p }: { p: Proposal }) {
     return (
       <div className="flex flex-col gap-0.5">
         <span className="text-sm font-medium text-destructive tabular-nums">{dateStr}</span>
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-destructive/90">Vencida</span>
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-destructive/90">Expirada</span>
       </div>
     );
   }
@@ -215,7 +217,18 @@ const Proposals = () => {
   const [conversionFilter, setConversionFilter] = useState(() =>
     parseConversionFromUrl(searchParams.get("conv")),
   );
+  const [funnelFilterId, setFunnelFilterId] = useState<string | null>(() => searchParams.get("funnel"));
+  const [stageFilterId, setStageFilterId] = useState<string | null>(() => searchParams.get("stage"));
+  const [funnels, setFunnels] = useState<SalesFunnel[]>([]);
   const [filterSheetOpen, setFilterSheetOpen] = useState(false);
+
+  const proposalFunnels = useMemo(() => funnels.filter((f) => f.type === "proposals"), [funnels]);
+
+  const stagesForSelectedFunnel = useMemo(() => {
+    if (!funnelFilterId) return [];
+    const f = proposalFunnels.find((x) => x.id === funnelFilterId);
+    return f?.stages ?? [];
+  }, [funnelFilterId, proposalFunnels]);
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedQ(searchInput.trim()), 320);
@@ -233,6 +246,8 @@ const Proposals = () => {
     const owner = parseOwnerFromUrl(searchParams.get("owner"));
     const val = parseValidityFromUrl(searchParams.get("val"));
     const conv = parseConversionFromUrl(searchParams.get("conv"));
+    const funnel = searchParams.get("funnel");
+    const stage = searchParams.get("stage");
 
     setSearchInput((prev) => (prev !== q ? q : prev));
     setDebouncedQ((prev) => (prev !== q ? q : prev));
@@ -241,8 +256,34 @@ const Proposals = () => {
     setOwnerFilter((prev) => (prev !== owner ? owner : prev));
     setValidityFilter((prev) => (prev !== val ? val : prev));
     setConversionFilter((prev) => (prev !== conv ? conv : prev));
+    setFunnelFilterId((prev) => (prev !== (funnel || null) ? funnel || null : prev));
+    setStageFilterId((prev) => (prev !== (stage || null) ? stage || null : prev));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const r = await fetchFunnels();
+      if (!cancelled && r.success && r.data) setFunnels(r.data);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!funnelFilterId) {
+      setStageFilterId(null);
+      return;
+    }
+    if (proposalFunnels.length === 0) return;
+    const f = proposalFunnels.find((x) => x.id === funnelFilterId);
+    if (!f) return;
+    if (stageFilterId && !f.stages?.some((s) => s.id === stageFilterId)) {
+      setStageFilterId(null);
+    }
+  }, [funnelFilterId, proposalFunnels, stageFilterId]);
 
   useEffect(() => {
     const ownerParam =
@@ -261,6 +302,8 @@ const Proposals = () => {
           owner: ownerParam,
           val: valParam,
           conv: convParam,
+          funnel: funnelFilterId || null,
+          stage: stageFilterId || null,
         }),
       { replace: true },
     );
@@ -271,6 +314,8 @@ const Proposals = () => {
     ownerFilter,
     validityFilter,
     conversionFilter,
+    funnelFilterId,
+    stageFilterId,
     setSearchParams,
   ]);
 
@@ -300,6 +345,8 @@ const Proposals = () => {
     if (conversionFilter === "no") f.conversion = "no";
     if (ownerFilter === "__mine__" && user?.id) f.owner_user_id = user.id;
     else if (ownerFilter !== "__all__" && ownerFilter !== "__mine__") f.owner_user_id = ownerFilter;
+    if (funnelFilterId) f.funnel_id = funnelFilterId;
+    if (stageFilterId) f.stage_id = stageFilterId;
     return f;
   }, [
     statusFilter,
@@ -309,6 +356,8 @@ const Proposals = () => {
     conversionFilter,
     ownerFilter,
     user?.id,
+    funnelFilterId,
+    stageFilterId,
   ]);
 
   const loadList = useCallback(async () => {
@@ -385,6 +434,8 @@ const Proposals = () => {
     setOwnerFilter("__all__");
     setValidityFilter("__all__");
     setConversionFilter("__all__");
+    setFunnelFilterId(null);
+    setStageFilterId(null);
   };
 
   const formatCurrency = (value: number) =>
@@ -398,22 +449,41 @@ const Proposals = () => {
     clientFilterId !== null ||
     ownerFilter !== "__all__" ||
     validityFilter !== "__all__" ||
-    conversionFilter !== "__all__";
+    conversionFilter !== "__all__" ||
+    funnelFilterId !== null ||
+    stageFilterId !== null;
 
   const listStats = useMemo(() => {
+    const sum = (rows: Proposal[]) =>
+      rows.reduce((acc, p) => acc + (Number.isFinite(Number(p.amount)) ? Number(p.amount) : 0), 0);
+
     const total = list.length;
-    const abertas = list.filter((p) => p.status === "sent").length;
-    const aceitas = list.filter((p) => p.status === "accepted" || p.status === "invoiced").length;
-    const vencidas = list.filter(
-      (p) => p.status === "expired" || (p.valid_until && new Date(p.valid_until) < new Date() && p.status === "sent"),
-    ).length;
-    return { total, abertas, aceitas, vencidas };
+    const totalValor = sum(list);
+
+    const rowsPendentes = list.filter((p) => p.status === "sent");
+    const rowsAceitas = list.filter((p) => p.status === "accepted");
+    const rowsExpiradas = list.filter(
+      (p) =>
+        p.status === "expired" ||
+        (Boolean(p.valid_until) && isYmdBeforeToday(String(p.valid_until)) && p.status === "sent"),
+    );
+
+    return {
+      total,
+      totalValor,
+      pendentes: rowsPendentes.length,
+      pendentesValor: sum(rowsPendentes),
+      aceitas: rowsAceitas.length,
+      aceitasValor: sum(rowsAceitas),
+      expiradas: rowsExpiradas.length,
+      expiradasValor: sum(rowsExpiradas),
+    };
   }, [list]);
 
   const cardTotalActive = !hasActiveFilters;
-  const cardAbertasActive = statusFilter === "sent";
-  const cardAceitasActive = statusFilter === "accepted" || statusFilter === "invoiced";
-  const cardVencidasActive = validityFilter === "expired";
+  const cardPendentesActive = statusFilter === "sent" && validityFilter === "__all__";
+  const cardAceitasActive = statusFilter === "accepted";
+  const cardExpiradasActive = validityFilter === "expired" && statusFilter === "__all__";
   
   return (
     <CommercialListingPageShell>
@@ -484,13 +554,14 @@ const Proposals = () => {
               <Layers className="h-4 w-4 shrink-0 text-muted-foreground opacity-70" aria-hidden />
             </div>
             <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{listStats.total}</p>
+            <p className="mt-1 text-base font-semibold tabular-nums text-foreground">{formatCurrency(listStats.totalValor)}</p>
             <p className="mt-1 text-[11px] text-muted-foreground leading-snug">Limpar filtros e ver tudo</p>
           </CardContent>
         </Card>
         <Card
           className={cn(
             COMMERCIAL_SUMMARY_CARD_CLASS,
-            cardAbertasActive && summaryCardActiveRing,
+            cardPendentesActive && summaryCardActiveRing,
           )}
           onClick={() => {
             setStatusFilter("sent");
@@ -508,11 +579,13 @@ const Proposals = () => {
         >
           <CardContent className="p-3.5">
             <div className="flex items-start justify-between gap-2">
-              <p className="text-sm font-medium text-muted-foreground">Abertas</p>
+              <p className="text-sm font-medium text-muted-foreground">Pendentes</p>
               <Send className="h-4 w-4 shrink-0 text-amber-600/85" aria-hidden />
             </div>
-            <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{listStats.abertas}</p>
-            <p className="mt-1 text-[11px] text-muted-foreground leading-snug">Enviadas aguardando resposta</p>
+            <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{listStats.pendentes}</p>
+            <p className="mt-1 text-base font-semibold tabular-nums text-amber-800 dark:text-amber-300">
+              {formatCurrency(listStats.pendentesValor)}
+            </p>
           </CardContent>
         </Card>
         <Card
@@ -536,17 +609,19 @@ const Proposals = () => {
         >
           <CardContent className="p-3.5">
             <div className="flex items-start justify-between gap-2">
-              <p className="text-sm font-medium text-muted-foreground">Aceitas / ganhas</p>
+              <p className="text-sm font-medium text-muted-foreground">Aceitas</p>
               <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600/80" aria-hidden />
             </div>
             <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{listStats.aceitas}</p>
-            <p className="mt-1 text-[11px] text-muted-foreground leading-snug">Aceitas e faturadas nesta lista</p>
+            <p className="mt-1 text-base font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
+              {formatCurrency(listStats.aceitasValor)}
+            </p>
           </CardContent>
         </Card>
         <Card
           className={cn(
             COMMERCIAL_SUMMARY_CARD_CLASS,
-            cardVencidasActive && summaryCardActiveRing,
+            cardExpiradasActive && summaryCardActiveRing,
           )}
           onClick={() => {
             setValidityFilter("expired");
@@ -564,11 +639,13 @@ const Proposals = () => {
         >
           <CardContent className="p-3.5">
             <div className="flex items-start justify-between gap-2">
-              <p className="text-sm font-medium text-muted-foreground">Vencidas</p>
+              <p className="text-sm font-medium text-muted-foreground">Expiradas</p>
               <AlertCircle className="h-4 w-4 shrink-0 text-red-600/75" aria-hidden />
             </div>
-            <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{listStats.vencidas}</p>
-            <p className="mt-1 text-[11px] text-muted-foreground leading-snug">Por data ou status expirado</p>
+            <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{listStats.expiradas}</p>
+            <p className="mt-1 text-base font-semibold tabular-nums text-red-700 dark:text-red-400">
+              {formatCurrency(listStats.expiradasValor)}
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -671,9 +748,48 @@ const Proposals = () => {
                       <SelectContent>
                       <SelectItem value="__all__">Todas</SelectItem>
                       <SelectItem value="valid">Dentro do prazo / sem data</SelectItem>
-                      <SelectItem value="expired">Vencidas (por data)</SelectItem>
+                      <SelectItem value="expired">Expiradas (por data)</SelectItem>
                       </SelectContent>
                     </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Funil de vendas</Label>
+                  <Select
+                    value={funnelFilterId ?? "__all__"}
+                    onValueChange={(v) => setFunnelFilterId(v === "__all__" ? null : v)}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Qualquer funil" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">Todos os funis</SelectItem>
+                      {proposalFunnels.map((fn) => (
+                        <SelectItem key={fn.id} value={fn.id}>
+                          {fn.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Estágio do funil</Label>
+                  <Select
+                    value={stageFilterId ?? "__all__"}
+                    onValueChange={(v) => setStageFilterId(v === "__all__" ? null : v)}
+                    disabled={!funnelFilterId || stagesForSelectedFunnel.length === 0}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder={funnelFilterId ? "Estágio" : "Selecione um funil"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">Todos os estágios</SelectItem>
+                      {stagesForSelectedFunnel.map((st) => (
+                        <SelectItem key={st.id} value={st.id}>
+                          {st.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs text-muted-foreground">Faturamento</Label>
@@ -704,67 +820,104 @@ const Proposals = () => {
           </Sheet>
       </div>
 
-        <div className="hidden md:grid md:grid-cols-4 md:gap-2">
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="h-10 w-full" aria-label="Filtrar por status">
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">Todos os status</SelectItem>
-              {(Object.keys(STATUS_LABELS) as Proposal["status"][]).map((s) => (
-                <SelectItem key={s} value={s}>
-                  {STATUS_LABELS[s]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={validityFilter} onValueChange={setValidityFilter}>
-            <SelectTrigger className="h-10 w-full" aria-label="Filtrar por validade">
-              <SelectValue placeholder="Validade" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">Validade: todas</SelectItem>
-              <SelectItem value="valid">Dentro do prazo / sem data</SelectItem>
-              <SelectItem value="expired">Vencidas (por data)</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select value={conversionFilter} onValueChange={setConversionFilter}>
-            <SelectTrigger className="h-10 w-full" aria-label="Filtrar por faturamento">
-              <SelectValue placeholder="Faturamento" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">Faturamento: todas</SelectItem>
-              <SelectItem value="yes">Com fatura</SelectItem>
-              <SelectItem value="no">Sem fatura</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select value={ownerFilter} onValueChange={setOwnerFilter}>
-            <SelectTrigger className="h-10 w-full" aria-label="Filtrar por responsável">
-              <SelectValue placeholder="Responsável" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">Todos os responsáveis</SelectItem>
-              <SelectItem value="__mine__">Minhas propostas</SelectItem>
-              {tenantUsers.map((u) => (
-                <SelectItem key={u.id} value={u.id}>
-                  {u.full_name?.trim() || u.email}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <div className="hidden md:flex md:flex-col md:gap-2">
+          <div className="grid md:grid-cols-2 lg:grid-cols-4 md:gap-2">
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="h-10 w-full" aria-label="Filtrar por status">
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Todos os status</SelectItem>
+                {(Object.keys(STATUS_LABELS) as Proposal["status"][]).map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {STATUS_LABELS[s]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={validityFilter} onValueChange={setValidityFilter}>
+              <SelectTrigger className="h-10 w-full" aria-label="Filtrar por validade">
+                <SelectValue placeholder="Validade" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Validade: todas</SelectItem>
+                <SelectItem value="valid">Dentro do prazo / sem data</SelectItem>
+                <SelectItem value="expired">Expiradas (por data)</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={conversionFilter} onValueChange={setConversionFilter}>
+              <SelectTrigger className="h-10 w-full" aria-label="Filtrar por faturamento">
+                <SelectValue placeholder="Faturamento" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Faturamento: todas</SelectItem>
+                <SelectItem value="yes">Com fatura</SelectItem>
+                <SelectItem value="no">Sem fatura</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={ownerFilter} onValueChange={setOwnerFilter}>
+              <SelectTrigger className="h-10 w-full" aria-label="Filtrar por responsável">
+                <SelectValue placeholder="Responsável" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Todos os responsáveis</SelectItem>
+                <SelectItem value="__mine__">Minhas propostas</SelectItem>
+                {tenantUsers.map((u) => (
+                  <SelectItem key={u.id} value={u.id}>
+                    {u.full_name?.trim() || u.email}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid md:grid-cols-2 md:gap-2">
+            <Select
+              value={funnelFilterId ?? "__all__"}
+              onValueChange={(v) => setFunnelFilterId(v === "__all__" ? null : v)}
+            >
+              <SelectTrigger className="h-10 w-full" aria-label="Filtrar por funil de vendas">
+                <SelectValue placeholder="Funil" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Todos os funis</SelectItem>
+                {proposalFunnels.map((fn) => (
+                  <SelectItem key={fn.id} value={fn.id}>
+                    {fn.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              value={stageFilterId ?? "__all__"}
+              onValueChange={(v) => setStageFilterId(v === "__all__" ? null : v)}
+              disabled={!funnelFilterId || stagesForSelectedFunnel.length === 0}
+            >
+              <SelectTrigger className="h-10 w-full" aria-label="Filtrar por estágio do funil">
+                <SelectValue placeholder={funnelFilterId ? "Estágio" : "Funil primeiro"} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Todos os estágios</SelectItem>
+                {stagesForSelectedFunnel.map((st) => (
+                  <SelectItem key={st.id} value={st.id}>
+                    {st.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="hidden min-w-0 md:block">
+            <Label className="mb-1.5 block text-xs text-muted-foreground">Cliente</Label>
+            <ClientSearchCombobox
+              id="proposals-list-client"
+              label=""
+              value={clientFilterId}
+              onChange={setClientFilterId}
+              remoteSearch
+              placeholderTrigger="Qualquer cliente"
+              className="w-full"
+            />
+          </div>
         </div>
-        <div className="hidden min-w-0 md:block">
-          <Label className="mb-1.5 block text-xs text-muted-foreground">Cliente</Label>
-          <ClientSearchCombobox
-            id="proposals-list-client"
-            label=""
-            value={clientFilterId}
-            onChange={setClientFilterId}
-            remoteSearch
-            placeholderTrigger="Qualquer cliente"
-            className="w-full"
-          />
-            </div>
         {hasActiveFilters ? (
           <div className="hidden justify-end md:flex">
             <Button type="button" variant="ghost" size="sm" className="h-9 text-muted-foreground" onClick={clearFilters}>

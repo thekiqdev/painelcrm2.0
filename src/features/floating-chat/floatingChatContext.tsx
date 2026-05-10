@@ -22,8 +22,8 @@ export type FloatingChatContextValue = {
   inboxScope: 'tenant' | 'owner';
   /** Desktop: janela flutuante; mobile (< md): overlay full-screen sem mudar de rota. */
   openConversationInContext: (conversationId: string) => void;
-  openChatForClient: (clientId: string) => Promise<void>;
-  openChatForLead: (leadId: string) => Promise<void>;
+  openChatForClient: (clientId: string) => Promise<string | null>;
+  openChatForLead: (leadId: string, options?: { createIfMissing?: boolean }) => Promise<string | null>;
   closeMobileConversationOverlay: () => void;
   compactProfileOpenByConversationId: Record<string, boolean>;
   toggleCompactProfile: (conversationId: string) => void;

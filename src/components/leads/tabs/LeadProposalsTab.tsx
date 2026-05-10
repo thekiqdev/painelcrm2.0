@@ -3,10 +3,11 @@ import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { FileText, Loader2, Plus } from "lucide-react";
+import { Ban, DollarSign, FileText, Loader2, Percent, Plus, Send, Trophy } from "lucide-react";
 import { TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -39,6 +40,47 @@ function formatMoney(n: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(n);
 }
 
+function formatPercent(n: number): string {
+  return `${new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 }).format(n)}%`;
+}
+
+function proposalStatusGroup(status: string): "draft" | "sent" | "accepted" | "lost" {
+  const s = String(status || "").toLowerCase();
+  if (["accepted", "approved", "won", "signed", "invoiced"].includes(s)) return "accepted";
+  if (["rejected", "declined", "lost", "expired", "cancelled", "canceled"].includes(s)) return "lost";
+  if (["sent", "viewed", "pending"].includes(s)) return "sent";
+  return "draft";
+}
+
+function ProposalMetricCard({
+  label,
+  value,
+  hint,
+  icon,
+}: {
+  label: string;
+  value: string | number;
+  hint?: string;
+  icon: React.ReactNode;
+}) {
+  return (
+    <Card className="border-border/60 bg-muted/10 shadow-sm md:border-border/70 md:bg-muted/15">
+      <CardContent className="p-2.5 md:p-3">
+        <div className="flex items-start justify-between gap-1.5">
+          <p className="text-[10px] font-medium leading-tight text-muted-foreground md:text-xs">{label}</p>
+          <span className="shrink-0 text-muted-foreground opacity-80 [&>svg]:h-3.5 [&>svg]:w-3.5 md:[&>svg]:h-4 md:[&>svg]:w-4">
+            {icon}
+          </span>
+        </div>
+        <p className="mt-0.5 text-base font-semibold tabular-nums tracking-tight md:mt-1 md:text-lg">{value}</p>
+        {hint ? (
+          <p className="mt-0.5 line-clamp-2 text-[10px] leading-snug text-muted-foreground md:text-[11px]">{hint}</p>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
 function mergeProposalsById(byLead: Proposal[], byClient: Proposal[]): Proposal[] {
   const map = new Map<string, Proposal>();
   for (const p of byLead) map.set(p.id, p);
@@ -53,6 +95,8 @@ interface LeadProposalsTabProps {
   migratedClientId?: string | null;
   leadName: string;
   onCreateProposal: () => void;
+  canViewProposal?: boolean;
+  canCreateProposal?: boolean;
 }
 
 const LeadProposalsTab: React.FC<LeadProposalsTabProps> = ({
@@ -60,6 +104,8 @@ const LeadProposalsTab: React.FC<LeadProposalsTabProps> = ({
   migratedClientId,
   leadName,
   onCreateProposal,
+  canViewProposal = true,
+  canCreateProposal = true,
 }) => {
   const cid = migratedClientId?.trim() ?? "";
 
@@ -77,47 +123,131 @@ const LeadProposalsTab: React.FC<LeadProposalsTabProps> = ({
       }
       return byLead;
     },
-    enabled: Boolean(leadId?.trim()),
+    enabled: Boolean(leadId?.trim()) && canViewProposal,
   });
   const error = queryError instanceof Error ? queryError.message : queryError ? String(queryError) : null;
+  const summary = React.useMemo(() => {
+    const total = rows.length;
+    let sent = 0;
+    let accepted = 0;
+    let lost = 0;
+    let totalValue = 0;
+    let acceptedValue = 0;
+
+    for (const proposal of rows) {
+      const amount = Number(proposal.amount ?? 0);
+      const group = proposalStatusGroup(String(proposal.status));
+      totalValue += Number.isFinite(amount) ? amount : 0;
+      if (group === "sent") sent++;
+      if (group === "accepted") {
+        accepted++;
+        acceptedValue += Number.isFinite(amount) ? amount : 0;
+      }
+      if (group === "lost") lost++;
+    }
+
+    const conversionBase = sent + accepted + lost;
+    const conversionRate = conversionBase > 0 ? (accepted / conversionBase) * 100 : 0;
+    return { total, sent, accepted, lost, totalValue, acceptedValue, conversionRate };
+  }, [rows]);
 
   return (
     <TabsContent value="proposals">
-      <div className="space-y-4">
-        <div className="flex flex-col gap-2 sm:flex-row sm:justify-between sm:items-center">
-          <div>
-            <h3 className="text-lg font-medium">Propostas</h3>
-            <p className="text-sm text-muted-foreground">
-              Propostas vinculadas a <strong className="font-medium text-foreground">{leadName}</strong>.
-              {cid
-                ? " Inclui também as que já estão no cliente CRM após a conversão."
-                : " Ao converter o lead em cliente, as propostas do lead passam para o cliente."}
+      <div className="space-y-3 md:space-y-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <h3 className="text-base font-semibold tracking-tight md:text-lg md:font-medium">Propostas</h3>
+            <p className="mt-0.5 text-xs leading-snug text-muted-foreground md:text-sm md:leading-normal">
+              <span className="line-clamp-2 md:line-clamp-none">
+                Propostas de <strong className="font-medium text-foreground">{leadName}</strong>.
+                {cid
+                  ? " Inclui também as do cliente CRM após conversão."
+                  : " Ao converter o lead, as propostas seguem para o cliente."}
+              </span>
             </p>
           </div>
-          <Button type="button" onClick={onCreateProposal} className="shrink-0">
+          <Button
+            type="button"
+            onClick={onCreateProposal}
+            className="h-9 shrink-0 text-xs md:h-10 md:text-sm"
+            disabled={!canCreateProposal}
+          >
             <Plus className="mr-2 h-4 w-4" />
             Criar proposta
           </Button>
         </div>
 
-        {loading ? (
+        {!canViewProposal ? (
+          <div className="rounded-xl border border-dashed border-border/70 p-5 text-center text-sm text-muted-foreground md:p-6">
+            Sem permissão para visualizar propostas deste lead.
+          </div>
+        ) : null}
+
+        {canViewProposal && !error ? (
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-2 lg:grid-cols-4">
+            <ProposalMetricCard
+              label="Total"
+              value={summary.total}
+              hint={`${summary.sent} enviadas`}
+              icon={<FileText className="h-4 w-4" />}
+            />
+            <ProposalMetricCard
+              label="Aceitas"
+              value={summary.accepted}
+              hint={`${summary.lost} recusadas/expiradas`}
+              icon={<Trophy className="h-4 w-4" />}
+            />
+            <ProposalMetricCard
+              label="Valor total"
+              value={formatMoney(summary.totalValue)}
+              hint={`Aceito: ${formatMoney(summary.acceptedValue)}`}
+              icon={<DollarSign className="h-4 w-4" />}
+            />
+            <ProposalMetricCard
+              label="Conversão"
+              value={formatPercent(summary.conversionRate)}
+              hint="Aceitas sobre enviadas/encerradas"
+              icon={<Percent className="h-4 w-4" />}
+            />
+            <ProposalMetricCard
+              label="Enviadas"
+              value={summary.sent}
+              hint="Aguardando resposta"
+              icon={<Send className="h-4 w-4" />}
+            />
+            <ProposalMetricCard
+              label="Recusadas/expiradas"
+              value={summary.lost}
+              hint="Status perdidos"
+              icon={<Ban className="h-4 w-4" />}
+            />
+            <ProposalMetricCard
+              label="Valor aceito"
+              value={formatMoney(summary.acceptedValue)}
+              hint="Aceitas/aprovadas"
+              icon={<Trophy className="h-4 w-4" />}
+            />
+          </div>
+        ) : null}
+
+        {canViewProposal && loading ? (
           <div className="flex items-center justify-center gap-2 py-12 text-muted-foreground">
             <Loader2 className="h-5 w-5 animate-spin" />
             Carregando propostas…
           </div>
-        ) : error ? (
+        ) : canViewProposal && error ? (
           <p className="text-sm text-destructive py-4">{error}</p>
-        ) : rows.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border p-8 text-center text-muted-foreground">
-            <FileText className="h-10 w-10 mx-auto mb-3 opacity-50" />
-            <p className="text-sm mb-4">Nenhuma proposta para este lead ainda.</p>
-            <Button type="button" variant="outline" onClick={onCreateProposal}>
+        ) : canViewProposal && rows.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-border/70 px-4 py-8 text-center text-muted-foreground md:p-8">
+            <FileText className="mx-auto mb-3 h-9 w-9 opacity-50 md:h-10 md:w-10" />
+            <p className="mb-4 text-sm">Nenhuma proposta para este lead ainda.</p>
+            <Button type="button" variant="outline" size="sm" className="md:size-default" onClick={onCreateProposal} disabled={!canCreateProposal}>
               <Plus className="mr-2 h-4 w-4" />
               Criar proposta
             </Button>
           </div>
-        ) : (
-          <div className="rounded-md border overflow-x-auto">
+        ) : canViewProposal ? (
+          <div className="overflow-x-auto rounded-lg border border-border/60 shadow-sm">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -157,7 +287,7 @@ const LeadProposalsTab: React.FC<LeadProposalsTabProps> = ({
               </TableBody>
             </Table>
           </div>
-        )}
+        ) : null}
       </div>
     </TabsContent>
   );

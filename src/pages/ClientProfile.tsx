@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, useNavigate, useLocation, Link } from "react-router-dom";
 import { ClientSidebar } from "@/components/clients/ClientSidebar";
 import { clientsService, type ClientTimelineEvent } from "@/services/clients";
@@ -42,6 +43,7 @@ import {
   CheckSquare,
   Send,
   MessageSquare,
+  MessageCircle,
   PieChart,
   CalendarSync,
   CalendarDays,
@@ -122,6 +124,20 @@ const clientEditSchema = z.object({
   status: z.string().optional(),
   source: z.string().optional(),
 });
+
+/** Espelha a normalização do backend (`normalizeLeadPhoneToWhatsappDigits`) para aviso de UX. */
+function normalizePhoneToWhatsappDigits(raw: string | null | undefined): string | null {
+  let digits = String(raw ?? "").replace(/\D/g, "");
+  while (digits.startsWith("00")) digits = digits.slice(2);
+  if (digits.startsWith("5555") && digits.length > 13) {
+    digits = digits.slice(2);
+  }
+  if (!digits.startsWith("55") && (digits.length === 10 || digits.length === 11)) {
+    digits = `55${digits}`;
+  }
+  if (digits.length < 10 || digits.length > 15) return null;
+  return digits;
+}
 
 const priorityLabels: Record<"low" | "medium" | "high", string> = {
   low: "Baixa",
@@ -238,8 +254,11 @@ const ClientProfile = () => {
   const pendingOutgoingOptimisticQueueRef = useRef<string[]>([]);
   const newMessageRef = useRef("");
   const isSubmittingCurrentMessageRef = useRef(false);
+  const [isSendingClientChat, setIsSendingClientChat] = useState(false);
+  const [preparedInstanceId, setPreparedInstanceId] = useState("");
   const { session } = useAuth();
-  const { canDeleteRecord, canView, canCreate, canEdit } = useModulePermissions();
+  const queryClient = useQueryClient();
+  const { canDeleteRecord, canView, canCreate, canEdit, canChatReply } = useModulePermissions();
   const isMobile = useIsMobile();
 
   const taskDetailForm = useForm<z.infer<typeof taskSchema>>({
@@ -319,6 +338,12 @@ const ClientProfile = () => {
     const totalCount = clientProposals.length;
     return { pending, acceptedCount, acceptedTotal, totalCount };
   }, [clientProposals]);
+
+  const clientWhatsappDigits = useMemo(
+    () => normalizePhoneToWhatsappDigits(client?.phone),
+    [client?.phone],
+  );
+  const hasClientPhoneField = Boolean(client?.phone?.trim());
 
   useEffect(() => {
     if (activeTab !== "opportunities" || !id || !canView("proposals")) {
@@ -436,10 +461,10 @@ const ClientProfile = () => {
   }, [loadClientBillingData]);
 
   useEffect(() => {
-    if (activeTab === "messages" && id) {
-      loadClientMessages();
+    if (activeTab === "messages" && id && canView("chat")) {
+      void loadClientMessages();
     }
-  }, [activeTab, id]);
+  }, [activeTab, id, canView]);
 
   useEffect(() => {
     if (activeTab === "timeline" && id) {
@@ -840,6 +865,46 @@ const ClientProfile = () => {
     }
   }, [id]);
 
+  const isConnectedChatInstance = useCallback(
+    (instance: { status?: string; metadata?: Record<string, unknown> | null }) => {
+      const status = String(instance.status || "").toLowerCase();
+      const enabled = instance.metadata?.enabled_in_chat !== false;
+      return enabled && (status === "connected" || status === "open");
+    },
+    [],
+  );
+
+  const { data: connectedChatInstances = [] } = useQuery({
+    queryKey: ["client-profile", "chat-connected-instances"],
+    queryFn: async () => {
+      const rows = await chatService.listInstances();
+      return rows.filter(isConnectedChatInstance);
+    },
+    enabled: Boolean(client?.id && canView("chat")),
+    staleTime: 30_000,
+  });
+
+  useEffect(() => {
+    if (connectedChatInstances.length > 0 && !preparedInstanceId) {
+      setPreparedInstanceId(connectedChatInstances[0].id);
+    }
+  }, [connectedChatInstances, preparedInstanceId]);
+
+  const changePreparedChatInstance = useCallback(
+    async (nextInstanceId: string) => {
+      if (!nextInstanceId) return;
+      setPreparedInstanceId(nextInstanceId);
+      if (!conversationId || clientMessages.length > 0) return;
+      try {
+        await chatService.patchPreparedConversationInstance(conversationId, nextInstanceId);
+        void queryClient.invalidateQueries({ queryKey: ["floating-chat"] });
+      } catch (e: unknown) {
+        toast.error(e instanceof Error ? e.message : "Não foi possível alterar a instância");
+      }
+    },
+    [conversationId, clientMessages.length, queryClient],
+  );
+
   const applyClientMessages = useCallback((updater: (prev: ChatMessage[]) => ChatMessage[]) => {
     setClientMessages((prev) => {
       const next = updater(prev);
@@ -866,22 +931,55 @@ const ClientProfile = () => {
     newMessageRef.current = newMessage;
   }, [newMessage]);
 
-  const handleSendMessage = (event: React.FormEvent) => {
+  const handleSendMessage = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!conversationId) {
-      toast.error("Nenhuma conversa encontrada para este cliente");
-      return;
-    }
-    if (isSubmittingCurrentMessageRef.current) return;
+    if (isSubmittingCurrentMessageRef.current || isSendingClientChat) return;
     const text = newMessageRef.current.trim();
     if (!text) return;
+    if (!canChatReply()) {
+      toast.error("Sem permissão para enviar mensagens.");
+      return;
+    }
+
     isSubmittingCurrentMessageRef.current = true;
-    newMessageRef.current = "";
-    setNewMessage("");
-    enqueueText(text, null);
-    queueMicrotask(() => {
-      isSubmittingCurrentMessageRef.current = false;
-    });
+    setIsSendingClientChat(true);
+    try {
+      let cid = conversationId;
+      if (!cid) {
+        if (!id) return;
+        if (!client?.phone?.trim()) {
+          toast.error("Cadastre um telefone WhatsApp no cliente.");
+          return;
+        }
+        if (connectedChatInstances.length === 0) {
+          toast.error("Conecte uma instância WhatsApp para iniciar conversas.");
+          return;
+        }
+        const inst = preparedInstanceId || connectedChatInstances[0]?.id;
+        if (!inst) {
+          toast.error("Selecione uma instância WhatsApp.");
+          return;
+        }
+        const res = await chatService.resolveConversationForClient({
+          client_id: id,
+          instance_id: inst,
+        });
+        cid = res.conversation.id;
+        setConversationId(cid);
+        void queryClient.invalidateQueries({ queryKey: ["floating-chat"] });
+      }
+
+      newMessageRef.current = "";
+      setNewMessage("");
+      enqueueText(text, null, cid);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível iniciar a conversa.");
+    } finally {
+      queueMicrotask(() => {
+        isSubmittingCurrentMessageRef.current = false;
+        setIsSendingClientChat(false);
+      });
+    }
   };
 
   // Scroll para o final das mensagens
@@ -2064,53 +2162,110 @@ const ClientProfile = () => {
             </Card>
           )}
 
-          {/* Aba de Mensagens — painel tipo inbox: cabeçalho + área com scroll + input fixo */}
+          {/* Aba Conversa / WhatsApp */}
           {activeTab === "messages" && (
             <Card className="flex min-h-0 flex-1 flex-col overflow-hidden border border-border/80 bg-card shadow-sm lg:rounded-xl">
               <CardHeader className="flex shrink-0 flex-row items-center justify-between space-y-0 border-b border-border/60 px-4 py-2.5">
                 <div className="space-y-0.5">
-                  <CardTitle className="text-sm font-semibold leading-tight tracking-tight">
-                    Mensagens do WhatsApp
-                  </CardTitle>
-                  <p className="text-[11px] text-muted-foreground">
-                    Conversa vinculada ao cliente
-                  </p>
+                  <CardTitle className="text-sm font-semibold leading-tight tracking-tight">Conversa</CardTitle>
+                  <p className="text-[11px] text-muted-foreground">WhatsApp vinculado ao cliente</p>
                 </div>
               </CardHeader>
               <CardContent className="flex min-h-0 flex-1 flex-col p-0">
-                {isLoadingMessages ? (
+                {!canView("chat") ? (
+                  <div className="px-4 py-10 text-center text-sm text-muted-foreground">
+                    Sem permissão para ver o módulo de Chat.
+                  </div>
+                ) : !hasClientPhoneField ? (
+                  <div className="space-y-3 px-4 py-10 text-center">
+                    <MessageCircle className="mx-auto h-10 w-10 text-muted-foreground/60" />
+                    <p className="text-sm font-medium text-foreground">Este cliente ainda não possui WhatsApp cadastrado.</p>
+                    <p className="text-xs text-muted-foreground">Adicione um telefone no cadastro para iniciar conversas.</p>
+                    {canEdit("clients") ? (
+                      <Button type="button" variant="outline" size="sm" onClick={() => setIsEditingClientDetails(true)}>
+                        Editar cliente
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : !clientWhatsappDigits ? (
+                  <div className="space-y-3 px-4 py-10 text-center">
+                    <Phone className="mx-auto h-10 w-10 text-muted-foreground/60" />
+                    <p className="text-sm font-medium text-foreground">Telefone não válido para WhatsApp</p>
+                    <p className="text-xs text-muted-foreground">
+                      Corrija o número no cadastro (DDI + DDD + número, sem caracteres inválidos).
+                    </p>
+                    {canEdit("clients") ? (
+                      <Button type="button" variant="outline" size="sm" onClick={() => setIsEditingClientDetails(true)}>
+                        Editar telefone
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : connectedChatInstances.length === 0 ? (
+                  <div className="space-y-3 px-4 py-10 text-center">
+                    <MessageSquare className="mx-auto h-10 w-10 text-muted-foreground/60" />
+                    <p className="text-sm font-medium text-foreground">Conecte uma instância WhatsApp</p>
+                    <p className="text-xs text-muted-foreground">É necessário haver pelo menos uma instância conectada para enviar mensagens.</p>
+                    <Button type="button" variant="outline" size="sm" asChild>
+                      <Link to="/superadmin/conexoes/uazapi">Abrir conexões WhatsApp</Link>
+                    </Button>
+                  </div>
+                ) : isLoadingMessages ? (
                   <div className="flex flex-1 items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
                     <RefreshCw className="h-4 w-4 animate-spin" />
                     Carregando mensagens...
                   </div>
                 ) : (
                   <>
+                    {connectedChatInstances.length > 1 && clientMessages.length === 0 ? (
+                      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border/60 px-3 py-2 text-xs text-muted-foreground sm:px-4">
+                        <span className="shrink-0">Enviar por:</span>
+                        <Select
+                          value={preparedInstanceId || connectedChatInstances[0]?.id}
+                          onValueChange={(v) => void changePreparedChatInstance(v)}
+                        >
+                          <SelectTrigger className="h-9 max-w-full flex-1 text-xs">
+                            <SelectValue placeholder="Instância" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {connectedChatInstances.map((instance) => (
+                              <SelectItem key={instance.id} value={instance.id}>
+                                {instance.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : null}
                     <ScrollArea className="min-h-0 flex-1 [&_[data-radix-scroll-area-scrollbar]]:w-1.5 [&_[data-radix-scroll-area-thumb]]:bg-border/50">
                       <div className="px-3 py-3 sm:px-4">
                         {clientMessages.length === 0 ? (
-                          <div className="py-12 text-center text-sm text-muted-foreground">
-                            Nenhuma mensagem do WhatsApp encontrada para este cliente
+                          <div className="flex flex-col items-center py-12 text-center">
+                            <MessageCircle className="mb-3 h-12 w-12 text-muted-foreground/55" />
+                            <p className="text-sm font-semibold text-foreground">Nenhuma conversa ainda</p>
+                            <p className="mt-1 max-w-sm text-xs text-muted-foreground">
+                              Digite uma mensagem abaixo para iniciar o atendimento pelo WhatsApp.
+                            </p>
                           </div>
                         ) : (
                           <div className="space-y-3 pb-2">
                             {clientMessages.map((message) => (
-                              <div 
+                              <div
                                 key={message.id}
-                                className={`flex ${message.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}
+                                className={`flex ${message.direction === "outgoing" ? "justify-end" : "justify-start"}`}
                               >
-                                <div 
+                                <div
                                   className={`max-w-[min(85%,28rem)] rounded-lg px-3 py-2 text-sm shadow-sm ${
-                                    message.direction === 'outgoing'
-                                      ? 'bg-primary text-primary-foreground' 
-                                      : 'bg-muted'
+                                    message.direction === "outgoing"
+                                      ? "bg-primary text-primary-foreground"
+                                      : "bg-muted"
                                   }`}
                                 >
                                   <ChatBubbleContent message={message} />
                                   <span
                                     className={`mt-1 flex items-center gap-1 text-[10px] ${
-                                      message.direction === 'outgoing'
-                                        ? 'text-primary-foreground/80'
-                                        : 'text-muted-foreground'
+                                      message.direction === "outgoing"
+                                        ? "text-primary-foreground/80"
+                                        : "text-muted-foreground"
                                     }`}
                                   >
                                     <span>
@@ -2118,14 +2273,13 @@ const ClientProfile = () => {
                                         <>
                                           {formatRelativeDate(message.sentAt)} • {formatHour(message.sentAt)}
                                         </>
-                                      ) : 'Data não disponível'}
+                                      ) : (
+                                        "Data não disponível"
+                                      )}
                                     </span>
-                                    {message.direction === 'outgoing' ? (
+                                    {message.direction === "outgoing" ? (
                                       <>
-                                        <MessageStatusIndicator
-                                          status={message.status}
-                                          className="h-3 w-3"
-                                        />
+                                        <MessageStatusIndicator status={message.status} className="h-3 w-3" />
                                         {message.status === "failed" ? (
                                           <button
                                             type="button"
@@ -2146,31 +2300,34 @@ const ClientProfile = () => {
                         )}
                       </div>
                     </ScrollArea>
-                    {conversationId && (
-                      <form
-                        onSubmit={handleSendMessage}
-                        className="flex shrink-0 gap-2 border-t border-border/80 bg-muted/20 px-3 py-2.5 backdrop-blur-sm sm:px-4"
+                    <form
+                      onSubmit={(e) => void handleSendMessage(e)}
+                      className="flex shrink-0 gap-2 border-t border-border/80 bg-muted/20 px-3 py-2.5 backdrop-blur-sm sm:px-4"
+                    >
+                      <Input
+                        placeholder={
+                          canChatReply()
+                            ? "Digite uma mensagem…"
+                            : "Sem permissão para enviar mensagens"
+                        }
+                        value={newMessage}
+                        onChange={(event) => {
+                          const v = event.target.value;
+                          newMessageRef.current = v;
+                          setNewMessage(v);
+                        }}
+                        className="min-h-10 bg-background"
+                        disabled={!canChatReply()}
+                      />
+                      <Button
+                        type="submit"
+                        size="icon"
+                        className="shrink-0"
+                        disabled={!canChatReply() || !newMessage.trim() || isSendingClientChat}
                       >
-                        <Input 
-                          placeholder="Digite uma mensagem..."
-                          value={newMessage}
-                          onChange={(event) => {
-                            const v = event.target.value;
-                            newMessageRef.current = v;
-                            setNewMessage(v);
-                          }}
-                          className="min-h-10 bg-background"
-                        />
-                        <Button 
-                          type="submit" 
-                          size="icon"
-                          className="shrink-0"
-                          disabled={!newMessage.trim()}
-                        >
-                          <Send className="h-4 w-4" />
-                        </Button>
-                      </form>
-                    )}
+                        <Send className="h-4 w-4" />
+                      </Button>
+                    </form>
                   </>
                 )}
               </CardContent>

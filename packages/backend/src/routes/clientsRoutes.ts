@@ -8,6 +8,7 @@ const router = Router();
 router.use(...tenantAuthCrm);
 
 router.get('/', clientsController.getClients);
+router.get('/:id/financial-summary', clientsController.getClientFinancialSummary);
 router.get('/:id/timeline', clientsController.getClientTimeline);
 router.post('/:id/timeline/events', clientsController.createClientTimeline);
 router.post('/:id/google-drive/ensure-folders', clientsController.ensureClientGoogleDriveFolders);

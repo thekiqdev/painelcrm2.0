@@ -8,6 +8,8 @@ type Props = {
   /** Metadata da coluna do cartão (ex.: `kanban_proposals`). */
   columnMetadata?: Record<string, unknown> | null;
   onCardClick: (card: ChatKanbanBoardCard) => void;
+  /** Remover cartão só desta coluna (confirmação na página). */
+  onRemoveCard?: (card: ChatKanbanBoardCard) => void;
   pulseUnreadHighlight?: boolean;
 };
 
@@ -15,6 +17,7 @@ export function ChatKanbanSortableCard({
   card,
   columnMetadata,
   onCardClick,
+  onRemoveCard,
   pulseUnreadHighlight,
 }: Props) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -35,6 +38,7 @@ export function ChatKanbanSortableCard({
         onClick={() => onCardClick(card)}
         dragHandleProps={{ ...attributes, ...listeners }}
         pulseUnreadHighlight={pulseUnreadHighlight}
+        onRemoveRequest={onRemoveCard ? () => onRemoveCard(card) : undefined}
       />
       {isDragging ? (
         <div

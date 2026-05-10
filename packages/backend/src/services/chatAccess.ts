@@ -24,6 +24,7 @@ export type ChatAction =
   | 'view_metrics'
   | 'manage_automation'
   | 'manage_tags'
+  | 'delete'
   | 'schedule_from_chat'
   | 'create_invoice_from_chat'
   | 'create_proposal_from_chat'
@@ -48,6 +49,7 @@ const ACTION_TO_KEY: Record<ChatAction, PermissionCatalogKey> = {
   view_metrics: 'chat.view_metrics',
   manage_automation: 'chat.manage_automation',
   manage_tags: 'chat.manage_tags',
+  delete: 'chat.delete',
   schedule_from_chat: 'chat.schedule_from_chat',
   create_invoice_from_chat: 'chat.create_invoice_from_chat',
   create_proposal_from_chat: 'chat.create_proposal_from_chat',

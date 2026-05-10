@@ -4,6 +4,7 @@ import { getDevApiBaseUrl } from '@/lib/devBackendOrigin';
 export const REALTIME_EVENTS = {
   messageCreated: 'message.created',
   conversationUpdated: 'conversation.updated',
+  conversationDeleted: 'conversation.deleted',
   notificationCreated: 'notification.created',
   channelStatusChanged: 'channel.status_changed',
   /** Instância WhatsApp removida no backend — limpar caches de chat */
@@ -13,6 +14,7 @@ export const REALTIME_EVENTS = {
 export const REALTIME_WINDOW_EVENTS = {
   messageCreated: 'painelcrm:realtime:message.created',
   conversationUpdated: 'painelcrm:realtime:conversation.updated',
+  conversationDeleted: 'painelcrm:realtime:conversation.deleted',
   notificationCreated: 'painelcrm:realtime:notification.created',
   channelStatusChanged: 'painelcrm:realtime:channel.status_changed',
   whatsappInstanceRemoved: 'painelcrm:realtime:whatsapp.instance_removed',
@@ -61,6 +63,12 @@ export function connectRealtime(token: string): Socket {
   );
   socket.on(REALTIME_EVENTS.conversationUpdated, (payload) =>
     emitWindowEvent(REALTIME_WINDOW_EVENTS.conversationUpdated, payload)
+  );
+  socket.on(REALTIME_EVENTS.conversationDeleted, (payload) =>
+    emitWindowEvent(REALTIME_WINDOW_EVENTS.conversationDeleted, payload)
+  );
+  socket.on('conversation_deleted', (payload) =>
+    emitWindowEvent(REALTIME_WINDOW_EVENTS.conversationDeleted, payload)
   );
   socket.on(REALTIME_EVENTS.notificationCreated, (payload) =>
     emitWindowEvent(REALTIME_WINDOW_EVENTS.notificationCreated, payload)

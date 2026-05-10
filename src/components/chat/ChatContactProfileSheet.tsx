@@ -7,8 +7,16 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -29,10 +37,10 @@ import {
 } from "@/lib/chatKanbanTagStyle";
 import {
   ArrowRightLeft,
+  AlertTriangle,
   CalendarClock,
   CheckSquare,
   ChevronLeft,
-  ExternalLink,
   FileSignature,
   FileText,
   Loader2,
@@ -41,7 +49,6 @@ import {
   Plus,
   Receipt,
   RefreshCw,
-  Tag,
   Ticket,
   Trash2,
   UserPlus,
@@ -49,6 +56,12 @@ import {
   UsersRound,
   X,
 } from "lucide-react";
+import {
+  ChatProfileContactCompactList,
+  ChatProfileFinancialSummaryBlock,
+  ChatProfileIdentitySummaryHeader,
+} from "@/components/chat/ChatContactProfileSummary";
+import { ChatContactInvoiceHistorySection } from "@/components/chat/ChatContactInvoiceHistorySection";
 
 export type ChatProfileFieldKey =
   | "name"
@@ -82,8 +95,6 @@ export type ChatContactProfileSheetProps = {
   canEditProfileFields: boolean;
   profileSavingKey: string | null;
   onSaveProfileField?: (key: ChatProfileFieldKey, value: string) => Promise<void>;
-  /** Etiquetas só leitura (funil, grupo, …) */
-  tagLabels: string[];
   /** Tags Kanban na conversa (catálogo partilhado com o quadro). */
   conversationKanbanTags?: Array<{ id: string; label: string; color?: string }>;
   conversationKanbanTagsLoading?: boolean;
@@ -124,13 +135,21 @@ export type ChatContactProfileSheetProps = {
   disableAddLead?: boolean;
   addLeadDisabledReason?: string;
   onUnlink?: () => void;
+  onSystemDelete?: () => Promise<void> | void;
   showConvertLead: boolean;
   showLinkActions: boolean;
   showUnlink: boolean;
+  showSystemDelete?: boolean;
   linkConversationLabel?: string;
   /** Cliente CRM vinculado: botão para página completa do cliente */
   showOpenFullProfile?: boolean;
   onOpenFullProfile?: () => void;
+  /** UUID do cliente CRM para resumo financeiro (customer_invoices) */
+  crmClientId?: string | null;
+  /** Texto curto ex.: "21 de abr. de 2023" quando kind === client */
+  clientSinceLabel?: string | null;
+  /** Abre o Financeiro do cliente (`/clients/:id/finance`) com retorno ao chat */
+  onOpenClientFinance?: () => void;
   /** Notas CRM (painel lateral — últimas entradas) */
   crmNotesPreview?: Array<{
     id: string;
@@ -158,6 +177,8 @@ export type ChatContactProfileSheetProps = {
   createGroupWithClientDisabled?: boolean;
   createGroupWithClientDisabledHint?: string | null;
   onOpenCreateGroupWithClient?: () => void;
+  /** Secção opcional ex.: mensagens de texto agendadas para esta conversa */
+  scheduledMessagesSection?: React.ReactNode;
 };
 
 export type ChatContactProfilePanelExtraProps = {
@@ -206,21 +227,12 @@ function KanbanTagsOnConversationSection({
 
   return (
     <section className="rounded-xl border border-border/70 bg-card/80 p-3 shadow-sm">
-      <div className="flex items-start gap-2">
-        <Tag className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-        <div className="min-w-0 flex-1">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Tags Kanban</p>
-          <p className="mt-1 text-[11px] text-muted-foreground leading-snug">
-            As mesmas tags do quadro. Ao adicionar aqui, o servidor pode criar cartões nas colunas com automação «Conversas
-            com tag». Remover a tag não retira o cartão.
-          </p>
-        </div>
-      </div>
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Tags Kanban</p>
       <div className="mt-2 flex flex-wrap gap-1.5">
         {loading ? (
-          <span className="text-xs italic text-muted-foreground">A carregar…</span>
+          <span className="text-xs text-muted-foreground">A carregar…</span>
         ) : tags.length === 0 ? (
-          <span className="text-xs italic text-muted-foreground">Nenhuma tag nesta conversa</span>
+          <span className="text-xs text-muted-foreground">—</span>
         ) : (
           tags.map((t) => (
             <span key={t.id} className="inline-flex max-w-full items-center gap-0.5">
@@ -406,7 +418,7 @@ function KanbanTagsOnConversationSection({
   );
 }
 
-function ProfileFieldEditor({
+export function ProfileFieldEditor({
   row,
   canEdit,
   saving,
@@ -517,7 +529,6 @@ export function ChatContactProfilePanel(props: ChatContactProfilePanelProps) {
     canEditProfileFields,
     profileSavingKey,
     onSaveProfileField,
-    tagLabels,
     conversationKanbanTags,
     conversationKanbanTagsLoading,
     tenantKanbanTagOptions,
@@ -551,15 +562,29 @@ export function ChatContactProfilePanel(props: ChatContactProfilePanelProps) {
     disableAddLead = false,
     addLeadDisabledReason,
     onUnlink,
+    onSystemDelete,
     showConvertLead,
     showLinkActions,
     showUnlink,
+    showSystemDelete = false,
     linkConversationLabel = "Vincular conversa",
     showCreateGroupWithClient = false,
     createGroupWithClientDisabled = false,
     createGroupWithClientDisabledHint = null,
     onOpenCreateGroupWithClient,
+    crmClientId = null,
+    clientSinceLabel = null,
+    onOpenClientFinance,
+    scheduledMessagesSection,
   } = props;
+
+  const [profileSurface, setProfileSurface] = React.useState<"summary" | "edit">("summary");
+  const [systemDeleteConfirmOpen, setSystemDeleteConfirmOpen] = React.useState(false);
+  const [systemDeleting, setSystemDeleting] = React.useState(false);
+
+  React.useEffect(() => {
+    setProfileSurface("summary");
+  }, [displayName, kind, phoneDisplay]);
 
   const closeThen = React.useCallback(
     (fn: () => void) => {
@@ -570,6 +595,26 @@ export function ChatContactProfilePanel(props: ChatContactProfilePanelProps) {
     },
     [interactionMode, onOpenChange],
   );
+
+  const handleMobileHeaderBack = React.useCallback(() => {
+    if (profileSurface === "edit") {
+      setProfileSurface("summary");
+      return;
+    }
+    closeThen(onBackToConversation);
+  }, [profileSurface, closeThen, onBackToConversation]);
+
+  const handleConfirmSystemDelete = React.useCallback(async () => {
+    if (!onSystemDelete) return;
+    setSystemDeleting(true);
+    try {
+      await onSystemDelete();
+      setSystemDeleteConfirmOpen(false);
+      onOpenChange(false);
+    } finally {
+      setSystemDeleting(false);
+    }
+  }, [onOpenChange, onSystemDelete]);
 
   const commercialActions = [
     canCreateInvoice ? { key: "inv", label: "Criar fatura", icon: Receipt, onClick: onCreateInvoice } : null,
@@ -584,7 +629,9 @@ export function ChatContactProfilePanel(props: ChatContactProfilePanelProps) {
     >
       {interactionMode === "desktop" ? (
         <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-muted/15 px-3 py-2">
-          <p className="min-w-0 truncate text-base font-semibold leading-tight">Perfil do contato</p>
+          <p className="min-w-0 truncate text-base font-semibold leading-tight">
+            {profileSurface === "edit" ? "Editar contato" : "Perfil do contato"}
+          </p>
           {onDesktopClose ? (
             <Button
               type="button"
@@ -611,8 +658,8 @@ export function ChatContactProfilePanel(props: ChatContactProfilePanelProps) {
               variant="ghost"
               size="icon"
               className="h-9 w-9 shrink-0"
-              aria-label="Voltar para conversa"
-              onClick={() => closeThen(onBackToConversation)}
+              aria-label={profileSurface === "edit" ? "Voltar ao resumo do perfil" : "Voltar para conversa"}
+              onClick={handleMobileHeaderBack}
             >
               <ChevronLeft className="h-5 w-5" />
             </Button>
@@ -626,76 +673,129 @@ export function ChatContactProfilePanel(props: ChatContactProfilePanelProps) {
 
         <ScrollArea className="min-h-0 flex-1">
           <div className="space-y-5 px-4 py-4 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
-            {/* Identidade */}
-            <div className="flex flex-col items-center text-center">
-              <Avatar className="h-16 w-16 border border-border/80 shadow-sm">
-                {avatarUrl ? <AvatarImage src={avatarUrl} alt={displayName} /> : null}
-                <AvatarFallback className="bg-primary/12 text-lg font-semibold text-primary">{initials}</AvatarFallback>
-              </Avatar>
-              <h2 className="mt-2.5 text-base font-semibold leading-snug">{displayName}</h2>
-              {phoneDisplay ? <p className="mt-0.5 text-sm text-muted-foreground">{phoneDisplay}</p> : null}
-            </div>
+            {profileSurface === "summary" ? (
+              <>
+                <ChatProfileIdentitySummaryHeader
+                  displayName={displayName}
+                  phoneDisplay={phoneDisplay}
+                  avatarUrl={avatarUrl}
+                  initials={initials}
+                  kind={kind}
+                  clientSinceLabel={clientSinceLabel ?? undefined}
+                  showOpenFullProfile={Boolean(showOpenFullProfile && onOpenFullProfile)}
+                  onOpenFullProfile={
+                    showOpenFullProfile && onOpenFullProfile ? () => closeThen(onOpenFullProfile) : undefined
+                  }
+                  canEditProfileFields={canEditProfileFields}
+                  onEdit={() => setProfileSurface("edit")}
+                />
+                {statusLine ? (
+                  <p className="-mt-2 text-center text-[11px] leading-snug text-muted-foreground">{statusLine}</p>
+                ) : null}
 
-            {/* CRM — sempre visível */}
-            <div className="rounded-xl border border-border/80 bg-muted/20 p-3">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Vínculo CRM</p>
-              <div className="mt-2 flex flex-wrap items-center justify-center gap-2 sm:justify-start">
-                {kind === "client" ? (
-                  <Badge className="border-emerald-500/30 bg-emerald-500/12 text-emerald-900 dark:text-emerald-100">Cliente</Badge>
-                ) : kind === "lead" ? (
-                  <Badge className="border-blue-500/35 bg-blue-500/10 text-blue-900 dark:text-blue-100">Lead</Badge>
-                ) : (
-                  <Badge variant="outline" className="font-normal">
-                    Não vinculado
-                  </Badge>
-                )}
-              </div>
-              <div className="mt-3 flex flex-col gap-2">
-                {kind === "unlinked" && showLinkActions && onAddLead ? (
-                  <Button
-                    type="button"
-                    size="default"
-                    className="w-full gap-2 shadow-sm"
-                    onClick={() => closeThen(onAddLead)}
-                    disabled={loadingLead || disableAddLead}
-                    title={disableAddLead ? addLeadDisabledReason : undefined}
-                  >
-                    <Plus className="h-4 w-4 shrink-0" />
-                    + Lead
-                  </Button>
+                {scheduledMessagesSection ? (
+                  <div className="-mt-1 space-y-2">{scheduledMessagesSection}</div>
                 ) : null}
-                {kind === "unlinked" && showLinkActions && onLink ? (
-                  <Button type="button" variant="secondary" className="w-full gap-2" onClick={() => closeThen(onLink)}>
-                    <Users className="h-4 w-4 shrink-0" />
-                    {linkConversationLabel}
-                  </Button>
-                ) : null}
-                {kind === "lead" && showConvertLead && onConvertLead ? (
-                  <Button
-                    type="button"
-                    className="w-full gap-2 shadow-sm"
-                    onClick={() => closeThen(onConvertLead)}
-                    disabled={loadingLead}
-                  >
-                    <UserPlus className="h-4 w-4 shrink-0" />
-                    Converter para cliente
-                  </Button>
-                ) : null}
-                {kind === "client" && showOpenFullProfile && onOpenFullProfile ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="w-full gap-2"
-                    onClick={() => closeThen(onOpenFullProfile)}
-                  >
-                    <ExternalLink className="h-4 w-4 shrink-0" />
-                    Abrir perfil completo
-                  </Button>
-                ) : null}
-              </div>
-            </div>
 
-            {showCreateGroupWithClient && onOpenCreateGroupWithClient ? (
+                <ChatProfileFinancialSummaryBlock clientId={crmClientId} kind={kind} />
+
+                <ChatProfileContactCompactList
+                  profileFields={profileFields}
+                  headerPhone={phoneDisplay}
+                  onEditContact={() => setProfileSurface("edit")}
+                  canEditProfileFields={canEditProfileFields}
+                />
+
+                {(kind === "unlinked" && showLinkActions) || (kind === "lead" && showConvertLead && onConvertLead) ? (
+                  <div className="rounded-xl border border-border/80 bg-muted/20 p-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Vínculo CRM</p>
+                    <div className="mt-3 flex flex-col gap-2">
+                      {kind === "unlinked" && showLinkActions && onAddLead ? (
+                        <Button
+                          type="button"
+                          size="default"
+                          className="w-full gap-2 shadow-sm"
+                          onClick={() => closeThen(onAddLead)}
+                          disabled={loadingLead || disableAddLead}
+                          title={disableAddLead ? addLeadDisabledReason : undefined}
+                        >
+                          <Plus className="h-4 w-4 shrink-0" />
+                          + Lead
+                        </Button>
+                      ) : null}
+                      {kind === "unlinked" && showLinkActions && onLink ? (
+                        <Button type="button" variant="secondary" className="w-full gap-2" onClick={() => closeThen(onLink)}>
+                          <Users className="h-4 w-4 shrink-0" />
+                          {linkConversationLabel}
+                        </Button>
+                      ) : null}
+                      {kind === "lead" && showConvertLead && onConvertLead ? (
+                        <Button
+                          type="button"
+                          className="w-full gap-2 shadow-sm"
+                          onClick={() => closeThen(onConvertLead)}
+                          disabled={loadingLead}
+                        >
+                          <UserPlus className="h-4 w-4 shrink-0" />
+                          Converter para cliente
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <>
+                {interactionMode === "desktop" ? (
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="gap-1 px-2 text-muted-foreground"
+                      onClick={() => setProfileSurface("summary")}
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                      Voltar ao resumo
+                    </Button>
+                  </div>
+                ) : null}
+                {profileFields.length > 0 ? (
+                  <section className="rounded-xl border border-border/70 bg-card/80 p-3 shadow-sm">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      Informações do contato
+                    </p>
+                    <div className="mt-1 divide-y divide-border/40">
+                      {profileFields.map((row) => (
+                        <ProfileFieldEditor
+                          key={row.key}
+                          row={row}
+                          canEdit={canEditProfileFields}
+                          saving={profileSavingKey === row.key}
+                          onSave={onSaveProfileField}
+                        />
+                      ))}
+                    </div>
+                    {(assigneeDisplay || teamName) && (
+                      <div className="mt-3 space-y-1 border-t border-border/50 pt-3 text-xs text-muted-foreground">
+                        {assigneeDisplay ? (
+                          <p>
+                            <span className="font-medium text-foreground/90">Responsável:</span> {assigneeDisplay}
+                          </p>
+                        ) : null}
+                        {teamName ? (
+                          <p>
+                            <span className="font-medium text-foreground/90">Equipe / fila:</span> {teamName}
+                          </p>
+                        ) : null}
+                      </div>
+                    )}
+                  </section>
+                ) : null}
+              </>
+            )}
+
+            {profileSurface === "summary" && showCreateGroupWithClient && onOpenCreateGroupWithClient ? (
               <div className="rounded-xl border border-border/80 bg-muted/20 p-3">
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Grupo WhatsApp</p>
                 <Button
@@ -717,81 +817,40 @@ export function ChatContactProfilePanel(props: ChatContactProfilePanelProps) {
               </div>
             ) : null}
 
-            {/* Informações */}
-            {profileFields.length > 0 ? (
-              <section className="rounded-xl border border-border/70 bg-card/80 p-3 shadow-sm">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  Informações do contato
-                </p>
-                <div className="mt-1 divide-y divide-border/40">
-                  {profileFields.map((row) => (
-                    <ProfileFieldEditor
-                      key={row.key}
-                      row={row}
-                      canEdit={canEditProfileFields}
-                      saving={profileSavingKey === row.key}
-                      onSave={onSaveProfileField}
-                    />
-                  ))}
-                </div>
-                {(assigneeDisplay || teamName) && (
-                  <div className="mt-3 space-y-1 border-t border-border/50 pt-3 text-xs text-muted-foreground">
-                    {assigneeDisplay ? (
-                      <p>
-                        <span className="font-medium text-foreground/90">Responsável:</span> {assigneeDisplay}
-                      </p>
-                    ) : null}
-                    {teamName ? (
-                      <p>
-                        <span className="font-medium text-foreground/90">Equipe / fila:</span> {teamName}
-                      </p>
-                    ) : null}
-                  </div>
-                )}
-              </section>
+            {profileSurface === "summary" && kind === "client" && crmClientId ? (
+              <ChatContactInvoiceHistorySection
+                clientId={crmClientId}
+                enabled={kind === "client"}
+                onViewAll={
+                  onOpenClientFinance ? () => closeThen(onOpenClientFinance) : undefined
+                }
+              />
             ) : null}
 
-            {/* Etiquetas CRM */}
-            <section className="rounded-xl border border-border/70 bg-card/80 p-3 shadow-sm">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Etiquetas CRM</p>
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                Funil e grupo do cliente. As regras de etiquetas do Kanban usam os mesmos dados de cliente quando o cartão
-                está vinculado ao CRM.
-              </p>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {tagLabels.length > 0 ? (
-                  tagLabels.map((t) => (
-                    <Badge key={t} variant="secondary" className="font-normal">
-                      {t}
-                    </Badge>
-                  ))
-                ) : (
-                  <span className="text-xs italic text-muted-foreground">Sem etiquetas definidas</span>
-                )}
-              </div>
-              {kind === "client" && clientGroups && clientGroups.length > 0 && onClientGroupChange ? (
-                <div className="mt-3">
-                  <span className="text-[11px] font-medium text-muted-foreground">Grupo de clientes</span>
-                  <Select
-                    value={selectedClientGroupId ?? "__none__"}
-                    disabled={savingClientGroup}
-                    onValueChange={(v) => void onClientGroupChange(v === "__none__" ? null : v)}
-                  >
-                    <SelectTrigger className="mt-1.5 h-9">
-                      <SelectValue placeholder="Sem grupo" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">Sem grupo</SelectItem>
-                      {clientGroups.map((g) => (
-                        <SelectItem key={g.id} value={g.id}>
-                          {g.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              ) : null}
-            </section>
+            {kind === "client" && clientGroups && clientGroups.length > 0 && onClientGroupChange ? (
+              <section className="rounded-xl border border-border/70 bg-card/80 p-3 shadow-sm">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Grupo de clientes
+                </p>
+                <Select
+                  value={selectedClientGroupId ?? "__none__"}
+                  disabled={savingClientGroup}
+                  onValueChange={(v) => void onClientGroupChange(v === "__none__" ? null : v)}
+                >
+                  <SelectTrigger className="mt-2 h-9">
+                    <SelectValue placeholder="Sem grupo" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">Sem grupo</SelectItem>
+                    {clientGroups.map((g) => (
+                      <SelectItem key={g.id} value={g.id}>
+                        {g.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </section>
+            ) : null}
 
             {onAddConversationKanbanTag && onRemoveConversationKanbanTag ? (
               <KanbanTagsOnConversationSection
@@ -956,18 +1015,36 @@ export function ChatContactProfilePanel(props: ChatContactProfilePanelProps) {
 
             <Separator className="opacity-60" />
 
-            {showUnlink && onUnlink ? (
+            {(showUnlink && onUnlink) || (showSystemDelete && onSystemDelete) ? (
               <div className="pb-1">
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Avançado</p>
-                <Button
-                  type="button"
-                  variant="destructive"
-                  className="mt-2 h-11 w-full justify-start gap-2 rounded-lg"
-                  onClick={() => closeThen(onUnlink)}
-                >
-                  <Trash2 className="h-4 w-4 shrink-0" />
-                  Remover vínculo com CRM
-                </Button>
+                {showUnlink && onUnlink ? (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    className="mt-2 h-11 w-full justify-start gap-2 rounded-lg"
+                    onClick={() => closeThen(onUnlink)}
+                  >
+                    <Trash2 className="h-4 w-4 shrink-0" />
+                    Remover vínculo com CRM
+                  </Button>
+                ) : null}
+                {showSystemDelete && onSystemDelete ? (
+                  <div className="mt-2 rounded-lg border border-destructive/25 bg-destructive/5 p-2">
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      className="h-11 w-full justify-start gap-2 rounded-lg"
+                      onClick={() => setSystemDeleteConfirmOpen(true)}
+                    >
+                      <AlertTriangle className="h-4 w-4 shrink-0" />
+                      Deletar conversa do sistema
+                    </Button>
+                    <p className="mt-2 px-1 text-xs leading-relaxed text-muted-foreground">
+                      Remove permanentemente o histórico desta conversa do PainelCRM.
+                    </p>
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -981,6 +1058,39 @@ export function ChatContactProfilePanel(props: ChatContactProfilePanelProps) {
           </Button>
         </div>
       ) : null}
+      <AlertDialog open={systemDeleteConfirmOpen} onOpenChange={setSystemDeleteConfirmOpen}>
+        <AlertDialogContent className="max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Deletar conversa?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3 text-sm text-muted-foreground">
+                <p>Esta ação removerá permanentemente:</p>
+                <ul className="list-disc space-y-1 pl-5">
+                  <li>histórico de mensagens;</li>
+                  <li>vínculo com cliente/lead;</li>
+                  <li>anexos locais;</li>
+                  <li>cache da conversa;</li>
+                  <li>dados do atendimento.</li>
+                </ul>
+                <p className="font-medium text-foreground">A conversa NÃO será apagada do WhatsApp.</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={systemDeleting}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={systemDeleting}
+              onClick={(event) => {
+                event.preventDefault();
+                void handleConfirmSystemDelete();
+              }}
+            >
+              {systemDeleting ? "Deletando..." : "Sim, deletar conversa"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

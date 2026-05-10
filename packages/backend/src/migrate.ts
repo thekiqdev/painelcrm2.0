@@ -344,6 +344,8 @@ const order = [
   '222_announcement_reads_user_id_idx.sql',
   /** WhatsApp: índice user_id + external_instance_name (webhook / resolução) */
   '223_chat_instances_user_external_name_idx.sql',
+  /** Mensagens de texto agendadas (worker + UI chat) */
+  '224_chat_scheduled_messages.sql',
   'create-admin-user.sql',
 ];
 

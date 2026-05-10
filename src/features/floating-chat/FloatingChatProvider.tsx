@@ -421,25 +421,28 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
       });
       if (!cid) {
         toast.info('Nenhuma conversa WhatsApp encontrada para este cliente.');
-        return;
+        return null;
       }
       openConversationInContext(cid);
+      return cid;
     },
     [instanceIds, inboxScope, openConversationInContext],
   );
 
   const openChatForLead = useCallback(
-    async (leadId: string) => {
+    async (leadId: string, options?: { createIfMissing?: boolean }) => {
       const cid = await resolveConversationIdForCrmRecord({
         leadId,
         instanceIds,
         inboxScope,
       });
       if (!cid) {
+        if (options?.createIfMissing) return null;
         toast.info('Nenhuma conversa WhatsApp encontrada para este lead.');
-        return;
+        return null;
       }
       openConversationInContext(cid);
+      return cid;
     },
     [instanceIds, inboxScope, openConversationInContext],
   );
@@ -508,6 +511,28 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
     setActiveWindowId((prev) => (prev === conversationId ? null : prev));
     clearPulseFor(conversationId);
   }, [clearPulseFor]);
+
+  useEffect(() => {
+    const onConversationDeleted = (event: Event) => {
+      const detail = (event as CustomEvent<Record<string, unknown>>).detail;
+      const conversationId =
+        typeof detail?.conversation_id === 'string'
+          ? detail.conversation_id
+          : typeof detail?.id === 'string'
+          ? detail.id
+          : null;
+      if (!conversationId) return;
+      closePanel(conversationId);
+      if (mobileOverlayConversationIdRef.current === conversationId) {
+        closeMobileConversationOverlay();
+      }
+      void queryClient.invalidateQueries({ queryKey: ['floating-chat'] });
+      void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'conversations'] });
+      emitChatNavUnreadRefresh();
+    };
+    window.addEventListener(REALTIME_WINDOW_EVENTS.conversationDeleted, onConversationDeleted);
+    return () => window.removeEventListener(REALTIME_WINDOW_EVENTS.conversationDeleted, onConversationDeleted);
+  }, [closeMobileConversationOverlay, closePanel, queryClient]);
 
   const setCompactProfileOpen = useCallback((conversationId: string, open: boolean) => {
     setCompactProfileOpenByConversationId((prev) => ({ ...prev, [conversationId]: open }));

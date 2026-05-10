@@ -197,6 +197,8 @@ function lineTotalCents(line: InvoiceLineRow): number {
 type CustomerInvoiceNewProps = {
   embedded?: boolean;
   initialClientId?: string | null;
+  /** No fluxo embutido no chat: pré-seleciona fatura única vs assinatura recorrente. */
+  embeddedBillingPreset?: 'one_off' | 'subscription';
   onBack?: () => void;
   onCreated?: (invoiceId: string) => void;
 };
@@ -207,6 +209,7 @@ type CreationKind = "one_off" | "subscription";
 const CustomerInvoiceNew = ({
   embedded = false,
   initialClientId = null,
+  embeddedBillingPreset = 'one_off',
   onBack,
   onCreated,
 }: CustomerInvoiceNewProps = {}) => {
@@ -523,7 +526,7 @@ const CustomerInvoiceNew = ({
       return { ...f, client_id: prefillClientId };
     });
     if (embedded) {
-      setCreationKind("one_off");
+      setCreationKind(embeddedBillingPreset === "subscription" ? "subscription" : "one_off");
     setStep("form");
     } else {
       const kindFromUrl =
@@ -535,7 +538,7 @@ const CustomerInvoiceNew = ({
       setCreationKind(kindFromUrl);
       setStep(kindFromUrl ? "form" : "billing_type");
     }
-  }, [prefillClientId, isEditMode, embedded, billingKindQuery]);
+  }, [prefillClientId, isEditMode, embedded, billingKindQuery, embeddedBillingPreset]);
 
   useEffect(() => {
     if (embedded && !isEditMode) {

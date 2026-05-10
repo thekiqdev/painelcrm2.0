@@ -90,8 +90,8 @@ export function useChatOutboundQueue(options: {
   );
 
   const enqueueText = useCallback(
-    (text: string, reply: ChatReplySnap | null): boolean => {
-      const cid = conversationId;
+    (text: string, reply: ChatReplySnap | null, conversationIdOverride?: string | null): boolean => {
+      const cid = conversationIdOverride ?? conversationId;
       const trimmed = text.trim();
       if (!cid || !trimmed) return false;
 

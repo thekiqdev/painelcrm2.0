@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, ExternalLink, FolderOpen, Loader2, Unplug } from 'lucide-react';
+import { CheckCircle2, ExternalLink, FolderOpen, Loader2, Unplug } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -131,18 +131,6 @@ export function GoogleDriveSection() {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
-          <div className="flex gap-2 font-medium text-amber-900 dark:text-amber-100">
-            <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden />
-            Permissões Google
-          </div>
-          <p className="mt-2 text-muted-foreground">
-            Esta integração solicita o scope completo do Drive (<code className="rounded bg-muted/80 px-1 text-xs">drive</code>
-            ), para poder criar pastas na raiz «Meu Drive» e preparar a hierarquia empresa/clientes. É uma permissão ampla:
-            o consentimento pode exigir verificação na Google Cloud Console.
-          </p>
-        </div>
-
         {misconfigured ? (
           <p className="text-sm text-amber-700 dark:text-amber-400">
             A integração Google neste ambiente ainda não está concluída. Contacte o suporte.

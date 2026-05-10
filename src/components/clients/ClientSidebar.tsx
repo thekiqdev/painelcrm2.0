@@ -139,10 +139,10 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
       },
       {
         id: "messages",
-        label: "Mensagens",
+        label: "Conversa",
         icon: MessageSquare,
         path: `${base}/messages`,
-        description: "Histórico de conversas",
+        description: "WhatsApp com o cliente",
       },
       {
         id: "notes",
@@ -262,7 +262,7 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
           </div>
         </SidebarGroup>
 
-        {/* Navegação mobile: chips (sem aba Mensagens) */}
+        {/* Navegação mobile: chips (sem aba Conversa) */}
         <SidebarGroup className="p-0 lg:hidden">
           <div className="flex gap-1.5 overflow-x-auto px-2 pb-2 pt-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {mobileNavItems.map((item) => {

@@ -34,6 +34,20 @@ export function buildClientProfileToFromChat(clientId: string, ctx: ChatConversa
   };
 }
 
+/** Mesmo contexto de retorno ao chat que o resumo do cliente, mas abre o hub Financeiro do CRM. */
+export function buildClientFinanceHubFromChat(clientId: string, ctx: ChatConversationRestoreKeys) {
+  const search = new URLSearchParams({
+    from: 'chat',
+    conversation: ctx.id,
+    chatExternal: ctx.external_chat_id,
+    chatInstance: ctx.instance_id,
+  });
+  return {
+    pathname: `/clients/${clientId}/finance` as const,
+    search: `?${search.toString()}`,
+  };
+}
+
 export function buildClientProfileStateFromChat(ctx: ChatConversationRestoreKeys): ClientProfileFromChatState {
   return {
     from: 'chat',

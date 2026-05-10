@@ -82,6 +82,17 @@ export type ChatKanbanTagUi = {
   color: string;
 };
 
+/** Mensagem de texto agendada para envio futuro no WhatsApp (via conversa). */
+export type ChatScheduledMessageApi = {
+  id: string;
+  tenant_id?: string;
+  conversation_id: string;
+  message_text: string;
+  scheduled_at: string;
+  status: string;
+  metadata?: Record<string, unknown>;
+};
+
 export function normalizeConversationTagsFromApi(raw: unknown): ChatKanbanTagUi[] | undefined {
   if (raw === undefined) return undefined;
   if (!Array.isArray(raw)) return undefined;
@@ -1085,6 +1096,59 @@ export const chatService = {
     return normalizeConversation(response.data.conversation as ChatConversation);
   },
 
+  /** Prepara conversa WhatsApp para enviar a primeira mensagem a partir de um lead (perfil lead / inbox). */
+  async prepareLeadConversation(body: {
+    lead_id: string;
+    instance_id: string;
+  }): Promise<{ conversation: ChatConversation; is_new: boolean; reused: boolean }> {
+    const response = await apiClient.post<{
+      conversation: ChatConversation | null;
+      is_new: boolean;
+      reused: boolean;
+    }>('/api/chat/conversations/prepare', body);
+    if (response.error) throw new Error(response.error);
+    if (!response.data?.conversation) throw new Error('Resposta inválida ao preparar conversa');
+    return {
+      conversation: normalizeConversation(response.data.conversation as ChatConversation),
+      is_new: Boolean(response.data.is_new),
+      reused: Boolean(response.data.reused),
+    };
+  },
+
+  /** Altera a instância da conversa preparada (apenas antes da primeira mensagem). */
+  async patchPreparedConversationInstance(
+    conversationId: string,
+    instanceId: string,
+  ): Promise<ChatConversation> {
+    const response = await apiClient.patch<{ conversation: ChatConversation }>(
+      `/api/chat/conversations/${conversationId}/prepared-instance`,
+      { instance_id: instanceId },
+    );
+    if (response.error) throw new Error(response.error);
+    if (!response.data?.conversation) throw new Error('Resposta inválida');
+    return normalizeConversation(response.data.conversation as ChatConversation);
+  },
+
+  /** Cria ou reutiliza conversa WhatsApp vinculada ao cliente (sem enviar mensagem). Perfil do cliente / primeira mensagem. */
+  async resolveConversationForClient(body: {
+    client_id: string;
+    instance_id: string;
+    phone?: string;
+  }): Promise<{ conversation: ChatConversation; is_new: boolean; reused: boolean }> {
+    const response = await apiClient.post<{
+      conversation: ChatConversation | null;
+      is_new: boolean;
+      reused: boolean;
+    }>('/api/chat/conversations/resolve-for-client', body);
+    if (response.error) throw new Error(response.error);
+    if (!response.data?.conversation) throw new Error('Resposta inválida ao resolver conversa');
+    return {
+      conversation: normalizeConversation(response.data.conversation as ChatConversation),
+      is_new: Boolean(response.data.is_new),
+      reused: Boolean(response.data.reused),
+    };
+  },
+
   async getConversations(filters?: {
     instanceId?: string;
     /** Apenas linhas `whatsapp_official` (Super Admin / tenant com flag). */
@@ -1517,6 +1581,46 @@ export const chatService = {
     return response.data;
   },
 
+  async listConversationScheduledMessages(conversationId: string, limit = 3) {
+    const response = await apiClient.get<{ scheduled_messages: ChatScheduledMessageApi[] }>(
+      `/api/chat/conversations/${conversationId}/scheduled-messages?limit=${limit}`,
+    );
+    if (response.error) throw new Error(response.error);
+    return response.data?.scheduled_messages ?? [];
+  },
+
+  async createConversationScheduledMessage(
+    conversationId: string,
+    body: { message_text: string; scheduled_at: string; internal_note?: string },
+  ) {
+    const response = await apiClient.post<{ scheduled_message: ChatScheduledMessageApi }>(
+      `/api/chat/conversations/${conversationId}/scheduled-messages`,
+      body,
+    );
+    if (response.error) throw new Error(response.error);
+    if (!response.data?.scheduled_message) throw new Error('Resposta inválida');
+    return response.data.scheduled_message;
+  },
+
+  async cancelConversationScheduledMessage(id: string) {
+    const response = await apiClient.post(`/api/chat/scheduled-messages/${id}/cancel`, {});
+    if (response.error) throw new Error(response.error);
+    return response.data;
+  },
+
+  async patchConversationScheduledMessage(
+    id: string,
+    body: { message_text: string; scheduled_at: string },
+  ) {
+    const response = await apiClient.patch<{ scheduled_message: ChatScheduledMessageApi }>(
+      `/api/chat/scheduled-messages/${id}`,
+      body,
+    );
+    if (response.error) throw new Error(response.error);
+    if (!response.data?.scheduled_message) throw new Error('Resposta inválida');
+    return response.data.scheduled_message;
+  },
+
   async markConversationRead(conversationId: string, read = true) {
     const response = await apiClient.post(`/api/chat/conversations/${conversationId}/mark-read`, {
       read,
@@ -1545,6 +1649,21 @@ export const chatService = {
     if (response.error) throw new Error(response.error);
     if (!response.data) throw new Error('Falha ao remover vínculo');
     return normalizeConversation(response.data);
+  },
+
+  async systemDeleteConversation(conversationId: string): Promise<{
+    ok: boolean;
+    conversation_id: string;
+    deleted_messages_count: number;
+  }> {
+    const response = await apiClient.delete<{
+      ok: boolean;
+      conversation_id: string;
+      deleted_messages_count: number;
+    }>(`/api/chat/conversations/${conversationId}/system-delete`);
+    if (response.error) throw new Error(response.error);
+    if (!response.data?.ok) throw new Error('Falha ao deletar conversa');
+    return response.data;
   },
 
   async getConversationKanbanTags(conversationId: string): Promise<{

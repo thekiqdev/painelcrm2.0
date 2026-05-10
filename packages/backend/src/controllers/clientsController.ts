@@ -386,6 +386,143 @@ export async function getClientById(req: AuthRequest, res: Response): Promise<vo
   }
 }
 
+/** Agregação de faturas do cliente (customer_invoices), mesmo tenant e permissão que getClientById. */
+export async function getClientFinancialSummary(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    const { id: clientId } = req.params;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Empresa não identificada' });
+      return;
+    }
+
+    let permMap;
+    try {
+      permMap = await assertPermissionKey(userId, 'clients.view', req);
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        res.status(e.statusCode).json({ error: e.message });
+        return;
+      }
+      throw e;
+    }
+    const cg = resolveClientsGranularFromLegacy(permMap);
+
+    const clientCheck = await pool.query<{ user_id: string }>(
+      `SELECT c.user_id
+       FROM clients c
+       INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $2
+       WHERE c.id = $1`,
+      [clientId, tenantId],
+    );
+    if (clientCheck.rows.length === 0) {
+      res.status(404).json({ error: 'Client not found' });
+      return;
+    }
+    const ownerUserId = clientCheck.rows[0]!.user_id;
+    if (cg.view_own && !cg.view_all && ownerUserId !== userId) {
+      res.status(404).json({ error: 'Client not found' });
+      return;
+    }
+
+    const agg = await pool.query<{
+      invoices_count: string;
+      open_amount_cents: string;
+      paid_amount_cents: string;
+      overdue_amount_cents: string;
+      average_ticket_cents: string | null;
+      last_invoice_amount_cents: string | null;
+      last_invoice_status: string | null;
+    }>(
+      `SELECT
+         COUNT(*) FILTER (WHERE status <> 'cancelled')::text AS invoices_count,
+         COALESCE(SUM(amount_cents) FILTER (WHERE status IN ('pending', 'overdue')), 0)::text AS open_amount_cents,
+         COALESCE(SUM(amount_cents) FILTER (WHERE status = 'paid'), 0)::text AS paid_amount_cents,
+         COALESCE(SUM(amount_cents) FILTER (WHERE status = 'overdue'), 0)::text AS overdue_amount_cents,
+         CASE
+           WHEN COUNT(*) FILTER (WHERE status = 'paid') > 0 THEN
+             ROUND(
+               SUM(amount_cents) FILTER (WHERE status = 'paid')::numeric
+               / NULLIF(COUNT(*) FILTER (WHERE status = 'paid'), 0)
+             )::text
+           ELSE NULL
+         END AS average_ticket_cents,
+         (
+           SELECT amount_cents::text
+           FROM customer_invoices ci2
+           WHERE ci2.tenant_id = $1 AND ci2.client_id = $2 AND ci2.status <> 'cancelled'
+           ORDER BY ci2.created_at DESC NULLS LAST
+           LIMIT 1
+         ) AS last_invoice_amount_cents,
+         (
+           SELECT status::text
+           FROM customer_invoices ci3
+           WHERE ci3.tenant_id = $1 AND ci3.client_id = $2 AND ci3.status <> 'cancelled'
+           ORDER BY ci3.created_at DESC NULLS LAST
+           LIMIT 1
+         ) AS last_invoice_status
+       FROM customer_invoices ci
+       WHERE ci.tenant_id = $1 AND ci.client_id = $2`,
+      [tenantId, clientId],
+    );
+
+    const row = agg.rows[0];
+    const parseNum = (v: string | null | undefined) => {
+      if (v == null || v === '') return 0;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : 0;
+    };
+    const parseNullableNum = (v: string | null | undefined) => {
+      if (v == null || v === '') return null;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+
+    const propAgg = await pool.query<{
+      proposals_accepted_count: string;
+      proposals_accepted_amount_cents: string;
+      proposals_pending_count: string;
+      proposals_pending_amount_cents: string;
+    }>(
+      `SELECT
+         COUNT(*) FILTER (WHERE p.status IN ('accepted', 'invoiced'))::text AS proposals_accepted_count,
+         COALESCE(
+           ROUND(COALESCE(SUM(p.amount) FILTER (WHERE p.status IN ('accepted', 'invoiced')), 0) * 100)::bigint,
+           0
+         )::text AS proposals_accepted_amount_cents,
+         COUNT(*) FILTER (WHERE p.status IN ('draft', 'sent'))::text AS proposals_pending_count,
+         COALESCE(
+           ROUND(COALESCE(SUM(p.amount) FILTER (WHERE p.status IN ('draft', 'sent')), 0) * 100)::bigint,
+           0
+         )::text AS proposals_pending_amount_cents
+       FROM proposals p
+       INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = $1
+       WHERE p.client_id = $2`,
+      [tenantId, clientId],
+    );
+    const pr = propAgg.rows[0];
+
+    res.json({
+      invoices_count: parseNum(row?.invoices_count),
+      open_amount_cents: parseNum(row?.open_amount_cents),
+      paid_amount_cents: parseNum(row?.paid_amount_cents),
+      overdue_amount_cents: parseNum(row?.overdue_amount_cents),
+      average_ticket_cents: parseNullableNum(row?.average_ticket_cents),
+      last_invoice_amount_cents: parseNullableNum(row?.last_invoice_amount_cents),
+      last_invoice_status: row?.last_invoice_status ?? null,
+      proposals_accepted_count: parseNum(pr?.proposals_accepted_count),
+      proposals_accepted_amount_cents: parseNum(pr?.proposals_accepted_amount_cents),
+      proposals_pending_count: parseNum(pr?.proposals_pending_count),
+      proposals_pending_amount_cents: parseNum(pr?.proposals_pending_amount_cents),
+      currency: 'BRL',
+    });
+  } catch (error) {
+    console.error('Error fetching client financial summary:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
 export async function getClientTimeline(req: AuthRequest, res: Response): Promise<void> {
   try {
     const tenantId = req.tenantId ?? null;

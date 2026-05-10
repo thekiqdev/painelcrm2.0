@@ -1,24 +1,50 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useModulePermissions } from '@/contexts/ModulePermissionsContext';
 import { chatCommercialGates } from '@/utils/chatCommercialGates';
+import {
+  ProfileFieldEditor,
+  type ChatProfileFieldKey,
+  type ChatProfileFieldRow,
+} from '@/components/chat/ChatContactProfileSheet';
+import {
+  ChatProfileContactCompactList,
+  ChatProfileFinancialSummaryBlock,
+  ChatProfileIdentitySummaryHeader,
+} from '@/components/chat/ChatContactProfileSummary';
+import { ChatContactInvoiceHistorySection } from '@/components/chat/ChatContactInvoiceHistorySection';
+import {
+  buildClientFinanceHubFromChat,
+  buildClientProfileStateFromChat,
+} from '@/utils/clientProfileNavigation';
+import { clientsService, type Client } from '@/services/clients';
+import { normalizeBrazilTaxIdInput } from '@/utils/brazilTaxId';
 import { useQuery } from '@tanstack/react-query';
 import { useQueryClient } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
-import {
-  chatService,
-  resolveChatKanbanTagsForUi,
-  type ChatConversation,
-  type ChatKanbanTagUi,
-} from '@/services/chat';
+import { chatService, type ChatConversation, type ChatKanbanTagUi } from '@/services/chat';
 import { chatKanbanService } from '@/services/chatKanban';
 import { tasksService } from '@/services/tasks';
 import { useFloatingConversationIdentity } from './useFloatingConversationIdentity';
 import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
 import { assigneeInitials } from '@/utils/chatKanbanCardDisplay';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Users, Shield, Info, UserCircle, FileText, Receipt, FileSignature, CalendarDays, ListTodo, Plus, Tag, X } from 'lucide-react';
+import {
+  Users,
+  Shield,
+  Info,
+  UserCircle,
+  FileText,
+  Receipt,
+  FileSignature,
+  CalendarDays,
+  ListTodo,
+  Plus,
+  Tag,
+  X,
+  ChevronLeft,
+} from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -31,9 +57,11 @@ import { ContractCreateForm } from '@/components/contracts/ContractCreateForm';
 import { ChatGroupProfilePanel } from '@/components/chat/ChatGroupProfilePanel';
 import { ChatKanbanTagBadge } from '@/components/chat/ChatKanbanTagBadge';
 import { ChatKanbanTagQuickPicker } from '@/components/chat/ChatKanbanTagQuickPicker';
+import { ChatScheduledMessagesStrip } from '@/components/chat/ChatScheduledMessagesStrip';
 import { DEFAULT_CHAT_TAG_COLOR, normalizeHexColor } from '@/lib/chatKanbanTagStyle';
 import { patchConversationKanbanTagsEverywhere } from './conversationKanbanTagsCache';
-import { format } from 'date-fns';
+import { format, formatDistanceToNow, parseISO } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
 import { apiClient } from '@/integrations/api/client';
 type LeadProfileForConversion = {
   id?: string;
@@ -61,14 +89,13 @@ export function FloatingCompactProfile({
   conversationId: string;
   conversation: ChatConversation | null | undefined;
 }) {
-  const { hasPermissionKey } = useModulePermissions();
+  const { hasPermissionKey, canEdit } = useModulePermissions();
   const commercial = useMemo(() => chatCommercialGates(hasPermissionKey), [hasPermissionKey]);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const identity = useFloatingConversationIdentity(conversationId, conversation);
   const isGroup =
     conversation?.conversation_type === 'group' || conversation?.external_chat_id?.endsWith('@g.us') === true;
-  const previewTags = resolveChatKanbanTagsForUi(conversation);
 
   const { data: group } = useQuery({
     queryKey: ['floating-chat', 'group-compact-profile', conversationId],
@@ -91,6 +118,7 @@ export function FloatingCompactProfile({
   }, [isGroup, conversation?.client_id, conversation?.leadId]);
 
   const [invoiceOpen, setInvoiceOpen] = useState(false);
+  const [invoiceBillingPreset, setInvoiceBillingPreset] = useState<'one_off' | 'subscription'>('one_off');
   const [proposalOpen, setProposalOpen] = useState(false);
   const [contractOpen, setContractOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
@@ -99,6 +127,8 @@ export function FloatingCompactProfile({
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [savingTask, setSavingTask] = useState(false);
   const [kanbanTagsBusy, setKanbanTagsBusy] = useState(false);
+  const [profileSurface, setProfileSurface] = useState<'summary' | 'edit'>('summary');
+  const [profileSavingKey, setProfileSavingKey] = useState<string | null>(null);
   const [conversationKanbanTags, setConversationKanbanTags] = useState<ChatKanbanTagUi[]>([]);
   const [conversationKanbanTagsLoading, setConversationKanbanTagsLoading] = useState(false);
   const [tenantKanbanTagsCatalog, setTenantKanbanTagsCatalog] = useState<ChatKanbanTagUi[]>([]);
@@ -296,10 +326,19 @@ export function FloatingCompactProfile({
       if (!detail || detail.conversationId !== conversationId) return;
       switch (detail.action) {
         case 'invoice':
+        case 'invoice_one_off':
           if (!commercial.canCreateInvoiceFromChatFull) {
             toast.error(commercial.permDenied);
             return;
           }
+          setInvoiceBillingPreset('one_off');
+          return setInvoiceOpen(true);
+        case 'invoice_recurring':
+          if (!commercial.canCreateInvoiceFromChatFull) {
+            toast.error(commercial.permDenied);
+            return;
+          }
+          setInvoiceBillingPreset('subscription');
           return setInvoiceOpen(true);
         case 'proposal':
           if (!commercial.canCreateProposalFromChatFull) {
@@ -353,10 +392,169 @@ export function FloatingCompactProfile({
 
   const isUnlinked = !isGroup && !conversation?.client_id && !conversation?.leadId;
 
-  const tagsForQuickPicker = useMemo(() => {
-    if (conversationKanbanTags.length > 0) return conversationKanbanTags;
-    return previewTags;
-  }, [conversationKanbanTags, previewTags]);
+  useEffect(() => {
+    setProfileSurface('summary');
+  }, [conversationId, conversation?.client_id, conversation?.leadId]);
+
+  const profileKind = useMemo((): 'client' | 'lead' | 'unlinked' => {
+    if (!conversation) return 'unlinked';
+    if (conversation.client_id) return 'client';
+    if (conversation.leadId) return 'lead';
+    return 'unlinked';
+  }, [conversation?.client_id, conversation?.leadId]);
+
+  const profileFields = useMemo((): ChatProfileFieldRow[] => {
+    if (!conversation || isGroup) return [];
+    const phoneDisplay =
+      (identity.phoneLine && identity.phoneLine.trim()) ||
+      conversation.phoneNumber ||
+      (conversation as { canonicalPhone?: string }).canonicalPhone ||
+      (conversation as { canonical_phone?: string }).canonical_phone ||
+      null;
+    const lastInteractionLabel = conversation.lastMessageAt
+      ? formatDistanceToNow(new Date(conversation.lastMessageAt), { addSuffix: true, locale: ptBR })
+      : 'Sem mensagens recentes';
+
+    if (crmProfile?.type === 'client' && crmProfile.profile) {
+      const contact = crmProfile.profile as Client;
+      return [
+        { key: 'name', label: 'Nome', value: (contact.name || '').trim() || null, editable: true },
+        {
+          key: 'phone',
+          label: 'Telefone',
+          value: (contact.phone || phoneDisplay || '').trim() || null,
+          editable: true,
+        },
+        { key: 'email', label: 'E-mail', value: contact.email?.trim() || null, editable: true },
+        {
+          key: 'cpf_cnpj',
+          label: 'CPF/CNPJ',
+          value: contact.cpf_cnpj?.trim() || null,
+          editable: true,
+        },
+        {
+          key: 'company',
+          label: 'Empresa',
+          value: contact.company?.trim() || null,
+          editable: true,
+        },
+        {
+          key: 'source',
+          label: 'Origem',
+          value: contact.source?.trim() || null,
+          editable: true,
+        },
+        { key: 'lastInteraction', label: 'Última interação', value: lastInteractionLabel, editable: false },
+      ];
+    }
+
+    if (crmProfile?.type === 'lead' && crmProfile.profile) {
+      const lead = crmProfile.profile as {
+        id?: string;
+        name?: string;
+        phone?: string | null;
+        email?: string | null;
+        company?: string | null;
+        source?: string | null;
+        cpf_cnpj?: string | null;
+      };
+      const leadCpf = typeof lead.cpf_cnpj === 'string' ? lead.cpf_cnpj.trim() : '';
+      const rows: ChatProfileFieldRow[] = [
+        { key: 'name', label: 'Nome', value: (lead.name || '').trim() || null, editable: true },
+        {
+          key: 'phone',
+          label: 'Telefone',
+          value: (lead.phone || phoneDisplay || '').trim() || null,
+          editable: true,
+        },
+        { key: 'email', label: 'E-mail', value: lead.email?.trim() || null, editable: true },
+      ];
+      if (leadCpf) {
+        rows.push({ key: 'cpf_cnpj', label: 'CPF/CNPJ', value: leadCpf, editable: true });
+      }
+      rows.push(
+        { key: 'company', label: 'Empresa', value: lead.company?.trim() || null, editable: true },
+        { key: 'source', label: 'Origem', value: lead.source?.trim() || null, editable: true },
+        { key: 'lastInteraction', label: 'Última interação', value: lastInteractionLabel, editable: false },
+      );
+      return rows;
+    }
+
+    return [
+      {
+        key: 'name',
+        label: 'Nome',
+        value: identity.displayName && identity.displayName !== '—' ? identity.displayName : null,
+        editable: false,
+      },
+      { key: 'phone', label: 'Telefone', value: phoneDisplay, editable: false },
+      { key: 'lastInteraction', label: 'Última interação', value: lastInteractionLabel, editable: false },
+    ];
+  }, [conversation, isGroup, crmProfile, identity.displayName, identity.phoneLine]);
+
+  const canEditChatFields = useMemo(
+    () =>
+      Boolean(crmProfile?.type === 'client' && crmProfile.profile && canEdit('clients')) ||
+      Boolean(
+        crmProfile?.type === 'lead' && crmProfile.profile && !conversation?.client_id && canEdit('leads'),
+      ),
+    [crmProfile, conversation?.client_id, canEdit],
+  );
+
+  const clientSinceLabelFloating = useMemo(() => {
+    if (profileKind !== 'client' || !crmProfile?.profile) return null;
+    const created = (crmProfile.profile as Client).created_at;
+    if (!created) return null;
+    try {
+      return format(parseISO(created), "d 'de' MMM 'de' yyyy", { locale: ptBR });
+    } catch {
+      return null;
+    }
+  }, [profileKind, crmProfile]);
+
+  const handleSaveFloatingProfileField = useCallback(
+    async (key: ChatProfileFieldKey, value: string) => {
+      if (!crmProfile?.profile) return;
+      setProfileSavingKey(key);
+      try {
+        if (crmProfile.type === 'client') {
+          const clientId = (crmProfile.profile as Client).id;
+          const patch: Partial<Client> = {};
+          if (key === 'name') patch.name = value;
+          else if (key === 'email') patch.email = value;
+          else if (key === 'phone') patch.phone = value;
+          else if (key === 'cpf_cnpj') patch.cpf_cnpj = value ? normalizeBrazilTaxIdInput(value) : null;
+          else if (key === 'company') patch.company = value;
+          else if (key === 'source') patch.source = value;
+          const updated = await clientsService.updateClient(clientId, patch);
+          void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'conversation-crm-profile', conversationId] });
+          void queryClient.invalidateQueries({ queryKey: ['clients'] });
+          void queryClient.invalidateQueries({ queryKey: ['client-financial-summary', updated.id] });
+          toast.success('Dados atualizados');
+        } else if (crmProfile.type === 'lead') {
+          const leadId = (crmProfile.profile as { id?: string }).id;
+          if (!leadId) throw new Error('Lead inválido');
+          const body: Record<string, unknown> = {};
+          if (key === 'name') body.name = value;
+          else if (key === 'email') body.email = value;
+          else if (key === 'phone') body.phone = value;
+          else if (key === 'company') body.company = value;
+          else if (key === 'source') body.source = value;
+          else if (key === 'cpf_cnpj') body.cpf_cnpj = value ? normalizeBrazilTaxIdInput(value) : null;
+          await apiClient.patch(`/api/leads/${leadId}`, body);
+          void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'conversation-crm-profile', conversationId] });
+          void queryClient.invalidateQueries({ queryKey: ['leads'] });
+          toast.success('Dados atualizados');
+        }
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Erro ao guardar');
+        throw e;
+      } finally {
+        setProfileSavingKey(null);
+      }
+    },
+    [crmProfile, conversationId, queryClient],
+  );
 
   useEffect(() => {
     if (!conversationId || isGroup) {
@@ -568,50 +766,131 @@ export function FloatingCompactProfile({
     </Button>
   );
 
+  const scheduledStrip =
+    hasPermissionKey('chat.send_message') ? (
+      <ChatScheduledMessagesStrip conversationId={conversationId} density="compact" />
+    ) : null;
+
   return (
-    <div className="shrink-0 border-b border-neutral-200 bg-white/95 px-3 py-2 dark:border-slate-800 dark:bg-slate-950/95">
-      <div className="flex items-start gap-2.5">
-        <div className="relative shrink-0">
-          <Avatar className="h-10 w-10 shrink-0 border border-border/60">
-            {identity.avatarUrl ? <AvatarImage src={chatAvatarUrlForImgSrc(identity.avatarUrl) ?? identity.avatarUrl} alt="" /> : null}
-            <AvatarFallback className="bg-primary/15 text-xs font-semibold text-primary">
-              {identity.initials.slice(0, 2).toUpperCase()}
-            </AvatarFallback>
-          </Avatar>
-          {!isGroup && !conversation?.client_id ? (
-            (conversation?.leadId
-              ? commercial.canConvertLeadToClient
-              : commercial.canCreateLeadFromChat) ? (
-              <Button
-                type="button"
-                variant="default"
-                size="icon"
-                className="absolute -bottom-0.5 -left-0.5 z-[1] h-5 w-5 rounded-full border-2 border-background p-0 shadow-md"
-                title={conversation?.leadId ? 'Converter para cliente' : 'Adicionar como lead'}
-                aria-label={
-                  conversation?.leadId ? 'Converter lead para cliente' : 'Adicionar como lead'
-                }
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  void (conversation?.leadId ? handleConvertLeadToClient() : handleCreateLeadAndLink());
-                }}
-              >
-                <Plus className="h-2.5 w-2.5 text-primary-foreground" />
-              </Button>
-            ) : null
-          ) : null}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <p className="truncate text-xs font-semibold">{identity.displayName}</p>
-            <Badge variant="secondary" className="h-4 px-1 py-0 text-[9px] font-normal">
-              {sourceLabel}
-            </Badge>
+    <div
+      className="min-h-0 max-h-[min(340px,52dvh)] shrink overflow-y-auto overflow-x-hidden overscroll-contain touch-pan-y border-b border-neutral-200 bg-white/95 px-3 py-2 dark:border-slate-800 dark:bg-slate-950/95"
+      data-floating-compact-profile-scroll
+    >
+      {isGroup ? (
+        <>
+          <div className="flex items-start gap-2.5">
+            <div className="relative shrink-0">
+              <Avatar className="h-10 w-10 shrink-0 border border-border/60">
+                {identity.avatarUrl ? (
+                  <AvatarImage src={chatAvatarUrlForImgSrc(identity.avatarUrl) ?? identity.avatarUrl} alt="" />
+                ) : null}
+                <AvatarFallback className="bg-primary/15 text-xs font-semibold text-primary">
+                  {identity.initials.slice(0, 2).toUpperCase()}
+                </AvatarFallback>
+              </Avatar>
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <p className="truncate text-xs font-semibold">{identity.displayName}</p>
+                <Badge variant="secondary" className="h-4 px-1 py-0 text-[9px] font-normal">
+                  {sourceLabel}
+                </Badge>
+              </div>
+              {identity.phoneLine ? (
+                <p className="truncate text-[10px] text-muted-foreground">{identity.phoneLine}</p>
+              ) : null}
+              {conversation?.assignee_display?.trim() ? (
+                <p className="flex min-w-0 items-center gap-1.5 truncate text-[10px] text-muted-foreground">
+                  <span className="shrink-0">Responsável:</span>
+                  <Avatar className="h-4 w-4 shrink-0 border border-border/50">
+                    {chatAvatarUrlForImgSrc(conversation.assignee_avatar_url) ? (
+                      <AvatarImage
+                        src={chatAvatarUrlForImgSrc(conversation.assignee_avatar_url)!}
+                        alt=""
+                        className="object-cover"
+                      />
+                    ) : null}
+                    <AvatarFallback className="text-[7px] font-semibold">
+                      {assigneeInitials(conversation.assignee_display)}
+                    </AvatarFallback>
+                  </Avatar>
+                  <span className="min-w-0 truncate font-medium text-foreground/90">{conversation.assignee_display}</span>
+                </p>
+              ) : null}
+            </div>
           </div>
-          {identity.phoneLine ? <p className="truncate text-[10px] text-muted-foreground">{identity.phoneLine}</p> : null}
+          {scheduledStrip ? <div className="mt-2">{scheduledStrip}</div> : null}
+        </>
+      ) : profileSurface === 'edit' ? (
+        <div className="space-y-3 py-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 gap-1 px-2 text-[10px]"
+            onClick={() => setProfileSurface('summary')}
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+            Voltar ao resumo
+          </Button>
+          <section className="rounded-xl border border-border/70 bg-card/80 p-3 shadow-sm dark:bg-slate-900/40">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Informações do contato</p>
+            <div className="mt-1 divide-y divide-border/40">
+              {profileFields.map((row) => (
+                <ProfileFieldEditor
+                  key={row.key}
+                  row={row}
+                  canEdit={canEditChatFields}
+                  saving={profileSavingKey === row.key}
+                  onSave={canEditChatFields ? handleSaveFloatingProfileField : undefined}
+                />
+              ))}
+            </div>
+          </section>
+        </div>
+      ) : (
+        <>
+          <ChatProfileIdentitySummaryHeader
+            density="floating"
+            displayName={identity.displayName || '—'}
+            phoneDisplay={identity.phoneLine ?? conversation?.phoneNumber ?? null}
+            avatarUrl={identity.avatarUrl ? chatAvatarUrlForImgSrc(identity.avatarUrl) ?? identity.avatarUrl : null}
+            initials={identity.initials.slice(0, 2).toUpperCase()}
+            kind={profileKind}
+            clientSinceLabel={clientSinceLabelFloating ?? undefined}
+            showOpenFullProfile={Boolean(conversation?.client_id && commercial.canViewClientNav)}
+            onOpenFullProfile={
+              conversation?.client_id && commercial.canViewClientNav
+                ? () => navigate(`/clients/${conversation.client_id}`)
+                : undefined
+            }
+            canEditProfileFields={canEditChatFields}
+            onEdit={() => setProfileSurface('edit')}
+            avatarAccessory={
+              !conversation?.client_id &&
+              (conversation?.leadId ? commercial.canConvertLeadToClient : commercial.canCreateLeadFromChat) ? (
+                <Button
+                  type="button"
+                  variant="default"
+                  size="icon"
+                  className="absolute -bottom-0.5 -left-0.5 z-[1] h-5 w-5 rounded-full border-2 border-background p-0 shadow-md"
+                  title={conversation?.leadId ? 'Converter para cliente' : 'Adicionar como lead'}
+                  aria-label={
+                    conversation?.leadId ? 'Converter lead para cliente' : 'Adicionar como lead'
+                  }
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    void (conversation?.leadId ? handleConvertLeadToClient() : handleCreateLeadAndLink());
+                  }}
+                >
+                  <Plus className="h-2.5 w-2.5 text-primary-foreground" />
+                </Button>
+              ) : undefined
+            }
+          />
           {conversation?.assignee_display?.trim() ? (
-            <p className="flex min-w-0 items-center gap-1.5 truncate text-[10px] text-muted-foreground">
+            <p className="mt-2 flex min-w-0 items-center justify-center gap-1.5 truncate px-1 text-[10px] text-muted-foreground">
               <span className="shrink-0">Responsável:</span>
               <Avatar className="h-4 w-4 shrink-0 border border-border/50">
                 {chatAvatarUrlForImgSrc(conversation.assignee_avatar_url) ? (
@@ -628,8 +907,42 @@ export function FloatingCompactProfile({
               <span className="min-w-0 truncate font-medium text-foreground/90">{conversation.assignee_display}</span>
             </p>
           ) : null}
-        </div>
-      </div>
+          {scheduledStrip ? <div className="mt-2">{scheduledStrip}</div> : null}
+          <div className="mt-3 space-y-3">
+            <ChatProfileFinancialSummaryBlock
+              clientId={conversation?.client_id ?? null}
+              kind={profileKind}
+              density="floating"
+            />
+            <ChatProfileContactCompactList
+              profileFields={profileFields}
+              headerPhone={identity.phoneLine ?? conversation?.phoneNumber ?? null}
+              onEditContact={() => setProfileSurface('edit')}
+              canEditProfileFields={canEditChatFields}
+            />
+            {conversation?.client_id ? (
+              <ChatContactInvoiceHistorySection
+                clientId={conversation.client_id}
+                enabled={Boolean(isClient)}
+                onViewAll={
+                  commercial.canViewClientNav
+                    ? () => {
+                        const keys = {
+                          id: conversationId,
+                          external_chat_id: conversation.external_chat_id ?? '',
+                          instance_id: conversation.instance_id ?? '',
+                        };
+                        navigate(buildClientFinanceHubFromChat(conversation.client_id!, keys), {
+                          state: buildClientProfileStateFromChat(keys),
+                        });
+                      }
+                    : undefined
+                }
+              />
+            ) : null}
+          </div>
+        </>
+      )}
 
       {isGroup ? (
         <div className="mt-2 space-y-1.5">
@@ -646,52 +959,30 @@ export function FloatingCompactProfile({
             Gerenciar grupo
           </Button>
         </div>
-      ) : (
-        <div className="mt-2">
-          <div className="flex flex-wrap items-center gap-1">
-            {tagsForQuickPicker.slice(0, 4).map((t) => (
-              <ChatKanbanTagBadge key={t.id} label={t.label} color={t.color} className="max-w-[min(120px,40vw)]" />
-            ))}
-            <ChatKanbanTagQuickPicker
-              tenantOptions={tenantKanbanTagsCatalog}
-              tenantLoading={tenantKanbanTagsLoading}
-              busy={kanbanTagsBusy}
-              conversationKanbanTags={tagsForQuickPicker}
-              onAddTag={handleAddConversationTag}
-            />
-          </div>
-          <div className="mt-1.5 flex flex-wrap gap-1.5">
-            {conversation?.client_id && commercial.canViewClientNav ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-7 text-[10px]"
-                onClick={() => navigate(`/clients/${conversation.client_id}`)}
-              >
-                Ver cliente
-              </Button>
-            ) : null}
-            {conversation?.leadId && commercial.canViewLeadNav ? (
-              <Button type="button" size="sm" variant="outline" className="h-7 text-[10px]" onClick={() => navigate('/leads')}>
-                Ver lead
-              </Button>
-            ) : null}
-            {!conversation?.client_id && !conversation?.leadId && commercial.canCreateClientFromChat ? (
-              <Button type="button" size="sm" variant="outline" className="h-7 text-[10px]" onClick={() => void handleCreateClientAndLink()}>
-                <UserCircle className="mr-1 h-3 w-3" />
-                Criar cliente
-              </Button>
-            ) : null}
-            {!conversation?.client_id && !conversation?.leadId && commercial.canCreateLeadFromChat ? (
-              <Button type="button" size="sm" variant="outline" className="h-7 text-[10px]" onClick={() => void handleCreateLeadAndLink()}>
-                <UserCircle className="mr-1 h-3 w-3" />
-                Criar lead
-              </Button>
-            ) : null}
-          </div>
+      ) : (conversation?.leadId && commercial.canViewLeadNav) ||
+        (!conversation?.client_id &&
+          !conversation?.leadId &&
+          (commercial.canCreateClientFromChat || commercial.canCreateLeadFromChat)) ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {conversation?.leadId && commercial.canViewLeadNav ? (
+            <Button type="button" size="sm" variant="outline" className="h-7 text-[10px]" onClick={() => navigate('/leads')}>
+              Ver lead
+            </Button>
+          ) : null}
+          {!conversation?.client_id && !conversation?.leadId && commercial.canCreateClientFromChat ? (
+            <Button type="button" size="sm" variant="outline" className="h-7 text-[10px]" onClick={() => void handleCreateClientAndLink()}>
+              <UserCircle className="mr-1 h-3 w-3" />
+              Criar cliente
+            </Button>
+          ) : null}
+          {!conversation?.client_id && !conversation?.leadId && commercial.canCreateLeadFromChat ? (
+            <Button type="button" size="sm" variant="outline" className="h-7 text-[10px]" onClick={() => void handleCreateLeadAndLink()}>
+              <UserCircle className="mr-1 h-3 w-3" />
+              Criar lead
+            </Button>
+          ) : null}
         </div>
-      )}
+      ) : null}
 
       <div className="mt-2.5">
         <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Ações rápidas</p>
@@ -727,13 +1018,6 @@ export function FloatingCompactProfile({
                 onClick={() => setScheduleOpen(true)}
               />
               <QuickAction icon={<ListTodo className="h-3.5 w-3.5" />} label="Tarefa" onClick={() => setTaskOpen(true)} />
-              <QuickAction
-                icon={<UserCircle className="h-3.5 w-3.5" />}
-                label="Ver cliente"
-                disabled={!commercial.canViewClientNav}
-                title={!commercial.canViewClientNav ? commercial.permDenied : undefined}
-                onClick={() => navigate(`/clients/${conversation?.client_id}`)}
-              />
             </>
           ) : null}
 
@@ -840,18 +1124,30 @@ export function FloatingCompactProfile({
         <span>Perfil compacto da conversa</span>
       </div>
 
-      <Dialog open={invoiceOpen} onOpenChange={setInvoiceOpen}>
+      <Dialog
+        open={invoiceOpen}
+        onOpenChange={(o) => {
+          setInvoiceOpen(o);
+          if (!o) setInvoiceBillingPreset('one_off');
+        }}
+      >
         <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle>Nova fatura</DialogTitle>
           </DialogHeader>
           <CustomerInvoiceNew
+            key={`fa-${invoiceBillingPreset}`}
             embedded
+            embeddedBillingPreset={invoiceBillingPreset}
             initialClientId={conversation?.client_id ?? null}
-            onBack={() => setInvoiceOpen(false)}
+            onBack={() => {
+              setInvoiceOpen(false);
+              setInvoiceBillingPreset('one_off');
+            }}
             onCreated={() => {
               toast.success('Fatura criada');
               setInvoiceOpen(false);
+              setInvoiceBillingPreset('one_off');
             }}
           />
         </DialogContent>

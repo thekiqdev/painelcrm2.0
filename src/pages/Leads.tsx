@@ -92,7 +92,7 @@ const Leads = () => {
   const [sortField, setSortField] = useState("name");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [leadTasks, setLeadTasks] = useState<any[]>([]);
-  const [activeTab, setActiveTab] = useState("details");
+  const [activeTab, setActiveTab] = useState("summary");
   const [activeStatusFilter, setActiveStatusFilter] = useState("all");
   const [isConvertDialogOpen, setIsConvertDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -171,7 +171,7 @@ const Leads = () => {
     if (!user) return;
     
     try {
-      const response = await apiClient.get(`/api/leads/${leadId}/tasks`);
+      const response = await apiClient.get(`/api/lead-tasks/leads/${leadId}/tasks`);
       if (response.error) throw new Error(response.error);
       setLeadTasks(response.data || []);
     } catch (error: any) {
@@ -226,7 +226,7 @@ const Leads = () => {
       setSelectedLead(lead);
     }
     setIsViewDialogOpen(true);
-    setActiveTab("details");
+    setActiveTab("summary");
     await fetchLeadTasks(lead.id);
   };
 
@@ -348,26 +348,29 @@ const Leads = () => {
     if (!selectedLead || !user) return;
     
     try {
-      // Converting Date to ISO string
-      const formattedDueDate = values.due_date ? values.due_date.toISOString() : null;
-      
-      const taskData = {
+      const taskData: Record<string, unknown> = {
         lead_id: selectedLead.id,
-        title: values.title,
-        description: values.description || "",
-        due_date: formattedDueDate,
-        status: values.status
+        title: values.title.trim(),
+        status: values.status || "pending",
       };
+
+      const description = values.description?.trim();
+      if (description) {
+        taskData.description = description;
+      }
+      if (values.due_date) {
+        taskData.due_date = values.due_date.toISOString();
+      }
       
       const response = await apiClient.post("/api/lead-tasks", taskData);
       if (response.error) throw new Error(response.error);
 
       toast.success("Tarefa adicionada com sucesso!");
-      fetchLeadTasks(selectedLead.id);
+      await fetchLeadTasks(selectedLead.id);
       setActiveTab("tasks");
     } catch (error: any) {
       console.error("Erro ao adicionar tarefa:", error.message);
-      toast.error("Não foi possível adicionar a tarefa");
+      toast.error(error?.message || "Não foi possível adicionar a tarefa");
     }
   };
 
@@ -455,6 +458,23 @@ const Leads = () => {
     } catch (error: any) {
       console.error("Erro ao atualizar status:", error.message);
       toast.error("Não foi possível atualizar o status");
+    }
+  };
+
+  const handleDeleteTask = async (taskId: string) => {
+    if (!user) return;
+
+    try {
+      const response = await apiClient.delete(`/api/lead-tasks/${taskId}`);
+      if (response.error) throw new Error(response.error);
+
+      toast.success("Tarefa excluída com sucesso!");
+      if (selectedLead) {
+        fetchLeadTasks(selectedLead.id);
+      }
+    } catch (error: any) {
+      console.error("Erro ao excluir tarefa:", error.message);
+      toast.error("Não foi possível excluir a tarefa");
     }
   };
 
@@ -867,6 +887,7 @@ const Leads = () => {
         onConvertToClient={() => setIsConvertDialogOpen(true)}
         onAddTask={handleAddTask}
         onUpdateTaskStatus={updateTaskStatus}
+        onDeleteTask={handleDeleteTask}
         onSaveStickyNotesJson={handleSaveStickyNotesJson}
         onOpenProposalCreate={() => setIsProposalSheetOpen(true)}
       />

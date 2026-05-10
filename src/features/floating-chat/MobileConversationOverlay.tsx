@@ -1,22 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, type ChangeEventHandler } from 'react';
+import type { ChangeEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useChatOutboundQueue } from '@/hooks/useChatOutboundQueue';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import {
-  ArrowLeft,
-  CalendarIcon,
-  FileText,
-  Headphones,
-  Image as ImageIcon,
-  Info,
-  LayoutTemplate,
-  Plus,
-  Send,
-  Video,
-} from 'lucide-react';
+import { ArrowLeft, Headphones, Info, Plus, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { ChatBubbleContent } from '@/components/chat/ChatBubbleContent';
 import { MessageStatusIndicator } from '@/components/chat/MessageStatusIndicator';
@@ -29,7 +20,22 @@ import { floatingAttendanceRowModel } from './attendanceUi';
 import { Badge } from '@/components/ui/badge';
 import { FloatingCompactProfile } from './FloatingCompactProfile';
 import { getCachedFloatingConversationById } from './queryCache';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { ChatComposerDropZone } from '@/components/chat/ChatComposerDropZone';
+import { ChatComposerQuickActionsPanel } from '@/components/chat/ChatComposerQuickActionsPanel';
+import { chatScheduledMessagesQueryKey } from '@/components/chat/ChatScheduledMessagesStrip';
+import { ScheduleChatMessageDialog } from '@/components/chat/ScheduleChatMessageDialog';
+import {
+  classifyChatOutgoingFile,
+  inferDocumentMimeForSend,
+  validateChatOutgoingFileSize,
+} from '@/utils/chatComposerOutgoingFile';
+import { buildFloatingComposerQuickSections } from './buildFloatingComposerQuickSections';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 import { ChatKanbanTagBadge } from '@/components/chat/ChatKanbanTagBadge';
@@ -62,13 +68,13 @@ type Props = {
 };
 
 export function MobileConversationOverlay({ conversationId, onClose }: Props) {
-  const { hasPermissionKey } = useModulePermissions();
+  const { canChatReply, hasPermissionKey } = useModulePermissions();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const imageFileInputRef = useRef<HTMLInputElement>(null);
-  const documentFileInputRef = useRef<HTMLInputElement>(null);
+  const attachComboInputRef = useRef<HTMLInputElement>(null);
   const draftRef = useRef('');
+  const [scheduleChatDlgOpen, setScheduleChatDlgOpen] = useState(false);
   const pendingWsFifoRef = useRef<string[]>([]);
   const {
     composerDrafts,
@@ -139,6 +145,19 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
     staleTime: 5_000,
   });
 
+  const { data: connectedInstances = [] } = useQuery({
+    queryKey: ['floating-chat', 'connected-instances'],
+    queryFn: async () => {
+      const rows = await chatService.listInstances();
+      return rows.filter((instance) => {
+        const status = String(instance.status || '').toLowerCase();
+        const enabled = (instance.metadata as Record<string, unknown> | null | undefined)?.enabled_in_chat !== false;
+        return enabled && (status === 'connected' || status === 'open');
+      });
+    },
+    staleTime: 30_000,
+  });
+
   useEffect(() => {
     const onMsg = (e: Event) => {
       const d = (e as CustomEvent<Record<string, unknown>>).detail;
@@ -174,6 +193,8 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
   const draft = composerDrafts[conversationId] ?? '';
   const commercial = useMemo(() => chatCommercialGates(hasPermissionKey), [hasPermissionKey]);
   const permDenied = 'Seu perfil não tem permissão para esta ação.';
+  const isEmptyLeadConversation = !isLoading && messages.length === 0 && Boolean(conversation?.leadId);
+  const selectedInstanceId = conversation?.instance_id ?? '';
 
   const dispatchCompactAction = useCallback(
     (action: string) => {
@@ -196,10 +217,16 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
     });
   }, []);
 
-  const onPickImage: ChangeEventHandler<HTMLInputElement> = async (ev) => {
-    const file = ev.target.files?.[0];
-    ev.target.value = '';
-    if (!file) return;
+  const sendMobileImageFile = async (file: File) => {
+    const sizeOk = validateChatOutgoingFileSize(file);
+    if (!sizeOk.ok) {
+      toast.error(sizeOk.message);
+      return;
+    }
+    if (classifyChatOutgoingFile(file) !== 'image') {
+      toast.error('Arquivo inválido para imagem');
+      return;
+    }
     try {
       const dataUrl = await readFileAsDataUrl(file);
       const comma = dataUrl.indexOf(',');
@@ -215,17 +242,23 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
     }
   };
 
-  const onPickDocument: ChangeEventHandler<HTMLInputElement> = async (ev) => {
-    const file = ev.target.files?.[0];
-    ev.target.value = '';
-    if (!file) return;
+  const sendMobileDocumentFile = async (file: File) => {
+    const sizeOk = validateChatOutgoingFileSize(file);
+    if (!sizeOk.ok) {
+      toast.error(sizeOk.message);
+      return;
+    }
+    if (classifyChatOutgoingFile(file) !== 'document') {
+      toast.error('Tipo de documento não suportado');
+      return;
+    }
     try {
       const dataUrl = await readFileAsDataUrl(file);
       const comma = dataUrl.indexOf(',');
       const fileBase64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
       await chatService.sendDocumentMessage(conversationId, {
         fileBase64,
-        mimeType: file.type || 'application/pdf',
+        mimeType: inferDocumentMimeForSend(file),
         fileName: file.name,
       });
       void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'messages', conversationId] });
@@ -234,6 +267,59 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
       toast.error(e instanceof Error ? e.message : 'Falha ao enviar documento');
     }
   };
+
+  const handleAttachComboChange = async (ev: ChangeEvent<HTMLInputElement>) => {
+    const file = ev.target.files?.[0];
+    ev.target.value = '';
+    if (!file) return;
+    const kind = classifyChatOutgoingFile(file);
+    if (kind === 'image') await sendMobileImageFile(file);
+    else if (kind === 'document') await sendMobileDocumentFile(file);
+    else toast.error('Tipo de arquivo não suportado.');
+  };
+
+  const floatingComposerSections = useMemo(
+    () =>
+      buildFloatingComposerQuickSections({
+        conversation,
+        commercial,
+        canCreateInvoice: Boolean(conversation?.client_id && commercial.canCreateInvoiceFromChatFull),
+        canCreateProposal: Boolean(
+          (conversation?.client_id || conversation?.leadId) && commercial.canCreateProposalFromChatFull,
+        ),
+        canCreateContract: Boolean(conversation?.client_id && commercial.canCreateContractFromChatFull),
+        hasSchedulePermission: hasPermissionKey('chat.schedule_from_chat'),
+        canManageGroupUi: hasPermissionKey('chat.manage_groups'),
+        canManageKanbanTags: hasPermissionKey('chat.manage_tags'),
+        permDenied,
+        isMobile: true,
+        canScheduleChatMessage: hasPermissionKey('chat.send_message'),
+        onAttachFile: () => attachComboInputRef.current?.click(),
+        onScheduleMessage: () => setScheduleChatDlgOpen(true),
+        onTemplate: () =>
+          toast.info('Templates no floating entram na próxima etapa. Use o chat completo para modelos.'),
+        dispatchAction: dispatchCompactAction,
+        onOpenProfileForTags: () => {
+          if (!compactProfileOpen) toggleCompactProfile(conversationId);
+        },
+        onOpenClient: () => {
+          if (conversation?.client_id && commercial.canViewClientNav) {
+            navigate(`/clients/${conversation.client_id}`);
+          }
+        },
+      }),
+    [
+      conversation,
+      commercial,
+      compactProfileOpen,
+      toggleCompactProfile,
+      conversationId,
+      dispatchCompactAction,
+      navigate,
+      hasPermissionKey,
+      permDenied,
+    ],
+  );
 
   useEffect(() => {
     draftRef.current = draft;
@@ -246,6 +332,20 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
     setComposerDraft(conversationId, '');
     enqueueText(t, null);
   }, [conversationId, setComposerDraft, enqueueText]);
+
+  const changePreparedInstance = useCallback(
+    async (nextInstanceId: string) => {
+      if (!nextInstanceId || nextInstanceId === selectedInstanceId || messages.length > 0) return;
+      try {
+        const updated = await chatService.patchPreparedConversationInstance(conversationId, nextInstanceId);
+        queryClient.setQueryData(['floating-chat', 'conversation-meta', conversationId], updated);
+        void queryClient.invalidateQueries({ queryKey: ['floating-chat'] });
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Não foi possível alterar a instância');
+      }
+    },
+    [conversationId, messages.length, queryClient, selectedInstanceId],
+  );
 
   const root = typeof document !== 'undefined' ? document.body : null;
   if (!root) return null;
@@ -381,6 +481,12 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
         <FloatingCompactProfile conversationId={conversationId} conversation={conversation} />
       ) : null}
 
+      <ChatComposerDropZone
+        disabled
+        className="flex min-h-0 flex-1 flex-col"
+        onSendImageFile={(f) => void sendMobileImageFile(f)}
+        onSendDocumentFile={(f) => void sendMobileDocumentFile(f)}
+      >
       <div
         ref={scrollRef}
         className={cn(
@@ -391,6 +497,33 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
         <div className="space-y-1.5 pb-2">
           {isLoading ? (
             <p className="py-10 text-center text-xs text-muted-foreground">Carregando mensagens…</p>
+          ) : isEmptyLeadConversation ? (
+            <div className="flex min-h-[55dvh] flex-col items-center justify-center px-5 py-10 text-center">
+              <Avatar className="mb-3 h-14 w-14 border border-border/70">
+                {identity.avatarUrl ? <AvatarImage src={identity.avatarUrl} alt="" /> : null}
+                <AvatarFallback>{identity.initials}</AvatarFallback>
+              </Avatar>
+              <Badge variant="secondary" className="mb-2">Lead</Badge>
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Nova conversa com Lead</p>
+              <p className="mt-1 text-base font-semibold text-foreground">Conversa ainda não iniciada</p>
+              <p className="mt-1 max-w-[280px] text-sm text-muted-foreground">
+                Envie a primeira mensagem pelo WhatsApp.
+              </p>
+              {connectedInstances.length === 0 ? (
+                <div className="mt-4 rounded-lg border border-dashed border-border bg-background p-4 text-sm text-muted-foreground">
+                  <p>Nenhuma instância WhatsApp conectada.</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-3"
+                    onClick={() => navigate('/superadmin/conexoes/uazapi')}
+                  >
+                    Conectar WhatsApp
+                  </Button>
+                </div>
+              ) : null}
+            </div>
           ) : messages.length === 0 ? (
             <p className="py-10 text-center text-xs text-muted-foreground">Sem mensagens.</p>
           ) : (
@@ -441,130 +574,41 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
       </div>
 
       <div className="shrink-0 border-t border-border bg-background px-2 py-2">
+        {isEmptyLeadConversation && connectedInstances.length > 1 ? (
+          <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="shrink-0">Enviar por:</span>
+            <Select value={selectedInstanceId} onValueChange={(v) => void changePreparedInstance(v)}>
+              <SelectTrigger className="h-9 flex-1 text-xs">
+                <SelectValue placeholder="Instância WhatsApp" />
+              </SelectTrigger>
+              <SelectContent>
+                {connectedInstances.map((instance) => (
+                  <SelectItem key={instance.id} value={instance.id}>
+                    {instance.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        ) : null}
+        {canChatReply() ? (
         <div className="flex items-end gap-2">
-          <input ref={imageFileInputRef} type="file" accept="image/*" className="hidden" onChange={onPickImage} />
-          <input ref={documentFileInputRef} type="file" accept="application/pdf" className="hidden" onChange={onPickDocument} />
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button type="button" variant="outline" size="icon" className="h-11 w-11 shrink-0 rounded-xl">
-                <Plus className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent side="top" align="start" className="z-[170] w-56">
-              <DropdownMenuItem onSelect={(e) => { e.preventDefault(); imageFileInputRef.current?.click(); }}>
-                <ImageIcon className="mr-2 h-4 w-4" />
-                Enviar imagem
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={(e) => { e.preventDefault(); documentFileInputRef.current?.click(); }}>
-                <FileText className="mr-2 h-4 w-4" />
-                Enviar documento
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={(e) => { e.preventDefault(); toast.info('Templates no floating entram na próxima etapa.'); }}>
-                <LayoutTemplate className="mr-2 h-4 w-4" />
-                Usar template
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                disabled={!hasPermissionKey('chat.schedule_from_chat')}
-                title={hasPermissionKey('chat.schedule_from_chat') ? undefined : permDenied}
-                onSelect={(e) => { e.preventDefault(); dispatchCompactAction('schedule'); }}
-              >
-                <CalendarIcon className="mr-2 h-4 w-4" />
-                Agendar compromisso
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={!hasPermissionKey('chat.schedule_from_chat')}
-                title={hasPermissionKey('chat.schedule_from_chat') ? undefined : permDenied}
-                onSelect={(e) => { e.preventDefault(); dispatchCompactAction('meet_now'); }}
-              >
-                <Video className="mr-2 h-4 w-4" />
-                Criar reunião para agora
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={!hasPermissionKey('chat.schedule_from_chat')}
-                title={hasPermissionKey('chat.schedule_from_chat') ? undefined : permDenied}
-                onSelect={(e) => { e.preventDefault(); dispatchCompactAction('meet_later'); }}
-              >
-                <CalendarIcon className="mr-2 h-4 w-4" />
-                Criar reunião para depois
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              {conversation?.conversation_type === 'group' || conversation?.external_chat_id?.endsWith('@g.us') ? (
-                <DropdownMenuItem
-                  disabled={!hasPermissionKey('chat.manage_groups')}
-                  title={hasPermissionKey('chat.manage_groups') ? undefined : permDenied}
-                  onSelect={(e) => { e.preventDefault(); dispatchCompactAction('group_manage'); }}
-                >
-                  <Info className="mr-2 h-4 w-4" />
-                  Gerenciar grupo
-                </DropdownMenuItem>
-              ) : null}
-              {conversation?.leadId && !conversation?.client_id ? (
-                <DropdownMenuItem
-                  disabled={!commercial.canConvertLeadToClient}
-                  title={commercial.canConvertLeadToClient ? undefined : permDenied}
-                  onSelect={(e) => { e.preventDefault(); dispatchCompactAction('convert_lead'); }}
-                >
-                  <Info className="mr-2 h-4 w-4" />
-                  Converter para cliente
-                </DropdownMenuItem>
-              ) : null}
-              {conversation?.client_id ? (
-                <>
-                  <DropdownMenuItem
-                    disabled={!commercial.canCreateInvoiceFromChatFull}
-                    title={commercial.canCreateInvoiceFromChatFull ? undefined : permDenied}
-                    onSelect={(e) => { e.preventDefault(); dispatchCompactAction('invoice'); }}
-                  >
-                    <FileText className="mr-2 h-4 w-4" />
-                    Enviar fatura
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    disabled={!commercial.canCreateContractFromChatFull}
-                    title={commercial.canCreateContractFromChatFull ? undefined : permDenied}
-                    onSelect={(e) => { e.preventDefault(); dispatchCompactAction('contract'); }}
-                  >
-                    <FileText className="mr-2 h-4 w-4" />
-                    Enviar contrato
-                  </DropdownMenuItem>
-                </>
-              ) : null}
-              {(conversation?.client_id || conversation?.leadId) ? (
-                <DropdownMenuItem
-                  disabled={!commercial.canCreateProposalFromChatFull}
-                  title={commercial.canCreateProposalFromChatFull ? undefined : permDenied}
-                  onSelect={(e) => { e.preventDefault(); dispatchCompactAction('proposal'); }}
-                >
-                  <FileText className="mr-2 h-4 w-4" />
-                  Criar proposta
-                </DropdownMenuItem>
-              ) : null}
-              {!conversation?.client_id && !conversation?.leadId ? (
-                <>
-                  <DropdownMenuItem
-                    disabled={!commercial.canCreateClientFromChat}
-                    title={commercial.canCreateClientFromChat ? undefined : permDenied}
-                    onSelect={(e) => { e.preventDefault(); dispatchCompactAction('create_client'); }}
-                  >
-                    <Info className="mr-2 h-4 w-4" />
-                    Criar cliente
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    disabled={!commercial.canCreateLeadFromChat}
-                    title={commercial.canCreateLeadFromChat ? undefined : permDenied}
-                    onSelect={(e) => { e.preventDefault(); dispatchCompactAction('create_lead'); }}
-                  >
-                    <Info className="mr-2 h-4 w-4" />
-                    Criar lead
-                  </DropdownMenuItem>
-                </>
-              ) : null}
-              <DropdownMenuItem onSelect={(e) => { e.preventDefault(); dispatchCompactAction('task'); }}>
-                <FileText className="mr-2 h-4 w-4" />
-                Criar tarefa
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <input
+            ref={attachComboInputRef}
+            type="file"
+            accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip,.rar,.ppt,.pptx"
+            className="hidden"
+            onChange={handleAttachComboChange}
+          />
+          <ChatComposerQuickActionsPanel
+            sections={floatingComposerSections}
+            density="compact"
+            triggerLabel="Ações rápidas"
+            headerTitle="Ações rápidas"
+            contentClassName="z-[190]"
+            side="top"
+            align="start"
+          />
           <Textarea
             value={draft}
             onChange={(e) => {
@@ -579,9 +623,10 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
                 submit();
               }
             }}
-            placeholder="Mensagem…"
+            placeholder={isEmptyLeadConversation ? "Digite a primeira mensagem..." : "Mensagem…"}
             rows={2}
             className="min-h-[48px] flex-1 resize-none text-base"
+            disabled={isEmptyLeadConversation && connectedInstances.length === 0}
           />
           <Button
             type="button"
@@ -589,13 +634,28 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
             className="h-11 w-11 shrink-0 rounded-xl"
             title="Enviar"
             aria-label="Enviar"
-            disabled={!draft.trim()}
+            disabled={!draft.trim() || (isEmptyLeadConversation && connectedInstances.length === 0)}
             onClick={() => submit()}
           >
             <Send className="h-4 w-4" />
           </Button>
         </div>
+        ) : (
+          <p className="px-2 py-3 text-sm text-muted-foreground">Seu perfil não tem permissão para enviar mensagens.</p>
+        )}
       </div>
+      </ChatComposerDropZone>
+      <ScheduleChatMessageDialog
+        open={scheduleChatDlgOpen}
+        onOpenChange={setScheduleChatDlgOpen}
+        conversationId={conversationId}
+        density="compact"
+        onSuccess={() => {
+          void queryClient.invalidateQueries({
+            queryKey: chatScheduledMessagesQueryKey(conversationId),
+          });
+        }}
+      />
     </div>,
     root,
   );

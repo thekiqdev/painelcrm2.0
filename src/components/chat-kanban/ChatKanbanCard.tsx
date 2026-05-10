@@ -1,5 +1,5 @@
 import type { ButtonHTMLAttributes } from 'react';
-import { Headphones, Users } from 'lucide-react';
+import { Headphones, Users, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import type { ChatKanbanBoardCard } from '@/services/chatKanban';
@@ -30,6 +30,8 @@ type Props = {
   dragHandleProps?: ButtonHTMLAttributes<HTMLButtonElement>;
   /** Destaque animado após nova mensagem recebida (alguns segundos). */
   pulseUnreadHighlight?: boolean;
+  /** Remover só o cartão desta coluna (confirmação na página). */
+  onRemoveRequest?: () => void;
 };
 
 function formatBrl(n: number): string {
@@ -42,6 +44,7 @@ export function ChatKanbanCard({
   onClick,
   dragHandleProps,
   pulseUnreadHighlight = false,
+  onRemoveRequest,
 }: Props) {
   const title = kanbanCardTitle(card);
   const phone = kanbanCardPhoneLine(card);
@@ -66,21 +69,23 @@ export function ChatKanbanCard({
   const convAvatar = chatAvatarUrlForImgSrc(avatarRaw);
 
   return (
-    <button
-      type="button"
-      {...dragHandleProps}
-      onClick={onClick}
-      data-kanban-card-id={card.id}
-      data-conversation-id={card.conversation_id}
-      data-column-id={card.column_id}
-      className={cn(
-        'relative w-full text-left rounded-lg border bg-card p-2.5 shadow-sm transition-[box-shadow,border-color,background-color] hover:border-primary/35 hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring cursor-grab active:cursor-grabbing',
-        unread > 0
-          ? 'border-sky-500/35 ring-1 ring-sky-500/15 bg-muted/25 dark:border-sky-400/30 dark:ring-sky-400/20'
-          : 'border-border/70',
-        pulseUnreadHighlight && 'animate-kanban-card-unread-attn motion-reduce:animate-none',
-      )}
-    >
+    <div className="relative w-full">
+      <button
+        type="button"
+        {...dragHandleProps}
+        onClick={onClick}
+        data-kanban-card-id={card.id}
+        data-conversation-id={card.conversation_id}
+        data-column-id={card.column_id}
+        className={cn(
+          'relative w-full text-left rounded-lg border bg-card p-2.5 shadow-sm transition-[box-shadow,border-color,background-color] hover:border-primary/35 hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring cursor-grab active:cursor-grabbing',
+          unread > 0
+            ? 'border-sky-500/35 ring-1 ring-sky-500/15 bg-muted/25 dark:border-sky-400/30 dark:ring-sky-400/20'
+            : 'border-border/70',
+          pulseUnreadHighlight && 'animate-kanban-card-unread-attn motion-reduce:animate-none',
+          onRemoveRequest && 'pr-7',
+        )}
+      >
       {unread > 0 ? (
         <span
           className={cn(
@@ -174,5 +179,27 @@ export function ChatKanbanCard({
         </div>
       </div>
     </button>
+      {onRemoveRequest ? (
+        <button
+          type="button"
+          className={cn(
+            'absolute z-[2] flex h-6 w-6 items-center justify-center rounded-md border border-border/60 bg-background/95 text-muted-foreground shadow-sm transition-colors hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            unread > 0 ? 'top-1 right-7' : 'top-1 right-1',
+          )}
+          title="Remover desta coluna"
+          aria-label="Remover cartão desta coluna"
+          onPointerDown={(e) => {
+            e.stopPropagation();
+          }}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onRemoveRequest();
+          }}
+        >
+          <X className="h-3.5 w-3.5" aria-hidden />
+        </button>
+      ) : null}
+    </div>
   );
 }
