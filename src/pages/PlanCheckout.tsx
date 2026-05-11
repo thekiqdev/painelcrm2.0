@@ -8,7 +8,7 @@ import { apiClient } from '@/integrations/api/client';
 import { toast } from '@/components/ui/sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { withMarketingAttribution } from '@/lib/marketingAttribution';
-import { buildSignupSuccessNavigation } from '@/lib/signupSuccessNavigation';
+import { navigateToSignupSuccess } from '@/lib/signupSuccessNavigation';
 import {
   Loader2,
   Copy,
@@ -1088,8 +1088,7 @@ export default function PlanCheckout() {
         const pwd = checkoutPasswordRef.current;
         const path = await signIn(email, pwd);
         if (path !== '/login') {
-          const dest = buildSignupSuccessNavigation('/dashboard');
-          navigate(dest.pathname, { replace: true, state: dest.state });
+          navigateToSignupSuccess(navigate, '/dashboard');
           return;
         }
         toast.error('Pagamento confirmado, mas o login automático falhou. Acesse com seu e-mail e senha.');
@@ -1266,8 +1265,7 @@ export default function PlanCheckout() {
         await refreshUser();
         persistCheckout(null);
         toast.success(`Bem-vindo! Seu trial de ${effectiveCheckoutTrialDays(plan)} dias começou.`);
-        const dest = buildSignupSuccessNavigation('/dashboard');
-        navigate(dest.pathname, { replace: true, state: dest.state });
+        navigateToSignupSuccess(navigate, '/dashboard');
       }
     } finally {
       setLoading(false);
@@ -1522,8 +1520,7 @@ export default function PlanCheckout() {
             const pwd = checkoutPasswordRef.current;
             const path = await signIn(email, pwd);
             if (path !== '/login') {
-              const dest = buildSignupSuccessNavigation('/dashboard');
-              navigate(dest.pathname, { replace: true, state: dest.state });
+              navigateToSignupSuccess(navigate, '/dashboard');
               return;
             }
             toast.error('Pagamento confirmado, mas o login automático falhou. Acesse com seu e-mail e senha.');

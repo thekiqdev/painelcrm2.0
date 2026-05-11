@@ -86,6 +86,8 @@ const AuthWhatsApp = () => {
 
   useEffect(() => {
     if (!user) return;
+    if (location.pathname === '/signup-success') return;
+    if (location.pathname === '/login' && mainTab === 'register') return;
     const fromQuery = safeRedirectPath(redirectParam);
     if (fromQuery) {
       navigate(fromQuery, { replace: true });
@@ -96,7 +98,7 @@ const AuthWhatsApp = () => {
       return;
     }
     navigate(getPostAuthHomePath(user), { replace: true });
-  }, [user, navigate, redirectParam, fromState]);
+  }, [user, navigate, redirectParam, fromState, location.pathname, mainTab]);
 
   const startResendCooldown = useCallback(() => {
     setResendCooldown(60);

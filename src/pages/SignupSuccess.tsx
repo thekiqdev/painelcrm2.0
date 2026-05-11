@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { loadPublicTrackingSettings } from '@/hooks/useMetaPixelTracking';
 import { initMetaPixel, trackMetaCompleteRegistration, trackMetaLead } from '@/lib/metaPixel';
+import { readSignupSuccessNext } from '@/lib/signupSuccessNavigation';
 
 const SESSION_COMPLETE_KEY = 'meta_complete_registration_fired';
 const SESSION_LEAD_KEY = 'meta_lead_fired';
@@ -11,8 +12,10 @@ const SESSION_LEAD_KEY = 'meta_lead_fired';
 export default function SignupSuccess() {
   const navigate = useNavigate();
   const location = useLocation();
-  const nextPath =
-    (location.state as { next?: string } | null)?.next?.trim() || '/dashboard';
+  const nextPath = readSignupSuccessNext(
+    location.search,
+    (location.state as { next?: string } | null) ?? null,
+  );
 
   useEffect(() => {
     let cancelled = false;

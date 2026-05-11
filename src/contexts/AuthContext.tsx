@@ -8,6 +8,7 @@ import { clearAuthState, getCurrentUserProfile } from '@/utils/auth-helpers';
 import { getPostAuthHomePath } from '@/utils/superAdminRedirect';
 import { COMMERCIAL_402_REDIRECT_FLAG } from '@/lib/commercialAccessPaths';
 import { withMarketingAttribution } from '@/lib/marketingAttribution';
+import { navigateToSignupSuccess } from '@/lib/signupSuccessNavigation';
 
 interface User {
   id: string;
@@ -281,8 +282,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(response.data.user);
         setProfile(response.data.user);
         setRegistrationComplete(false);
-        await fetchCurrentUser();
+        const fresh = await fetchCurrentUser();
         toast.success('Cadastro realizado com sucesso!');
+        navigateToSignupSuccess(navigate, getPostAuthHomePath(fresh ?? response.data.user));
       }
     } catch (error: any) {
       toast.error(error.message || 'Erro desconhecido');

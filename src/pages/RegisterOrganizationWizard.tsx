@@ -8,7 +8,7 @@ import { toast } from "@/components/ui/sonner";
 import { apiClient } from "@/integrations/api/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { withMarketingAttribution } from "@/lib/marketingAttribution";
-import { buildSignupSuccessNavigation } from "@/lib/signupSuccessNavigation";
+import { navigateToSignupSuccess } from "@/lib/signupSuccessNavigation";
 import { formatPhoneBrDigits, formatCpfCnpjDigits } from "@/lib/brazilInputMasks";
 import { isValidCpfOrCnpj } from "@/utils/cpfCnpj";
 import {
@@ -252,8 +252,7 @@ export default function RegisterOrganizationWizard() {
         });
         await refreshUser();
         toast.success("Conta criada com sucesso!");
-        const dest = buildSignupSuccessNavigation("/register/steps");
-        navigate(dest.pathname, { replace: true, state: dest.state });
+        navigateToSignupSuccess(navigate, "/register/steps");
       }
     } finally {
       setSubmitting(false);
