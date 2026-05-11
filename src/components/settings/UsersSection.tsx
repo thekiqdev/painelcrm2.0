@@ -9,7 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { FileEdit, Trash2, UserPlus, Users2 } from "lucide-react";
+import { Pencil, Trash2, UserPlus, Users2 } from "lucide-react";
 import { SettingsSectionProps } from "./types";
 import {
   getTenantLimits,
@@ -23,7 +23,9 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import { UserTeamsDialog } from "./UserTeamsDialog";
 import { NewUserDialog } from "./NewUserDialog";
+import { EditUserDialog } from "./EditUserDialog";
 import { toast } from "@/components/ui/sonner";
+import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 
 function getInitials(user: TenantUser): string {
   if (user.full_name && user.full_name.trim()) {
@@ -36,15 +38,26 @@ function getInitials(user: TenantUser): string {
 
 export const UsersSection: React.FC<SettingsSectionProps> = () => {
   const { user: authUser } = useAuth();
+  const { hasPermissionKey, loading: permLoading } = useModulePermissions();
   const [usersLimit, setUsersLimit] = useState<{ current: number; limit: number | null } | null>(null);
   const [users, setUsers] = useState<TenantUser[]>([]);
   const [roles, setRoles] = useState<TenantRole[]>([]);
   const [usersLoading, setUsersLoading] = useState(true);
   const [teamsDialogOpen, setTeamsDialogOpen] = useState(false);
   const [newUserDialogOpen, setNewUserDialogOpen] = useState(false);
+  const [editUserDialogOpen, setEditUserDialogOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<TenantUser | null>(null);
   const [editingUserForTeams, setEditingUserForTeams] = useState<{ id: string; name: string } | null>(null);
   const [updatingRoleUserId, setUpdatingRoleUserId] = useState<string | null>(null);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
+
+  const canManageTenantUsers =
+    !permLoading &&
+    Boolean(
+      authUser?.can_manage_plan === true ||
+        authUser?.is_tenant_admin === true ||
+        hasPermissionKey("settings.manage_users")
+    );
 
   useEffect(() => {
     getTenantLimits().then((limits) => {
@@ -68,6 +81,7 @@ export const UsersSection: React.FC<SettingsSectionProps> = () => {
   }, []);
 
   const handleRoleChange = async (userId: string, value: string) => {
+    if (!canManageTenantUsers) return;
     const payload =
       value.startsWith("custom:") ? { custom_role_id: value.slice(7) } : { role: value };
     setUpdatingRoleUserId(userId);
@@ -100,6 +114,7 @@ export const UsersSection: React.FC<SettingsSectionProps> = () => {
   const primaryUserId = users.length > 0 ? users[0].id : null;
 
   const handleDeleteUser = async (u: TenantUser) => {
+    if (!canManageTenantUsers) return;
     if (u.is_super_admin) return;
     if (primaryUserId && u.id === primaryUserId) {
       toast.error("Não é possível excluir o administrador principal da conta.");
@@ -149,8 +164,14 @@ export const UsersSection: React.FC<SettingsSectionProps> = () => {
               </div>
               <Button
                 size="sm"
-                disabled={atLimit}
-                title={atLimit ? "Limite de usuários do plano atingido" : undefined}
+                disabled={atLimit || !canManageTenantUsers}
+                title={
+                  !canManageTenantUsers
+                    ? "Sem permissão para adicionar utilizadores"
+                    : atLimit
+                      ? "Limite de usuários do plano atingido"
+                      : undefined
+                }
                 onClick={() => setNewUserDialogOpen(true)}
               >
                 <UserPlus className="mr-2 h-4 w-4" />
@@ -166,9 +187,10 @@ export const UsersSection: React.FC<SettingsSectionProps> = () => {
             <div className="overflow-hidden rounded-md border border-border">
               <div className="grid grid-cols-12 gap-4 border-b border-border bg-muted/30 p-4 text-sm font-medium">
                 <div className="col-span-3">Nome</div>
-                <div className="col-span-4">Email</div>
-                <div className="col-span-3">Tipo de Acesso</div>
-                <div className="col-span-2">Ações</div>
+                <div className="col-span-2">Email</div>
+                <div className="col-span-2">Nome no chat</div>
+                <div className="col-span-2">Tipo de Acesso</div>
+                <div className="col-span-3 text-right sm:text-left">Ações</div>
               </div>
 
               {usersLoading ? (
@@ -189,8 +211,23 @@ export const UsersSection: React.FC<SettingsSectionProps> = () => {
                         )}
                       </div>
                     </div>
-                    <div className="col-span-4 flex items-center">{u.email}</div>
-                    <div className="col-span-3 flex items-center">
+                    <div className="col-span-2 flex items-center min-w-0 break-all">{u.email}</div>
+                    <div className="col-span-2 flex items-center">
+                      {u.is_super_admin ? (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      ) : (
+                        <span
+                          className={
+                            u.chat_show_sender_name
+                              ? "px-2 py-0.5 rounded-full text-xs bg-emerald-100 text-emerald-900 dark:bg-emerald-900/30 dark:text-emerald-200"
+                              : "px-2 py-0.5 rounded-full text-xs bg-muted text-muted-foreground"
+                          }
+                        >
+                          {u.chat_show_sender_name ? "Sim" : "Não"}
+                        </span>
+                      )}
+                    </div>
+                    <div className="col-span-2 flex items-center">
                       {u.is_super_admin ? (
                         <span className="px-2 py-1 bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300 rounded-full text-xs">
                           Super Admin
@@ -199,9 +236,9 @@ export const UsersSection: React.FC<SettingsSectionProps> = () => {
                         <Select
                           value={selectValueForUser(u)}
                           onValueChange={(value) => handleRoleChange(u.id, value)}
-                          disabled={updatingRoleUserId === u.id}
+                          disabled={!canManageTenantUsers || updatingRoleUserId === u.id}
                         >
-                          <SelectTrigger className="w-[160px] h-8 text-xs">
+                          <SelectTrigger className="w-[140px] h-8 text-xs">
                             <SelectValue placeholder="Perfil de acesso" />
                           </SelectTrigger>
                           <SelectContent>
@@ -227,10 +264,11 @@ export const UsersSection: React.FC<SettingsSectionProps> = () => {
                         <span className="text-muted-foreground">—</span>
                       )}
                     </div>
-                    <div className="col-span-2 flex items-center gap-1">
+                    <div className="col-span-3 flex flex-nowrap items-center justify-end gap-0.5 sm:justify-start shrink-0">
                       <Button
                         variant="ghost"
                         size="icon"
+                        className="h-8 w-8 shrink-0"
                         title="Editar equipes deste usuário"
                         aria-label="Editar equipes"
                         onClick={() => {
@@ -240,13 +278,29 @@ export const UsersSection: React.FC<SettingsSectionProps> = () => {
                       >
                         <Users2 className="h-4 w-4" />
                       </Button>
-                      <Button variant="ghost" size="icon" title="Editar permissões (em breve)" aria-label="Editar permissões">
-                        <FileEdit className="h-4 w-4" />
-                      </Button>
-                      {!u.is_super_admin && primaryUserId && u.id !== primaryUserId && (
+                      {canManageTenantUsers && !u.is_super_admin && (
                         <Button
                           variant="ghost"
                           size="icon"
+                          className="h-8 w-8 shrink-0"
+                          title="Editar utilizador"
+                          aria-label="Editar utilizador"
+                          onClick={() => {
+                            setEditingUser(u);
+                            setEditUserDialogOpen(true);
+                          }}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {canManageTenantUsers &&
+                        !u.is_super_admin &&
+                        primaryUserId &&
+                        u.id !== primaryUserId && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 shrink-0"
                           title="Excluir usuário da conta"
                           aria-label="Excluir usuário"
                           disabled={deletingUserId === u.id || (authUser?.id != null && u.id === authUser.id)}
@@ -276,6 +330,17 @@ export const UsersSection: React.FC<SettingsSectionProps> = () => {
         open={newUserDialogOpen}
         onOpenChange={setNewUserDialogOpen}
         onCreated={() => getMyTenantUsers().then(setUsers).catch(() => {})}
+      />
+
+      <EditUserDialog
+        open={editUserDialogOpen}
+        onOpenChange={(o) => {
+          setEditUserDialogOpen(o);
+          if (!o) setEditingUser(null);
+        }}
+        user={editingUser}
+        roles={roles}
+        onSaved={() => getMyTenantUsers().then(setUsers).catch(() => {})}
       />
     </>
   );

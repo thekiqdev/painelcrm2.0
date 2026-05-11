@@ -346,6 +346,12 @@ const order = [
   '223_chat_instances_user_external_name_idx.sql',
   /** Mensagens de texto agendadas (worker + UI chat) */
   '224_chat_scheduled_messages.sql',
+  /** Chat: auditoria remoção sistema (conversas) */
+  '225_chat_conversation_system_delete_audit.sql',
+  /** Utilizadores: prefixo opcional *nome* em mensagens manuais do chat */
+  '226_users_chat_show_sender_name.sql',
+  /** Auditoria: admin altera perfil/senha de utilizadores do tenant */
+  '227_tenant_user_admin_audit.sql',
   'create-admin-user.sql',
 ];
 

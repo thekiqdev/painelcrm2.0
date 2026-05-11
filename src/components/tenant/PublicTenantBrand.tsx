@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useTheme } from 'next-themes';
 import { FileText } from 'lucide-react';
 import { resolveTenantLogoUrl, type TenantBrandUrls } from '@/utils/tenantBranding';
@@ -31,8 +31,13 @@ export function PublicTenantBrandMark({
   const { resolvedTheme } = useTheme();
   const url = resolveTenantLogoUrl(resolvedTheme, branding);
   const name = branding.name?.trim() || '';
+  const [logoFailed, setLogoFailed] = useState(false);
 
-  if (url) {
+  useEffect(() => {
+    setLogoFailed(false);
+  }, [url]);
+
+  if (url && !logoFailed) {
     return (
       <div className={cn('flex min-w-0 shrink-0 items-center', className)}>
         <img
@@ -42,6 +47,7 @@ export function PublicTenantBrandMark({
             'h-11 max-h-11 w-auto max-w-[180px] object-contain object-left',
             imgClassName
           )}
+          onError={() => setLogoFailed(true)}
         />
       </div>
     );

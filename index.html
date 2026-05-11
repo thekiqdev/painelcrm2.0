@@ -9,6 +9,13 @@
         try {
           var k = "painelcrm-theme";
           var t = localStorage.getItem(k);
+          // Apenas light/dark — valores antigos (ex.: "system") dessincronizavam o next-themes e causavam piscar.
+          if (t !== "dark" && t !== "light") {
+            t = "light";
+            try {
+              localStorage.setItem(k, t);
+            } catch (e2) {}
+          }
           var c = document.documentElement.classList;
           c.remove("light", "dark");
           if (t === "dark") c.add("dark");

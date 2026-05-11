@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { Logo } from '@/components/Logo';
 import { useTenantBrand } from '@/contexts/TenantBrandContext';
 import { cn } from '@/lib/utils';
@@ -12,6 +13,11 @@ type TenantSidebarMarkProps = {
 export function TenantSidebarMark({ collapsed, className }: TenantSidebarMarkProps) {
   const { resolvedLogoUrl, company, loading } = useTenantBrand();
   const textFallback = company?.name?.trim() || 'PainelCRM';
+  const [logoLoadFailed, setLogoLoadFailed] = useState(false);
+
+  useEffect(() => {
+    setLogoLoadFailed(false);
+  }, [resolvedLogoUrl]);
 
   if (loading && !company && !resolvedLogoUrl) {
     return (
@@ -27,7 +33,7 @@ export function TenantSidebarMark({ collapsed, className }: TenantSidebarMarkPro
     );
   }
 
-  if (resolvedLogoUrl) {
+  if (resolvedLogoUrl && !logoLoadFailed) {
     return (
       <div
         className={cn(
@@ -43,6 +49,7 @@ export function TenantSidebarMark({ collapsed, className }: TenantSidebarMarkPro
             'w-auto object-contain object-left',
             collapsed ? 'max-h-9 max-w-9' : 'max-h-10 max-w-[min(200px,100%)]',
           )}
+          onError={() => setLogoLoadFailed(true)}
         />
       </div>
     );

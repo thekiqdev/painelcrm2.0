@@ -57,6 +57,7 @@ export const toast = Object.assign(
 
 const Toaster = ({ ...props }: ToasterProps) => {
   const { resolvedTheme } = useTheme();
+  // Só "light" | "dark" — evita passar valor inválido ao Sonner se o storage estiver corrompido.
   const theme = resolvedTheme === "dark" ? "dark" : "light";
 
   return (

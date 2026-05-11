@@ -121,4 +121,34 @@ describe('permissionCatalog', () => {
     expect(hasPermissionKey(map, 'tasks.view')).toBe(true);
     expect(hasPermissionKey(map, 'tasks.create')).toBe(true);
   });
+
+  it('settings.manage_users exige can_edit em settings e settings_manage_users', () => {
+    const deny: ModulePermissionsMap = {
+      settings: {
+        module: 'settings',
+        can_view: true,
+        can_edit: true,
+        can_create: false,
+        can_delete: false,
+        edit_own_only: false,
+        delete_own_only: false,
+        module_extras: { settings_manage_users: false },
+      },
+    };
+    expect(hasPermissionKey(deny, 'settings.manage_users')).toBe(false);
+
+    const allow: ModulePermissionsMap = {
+      settings: {
+        module: 'settings',
+        can_view: true,
+        can_edit: true,
+        can_create: false,
+        can_delete: false,
+        edit_own_only: false,
+        delete_own_only: false,
+        module_extras: { settings_manage_users: true },
+      },
+    };
+    expect(hasPermissionKey(allow, 'settings.manage_users')).toBe(true);
+  });
 });

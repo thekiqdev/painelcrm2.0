@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -13,6 +14,8 @@ import {
   Target,
   XCircle,
   CheckCircle2,
+  KanbanSquare,
+  List,
   type LucideIcon,
 } from "lucide-react";
 import { apiClient } from "@/integrations/api/client";
@@ -22,9 +25,9 @@ import { z } from "zod";
 
 // Import our refactored components
 import LeadHeader from "@/components/leads/LeadHeader";
-import LeadFilters from "@/components/leads/LeadFilters";
 import LeadListTable from "@/components/leads/LeadListTable";
 import LeadMobileCardList from "@/components/leads/LeadMobileCardList";
+import LeadKanbanBoard, { type LeadKanbanLead } from "@/components/leads/LeadKanbanBoard";
 import LeadAddDialog from "@/components/leads/LeadAddDialog";
 import LeadEditDialog from "@/components/leads/LeadEditDialog";
 import LeadDetailsDialog from "@/components/leads/LeadDetailsDialog";
@@ -52,6 +55,8 @@ import {
 import { CommercialListingPageShell } from "@/components/listing/CommercialListingPageShell";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { prepareLeadsFromCsv, type LeadCsvProfile } from "@/utils/importLeadsCsv";
+import { useFloatingChatOptional } from "@/features/floating-chat";
+import { chatService, type ChatInstance } from "@/services/chat";
 
 // Schemas for form validation
 const leadFormSchema = z.object({
@@ -72,6 +77,9 @@ const taskFormSchema = z.object({
 
 type LeadFormValues = z.infer<typeof leadFormSchema>;
 type TaskFormValues = z.infer<typeof taskFormSchema>;
+type LeadViewMode = "list" | "kanban";
+
+const LEAD_VIEW_MODE_STORAGE_KEY = "lead_view_mode";
 
 const DEFAULT_LEAD_STATUSES = [
   { id: "1", name: "Novo", color: "#6E56CF" },
@@ -82,6 +90,8 @@ const DEFAULT_LEAD_STATUSES = [
 
 const Leads = () => {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const floatingChat = useFloatingChatOptional();
 
   const [leadStatuses, setLeadStatuses] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
@@ -100,6 +110,10 @@ const Leads = () => {
   const [isProposalSheetOpen, setIsProposalSheetOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
+  const [viewMode, setViewMode] = useState<LeadViewMode>(() => {
+    if (typeof window === "undefined") return "list";
+    return window.localStorage.getItem(LEAD_VIEW_MODE_STORAGE_KEY) === "kanban" ? "kanban" : "list";
+  });
   const { user } = useAuth();
   const tenantId = user?.tenant_id ?? "";
   const userId = user?.id ?? "";
@@ -119,6 +133,13 @@ const Leads = () => {
   useEffect(() => {
     setCurrentPage(1);
   }, [searchTerm, activeStatusFilter]);
+
+  const setLeadViewMode = (mode: LeadViewMode) => {
+    setViewMode(mode);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(LEAD_VIEW_MODE_STORAGE_KEY, mode);
+    }
+  };
 
   // Statuses em cache
   const { data: statusesData } = useQuery({
@@ -165,6 +186,12 @@ const Leads = () => {
   const leads = leadsData ?? [];
   const fetchLeads = () =>
     queryClient.invalidateQueries({ queryKey: ["leads", tenantId, userId] });
+
+  const isConnectedChatInstance = (instance: ChatInstance): boolean => {
+    const status = String(instance.status || "").toLowerCase();
+    const enabled = instance.metadata?.enabled_in_chat !== false;
+    return enabled && Boolean(instance.can_operate ?? true) && (status === "connected" || status === "open");
+  };
 
   // Fetch tasks for a selected lead
   const fetchLeadTasks = async (leadId: string) => {
@@ -228,6 +255,43 @@ const Leads = () => {
     setIsViewDialogOpen(true);
     setActiveTab("summary");
     await fetchLeadTasks(lead.id);
+  };
+
+  const openLeadConversation = async (lead: LeadKanbanLead) => {
+    try {
+      const existing = await floatingChat?.openChatForLead(lead.id, { createIfMissing: true });
+      if (existing) return;
+
+      if (!lead.phone?.trim()) {
+        toast.info("Este lead ainda não possui telefone para iniciar conversa.");
+        return;
+      }
+
+      const instances = (await chatService.listInstances()).filter(isConnectedChatInstance);
+      const firstInstance = instances[0];
+      if (!firstInstance) {
+        toast.info("Conecte uma instância WhatsApp para iniciar conversa com este lead.");
+        return;
+      }
+
+      const prepared = await chatService.prepareLeadConversation({
+        lead_id: lead.id,
+        instance_id: firstInstance.id,
+      });
+      if (floatingChat) {
+        floatingChat.openConversationInContext(prepared.conversation.id);
+      } else {
+        window.dispatchEvent(
+          new CustomEvent("painelcrm:floating-chat-open", {
+            detail: { conversationId: prepared.conversation.id, source: "lead_kanban_card" },
+          }),
+        );
+      }
+      void queryClient.invalidateQueries({ queryKey: ["floating-chat"] });
+      void queryClient.invalidateQueries({ queryKey: ["leads", tenantId, userId] });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Não foi possível abrir a conversa do lead");
+    }
   };
 
   // Edit lead
@@ -567,6 +631,57 @@ const Leads = () => {
     setIsProposalSheetOpen(true);
   };
 
+  const handleLeadKanbanQuickAction = (lead: LeadKanbanLead, action: "conversation" | "task" | "agenda" | "proposal") => {
+    if (action === "conversation") {
+      void openLeadConversation(lead);
+      return;
+    }
+    if (action === "task") {
+      void handleViewLead(lead);
+      setActiveTab("tasks");
+      return;
+    }
+    if (action === "agenda") {
+      const params = new URLSearchParams({
+        new: "1",
+        lead_id: lead.id,
+        title: lead.name ? `Contato com ${lead.name}` : "Contato com lead",
+      });
+      navigate(`/agenda?${params.toString()}`);
+      return;
+    }
+    openProposalForLead(lead);
+  };
+
+  const handleLeadKanbanStatusChange = async (lead: LeadKanbanLead, nextStatus: string) => {
+    const previousLead = { ...lead };
+    const querySnapshots = queryClient.getQueriesData<any[]>({ queryKey: ["leads", tenantId, userId] });
+    const applyStatus = (rows: any[] | undefined) =>
+      Array.isArray(rows) ? rows.map((row) => (row?.id === lead.id ? { ...row, status: nextStatus, updated_at: new Date().toISOString() } : row)) : rows;
+
+    queryClient.setQueriesData<any[]>({ queryKey: ["leads", tenantId, userId] }, applyStatus);
+    setSelectedLead((prev: any) => (prev?.id === lead.id ? { ...prev, status: nextStatus, updated_at: new Date().toISOString() } : prev));
+
+    try {
+      const response = await apiClient.patch(`/api/leads/${lead.id}`, { status: nextStatus });
+      if (response.error) throw new Error(response.error);
+      if (response.data) {
+        queryClient.setQueriesData<any[]>({ queryKey: ["leads", tenantId, userId] }, (rows) =>
+          Array.isArray(rows) ? rows.map((row) => (row?.id === lead.id ? { ...row, ...response.data } : row)) : rows,
+        );
+        setSelectedLead((prev: any) => (prev?.id === lead.id ? { ...prev, ...response.data } : prev));
+      }
+      toast.success(`Lead movido para ${nextStatus}.`);
+    } catch (error) {
+      for (const [key, data] of querySnapshots) {
+        queryClient.setQueryData(key, data);
+      }
+      setSelectedLead((prev: any) => (prev?.id === lead.id ? previousLead : prev));
+      toast.error(error instanceof Error ? error.message : "Não foi possível mover o lead");
+      throw error;
+    }
+  };
+
   const handleLeadsCsvChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
@@ -711,151 +826,186 @@ const Leads = () => {
         })}
       </div>
 
-      <LeadFilters
-        activeStatusFilter={activeStatusFilter}
-        setActiveStatusFilter={setActiveStatusFilter}
-        leadStatuses={leadStatuses}
-        sortField={sortField}
-        setSortField={setSortField}
-        sortDirection={sortDirection}
-        setSortDirection={setSortDirection}
-      />
-
       <Card className={COMMERCIAL_LIST_CONTAINER_CARD}>
         <CardHeader className="flex flex-col gap-2 border-b border-border/50 pb-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <CardTitle className="text-lg font-semibold tracking-tight">Lista de leads</CardTitle>
+            <CardTitle className="text-lg font-semibold tracking-tight">
+              {viewMode === "kanban" ? "Kanban de leads" : "Lista de leads"}
+            </CardTitle>
             <p className="mt-0.5 text-sm text-muted-foreground">
               {filteredLeads.length === 0
                 ? "Nenhum resultado"
-                : `Mostrando ${paginatedLeads.length} de ${filteredLeads.length} neste filtro`}
+                : viewMode === "kanban"
+                  ? `${filteredLeads.length} lead${filteredLeads.length === 1 ? "" : "s"} neste quadro`
+                  : `Mostrando ${paginatedLeads.length} de ${filteredLeads.length} neste filtro`}
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="hidden text-sm text-muted-foreground sm:inline">Por página</span>
-            <Select
-              value={String(itemsPerPage)}
-              onValueChange={(v) => {
-                setItemsPerPage(Number(v));
-                setCurrentPage(1);
-              }}
-            >
-              <SelectTrigger className="h-10 w-[88px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {[10, 25, 50].map((n) => (
-                  <SelectItem key={n} value={String(n)}>
-                    {n}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="inline-flex rounded-lg border border-border/70 bg-muted/30 p-1">
+              <Button
+                type="button"
+                variant={viewMode === "list" ? "secondary" : "ghost"}
+                size="sm"
+                className="h-8 gap-1.5 px-2.5 text-xs sm:text-sm"
+                onClick={() => setLeadViewMode("list")}
+              >
+                <List className="h-3.5 w-3.5" aria-hidden />
+                Lista
+              </Button>
+              <Button
+                type="button"
+                variant={viewMode === "kanban" ? "secondary" : "ghost"}
+                size="sm"
+                className="h-8 gap-1.5 px-2.5 text-xs sm:text-sm"
+                onClick={() => setLeadViewMode("kanban")}
+              >
+                <KanbanSquare className="h-3.5 w-3.5" aria-hidden />
+                Kanban
+              </Button>
+            </div>
+            {viewMode === "list" ? (
+              <div className="flex items-center gap-2">
+                <span className="hidden text-sm text-muted-foreground sm:inline">Por página</span>
+                <Select
+                  value={String(itemsPerPage)}
+                  onValueChange={(v) => {
+                    setItemsPerPage(Number(v));
+                    setCurrentPage(1);
+                  }}
+                >
+                  <SelectTrigger className="h-10 w-[88px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {[10, 25, 50].map((n) => (
+                      <SelectItem key={n} value={String(n)}>
+                        {n}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
           </div>
         </CardHeader>
         <CardContent className="pt-4">
-          <div className={COMMERCIAL_TABLE_DESKTOP_WRAP}>
-            <LeadListTable
-              leads={paginatedLeads}
-              sortField={sortField}
-              sortDirection={sortDirection}
-              handleSort={handleSort}
-              handleViewLead={handleViewLead}
-              handleEditLead={handleEditLead}
+          {viewMode === "kanban" ? (
+            <LeadKanbanBoard
+              leads={filteredLeads as LeadKanbanLead[]}
+              statuses={leadStatuses}
+              loading={leadsLoading}
               getStatusVariant={getStatusVariant}
-              onSelectLeadForTasks={(lead) => {
-                handleViewLead(lead);
-                setActiveTab("tasks");
-              }}
-              onSelectLeadForConversion={(lead) => {
-                setSelectedLead(lead);
-                fetchLeadTasks(lead.id);
-                setIsConvertDialogOpen(true);
-              }}
-              onDeleteLead={confirmDeleteLead}
+              onOpenLead={handleViewLead}
+              onStatusChange={handleLeadKanbanStatusChange}
+              onQuickAction={handleLeadKanbanQuickAction}
+              canCreateProposal={canCreateProposals}
             />
-          </div>
+          ) : (
+            <>
+              <div className={COMMERCIAL_TABLE_DESKTOP_WRAP}>
+                <LeadListTable
+                  leads={paginatedLeads}
+                  sortField={sortField}
+                  sortDirection={sortDirection}
+                  handleSort={handleSort}
+                  handleViewLead={handleViewLead}
+                  handleEditLead={handleEditLead}
+                  getStatusVariant={getStatusVariant}
+                  onSelectLeadForTasks={(lead) => {
+                    handleViewLead(lead);
+                    setActiveTab("tasks");
+                  }}
+                  onSelectLeadForConversion={(lead) => {
+                    setSelectedLead(lead);
+                    fetchLeadTasks(lead.id);
+                    setIsConvertDialogOpen(true);
+                  }}
+                  onDeleteLead={confirmDeleteLead}
+                />
+              </div>
 
-          <LeadMobileCardList
-            leads={paginatedLeads as any}
-            getStatusVariant={getStatusVariant}
-            onView={handleViewLead}
-            onEdit={handleEditLead}
-            onTasks={(lead) => {
-              handleViewLead(lead);
-              setActiveTab("tasks");
-            }}
-            onConvert={(lead) => {
-              setSelectedLead(lead);
-              void fetchLeadTasks(lead.id);
-              setIsConvertDialogOpen(true);
-            }}
-            onProposal={openProposalForLead}
-            onDelete={confirmDeleteLead}
-            canProposal={canCreateProposals}
-          />
+              <LeadMobileCardList
+                leads={paginatedLeads as any}
+                getStatusVariant={getStatusVariant}
+                onView={handleViewLead}
+                onEdit={handleEditLead}
+                onTasks={(lead) => {
+                  handleViewLead(lead);
+                  setActiveTab("tasks");
+                }}
+                onConvert={(lead) => {
+                  setSelectedLead(lead);
+                  void fetchLeadTasks(lead.id);
+                  setIsConvertDialogOpen(true);
+                }}
+                onProposal={openProposalForLead}
+                onDelete={confirmDeleteLead}
+                canProposal={canCreateProposals}
+              />
 
-          {filteredLeads.length > 0 ? (
-            <div className="mt-4 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-center text-xs text-muted-foreground sm:text-left">
-                Página {currentPage} de {totalPages}
-              </p>
-              <Pagination className="justify-center sm:justify-end">
-                <PaginationContent className="flex-wrap gap-1">
-                  <PaginationItem>
-                    <PaginationPrevious
-                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                      className={
-                        currentPage <= 1 ? "pointer-events-none opacity-50" : "cursor-pointer"
-                      }
-                      aria-disabled={currentPage <= 1}
-                    />
-                  </PaginationItem>
-                  {Array.from({ length: totalPages }, (_, i) => i + 1)
-                    .filter((p) => {
-                      if (totalPages <= 5) return true;
-                      if (p === 1 || p === totalPages) return true;
-                      return Math.abs(p - currentPage) <= 1;
-                    })
-                    .flatMap((p, idx, arr) => {
-                      const prev = arr[idx - 1];
-                      const showEllipsis = Boolean(prev && p - prev > 1);
-                      const items: React.ReactElement[] = [];
-                      if (showEllipsis) {
-                        items.push(
-                          <PaginationItem key={`ellipsis-${p}`}>
-                            <PaginationEllipsis />
-                          </PaginationItem>
-                        );
-                      }
-                      items.push(
-                        <PaginationItem key={p}>
-                          <PaginationLink
-                            isActive={currentPage === p}
-                            onClick={() => setCurrentPage(p)}
-                            className="cursor-pointer"
-                          >
-                            {p}
-                          </PaginationLink>
-                        </PaginationItem>
-                      );
-                      return items;
-                    })}
-                  <PaginationItem>
-                    <PaginationNext
-                      onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                      className={
-                        currentPage >= totalPages
-                          ? "pointer-events-none opacity-50"
-                          : "cursor-pointer"
-                      }
-                      aria-disabled={currentPage >= totalPages}
-                    />
-                  </PaginationItem>
-                </PaginationContent>
-              </Pagination>
-            </div>
-          ) : null}
+              {filteredLeads.length > 0 ? (
+                <div className="mt-4 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-center text-xs text-muted-foreground sm:text-left">
+                    Página {currentPage} de {totalPages}
+                  </p>
+                  <Pagination className="justify-center sm:justify-end">
+                    <PaginationContent className="flex-wrap gap-1">
+                      <PaginationItem>
+                        <PaginationPrevious
+                          onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                          className={
+                            currentPage <= 1 ? "pointer-events-none opacity-50" : "cursor-pointer"
+                          }
+                          aria-disabled={currentPage <= 1}
+                        />
+                      </PaginationItem>
+                      {Array.from({ length: totalPages }, (_, i) => i + 1)
+                        .filter((p) => {
+                          if (totalPages <= 5) return true;
+                          if (p === 1 || p === totalPages) return true;
+                          return Math.abs(p - currentPage) <= 1;
+                        })
+                        .flatMap((p, idx, arr) => {
+                          const prev = arr[idx - 1];
+                          const showEllipsis = Boolean(prev && p - prev > 1);
+                          const items: React.ReactElement[] = [];
+                          if (showEllipsis) {
+                            items.push(
+                              <PaginationItem key={`ellipsis-${p}`}>
+                                <PaginationEllipsis />
+                              </PaginationItem>
+                            );
+                          }
+                          items.push(
+                            <PaginationItem key={p}>
+                              <PaginationLink
+                                isActive={currentPage === p}
+                                onClick={() => setCurrentPage(p)}
+                                className="cursor-pointer"
+                              >
+                                {p}
+                              </PaginationLink>
+                            </PaginationItem>
+                          );
+                          return items;
+                        })}
+                      <PaginationItem>
+                        <PaginationNext
+                          onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                          className={
+                            currentPage >= totalPages
+                              ? "pointer-events-none opacity-50"
+                              : "cursor-pointer"
+                          }
+                          aria-disabled={currentPage >= totalPages}
+                        />
+                      </PaginationItem>
+                    </PaginationContent>
+                  </Pagination>
+                </div>
+              ) : null}
+            </>
+          )}
         </CardContent>
       </Card>
 

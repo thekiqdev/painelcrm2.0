@@ -39,6 +39,8 @@ export const CompanyDataSection: React.FC<SettingsSectionProps> = () => {
   const [uploadingDark, setUploadingDark] = useState(false);
   const [removingLight, setRemovingLight] = useState(false);
   const [removingDark, setRemovingDark] = useState(false);
+  const [lightPreviewBroken, setLightPreviewBroken] = useState(false);
+  const [darkPreviewBroken, setDarkPreviewBroken] = useState(false);
 
   const lightInputRef = useRef<HTMLInputElement>(null);
   const darkInputRef = useRef<HTMLInputElement>(null);
@@ -65,6 +67,8 @@ export const CompanyDataSection: React.FC<SettingsSectionProps> = () => {
       const darkRaw = d.logo_dark_url?.trim() || '';
       setLogoLightUrl(lightRaw ? normalizeCatalogMediaUrlForBrowser(lightRaw) : null);
       setLogoDarkUrl(darkRaw ? normalizeCatalogMediaUrlForBrowser(darkRaw) : null);
+      setLightPreviewBroken(false);
+      setDarkPreviewBroken(false);
     } finally {
       setLoading(false);
     }
@@ -284,7 +288,18 @@ export const CompanyDataSection: React.FC<SettingsSectionProps> = () => {
                 />
                 {logoLightUrl ? (
                   <div className="relative mb-3 flex justify-center">
-                    <img src={logoLightUrl} alt="Logo tema claro" className="max-h-20 max-w-full object-contain" />
+                    {lightPreviewBroken ? (
+                      <p className="max-w-xs text-center text-xs text-destructive">
+                        Não foi possível carregar a pré-visualização (ficheiro em falta no servidor). Remova e envie de novo.
+                      </p>
+                    ) : (
+                      <img
+                        src={logoLightUrl}
+                        alt="Logo tema claro"
+                        className="max-h-20 max-w-full object-contain"
+                        onError={() => setLightPreviewBroken(true)}
+                      />
+                    )}
                     <Button
                       type="button"
                       variant="secondary"
@@ -328,7 +343,18 @@ export const CompanyDataSection: React.FC<SettingsSectionProps> = () => {
                 />
                 {logoDarkUrl ? (
                   <div className="relative mb-3 flex justify-center rounded-md bg-muted/80 p-2">
-                    <img src={logoDarkUrl} alt="Logo tema escuro" className="max-h-20 max-w-full object-contain" />
+                    {darkPreviewBroken ? (
+                      <p className="max-w-xs text-center text-xs text-destructive">
+                        Não foi possível carregar a pré-visualização (ficheiro em falta no servidor). Remova e envie de novo.
+                      </p>
+                    ) : (
+                      <img
+                        src={logoDarkUrl}
+                        alt="Logo tema escuro"
+                        className="max-h-20 max-w-full object-contain"
+                        onError={() => setDarkPreviewBroken(true)}
+                      />
+                    )}
                     <Button
                       type="button"
                       variant="secondary"

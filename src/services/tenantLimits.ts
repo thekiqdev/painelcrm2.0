@@ -21,6 +21,11 @@ export interface TenantUser {
   is_super_admin: boolean;
   /** Nomes das equipes do usuário separados por " | " */
   team_names?: string | null;
+  whatsapp_number?: string | null;
+  job_title?: string | null;
+  avatar_url?: string | null;
+  /** Prefixo *Nome* em mensagens de texto enviadas manualmente pelo chat. */
+  chat_show_sender_name?: boolean;
 }
 
 export async function getTenantLimits(): Promise<TenantLimits | null> {
@@ -81,6 +86,26 @@ export interface CreateTenantUserResult {
 export async function deleteTenantUser(userId: string): Promise<void> {
   const response = await apiClient.delete(`/api/me/tenant/users/${userId}`);
   if (response.error) throw new Error(response.error);
+}
+
+export interface PatchTenantUserPayload {
+  full_name?: string;
+  email?: string;
+  phone?: string | null;
+  job_title?: string | null;
+  chat_show_sender_name?: boolean;
+  password?: string;
+  confirm_password?: string;
+}
+
+export async function patchTenantUser(
+  userId: string,
+  payload: PatchTenantUserPayload
+): Promise<TenantUser> {
+  const response = await apiClient.patch<TenantUser>(`/api/me/tenant/users/${userId}`, payload);
+  if (response.error) throw new Error(response.error);
+  if (!response.data) throw new Error('Resposta inválida');
+  return response.data;
 }
 
 export async function createTenantUser(

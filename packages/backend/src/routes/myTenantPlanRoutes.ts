@@ -51,6 +51,7 @@ router.get('/roles', ...tenantAuth, myTenantPlanController.getMyTenantRoles);
 router.post('/roles', ...tenantAuth, myTenantPlanController.postMyTenantRole);
 router.get('/users', ...tenantAuth, myTenantPlanController.getMyTenantUsers);
 router.post('/users', ...tenantAuth, myTenantPlanController.postMyTenantUser);
+router.patch('/users/:userId', ...tenantAuth, myTenantPlanController.patchMyTenantUser);
 router.put('/users/:userId/role', ...tenantAuth, myTenantPlanController.putMyTenantUserRole);
 router.delete('/users/:userId', ...tenantAuth, myTenantPlanController.deleteMyTenantUser);
 

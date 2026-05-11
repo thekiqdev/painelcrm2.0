@@ -120,7 +120,9 @@ export type PermissionCatalogKey =
   | 'chat.manage_queues'
   | 'chat.manage_teams'
   | 'chat.view_metrics'
-  | 'chat.manage_automation';
+  | 'chat.manage_automation'
+  /** Configurações: gerir utilizadores do tenant (edição de perfil / senha / opções). */
+  | 'settings.manage_users';
 
 /** Chaves só do chat (uso em mapas de ação). */
 export type ChatPermissionCatalogKey = Extract<PermissionCatalogKey, `chat.${string}`>;
@@ -540,6 +542,20 @@ export function resolveDashboardGranularFromLegacy(map: ModulePermissionsMap): D
   };
 }
 
+export interface SettingsGranularResolved {
+  manage_users: boolean;
+}
+
+/** Permissões granulares do módulo Configurações (extras em module_extras). */
+export function resolveSettingsGranularFromLegacy(map: ModulePermissionsMap): SettingsGranularResolved {
+  const s = map.settings;
+  const canEdit = s?.can_edit === true;
+  const ex = (s?.module_extras ?? {}) as Record<string, unknown>;
+  return {
+    manage_users: canEdit && extraFlag(ex, 'settings_manage_users', true),
+  };
+}
+
 export interface HasPermissionKeyOptions {
   isTenantAdmin?: boolean;
 }
@@ -560,6 +576,7 @@ export function hasPermissionKey(
   const pr = resolveProposalsGranularFromLegacy(map);
   const ct = resolveContractsGranularFromLegacy(map);
   const tk = resolveTasksGranularFromLegacy(map);
+  const st = resolveSettingsGranularFromLegacy(map);
 
   switch (key) {
     case 'dashboard.view':
@@ -802,6 +819,10 @@ export function hasPermissionKey(
       return g.view_metrics;
     case 'chat.manage_automation':
       return g.manage_automation;
+
+    case 'settings.manage_users':
+      return st.manage_users;
+
     default:
       return false;
   }

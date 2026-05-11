@@ -135,6 +135,7 @@ import {
 } from '../services/communication/realtimePayloads.js';
 import { emitToTenant } from '../services/realtimeService.js';
 import { canChatAction } from '../services/chatAccess.js';
+import { buildManualOutgoingTextWithSenderPrefix } from '../utils/chatOutgoingSenderName.js';
 import {
   isWhatsappOfficialSuperadminEnabled,
   isWhatsappOfficialTenantEnabled,
@@ -9209,7 +9210,35 @@ export async function sendMessage(req: AuthRequest, res: Response) {
         );
       }
     } else {
-      const text = (data.text ?? '').trim();
+      const rawText = (data.text ?? '').trim();
+      let text = rawText;
+      let senderNamePrefixMeta: Record<string, unknown> = {};
+      if (msgType === 'text' && rawText) {
+        const sndQ = await pool.query<{
+          chat_show_sender_name: boolean | null;
+          display_name: string | null;
+          email: string;
+        }>(
+          `SELECT COALESCE(u.chat_show_sender_name, false) AS chat_show_sender_name,
+                  TRIM(COALESCE(p.first_name, '') || ' ' || COALESCE(p.last_name, '')) AS display_name,
+                  u.email
+           FROM users u
+           LEFT JOIN profiles p ON p.id = u.id
+           WHERE u.id = $1`,
+          [userId]
+        );
+        const srow = sndQ.rows[0];
+        const displayName =
+          ((srow?.display_name as string) ?? '').trim() || ((srow?.email as string) ?? '').trim() || '';
+        const chatShow = srow?.chat_show_sender_name === true;
+        const pref = buildManualOutgoingTextWithSenderPrefix({
+          rawBody: rawText,
+          senderDisplayName: displayName,
+          chatShowSenderName: chatShow,
+        });
+        text = pref.textToSend;
+        senderNamePrefixMeta = pref.meta;
+      }
 
       if (isOfficial) {
         const accountId = String(
@@ -9245,6 +9274,7 @@ export async function sendMessage(req: AuthRequest, res: Response) {
               track_id: localTrackId,
               provisional: true,
               ...(data.clientMessageId ? { client_message_id: data.clientMessageId } : {}),
+              ...senderNamePrefixMeta,
             },
           });
           savedRowId = saveResult.rowId;
@@ -9311,6 +9341,7 @@ export async function sendMessage(req: AuthRequest, res: Response) {
                   : {}) as object),
                 source: 'whatsapp_official',
                 track_id: localTrackId,
+                ...senderNamePrefixMeta,
               }),
               new Date(),
               savedRowId,
@@ -9333,6 +9364,7 @@ export async function sendMessage(req: AuthRequest, res: Response) {
               track_id: localTrackId,
               provisional: true,
               ...(data.clientMessageId ? { client_message_id: data.clientMessageId } : {}),
+              ...senderNamePrefixMeta,
             },
             ...(replyContext
               ? {
@@ -9379,7 +9411,7 @@ export async function sendMessage(req: AuthRequest, res: Response) {
             [
               extId,
               nextStatus,
-              JSON.stringify({ ...messageResponse, track_id: localTrackId }),
+              JSON.stringify({ ...messageResponse, track_id: localTrackId, ...senderNamePrefixMeta }),
               new Date(),
               savedRowId,
             ]

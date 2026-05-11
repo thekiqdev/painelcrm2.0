@@ -36,6 +36,83 @@ import { getInvoiceById } from '../services/invoiceService.js';
 import { ensureTenantOverdueStatusesFresh } from '../services/billingOverdueStatusService.js';
 import type { PaymentMethod } from '../modules/payments/paymentGatewayTypes.js';
 import { reassignTenantUserDataAndDeleteUser } from '../services/tenantUserRemovalService.js';
+import { hasPermissionKey } from '../permissions/permissionCatalog.js';
+import { isTenantAdmin } from '../utils/tenant.js';
+import { logTenantUserAdminAudit } from '../services/tenantUserAdminAuditService.js';
+
+/** SELECT comum para listagem/detalhe de utilizadores do tenant (API). */
+const SQL_TENANT_USERS_SELECT = `
+SELECT u.id, u.email, u.is_super_admin,
+  u.whatsapp_number,
+  COALESCE(u.chat_show_sender_name, false) AS chat_show_sender_name,
+  p.job_title,
+  p.avatar_url,
+  TRIM(COALESCE(p.first_name, '') || ' ' || COALESCE(p.last_name, '')) AS full_name,
+  (SELECT MAX(s.last_used_at) FROM sessions s WHERE s.user_id = u.id) AS last_used_at,
+  (SELECT ur.role::text FROM user_roles ur
+   JOIN user_profiles up ON up.id = ur.profile_id
+   JOIN users owner ON owner.id = up.owner_id AND owner.tenant_id = u.tenant_id
+   WHERE ur.user_id = u.id LIMIT 1) AS role,
+  (SELECT ucr.custom_role_id FROM user_custom_roles ucr
+   JOIN user_profiles up ON up.id = ucr.profile_id
+   JOIN users owner ON owner.id = up.owner_id AND owner.tenant_id = u.tenant_id
+   WHERE ucr.user_id = u.id LIMIT 1) AS custom_role_id,
+  (SELECT tcr.name FROM user_custom_roles ucr
+   JOIN tenant_custom_roles tcr ON tcr.id = ucr.custom_role_id
+   JOIN user_profiles up ON up.id = ucr.profile_id
+   JOIN users owner ON owner.id = up.owner_id AND owner.tenant_id = u.tenant_id
+   WHERE ucr.user_id = u.id LIMIT 1) AS custom_role_name,
+  (SELECT string_agg(t.name, ' | ' ORDER BY t.name)
+   FROM teams t
+   INNER JOIN team_members tm ON tm.team_id = t.id AND tm.user_id = u.id
+   WHERE t.tenant_id = u.tenant_id) AS team_names
+FROM users u
+LEFT JOIN profiles p ON p.id = u.id
+WHERE u.tenant_id = $1
+`;
+
+function mapTenantUserApiRow(r: Record<string, unknown>) {
+  return {
+    id: r.id,
+    email: r.email,
+    full_name: (r.full_name as string)?.trim() || null,
+    whatsapp_number: (r.whatsapp_number as string | null) ?? null,
+    job_title: (r.job_title as string | null) ?? null,
+    avatar_url: (r.avatar_url as string | null) ?? null,
+    chat_show_sender_name: r.chat_show_sender_name === true,
+    last_used_at: r.last_used_at,
+    role: r.role || null,
+    custom_role_id: r.custom_role_id || null,
+    custom_role_name: r.custom_role_name || null,
+    is_super_admin: r.is_super_admin === true,
+    team_names: (r.team_names as string) || null,
+  };
+}
+
+/**
+ * Dono da conta, role admin no perfil da empresa, ou permissão granular `settings.manage_users`.
+ */
+async function resolveTenantUserManageGate(
+  tenantId: string,
+  requesterId: string
+): Promise<{ profileId: string; ownerId: string } | null> {
+  const pr = await pool.query<{ profile_id: string; owner_id: string }>(
+    `SELECT up.id AS profile_id, up.owner_id
+     FROM user_profiles up
+     JOIN users o ON o.id = up.owner_id AND o.tenant_id = $1
+     ORDER BY up.created_at ASC LIMIT 1`,
+    [tenantId]
+  );
+  if (pr.rows.length === 0) return null;
+  const { profile_id: profileId, owner_id: ownerId } = pr.rows[0];
+  if (ownerId === requesterId) return { profileId, ownerId };
+  if (await isTenantAdmin(requesterId)) return { profileId, ownerId };
+  const map = await getEffectiveModulePermissions(requesterId);
+  if (hasPermissionKey(map, 'settings.manage_users')) {
+    return { profileId, ownerId };
+  }
+  return null;
+}
 
 /** Primeiro usuário do tenant (`users.created_at`); usado em rotas comerciais (plano, cobrança interna). */
 export async function getMyTenantAndPrimary(req: AuthRequest): Promise<{ tenantId: string; primaryUserId: string } | null> {
@@ -81,44 +158,8 @@ export async function getMyTenantUsers(req: AuthRequest, res: Response): Promise
       res.status(403).json({ error: 'Usuário não vinculado a uma conta' });
       return;
     }
-    const result = await pool.query(
-      `SELECT u.id, u.email, u.is_super_admin,
-        TRIM(COALESCE(p.first_name, '') || ' ' || COALESCE(p.last_name, '')) AS full_name,
-        (SELECT MAX(s.last_used_at) FROM sessions s WHERE s.user_id = u.id) AS last_used_at,
-        (SELECT ur.role::text FROM user_roles ur
-         JOIN user_profiles up ON up.id = ur.profile_id
-         JOIN users owner ON owner.id = up.owner_id AND owner.tenant_id = u.tenant_id
-         WHERE ur.user_id = u.id LIMIT 1) AS role,
-        (SELECT ucr.custom_role_id FROM user_custom_roles ucr
-         JOIN user_profiles up ON up.id = ucr.profile_id
-         JOIN users owner ON owner.id = up.owner_id AND owner.tenant_id = u.tenant_id
-         WHERE ucr.user_id = u.id LIMIT 1) AS custom_role_id,
-        (SELECT tcr.name FROM user_custom_roles ucr
-         JOIN tenant_custom_roles tcr ON tcr.id = ucr.custom_role_id
-         JOIN user_profiles up ON up.id = ucr.profile_id
-         JOIN users owner ON owner.id = up.owner_id AND owner.tenant_id = u.tenant_id
-         WHERE ucr.user_id = u.id LIMIT 1) AS custom_role_name,
-        (SELECT string_agg(t.name, ' | ' ORDER BY t.name)
-         FROM teams t
-         INNER JOIN team_members tm ON tm.team_id = t.id AND tm.user_id = u.id
-         WHERE t.tenant_id = u.tenant_id) AS team_names
-       FROM users u
-       LEFT JOIN profiles p ON p.id = u.id
-       WHERE u.tenant_id = $1
-       ORDER BY u.created_at ASC`,
-      [tenantId]
-    );
-    const rows = result.rows.map((r: Record<string, unknown>) => ({
-      id: r.id,
-      email: r.email,
-      full_name: (r.full_name as string)?.trim() || null,
-      last_used_at: r.last_used_at,
-      role: r.role || null,
-      custom_role_id: r.custom_role_id || null,
-      custom_role_name: r.custom_role_name || null,
-      is_super_admin: r.is_super_admin === true,
-      team_names: (r.team_names as string) || null,
-    }));
+    const result = await pool.query(`${SQL_TENANT_USERS_SELECT} ORDER BY u.created_at ASC`, [tenantId]);
+    const rows = result.rows.map((r: Record<string, unknown>) => mapTenantUserApiRow(r));
     res.json(rows);
   } catch (error: any) {
     console.error('getMyTenantUsers error:', error);
@@ -143,27 +184,12 @@ export async function postMyTenantUser(req: AuthRequest, res: Response): Promise
     }
     const requesterId = req.userId!;
 
-    const profileRow = await pool.query(
-      `SELECT up.id, up.owner_id FROM user_profiles up
-       JOIN users o ON o.id = up.owner_id AND o.tenant_id = $1
-       ORDER BY up.created_at ASC LIMIT 1`,
-      [tenantId]
-    );
-    if (profileRow.rows.length === 0) {
-      res.status(400).json({ error: 'Nenhum perfil encontrado na empresa' });
+    const gate = await resolveTenantUserManageGate(tenantId, requesterId);
+    if (!gate) {
+      res.status(403).json({ error: 'Sem permissão para adicionar utilizadores nesta conta.' });
       return;
     }
-    const profileId = profileRow.rows[0].id;
-    const ownerId = profileRow.rows[0].owner_id;
-    const isOwner = ownerId === requesterId;
-    const adminRole = await pool.query(
-      `SELECT 1 FROM user_roles WHERE user_id = $1 AND profile_id = $2 AND role = 'admin'`,
-      [requesterId, profileId]
-    );
-    if (!isOwner && adminRole.rows.length === 0) {
-      res.status(403).json({ error: 'Apenas o administrador da conta pode adicionar usuários' });
-      return;
-    }
+    const profileId = gate.profileId;
 
     const limitCheck = await checkTenantUsersLimitForAddOne(tenantId);
     if (!limitCheck.allowed) {
@@ -375,6 +401,12 @@ export async function putMyTenantUserRole(req: AuthRequest, res: Response): Prom
     }
     const profileId = profileResult.rows[0].id;
 
+    const gate = await resolveTenantUserManageGate(tenantId, requesterId);
+    if (!gate) {
+      res.status(403).json({ error: 'Sem permissão para gerir perfis de acesso nesta conta.' });
+      return;
+    }
+
     const isMember = await pool.query(
       'SELECT 1 FROM profile_members WHERE profile_id = $1 AND user_id = $2',
       [profileId, targetUserId]
@@ -470,25 +502,9 @@ export async function deleteMyTenantUser(req: AuthRequest, res: Response): Promi
       return;
     }
 
-    const profileRow = await pool.query<{ id: string; owner_id: string }>(
-      `SELECT up.id, up.owner_id FROM user_profiles up
-       JOIN users o ON o.id = up.owner_id AND o.tenant_id = $1
-       ORDER BY up.created_at ASC LIMIT 1`,
-      [tenantId]
-    );
-    if (profileRow.rows.length === 0) {
-      res.status(400).json({ error: 'Nenhum perfil encontrado na empresa' });
-      return;
-    }
-    const profileId = profileRow.rows[0].id;
-    const ownerId = profileRow.rows[0].owner_id;
-    const isOwner = ownerId === requesterId;
-    const adminRole = await pool.query(
-      `SELECT 1 FROM user_roles WHERE user_id = $1 AND profile_id = $2 AND role = 'admin'`,
-      [requesterId, profileId]
-    );
-    if (!isOwner && adminRole.rows.length === 0) {
-      res.status(403).json({ error: 'Apenas o administrador da conta pode excluir usuários' });
+    const gate = await resolveTenantUserManageGate(tenantId, requesterId);
+    if (!gate) {
+      res.status(403).json({ error: 'Sem permissão para excluir utilizadores desta conta.' });
       return;
     }
 
@@ -537,6 +553,291 @@ export async function deleteMyTenantUser(req: AuthRequest, res: Response): Promi
       return;
     }
     res.status(500).json({ error: message });
+  }
+}
+
+const patchTenantUserSchema = z
+  .object({
+    full_name: z.string().min(1).max(200).optional(),
+    email: z.string().email().optional(),
+    phone: z.string().max(40).nullable().optional(),
+    job_title: z.string().max(200).nullable().optional(),
+    chat_show_sender_name: z.boolean().optional(),
+    password: z.preprocess((v) => {
+      if (v === '' || v === null || v === undefined) return undefined;
+      return v;
+    }, z.string().min(6).max(200).optional()),
+    confirm_password: z.string().optional(),
+  })
+  .superRefine((val, ctx) => {
+    if (val.password) {
+      if (val.password !== val.confirm_password) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Confirmação de senha não coincide',
+          path: ['confirm_password'],
+        });
+      }
+    }
+  })
+  .superRefine((val, ctx) => {
+    const has =
+      val.full_name !== undefined ||
+      val.email !== undefined ||
+      val.phone !== undefined ||
+      val.job_title !== undefined ||
+      val.chat_show_sender_name !== undefined ||
+      (val.password !== undefined && String(val.password).length > 0);
+    if (!has) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Nada para atualizar', path: ['_'] });
+    }
+  });
+
+/** PATCH /api/me/tenant/users/:userId — atualiza perfil (e opcionalmente senha) de utilizador do tenant. */
+export async function patchMyTenantUser(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = await getMyTenantId(req);
+    if (!tenantId) {
+      res.status(403).json({ error: 'Usuário não vinculado a uma conta' });
+      return;
+    }
+    const requesterId = req.userId!;
+    const { userId: targetUserId } = req.params;
+    if (!targetUserId) {
+      res.status(400).json({ error: 'userId é obrigatório' });
+      return;
+    }
+
+    const gate = await resolveTenantUserManageGate(tenantId, requesterId);
+    if (!gate) {
+      res.status(403).json({ error: 'Sem permissão para editar utilizadores desta conta.' });
+      return;
+    }
+
+    const body = patchTenantUserSchema.parse(req.body);
+
+    const reqSuper = await pool.query<{ is_super_admin: boolean }>(
+      'SELECT is_super_admin FROM users WHERE id = $1',
+      [requesterId]
+    );
+    const requesterIsSuper = reqSuper.rows[0]?.is_super_admin === true;
+
+    const cur = await pool.query<{
+      email: string;
+      whatsapp_number: string | null;
+      chat_show_sender_name: boolean;
+      first_name: string | null;
+      last_name: string | null;
+      job_title: string | null;
+      is_super_admin: boolean;
+    }>(
+      `SELECT u.email, u.whatsapp_number,
+        COALESCE(u.chat_show_sender_name, false) AS chat_show_sender_name,
+        p.first_name, p.last_name, p.job_title, u.is_super_admin
+       FROM users u
+       LEFT JOIN profiles p ON p.id = u.id
+       WHERE u.id = $1 AND u.tenant_id = $2`,
+      [targetUserId, tenantId]
+    );
+    if (cur.rows.length === 0) {
+      res.status(404).json({ error: 'Usuário não encontrado na empresa' });
+      return;
+    }
+    const before = cur.rows[0];
+    if (before.is_super_admin && !requesterIsSuper) {
+      res.status(403).json({ error: 'Não é possível alterar este utilizador.' });
+      return;
+    }
+
+    const changedProfile: string[] = [];
+    let chatShowBefore = before.chat_show_sender_name;
+    let chatShowAfter = chatShowBefore;
+
+    if (body.email !== undefined) {
+      const email = normalizeEmailForUniqueness(body.email);
+      const dup = await pool.query<{ id: string }>(
+        'SELECT id FROM users WHERE lower(btrim(email)) = $1 AND id <> $2',
+        [email, targetUserId]
+      );
+      if (dup.rows.length > 0) {
+        res.status(400).json({ error: 'Este e-mail já está em uso.' });
+        return;
+      }
+      if (email !== normalizeEmailForUniqueness(before.email)) {
+        changedProfile.push('email');
+      }
+    }
+
+    let phoneDigits: string | null | undefined;
+    if (body.phone !== undefined) {
+      phoneDigits = normalizeWhatsappDigits(body.phone ?? null);
+      const prevDigits = normalizeWhatsappDigits(before.whatsapp_number);
+      if (phoneDigits !== prevDigits) {
+        if (phoneDigits) {
+          const existingPhone = await pool.query(
+            `SELECT id FROM users
+             WHERE id <> $2
+               AND length(regexp_replace(COALESCE(whatsapp_number, ''), '\\D', '', 'g')) >= 8
+               AND regexp_replace(COALESCE(whatsapp_number, ''), '\\D', '', 'g') = $1`,
+            [phoneDigits, targetUserId]
+          );
+          if (existingPhone.rows.length > 0) {
+            res.status(400).json({ error: 'Este número de WhatsApp já está cadastrado na plataforma.' });
+            return;
+          }
+        }
+        changedProfile.push('whatsapp_number');
+      }
+    }
+
+    if (body.full_name !== undefined) {
+      const full = body.full_name.trim();
+      const prevFull =
+        `${(before.first_name ?? '').trim()} ${(before.last_name ?? '').trim()}`.trim() || null;
+      if (full !== (prevFull ?? '')) {
+        changedProfile.push('full_name');
+      }
+    }
+
+    if (body.job_title !== undefined) {
+      const jt = body.job_title?.trim() ?? null;
+      const prevJt = before.job_title?.trim() ?? null;
+      if (jt !== prevJt) {
+        changedProfile.push('job_title');
+      }
+    }
+
+    if (body.chat_show_sender_name !== undefined) {
+      chatShowAfter = body.chat_show_sender_name;
+      if (chatShowAfter !== chatShowBefore) {
+        changedProfile.push('chat_show_sender_name');
+      }
+    }
+
+    const passwordChanging = Boolean(body.password && body.password.length > 0);
+
+    const userSets: string[] = [];
+    const userVals: unknown[] = [];
+    let pi = 1;
+    if (body.email !== undefined) {
+      userSets.push(`email = $${pi++}`);
+      userVals.push(normalizeEmailForUniqueness(body.email));
+    }
+    if (body.phone !== undefined) {
+      userSets.push(`whatsapp_number = $${pi++}`);
+      userVals.push(phoneDigits ?? null);
+    }
+    if (body.chat_show_sender_name !== undefined) {
+      userSets.push(`chat_show_sender_name = $${pi++}`);
+      userVals.push(body.chat_show_sender_name);
+    }
+    if (passwordChanging) {
+      userSets.push(`password_hash = $${pi++}`);
+      userVals.push(await hashPassword(body.password!));
+    }
+    if (userSets.length > 0) {
+      userVals.push(targetUserId);
+      await pool.query(`UPDATE users SET ${userSets.join(', ')} WHERE id = $${pi}`, userVals);
+    }
+
+    if (body.full_name !== undefined || body.job_title !== undefined || body.phone !== undefined) {
+      const jobTitleUpd =
+        body.job_title !== undefined ? (body.job_title?.trim() ?? null) : undefined;
+      const phoneTrimmed = body.phone?.trim() ?? '';
+      const phoneForProfile =
+        body.phone !== undefined ? (phoneDigits ?? phoneTrimmed) : undefined;
+
+      const pSets: string[] = [];
+      const pVals: unknown[] = [];
+      let qi = 1;
+      if (body.full_name !== undefined) {
+        const fullName = body.full_name.trim();
+        const nameParts = fullName.split(/\s+/).filter(Boolean);
+        const firstName = nameParts[0] ?? fullName;
+        const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
+        pSets.push(`first_name = $${qi++}`, `last_name = $${qi++}`);
+        pVals.push(firstName, lastName);
+      }
+      if (body.job_title !== undefined) {
+        pSets.push(`job_title = $${qi++}`);
+        pVals.push(jobTitleUpd ?? null);
+      }
+      if (body.phone !== undefined) {
+        pSets.push(`whatsapp_number = $${qi++}`);
+        pVals.push(phoneForProfile ?? '');
+      }
+      if (pSets.length > 0) {
+        pVals.push(targetUserId);
+        await pool.query(`UPDATE profiles SET ${pSets.join(', ')} WHERE id = $${qi}`, pVals);
+      }
+    }
+
+    const ts = new Date().toISOString();
+    const basePayload = {
+      admin_user_id: requesterId,
+      target_user_id: targetUserId,
+      timestamp: ts,
+    };
+
+    if (passwordChanging) {
+      await logTenantUserAdminAudit({
+        tenantId,
+        adminUserId: requesterId,
+        targetUserId,
+        eventType: 'user_password_changed_by_admin',
+        payload: { ...basePayload, changed_fields: ['password'] },
+      });
+      await pool.query(`DELETE FROM sessions WHERE user_id = $1::uuid`, [targetUserId]);
+    }
+
+    if (body.chat_show_sender_name !== undefined && chatShowAfter !== chatShowBefore) {
+      await logTenantUserAdminAudit({
+        tenantId,
+        adminUserId: requesterId,
+        targetUserId,
+        eventType: 'user_chat_sender_name_setting_changed',
+        payload: {
+          ...basePayload,
+          changed_fields: ['chat_show_sender_name'],
+          from: chatShowBefore,
+          to: chatShowAfter,
+        },
+      });
+    }
+
+    const profileAuditFields = changedProfile.filter((f) => f !== 'chat_show_sender_name');
+    if (profileAuditFields.length > 0) {
+      await logTenantUserAdminAudit({
+        tenantId,
+        adminUserId: requesterId,
+        targetUserId,
+        eventType: 'user_profile_updated',
+        payload: { ...basePayload, changed_fields: profileAuditFields },
+      });
+    }
+
+    await incrementPermissionVersion(targetUserId);
+
+    const refreshed = await pool.query(`${SQL_TENANT_USERS_SELECT} AND u.id = $2`, [tenantId, targetUserId]);
+    const row = refreshed.rows[0];
+    if (!row) {
+      res.status(404).json({ error: 'Usuário não encontrado' });
+      return;
+    }
+    res.json(mapTenantUserApiRow(row as Record<string, unknown>));
+  } catch (error: unknown) {
+    if (error instanceof z.ZodError) {
+      const first = error.errors[0];
+      res.status(400).json({ error: first?.message ?? 'Dados inválidos', details: error.errors });
+      return;
+    }
+    console.error('patchMyTenantUser error:', error);
+    const code = (error as { code?: string })?.code;
+    if (code === '23505') {
+      res.status(400).json({ error: 'E-mail ou WhatsApp já cadastrado na plataforma.' });
+      return;
+    }
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
   }
 }
 
