@@ -39,6 +39,7 @@ import {
   Calendar,
 } from 'lucide-react';
 import LandingLayout from '@/landingpage/components/LandingLayout';
+import { LANDING_CHECKOUT_PREFILL_KEY } from '@/lib/landingCheckoutPrefill';
 import {
   formatMoneyBRL,
   formatVitrinePriceLabel,
@@ -934,6 +935,11 @@ export default function PlanCheckout() {
     /** Evita corrida com o efeito de focusBillingId / seat_addon (que pularia Empresa e admin). */
     if (state?.focusBillingId?.trim() || isSeatAddonMode || seatAddonBillingIdQuery?.trim()) return;
     if (state?.plan) {
+      try {
+        sessionStorage.removeItem(LANDING_CHECKOUT_PREFILL_KEY);
+      } catch {
+        /* ignore */
+      }
       applyPlanFromLanding({
         plan: state.plan,
         billingInterval: state.billingInterval ?? 'monthly',
@@ -947,12 +953,40 @@ export default function PlanCheckout() {
       });
       return;
     }
+    /** Landing estática grava o plano em sessionStorage antes de `window.location` para /checkout. */
+    try {
+      const raw = sessionStorage.getItem(LANDING_CHECKOUT_PREFILL_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as CheckoutLocationState;
+        if (parsed?.plan) {
+          navigate(`${location.pathname}${location.search}`, { replace: true, state: parsed });
+          return;
+        }
+        sessionStorage.removeItem(LANDING_CHECKOUT_PREFILL_KEY);
+      }
+    } catch {
+      try {
+        sessionStorage.removeItem(LANDING_CHECKOUT_PREFILL_KEY);
+      } catch {
+        /* ignore */
+      }
+    }
     /**
      * Sem contexto explícito (URL/state), não reaproveitar sessionStorage: evita seat_addon / focusBillingId /
      * wizard_step antigos após "Começar" ou Link /checkout. Fluxos especiais hidratam pelos efeitos dedicados.
      */
     persistCheckout(null);
-  }, [state, applyPlanFromLanding, isResumeMode, isRenewMode, isSeatAddonMode, seatAddonBillingIdQuery]);
+  }, [
+    state,
+    applyPlanFromLanding,
+    isResumeMode,
+    isRenewMode,
+    isSeatAddonMode,
+    seatAddonBillingIdQuery,
+    navigate,
+    location.pathname,
+    location.search,
+  ]);
 
   useEffect(() => {
     if ((isResumeMode || isRenewMode) && !resumePaymentOnly) return;

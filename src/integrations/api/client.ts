@@ -199,9 +199,18 @@ class ApiClient {
       typeof FormData !== 'undefined' && options.body instanceof FormData;
 
     const headers = new Headers(options.headers as HeadersInit);
+    const methodUpper = (options.method || 'GET').toUpperCase();
+    const hasJsonBody =
+      !isFormData &&
+      options.body != null &&
+      options.body !== '' &&
+      !(typeof options.body === 'string' && options.body.length === 0);
     if (isFormData) {
       headers.delete('Content-Type');
-    } else if (!headers.has('Content-Type')) {
+    } else if (
+      !headers.has('Content-Type') &&
+      (hasJsonBody || ['POST', 'PUT', 'PATCH', 'DELETE'].includes(methodUpper))
+    ) {
       headers.set('Content-Type', 'application/json');
     }
 

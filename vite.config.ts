@@ -2,6 +2,7 @@ import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
+import { visualizer } from "rollup-plugin-visualizer";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
@@ -9,6 +10,7 @@ export default defineConfig(({ mode }) => {
   const devPort = parseInt(env.VITE_DEV_PORT || "8080", 10);
   /** Destino real do backend em dev (não usar VITE_API_URL aqui — pode coincidir com a porta do Vite). */
   const apiProxyTarget = (env.VITE_API_PROXY_TARGET || "http://127.0.0.1:3001").replace(/\/$/, "");
+  const analyze = process.env.ANALYZE === "1" || process.env.ANALYZE === "true";
 
   return {
   server: {
@@ -29,8 +31,14 @@ export default defineConfig(({ mode }) => {
   },
   plugins: [
     react(),
-    mode === 'development' &&
-    componentTagger(),
+    mode === "development" && componentTagger(),
+    analyze &&
+      visualizer({
+        filename: "dist/stats.html",
+        gzipSize: true,
+        brotliSize: true,
+        template: "treemap",
+      }),
   ].filter(Boolean),
   resolve: {
     alias: {
@@ -59,34 +67,33 @@ export default defineConfig(({ mode }) => {
     },
   },
   build: {
-    target: 'esnext',
-    minify: false, // TEMPORÁRIO: Desabilitar minificação para testar se resolve o problema do parser
+    target: "esnext",
+    minify: mode === "production" ? "esbuild" : false,
     sourcemap: false,
-    // Configuração do esbuild para preservar código do socket.io-client
     esbuild: {
-      keepNames: true, // Preservar nomes de funções
-      legalComments: 'none',
+      keepNames: true,
+      legalComments: "none",
     },
     rollupOptions: {
       output: {
-        // Separar socket.io em chunk próprio
-        manualChunks: (id) => {
-          if (id.includes('socket.io-client') || id.includes('engine.io-client') || id.includes('socket.io-parser')) {
-            return 'socket.io';
+        manualChunks: (id: string) => {
+          if (
+            id.includes("socket.io-client") ||
+            id.includes("engine.io-client") ||
+            id.includes("socket.io-parser")
+          ) {
+            return "socket.io";
+          }
+          if (id.includes("node_modules")) {
+            if (id.includes("node_modules/react-dom")) return "react-vendor";
+            if (id.includes("node_modules/react/") && !id.includes("node_modules/react-router")) {
+              return "react-vendor";
+            }
+            if (id.includes("react-router")) return "router";
           }
         },
-        // Preservar nomes de funções exportadas
-        format: 'es',
+        format: "es",
       },
-      // Plugin para não minificar socket.io-client
-      plugins: [
-        {
-          name: 'preserve-socketio',
-          generateBundle(options, bundle) {
-            // Não fazer nada, apenas garantir que o código seja preservado
-          },
-        },
-      ],
     },
   },
   define: {

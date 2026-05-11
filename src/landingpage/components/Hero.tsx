@@ -43,10 +43,17 @@ const Hero = () => {
               style={{ animationDelay: "0.25s" }}
             >
               <Button size="lg" className="gap-2 px-8 text-base font-semibold" asChild>
-                <Link to="/checkout">
-                  Começar agora
-                  <ArrowRight size={18} />
-                </Link>
+                {import.meta.env.VITE_LANDING_STANDALONE === "1" ? (
+                  <a href="/checkout" className="inline-flex items-center gap-2">
+                    Começar agora
+                    <ArrowRight size={18} />
+                  </a>
+                ) : (
+                  <Link to="/checkout">
+                    Começar agora
+                    <ArrowRight size={18} />
+                  </Link>
+                )}
               </Button>
             </div>
 

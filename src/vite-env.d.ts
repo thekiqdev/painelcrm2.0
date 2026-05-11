@@ -1,6 +1,8 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
+  /** Build da landing estática (HTML separado); "1" só no vite.landing.config. */
+  readonly VITE_LANDING_STANDALONE?: string;
   readonly VITE_CHECKOUT_TRIAL_V1?: string;
   readonly VITE_CHECKOUT_RESUME_V1?: string;
   readonly VITE_FORCE_LEGACY_ONBOARDING_ROUTE?: string;

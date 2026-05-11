@@ -337,7 +337,7 @@ export default function WhatsappOfficialTemplatesPage({ variant = 'embedded' }: 
                           {st === 'APPROVED' ? (
                             <Button variant="outline" size="sm" asChild>
                               <Link
-                                to={`/superadmin/conexoes/whatsapp-official?tab=camp&campaignTpl=${encodeURIComponent(t.template_name)}&campaignLang=${encodeURIComponent(t.language)}`}
+                                to={`/superadmin/conexoes/whatsapp-oficial?tab=camp&campaignTpl=${encodeURIComponent(t.template_name)}&campaignLang=${encodeURIComponent(t.language)}`}
                               >
                                 Usar em campanha
                               </Link>

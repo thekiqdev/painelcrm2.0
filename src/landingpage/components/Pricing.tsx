@@ -8,6 +8,7 @@ import {
   freeAccessDaysBadge,
   getCheckoutListPriceCents,
 } from "@/lib/planCheckoutDisplay";
+import { LANDING_CHECKOUT_PREFILL_KEY } from "@/lib/landingCheckoutPrefill";
 import {
   Users,
   MessageCircle,
@@ -307,25 +308,33 @@ const Pricing = () => {
                 <Button
                   variant={plan.is_default ? "default" : "outline"}
                   className="w-full gap-2 font-semibold"
-                  onClick={() =>
-                    navigate("/checkout", {
-                      state: {
-                        plan: {
-                          id: plan.id,
-                          name: plan.name,
-                          plan_type: plan.plan_type,
-                          price_cents: plan.price_cents,
-                          interval_prices: plan.interval_prices,
-                          description: plan.description,
-                          benefits: plan.benefits,
-                          is_free: plan.is_free,
-                          free_access_days: plan.free_access_days,
-                        },
-                        billingInterval: INTERVALS[intervalIndex[plan.id] ?? 0]?.key ?? "monthly",
-                        usersCount: usersCount[plan.id] ?? 1,
+                  onClick={() => {
+                    const checkoutState = {
+                      plan: {
+                        id: plan.id,
+                        name: plan.name,
+                        plan_type: plan.plan_type,
+                        price_cents: plan.price_cents,
+                        interval_prices: plan.interval_prices,
+                        description: plan.description,
+                        benefits: plan.benefits,
+                        is_free: plan.is_free,
+                        free_access_days: plan.free_access_days,
                       },
-                    })
-                  }
+                      billingInterval: INTERVALS[intervalIndex[plan.id] ?? 0]?.key ?? "monthly",
+                      usersCount: usersCount[plan.id] ?? 1,
+                    };
+                    if (import.meta.env.VITE_LANDING_STANDALONE === "1") {
+                      try {
+                        sessionStorage.setItem(LANDING_CHECKOUT_PREFILL_KEY, JSON.stringify(checkoutState));
+                      } catch {
+                        /* ignore */
+                      }
+                      window.location.assign("/checkout");
+                      return;
+                    }
+                    navigate("/checkout", { state: checkoutState });
+                  }}
                 >
                   Contratar
                   <ArrowRight size={16} />

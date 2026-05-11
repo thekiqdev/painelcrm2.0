@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <script>
+      (function () {
+        try {
+          var k = "painelcrm-theme";
+          var t = localStorage.getItem(k);
+          if (t !== "dark" && t !== "light") {
+            t = "light";
+            try {
+              localStorage.setItem(k, t);
+            } catch (e2) {}
+          }
+          var c = document.documentElement.classList;
+          c.remove("light", "dark");
+          if (t === "dark") c.add("dark");
+          else c.add("light");
+        } catch (e) {}
+      })();
+    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#2563eb" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <link rel="manifest" href="/manifest.json" />
+    <title>PainelCRM - Plataforma de Gestão de Relacionamento</title>
+    <meta name="description" content="Sistema completo de CRM para gestão de clientes, funis de vendas, propostas e contratos" />
+    <meta name="author" content="PainelCRM" />
+    <meta property="og:title" content="PainelCRM - Plataforma de Gestão de Relacionamento" />
+    <meta property="og:description" content="Sistema completo de CRM para gestão de clientes, funis de vendas, propostas e contratos" />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@painelcrm" />
+    <meta name="twitter:image" content="/og-image.png" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/landing/main.tsx"></script>
+  </body>
+</html>

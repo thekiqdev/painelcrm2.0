@@ -1,5 +1,4 @@
-/* Landing page: tema escuro e utilitários scoped para não afetar o restante do app */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap');
+/* Landing: sem Google Fonts — stack do sistema (Fase 3 performance). */
 .landing-page {
   --background: 222 47% 6%;
   --foreground: 210 40% 96%;

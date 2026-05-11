@@ -3,24 +3,40 @@ import { lazyWithReload } from "@/lib/lazyWithReload";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AuthProvider } from "./contexts/AuthContext";
 import { ModulePermissionsProvider } from "./contexts/ModulePermissionsContext";
 import AuthLayout from "./layouts/AuthLayout";
-import AuthWhatsApp from "./pages/AuthWhatsApp";
-import Register from "./pages/Register";
-import RegistrationSteps from "./pages/Registration/RegistrationSteps";
 import AuthGuard from "./components/AuthGuard";
 import SuperAdminGuard from "./components/SuperAdminGuard";
-import AppLayout from "./layouts/AppLayout";
-import SuperAdminLayout from "./layouts/SuperAdminLayout";
-import SettingsLayout from "./layouts/SettingsLayout";
-import NotFound from "./pages/NotFound";
+import AppLayout from "./layouts/AppLayout.lazy";
+import SuperAdminLayout from "./layouts/SuperAdminLayout.lazy";
+import SettingsLayout from "./layouts/SettingsLayout.lazy";
+import { RouteLoadingFallback as LoadingFallback } from "@/components/RouteLoadingFallback";
 import HomeOrRedirect from "./components/HomeOrRedirect";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 
+/**
+ * Fase 2 — bundle inicial do CRM:
+ * - Páginas de domínio (Dashboard, Chat, etc.) já estavam em lazyWithReload.
+ * - Layouts pesados (AppLayout, SuperAdmin, Settings) carregam via *.lazy.tsx + Suspense.
+ * - Auth (login/registo) e NotFound também em lazy para não ir no chunk de entrada.
+ */
+/** Slug antigo em inglês (`whatsapp-official`) → rotas reais `whatsapp-oficial` (preserva query). */
+function SuperadminLegacyWhatsappOfficialRedirect() {
+  const { pathname, search, hash } = useLocation();
+  const dest = pathname.includes("whatsapp-official")
+    ? pathname.replace(/whatsapp-official/g, "whatsapp-oficial")
+    : "/superadmin/conexoes/whatsapp-oficial";
+  return <Navigate to={`${dest}${search}${hash}`} replace />;
+}
+
 const ForgotPasswordWhatsapp = lazyWithReload(() => import("./pages/ForgotPasswordWhatsapp"));
+const AuthWhatsApp = lazyWithReload(() => import("./pages/AuthWhatsApp"));
+const Register = lazyWithReload(() => import("./pages/Register"));
+const RegistrationSteps = lazyWithReload(() => import("./pages/Registration/RegistrationSteps"));
+const NotFound = lazyWithReload(() => import("./pages/NotFound"));
 
 // Lazy load todas as rotas protegidas para otimizar carregamento inicial
 const Dashboard = lazyWithReload(() => import("./pages/Dashboard"));
@@ -156,16 +172,6 @@ const Onboarding = lazyWithReload(() => import("./pages/Onboarding"));
 
 const LandingPage = lazyWithReload(() => import("./landingpage").then(m => ({ default: m.LandingPage })));
 
-// Loading fallback simples
-const LoadingFallback = () => (
-  <div className="flex items-center justify-center min-h-screen">
-    <div className="text-center">
-      <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-crm-primary"></div>
-      <p className="mt-4 text-muted-foreground">Carregando...</p>
-    </div>
-  </div>
-);
-
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
@@ -180,16 +186,39 @@ const App = () => (
             <Route path="/landingpage" element={<Navigate to="/" replace />} />
             
             {/* Alterado: a página de registro não precisa de AuthGuard */}
-            <Route path="/register" element={<AuthLayout><Register /></AuthLayout>} />
-            
-            <Route path="/register/steps" element={
-              <AuthGuard requireAuth={true} requireComplete={false} redirectTo="/login">
+            <Route
+              path="/register"
+              element={
                 <AuthLayout>
-                  <RegistrationSteps />
+                  <Suspense fallback={<LoadingFallback />}>
+                    <Register />
+                  </Suspense>
                 </AuthLayout>
-              </AuthGuard>
-            } />
-            <Route path="/login" element={<AuthLayout><AuthWhatsApp /></AuthLayout>} />
+              }
+            />
+            
+            <Route
+              path="/register/steps"
+              element={
+                <AuthGuard requireAuth={true} requireComplete={false} redirectTo="/login">
+                  <AuthLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <RegistrationSteps />
+                    </Suspense>
+                  </AuthLayout>
+                </AuthGuard>
+              }
+            />
+            <Route
+              path="/login"
+              element={
+                <AuthLayout>
+                  <Suspense fallback={<LoadingFallback />}>
+                    <AuthWhatsApp />
+                  </Suspense>
+                </AuthLayout>
+              }
+            />
             <Route
               path="/recuperar-senha"
               element={
@@ -815,6 +844,9 @@ const App = () => (
                 <Route path="conexoes/whatsapp-oficial" element={<Suspense fallback={<LoadingFallback />}><WhatsappOfficialConnectionPage /></Suspense>} />
                 <Route path="conexoes/whatsapp-oficial/modelos" element={<Suspense fallback={<LoadingFallback />}><WhatsappOfficialModelosPage /></Suspense>} />
                 <Route path="conexoes/whatsapp-oficial/chat" element={<Suspense fallback={<LoadingFallback />}><WhatsappOfficialChatFull /></Suspense>} />
+                <Route path="conexoes/whatsapp-official" element={<SuperadminLegacyWhatsappOfficialRedirect />} />
+                <Route path="conexoes/whatsapp-official/modelos" element={<SuperadminLegacyWhatsappOfficialRedirect />} />
+                <Route path="conexoes/whatsapp-official/chat" element={<SuperadminLegacyWhatsappOfficialRedirect />} />
                 <Route path="conexoes/uazapi" element={<Suspense fallback={<LoadingFallback />}><UazapiConnectionPage /></Suspense>} />
                 <Route path="plataforma" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
                 <Route path="avancado" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
@@ -893,7 +925,14 @@ const App = () => (
                 </Suspense>
               } />
             
-            <Route path="*" element={<NotFound />} />
+            <Route
+              path="*"
+              element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <NotFound />
+                </Suspense>
+              }
+            />
           </Routes>
           </Suspense>
           </ModulePermissionsProvider>
