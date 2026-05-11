@@ -52,6 +52,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAuth } from "@/contexts/AuthContext";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 import { io, Socket } from "socket.io-client";
+import { SOCKET_IO_CLIENT_TRANSPORTS } from "@/lib/socketIoClientOptions";
 import { format, parseISO, startOfDay, endOfDay, addMonths } from "date-fns";
 import { ClientUpcomingAppointments } from "@/components/clients/ClientUpcomingAppointments";
 import { ClientAppointmentsHistory } from "@/components/clients/ClientAppointmentsHistory";
@@ -1008,7 +1009,8 @@ const ClientProfile = () => {
       auth: {
         token: session.token,
       },
-      transports: ['websocket'],
+      transports: [...SOCKET_IO_CLIENT_TRANSPORTS],
+      path: "/socket.io/",
     });
 
     socketRef.current = socket;

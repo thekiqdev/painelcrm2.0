@@ -129,6 +129,7 @@ import { ChatKanbanTagBadge } from '@/components/chat/ChatKanbanTagBadge';
 import { ChatKanbanTagQuickPicker } from '@/components/chat/ChatKanbanTagQuickPicker';
 import { patchConversationKanbanTagsEverywhere } from '@/features/floating-chat/conversationKanbanTagsCache';
 import { REALTIME_WINDOW_EVENTS } from '@/services/realtimeClient';
+import { SOCKET_IO_CLIENT_TRANSPORTS } from '@/lib/socketIoClientOptions';
 import { io, Socket } from 'socket.io-client';
 import { apiClient } from '@/integrations/api/client';
 import ProposalCreateForm, {
@@ -1229,25 +1230,22 @@ const Chat = () => {
         console.error('[Chat] Endpoint test failed:', err);
       });
 
-    // Configuração: usar apenas WebSocket para evitar o caminho de XHR/polling do engine.io,
-    // que depende de polyfills de URL e pode quebrar em alguns ambientes.
-    const socketOptions: any = {
+    // Polling primeiro: proxies (Nginx, etc.) costumam falhar no WSS direto; o engine faz
+    // upgrade para websocket quando suportado.
+    const socketOptions = {
       auth: { token: session.token },
-      transports: ['websocket'], // Forçar apenas WebSocket
+      transports: [...SOCKET_IO_CLIENT_TRANSPORTS] as ('polling' | 'websocket')[],
       reconnection: true,
       reconnectionDelay: 2000,
       reconnectionDelayMax: 10000,
-      reconnectionAttempts: 3, // Limitar tentativas
-      timeout: 10000, // 10 segundos para timeout
+      reconnectionAttempts: 8,
+      timeout: 20000,
       forceNew: true,
       path: '/socket.io/',
       query: {
         token: session.token,
       },
       withCredentials: true,
-      // Com apenas 'websocket' como transporte, o upgrade é desnecessário
-      upgrade: false,
-      // Remover transportOptions que podem causar problemas de parse
     };
 
     const preferRealtimeV2Raw = String(import.meta.env.VITE_CHAT_REALTIME_V2 ?? '1').toLowerCase();
@@ -1312,12 +1310,6 @@ const Chat = () => {
       }
       
       console.error('[Chat] WebSocket connection error details:', errorDetails);
-      
-      // Tentar forçar polling se websocket falhar
-      if (socket.io.engine && socket.io.engine.transport.name === 'websocket') {
-        console.log('[Chat] WebSocket failed, will retry with polling');
-        socket.io.opts.transports = ['polling'];
-      }
     });
 
     socket.on('error', (error) => {

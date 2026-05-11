@@ -1,5 +1,6 @@
 import { io, type Socket } from 'socket.io-client';
 import { getDevApiBaseUrl } from '@/lib/devBackendOrigin';
+import { SOCKET_IO_CLIENT_TRANSPORTS } from '@/lib/socketIoClientOptions';
 
 export const REALTIME_EVENTS = {
   messageCreated: 'message.created',
@@ -53,7 +54,7 @@ export function connectRealtime(token: string): Socket {
   socket = io(getSocketUrl(), {
     auth: { token },
     query: { token },
-    transports: ['websocket', 'polling'],
+    transports: [...SOCKET_IO_CLIENT_TRANSPORTS],
     reconnection: true,
     path: '/socket.io/',
   });

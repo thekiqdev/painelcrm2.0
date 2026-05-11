@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { io, type Socket } from 'socket.io-client';
+import { SOCKET_IO_CLIENT_TRANSPORTS } from '@/lib/socketIoClientOptions';
 
 type AttendancePayload = { conversation?: { id?: string } };
 
@@ -29,7 +30,7 @@ export function useKanbanAttendanceSocketRefresh(
 
     const socket: Socket = io(socketUrl, {
       auth: { token },
-      transports: ['websocket'],
+      transports: [...SOCKET_IO_CLIENT_TRANSPORTS],
       reconnection: true,
       path: '/socket.io/',
       query: { token },

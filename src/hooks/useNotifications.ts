@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
+import { SOCKET_IO_CLIENT_TRANSPORTS } from '@/lib/socketIoClientOptions';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiClient } from '@/integrations/api/client';
 import { toast } from '@/components/ui/sonner';
@@ -81,7 +82,7 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
       auth: {
         token: session.token,
       },
-      transports: ['websocket', 'polling'],
+      transports: [...SOCKET_IO_CLIENT_TRANSPORTS],
       reconnection: true,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
