@@ -9,7 +9,12 @@ export default {
   content: [
     "./landing.html",
     "./src/landing/**/*.{ts,tsx}",
-    "./src/landingpage/**/*.{ts,tsx}",
+    "./src/landingpage/components/Hero.tsx",
+    "./src/landingpage/components/Features.tsx",
+    "./src/landingpage/components/HowItWorks.tsx",
+    "./src/landingpage/components/Pricing.tsx",
+    "./src/landingpage/components/CtaSection.tsx",
+    "./src/landingpage/components/hero-mockup/**/*.{ts,tsx}",
     "./src/components/ui/**/*.{ts,tsx}",
     "./src/components/Logo.tsx",
     "./src/lib/utils.ts",

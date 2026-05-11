@@ -38,6 +38,16 @@ export const getApiUrl = () => {
 
 const API_URL = getApiUrl();
 
+function rewriteEndpointForCurrentScope(endpoint: string): string {
+  if (typeof window === 'undefined') return endpoint;
+  const isSuperadminChat = window.location.pathname.startsWith('/superadmin/chat');
+  if (!isSuperadminChat) return endpoint;
+  if (endpoint === '/api/chat' || endpoint.startsWith('/api/chat/')) {
+    return endpoint.replace('/api/chat', '/api/superadmin/chat');
+  }
+  return endpoint;
+}
+
 /** GET público sem header Authorization (ex.: visualização de contrato por token). */
 export async function publicApiGet<T>(
   endpoint: string,
@@ -194,7 +204,8 @@ class ApiClient {
     endpoint: string,
     options: RequestInit = {}
   ): Promise<ApiResponse<T>> {
-    const url = `${this.baseURL}${endpoint}`;
+    const scopedEndpoint = rewriteEndpointForCurrentScope(endpoint);
+    const url = `${this.baseURL}${scopedEndpoint}`;
     const isFormData =
       typeof FormData !== 'undefined' && options.body instanceof FormData;
 

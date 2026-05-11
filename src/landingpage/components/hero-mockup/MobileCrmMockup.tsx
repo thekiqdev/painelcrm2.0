@@ -1,4 +1,4 @@
-import { MessageCircle } from "lucide-react";
+import MessageCircle from "lucide-react/dist/esm/icons/message-circle.js";
 import { AutomationToast } from "./AutomationToast";
 import { AnimatedDealCard } from "./AnimatedDealCard";
 import {

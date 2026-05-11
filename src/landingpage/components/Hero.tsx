@@ -1,7 +1,21 @@
-import { ArrowRight } from "lucide-react";
+import { Suspense, lazy } from "react";
+import ArrowRight from "lucide-react/dist/esm/icons/arrow-right.js";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { HeroInteractiveMockup } from "./hero-mockup/HeroInteractiveMockup";
+
+const HeroInteractiveMockup = lazy(() =>
+  import("./hero-mockup/HeroInteractiveMockup").then((m) => ({ default: m.HeroInteractiveMockup })),
+);
+
+const HeroMockupFallback = () => (
+  <div
+    className="flex min-h-[14rem] items-center justify-center md:min-h-[17rem]"
+    role="status"
+    aria-label="A carregar demonstração"
+  >
+    <div className="h-7 w-7 animate-spin rounded-full border-2 border-primary/30 border-t-primary" />
+  </div>
+);
 
 const Hero = () => {
   return (
@@ -72,7 +86,9 @@ const Hero = () => {
           >
             <div className="pointer-events-none absolute -inset-4 rounded-3xl bg-gradient-to-br from-primary/10 via-transparent to-violet-500/10 blur-2xl" />
             <div className="relative rounded-2xl border border-border/40 bg-card/30 p-2 shadow-xl backdrop-blur-sm sm:p-3">
-              <HeroInteractiveMockup />
+              <Suspense fallback={<HeroMockupFallback />}>
+                <HeroInteractiveMockup />
+              </Suspense>
             </div>
           </div>
         </div>

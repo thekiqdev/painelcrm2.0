@@ -66,7 +66,7 @@ export default function SuperAdminWhatsappOfficialHub() {
             </CardHeader>
             <CardContent>
               <Button asChild>
-                <Link to="/chat?channel=official">Abrir chat</Link>
+                <Link to="/superadmin/chat?channel=official">Abrir chat</Link>
               </Button>
             </CardContent>
           </Card>

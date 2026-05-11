@@ -1,11 +1,27 @@
-import {
-  Users, Target, GitBranch, FileText, FileSignature,
-  FolderKanban, CheckSquare, Headphones,
-  MessageCircle, Smartphone, LayoutTemplate,
-  Receipt, TrendingDown, BarChart3,
-  LayoutDashboard, Settings, UserCog,
-  Package, CalendarDays, Cloud, Kanban, Landmark, Bell, Wallet,
-} from "lucide-react";
+import BarChart3 from "lucide-react/dist/esm/icons/bar-chart-3.js";
+import Bell from "lucide-react/dist/esm/icons/bell.js";
+import CalendarDays from "lucide-react/dist/esm/icons/calendar-days.js";
+import CheckSquare from "lucide-react/dist/esm/icons/check-square.js";
+import Cloud from "lucide-react/dist/esm/icons/cloud.js";
+import FileSignature from "lucide-react/dist/esm/icons/file-signature.js";
+import FileText from "lucide-react/dist/esm/icons/file-text.js";
+import FolderKanban from "lucide-react/dist/esm/icons/folder-kanban.js";
+import GitBranch from "lucide-react/dist/esm/icons/git-branch.js";
+import Headphones from "lucide-react/dist/esm/icons/headphones.js";
+import Kanban from "lucide-react/dist/esm/icons/kanban.js";
+import Landmark from "lucide-react/dist/esm/icons/landmark.js";
+import LayoutDashboard from "lucide-react/dist/esm/icons/layout-dashboard.js";
+import LayoutTemplate from "lucide-react/dist/esm/icons/layout-template.js";
+import MessageCircle from "lucide-react/dist/esm/icons/message-circle.js";
+import Package from "lucide-react/dist/esm/icons/package.js";
+import Receipt from "lucide-react/dist/esm/icons/receipt.js";
+import Settings from "lucide-react/dist/esm/icons/settings.js";
+import Smartphone from "lucide-react/dist/esm/icons/smartphone.js";
+import Target from "lucide-react/dist/esm/icons/target.js";
+import TrendingDown from "lucide-react/dist/esm/icons/trending-down.js";
+import UserCog from "lucide-react/dist/esm/icons/user-cog.js";
+import Users from "lucide-react/dist/esm/icons/users.js";
+import Wallet from "lucide-react/dist/esm/icons/wallet.js";
 
 const categories = [
   {

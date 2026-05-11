@@ -70,6 +70,7 @@ export async function canChatAction(
   action: ChatAction,
   req?: AuthRequest
 ): Promise<boolean> {
+  if (req?.user?.is_super_admin === true && !req.tenantId) return true;
   if (await isTenantAdmin(userId)) return true;
   const map = await getMap(req, userId);
   const key = ACTION_TO_KEY[action];

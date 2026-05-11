@@ -1,4 +1,5 @@
-import { Sparkles, Zap } from "lucide-react";
+import Sparkles from "lucide-react/dist/esm/icons/sparkles.js";
+import Zap from "lucide-react/dist/esm/icons/zap.js";
 
 type AutomationToastProps = {
   visible: boolean;

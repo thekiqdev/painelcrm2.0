@@ -520,16 +520,36 @@ function ChatHeaderKanbanThreadExtras({
   );
 }
 
-const Chat = () => {
+type ChatPageScope = 'tenant' | 'platform';
+
+type ChatProps = {
+  scope?: ChatPageScope;
+};
+
+const Chat = ({ scope = 'tenant' }: ChatProps) => {
   const { user, session, profile } = useAuth();
   const {
     canView,
     canEdit,
-    canChatReply,
-    hasPermissionKey,
+    canChatReply: rawCanChatReply,
+    hasPermissionKey: rawHasPermissionKey,
     permissions,
     loading: modulePermLoading,
   } = useModulePermissions();
+  const isPlatformScope = scope === 'platform';
+  const isPlatformSuperAdmin = Boolean(isPlatformScope && user?.is_super_admin);
+  const hasPermissionKey = useCallback(
+    (key: Parameters<typeof rawHasPermissionKey>[0]) => {
+      if (!isPlatformScope) return rawHasPermissionKey(key);
+      if (!isPlatformSuperAdmin) return false;
+      return key === 'chat.view' || key === 'chat.send_message';
+    },
+    [isPlatformScope, isPlatformSuperAdmin, rawHasPermissionKey],
+  );
+  const canChatReply = useCallback(
+    () => (isPlatformScope ? isPlatformSuperAdmin : rawCanChatReply()),
+    [isPlatformScope, isPlatformSuperAdmin, rawCanChatReply],
+  );
 
   const crmAllowGroupManage = useMemo(
     () =>
@@ -539,29 +559,37 @@ const Chat = () => {
     [hasPermissionKey, permissions.chat?.module_extras],
   );
 
-  const canViewAttendanceQueue = hasPermissionKey('chat.view_queue');
+  const canViewAttendanceQueue = !isPlatformScope && hasPermissionKey('chat.view_queue');
   const hasChatFeature = useFeatureFlag('chat');
   const hasAgendaFeature = useFeatureFlag('agenda');
   const commercial = useMemo(() => chatCommercialGates(hasPermissionKey), [hasPermissionKey]);
   const canCreateAgendaInChat =
-    hasAgendaFeature && hasPermissionKey('chat.schedule_from_chat') && !modulePermLoading;
+    !isPlatformScope && hasAgendaFeature && hasPermissionKey('chat.schedule_from_chat') && !modulePermLoading;
   const canCreateProposalsInChat =
-    commercial.canCreateProposalFromChatFull && !modulePermLoading;
+    !isPlatformScope && commercial.canCreateProposalFromChatFull && !modulePermLoading;
   const canCreateContractsInChat =
-    commercial.canCreateContractFromChatFull && !modulePermLoading;
+    !isPlatformScope && commercial.canCreateContractFromChatFull && !modulePermLoading;
   const canCreateInvoicesInChat =
-    commercial.canCreateInvoiceFromChatFull && !modulePermLoading;
+    !isPlatformScope && commercial.canCreateInvoiceFromChatFull && !modulePermLoading;
   const navigate = useNavigate();
   const location = useLocation();
+  const chatRouteBase = isPlatformScope ? '/superadmin/chat' : '/chat';
 
   useEffect(() => {
+    if (isPlatformScope) {
+      if (!isPlatformSuperAdmin) {
+        toast.error('Acesso restrito a Super Admin');
+        navigate('/superadmin', { replace: true });
+      }
+      return;
+    }
     if (!hasChatFeature || modulePermLoading) return;
     if (user?.is_tenant_admin) return;
     if (!canView('chat')) {
       toast.error('Sem permissão para acessar o Chat');
       navigate('/dashboard', { replace: true });
     }
-  }, [hasChatFeature, modulePermLoading, user?.is_tenant_admin, canView, navigate]);
+  }, [isPlatformScope, isPlatformSuperAdmin, hasChatFeature, modulePermLoading, user?.is_tenant_admin, canView, navigate]);
   const [searchParams, setSearchParams] = useSearchParams();
   const focusMessageIdParam = searchParams.get('focusMessageId')?.trim() ?? '';
   const { conversationId: routeConversationId } = useParams<{ conversationId: string }>();
@@ -595,7 +623,9 @@ const Chat = () => {
   const [scheduleChatDlgOpen, setScheduleChatDlgOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'leads' | 'clients'>('all');
   /** Etapa 5 — inbox partilhada por defeito quando há tenant (evita lista vazia com escopo “equipa”). */
-  const [chatInboxScope, setChatInboxScope] = useState<'owner' | 'tenant'>('tenant');
+  const [chatInboxScope, setChatInboxScope] = useState<'owner' | 'tenant'>(
+    isPlatformScope ? 'owner' : 'tenant',
+  );
   const [chatAttendanceFilter, setChatAttendanceFilter] = useState<
     '' | 'queue' | 'team' | 'mine' | 'closed' | 'unassigned'
   >('');
@@ -993,7 +1023,7 @@ const Chat = () => {
     setContactProfileOpen(false);
     setSelectedConversationId(null);
     if (isMobile) {
-      navigate('/chat', { replace: true });
+      navigate(chatRouteBase, { replace: true });
     }
     void loadConversations(Array.from(enabledInstanceIdsRef.current));
   }, [isMobile, navigate, loadConversations]);
@@ -1109,8 +1139,8 @@ const Chat = () => {
       externalChatId: st?.openExternalChatId,
       instanceId: st?.openInstanceId,
     };
-    navigate('/chat', { replace: true, state: {} });
-  }, [location.state, navigate]);
+    navigate(chatRouteBase, { replace: true, state: {} });
+  }, [chatRouteBase, location.state, navigate]);
 
   /** Captura `focusInstanceId` antes de limpar `location.state` (aplicação real mais abaixo). */
   useEffect(() => {
@@ -1703,7 +1733,7 @@ const Chat = () => {
         setCurrentClient(null);
         setCurrentLead(null);
         if (isMobile) {
-          navigate('/chat', { replace: true });
+          navigate(chatRouteBase, { replace: true });
         }
       }
       void queryClient.invalidateQueries({ queryKey: ['floating-chat'] });
@@ -1934,7 +1964,7 @@ const Chat = () => {
       setMessages([]);
       if (isMobile && routeConversationId) {
         chatCrmListReturnPathRef.current = null;
-        navigate('/chat', { replace: true });
+        navigate(chatRouteBase, { replace: true });
       }
       return;
     }
@@ -2149,7 +2179,7 @@ const Chat = () => {
     );
 
   useEffect(() => {
-    if (!selectedConversationId || selectedIsGroupChat) {
+    if (isPlatformScope || !selectedConversationId || selectedIsGroupChat) {
       setConversationKanbanTags([]);
       return;
     }
@@ -2169,11 +2199,11 @@ const Chat = () => {
     return () => {
       cancelled = true;
     };
-  }, [selectedConversationId, selectedIsGroupChat]);
+  }, [isPlatformScope, selectedConversationId, selectedIsGroupChat]);
 
   /** Catálogo de tags do tenant para cabeçalho (+) e perfil — carrega com a conversa aberta. */
   useEffect(() => {
-    if (!user || !selectedConversationId || selectedIsGroupChat) return;
+    if (isPlatformScope || !user || !selectedConversationId || selectedIsGroupChat) return;
     let cancelled = false;
     setTenantKanbanTagsLoading(true);
     void chatKanbanService
@@ -2200,7 +2230,7 @@ const Chat = () => {
     return () => {
       cancelled = true;
     };
-  }, [user, selectedConversationId, selectedIsGroupChat]);
+  }, [isPlatformScope, user, selectedConversationId, selectedIsGroupChat]);
 
   useEffect(() => {
     chatProfileCrmLinkRef.current = {
@@ -2246,10 +2276,10 @@ const Chat = () => {
         next.set('focusMessageId', mid);
         setSearchParams(next, { replace: false });
       } else {
-        navigate(`/chat/${cid}?focusMessageId=${encodeURIComponent(mid)}`);
+        navigate(`${chatRouteBase}/${cid}?focusMessageId=${encodeURIComponent(mid)}`);
       }
     },
-    [selectedConversationId, searchParams, setSearchParams, navigate],
+    [chatRouteBase, selectedConversationId, searchParams, setSearchParams, navigate],
   );
 
   useEffect(() => {
@@ -2658,7 +2688,7 @@ const Chat = () => {
         ...(isChatListReturnPath(listReturn) ? { chatListReturn: listReturn } : {}),
         ...(opts?.clientProfileReturnId ? { clientProfileReturnId: opts.clientProfileReturnId } : {}),
       };
-      navigate(`/chat/${conversationId}`, {
+      navigate(`${chatRouteBase}/${conversationId}`, {
         // `replace` evita empilhar `/chat` entre a lista CRM e a thread — o «voltar» do sistema regressa à lista.
         replace: isChatListReturnPath(listReturn),
         state: Object.keys(navState).length > 0 ? navState : undefined,
@@ -2898,8 +2928,8 @@ const Chat = () => {
     }
     chatCrmListReturnPathRef.current = null;
     setViewMode('conversation');
-    navigate('/chat', { replace: true });
-  }, [location.state, navigate]);
+    navigate(chatRouteBase, { replace: true });
+  }, [chatRouteBase, location.state, navigate]);
 
   /** Após lista hidratada, resolve uuid (incl. após deduplicação) e aplica o mesmo fluxo do clique na conversa. */
   useEffect(() => {
@@ -3472,7 +3502,7 @@ const Chat = () => {
       emitChatNavUnreadRefresh();
       toast.success('Conversa removida do sistema.');
       if (isMobile) {
-        navigate('/chat', { replace: true });
+        navigate(chatRouteBase, { replace: true });
       }
     } catch (error) {
       console.error('Erro ao deletar conversa do sistema:', error);
@@ -4147,6 +4177,10 @@ const Chat = () => {
   };
 
   const handleNavigateToSettings = () => {
+    if (isPlatformScope) {
+      navigate('/superadmin/conexoes/uazapi');
+      return;
+    }
     navigate('/settings?section=whatsapp&openAddConnection=1');
   };
 
@@ -4311,7 +4345,7 @@ const Chat = () => {
             },
           ]
         : []),
-      ...(hasPermissionKey('chat.send_message')
+      ...(!isPlatformScope && hasPermissionKey('chat.send_message')
         ? [
             {
               id: 'schedule-message',
@@ -4329,20 +4363,24 @@ const Chat = () => {
             },
           ]
         : []),
-      {
-        id: 'template',
-        label: 'Usar template',
-        description: 'Modelos WhatsApp aprovados',
-        icon: LayoutTemplate,
-        onSelect: () => setWhatsappModelPickerOpen(true),
-        disabled: sendingMessage || !selectedConversationId,
-        disabledReason: !selectedConversationId
-          ? 'Selecione uma conversa'
-          : sendingMessage
-            ? 'Aguarde o envio da mensagem'
-            : undefined,
-        searchAliases: ['modelo', 'whatsapp', 'hsm'],
-      },
+      ...(!isPlatformScope
+        ? [
+            {
+              id: 'template',
+              label: 'Usar template',
+              description: 'Modelos WhatsApp aprovados',
+              icon: LayoutTemplate,
+              onSelect: () => setWhatsappModelPickerOpen(true),
+              disabled: sendingMessage || !selectedConversationId,
+              disabledReason: !selectedConversationId
+                ? 'Selecione uma conversa'
+                : sendingMessage
+                  ? 'Aguarde o envio da mensagem'
+                  : undefined,
+              searchAliases: ['modelo', 'whatsapp', 'hsm'],
+            },
+          ]
+        : []),
     ];
 
     const financeiro: ChatComposerQuickActionSection['items'] = [];
@@ -4463,7 +4501,7 @@ const Chat = () => {
 
     const crm: ChatComposerQuickActionSection['items'] = [];
 
-    if (!isGroup && conv?.client_id && commercial.canViewClientNav) {
+    if (!isPlatformScope && !isGroup && conv?.client_id && commercial.canViewClientNav) {
       crm.push({
         id: 'open-client',
         label: 'Abrir cliente',
@@ -4478,7 +4516,7 @@ const Chat = () => {
         searchAliases: ['crm', 'perfil', 'ficha', 'cliente'],
       });
     }
-    if (!isGroup && crmLinked && showTags) {
+    if (!isPlatformScope && !isGroup && crmLinked && showTags) {
       crm.push({
         id: 'tags',
         label: 'Tags Kanban',
@@ -4487,7 +4525,7 @@ const Chat = () => {
         onSelect: () => setContactProfileOpen(true),
       });
     }
-    if (!isGroup && crmLinked) {
+    if (!isPlatformScope && !isGroup && crmLinked) {
       crm.push({
         id: 'note',
         label: 'Anotação',
@@ -4499,7 +4537,7 @@ const Chat = () => {
         },
       });
     }
-    if (!isGroup && !crmLinked) {
+    if (!isPlatformScope && !isGroup && !crmLinked) {
       crm.push({
         id: 'link-crm',
         label: 'Vincular ao CRM',
@@ -4508,7 +4546,7 @@ const Chat = () => {
         onSelect: () => openLinkDialog(),
       });
     }
-    if (!isGroup && conv?.leadId && !conv?.client_id && commercial.canConvertLeadToClient) {
+    if (!isPlatformScope && !isGroup && conv?.leadId && !conv?.client_id && commercial.canConvertLeadToClient) {
       crm.push({
         id: 'convert-lead',
         label: 'Converter para cliente',
@@ -4517,7 +4555,7 @@ const Chat = () => {
         onSelect: () => void handleConvertToClient(),
       });
     }
-    if (!isGroup && !conv?.client_id && !conv?.leadId && commercial.canCreateClientFromChat) {
+    if (!isPlatformScope && !isGroup && !conv?.client_id && !conv?.leadId && commercial.canCreateClientFromChat) {
       crm.push({
         id: 'create-client',
         label: 'Criar cliente',
@@ -4527,7 +4565,7 @@ const Chat = () => {
       });
     }
 
-    if (!isGroup && !conv?.client_id && !conv?.leadId && commercial.canCreateLeadFromChat) {
+    if (!isPlatformScope && !isGroup && !conv?.client_id && !conv?.leadId && commercial.canCreateLeadFromChat) {
       crm.push({
         id: 'create-lead',
         label: 'Criar lead',
@@ -4537,7 +4575,7 @@ const Chat = () => {
       });
     }
 
-    if (canTransferThisConv) {
+    if (!isPlatformScope && canTransferThisConv) {
       crm.push({
         id: 'transfer',
         label: 'Transferir',
@@ -4553,13 +4591,15 @@ const Chat = () => {
       icon: RefreshCw,
       onSelect: () => void handleSyncConversation(),
     });
-    crm.push({
-      id: 'ticket',
-      label: 'Ticket',
-      description: 'Pedido de suporte',
-      icon: Ticket,
-      onSelect: () => handleOpenTicket(),
-    });
+    if (!isPlatformScope) {
+      crm.push({
+        id: 'ticket',
+        label: 'Ticket',
+        description: 'Pedido de suporte',
+        icon: Ticket,
+        onSelect: () => handleOpenTicket(),
+      });
+    }
 
     const sections: ChatComposerQuickActionSection[] = [
       { id: 'mensagens', title: 'Mensagens', items: messages },
@@ -4602,6 +4642,7 @@ const Chat = () => {
     handleOpenTicket,
     goToClientProfileFromChat,
     openLinkDialog,
+    isPlatformScope,
   ]);
 
   const handleConfirmTransfer = useCallback(async () => {
@@ -4848,6 +4889,24 @@ const Chat = () => {
           'md:h-[calc(100dvh-var(--app-topbar-height)-var(--chat-page-offset)+var(--chat-extra-height))] md:max-h-[calc(100dvh-var(--app-topbar-height)-var(--chat-page-offset)+var(--chat-extra-height))] md:overflow-hidden md:pb-0',
       )}
     >
+      {!isMobileConversationView && isPlatformScope ? (
+        <div className="shrink-0 px-3 pt-3 md:px-3">
+          <div className="rounded-xl border border-border/70 bg-card/80 px-4 py-3 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h1 className="text-lg font-semibold leading-tight text-foreground">Chat da Plataforma</h1>
+                <p className="mt-0.5 text-sm text-muted-foreground">
+                  Mensagens dos canais conectados no Super Admin.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="secondary">UazAPI</Badge>
+                <Badge variant="outline">Meta Oficial em preparação</Badge>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {instances.length > 0 ? (
         <div className="flex flex-1 flex-col min-h-0 overflow-hidden max-md:h-full max-md:min-h-0 md:h-full">
           {/* Renderizar conteúdo do chat - apenas uma vez, reutilizado para todas as abas */}
@@ -6147,7 +6206,7 @@ const Chat = () => {
                           onGroupConversationSynced={handleGroupConversationSynced}
                           crmAllowManage={crmAllowGroupManage}
                           scheduledMessagesSection={
-                            hasPermissionKey('chat.send_message') ? (
+                            !isPlatformScope && hasPermissionKey('chat.send_message') ? (
                               <ChatScheduledMessagesStrip conversationId={selectedConversation.id} />
                             ) : undefined
                           }
@@ -6239,8 +6298,8 @@ const Chat = () => {
                               !selectedConversation.client_id &&
                               commercial.canConvertLeadToClient,
                           )}
-                          showLinkActions={!selectedConversation.client_id && !selectedConversation.leadId}
-                          showUnlink={Boolean(selectedConversation.client_id || selectedConversation.leadId)}
+                          showLinkActions={!isPlatformScope && !selectedConversation.client_id && !selectedConversation.leadId}
+                          showUnlink={!isPlatformScope && Boolean(selectedConversation.client_id || selectedConversation.leadId)}
                           showSystemDelete={
                             !modulePermLoading &&
                             (hasPermissionKey('chat.delete') || hasPermissionKey('chat.manage_queues'))
@@ -6263,7 +6322,7 @@ const Chat = () => {
                           createGroupWithClientDisabledHint={createGroupWithClientDisabledHint}
                           onOpenCreateGroupWithClient={() => setCreateGroupDialogOpen(true)}
                           scheduledMessagesSection={
-                            selectedConversationId && hasPermissionKey('chat.send_message') ? (
+                            !isPlatformScope && selectedConversationId && hasPermissionKey('chat.send_message') ? (
                               <ChatScheduledMessagesStrip conversationId={selectedConversationId} />
                             ) : undefined
                           }
@@ -6278,9 +6337,13 @@ const Chat = () => {
       ) : (
         <Card className="flex-shrink-0">
           <CardContent className="py-10 text-center text-muted-foreground space-y-4">
-            <p>Configure sua primeira conexão WhatsApp em Configurações (fluxo completo com sincronização).</p>
+            <p>
+              {isPlatformScope
+                ? 'Configure uma instância UazAPI da plataforma no Super Admin para operar este chat.'
+                : 'Configure sua primeira conexão WhatsApp em Configurações (fluxo completo com sincronização).'}
+            </p>
             <Button type="button" onClick={handleNavigateToSettings}>
-              Abrir Configurações — WhatsApp
+              {isPlatformScope ? 'Abrir Conexões — UazAPI' : 'Abrir Configurações — WhatsApp'}
             </Button>
                   </CardContent>
                 </Card>
@@ -6444,7 +6507,7 @@ const Chat = () => {
           onGroupConversationSynced={handleGroupConversationSynced}
           crmAllowManage={crmAllowGroupManage}
           scheduledMessagesSection={
-            hasPermissionKey('chat.send_message') ? (
+            !isPlatformScope && hasPermissionKey('chat.send_message') ? (
               <ChatScheduledMessagesStrip conversationId={selectedConversation.id} />
             ) : undefined
           }
@@ -6529,8 +6592,8 @@ const Chat = () => {
               !selectedConversation.client_id &&
               commercial.canConvertLeadToClient,
           )}
-          showLinkActions={!selectedConversation.client_id && !selectedConversation.leadId}
-          showUnlink={Boolean(selectedConversation.client_id || selectedConversation.leadId)}
+          showLinkActions={!isPlatformScope && !selectedConversation.client_id && !selectedConversation.leadId}
+          showUnlink={!isPlatformScope && Boolean(selectedConversation.client_id || selectedConversation.leadId)}
           showSystemDelete={
             !modulePermLoading &&
             (hasPermissionKey('chat.delete') || hasPermissionKey('chat.manage_queues'))
@@ -6553,7 +6616,7 @@ const Chat = () => {
           createGroupWithClientDisabledHint={createGroupWithClientDisabledHint}
           onOpenCreateGroupWithClient={() => setCreateGroupDialogOpen(true)}
           scheduledMessagesSection={
-            selectedConversationId && hasPermissionKey('chat.send_message') ? (
+            !isPlatformScope && selectedConversationId && hasPermissionKey('chat.send_message') ? (
               <ChatScheduledMessagesStrip conversationId={selectedConversationId} />
             ) : undefined
           }

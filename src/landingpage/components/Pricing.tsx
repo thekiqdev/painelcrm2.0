@@ -1,6 +1,11 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Check, ArrowRight, ChevronLeft, ChevronRight, Minus, Plus } from "lucide-react";
+import ArrowRight from "lucide-react/dist/esm/icons/arrow-right.js";
+import Check from "lucide-react/dist/esm/icons/check.js";
+import ChevronLeft from "lucide-react/dist/esm/icons/chevron-left.js";
+import ChevronRight from "lucide-react/dist/esm/icons/chevron-right.js";
+import Minus from "lucide-react/dist/esm/icons/minus.js";
+import Plus from "lucide-react/dist/esm/icons/plus.js";
 import { Button } from "@/components/ui/button";
 import { apiClient } from "@/integrations/api/client";
 import {
@@ -9,25 +14,23 @@ import {
   getCheckoutListPriceCents,
 } from "@/lib/planCheckoutDisplay";
 import { LANDING_CHECKOUT_PREFILL_KEY } from "@/lib/landingCheckoutPrefill";
-import {
-  Users,
-  MessageCircle,
-  Mail,
-  Headphones,
-  Star,
-  Zap,
-  Shield,
-  FileText,
-  BarChart3,
-  Settings,
-  Smartphone,
-  Globe,
-  Lock,
-  Gift,
-  CreditCard,
-  Building2,
-  Calendar,
-} from "lucide-react";
+import BarChart3 from "lucide-react/dist/esm/icons/bar-chart-3.js";
+import Building2 from "lucide-react/dist/esm/icons/building-2.js";
+import Calendar from "lucide-react/dist/esm/icons/calendar.js";
+import CreditCard from "lucide-react/dist/esm/icons/credit-card.js";
+import FileText from "lucide-react/dist/esm/icons/file-text.js";
+import Gift from "lucide-react/dist/esm/icons/gift.js";
+import Globe from "lucide-react/dist/esm/icons/globe.js";
+import Headphones from "lucide-react/dist/esm/icons/headphones.js";
+import Lock from "lucide-react/dist/esm/icons/lock.js";
+import Mail from "lucide-react/dist/esm/icons/mail.js";
+import MessageCircle from "lucide-react/dist/esm/icons/message-circle.js";
+import Settings from "lucide-react/dist/esm/icons/settings.js";
+import Shield from "lucide-react/dist/esm/icons/shield.js";
+import Smartphone from "lucide-react/dist/esm/icons/smartphone.js";
+import Star from "lucide-react/dist/esm/icons/star.js";
+import Users from "lucide-react/dist/esm/icons/users.js";
+import Zap from "lucide-react/dist/esm/icons/zap.js";
 
 const INTERVALS = [
   { key: "monthly", label: "Mensal", short: "mês" },

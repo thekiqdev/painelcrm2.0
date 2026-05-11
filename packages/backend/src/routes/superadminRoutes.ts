@@ -22,6 +22,7 @@ import * as smtpSuperadminSettingsController from '../controllers/smtpSuperadmin
 import * as superadminLeadsController from '../controllers/superadminLeadsController.js';
 import superadminWhatsappOfficialRoutes from './superadminWhatsappOfficialRoutes.js';
 import connectionsRoutes from './connectionsRoutes.js';
+import superadminChatRoutes from './superadminChatRoutes.js';
 import * as adminScriptsController from '../controllers/adminScriptsController.js';
 import {
   getSuperadminMediaStorageDiagnostics,
@@ -155,6 +156,7 @@ router.post('/platform-whatsapp/instances/:id/connect', superadminPlatformWhatsA
 router.get('/platform-whatsapp/instances/:id/status', superadminPlatformWhatsAppController.getInstanceStatus);
 router.patch('/platform-whatsapp/instances/:id', superadminPlatformWhatsAppController.patchInstance);
 router.delete('/platform-whatsapp/instances/:id', superadminPlatformWhatsAppController.deleteSuperadminPlatformWhatsAppInstance);
+router.use('/chat', superadminChatRoutes);
 
 /** Configuração SMTP (persistência em superadmin_settings; sem envio transacional automático). */
 router.get('/smtp-settings', smtpSuperadminSettingsController.getSmtpSuperadminSettingsHandler);

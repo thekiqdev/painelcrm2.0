@@ -164,6 +164,11 @@ export const superAdminNavGroups: SuperAdminNavGroup[] = [
         end: true,
       },
       {
+        label: "Chat da plataforma",
+        to: "/superadmin/chat",
+        icon: MessageSquare,
+      },
+      {
         label: "Alertas operacionais",
         to: "/superadmin/notifications",
         icon: Bell,

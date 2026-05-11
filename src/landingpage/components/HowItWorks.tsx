@@ -1,4 +1,6 @@
-import { Building2, SlidersHorizontal, Rocket } from "lucide-react";
+import Building2 from "lucide-react/dist/esm/icons/building-2.js";
+import SlidersHorizontal from "lucide-react/dist/esm/icons/sliders-horizontal.js";
+import Rocket from "lucide-react/dist/esm/icons/rocket.js";
 
 const steps = [
   {

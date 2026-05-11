@@ -39,7 +39,47 @@
     <meta name="twitter:image" content="/og-image.png" />
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <a href="#landing-main" class="landing-skip">Saltar para o conteúdo principal</a>
+      <div class="landing-ssr-shell landing-page">
+        <nav class="landing-ssr-nav" aria-label="Navegação principal">
+          <div class="landing-ssr-nav-inner">
+            <a class="landing-ssr-brand" href="/">
+              <span class="landing-ssr-logo" aria-hidden="true">PC</span>
+              PainelCRM
+            </a>
+            <div class="landing-ssr-links">
+              <a href="#recursos">Recursos</a>
+              <a href="#como-funciona">Como funciona</a>
+              <a href="#planos">Planos</a>
+            </div>
+            <div class="landing-ssr-ctas">
+              <a href="/login">Acessar</a>
+              <a href="/checkout">Começar grátis</a>
+            </div>
+          </div>
+        </nav>
+        <main id="landing-main">
+          <div class="landing-ssr-hero">
+            <div class="landing-ssr-pill">
+              <span aria-hidden="true"></span>
+              Plataforma CRM completa para PMEs
+            </div>
+            <h1>
+              Transforme conversas em vendas e
+              <span class="landing-ssr-gradient"> gerencie toda sua empresa</span>
+            </h1>
+            <p>
+              Atenda seus clientes pelo WhatsApp, organize oportunidades no Kanban e automatize etapas comerciais
+              dentro do PainelCRM.
+            </p>
+            <div class="landing-ssr-cta-row">
+              <a href="/checkout">Começar agora</a>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
     <script type="module" src="/src/landing/main.tsx"></script>
   </body>
 </html>

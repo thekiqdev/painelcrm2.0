@@ -1,4 +1,5 @@
-import { MessageCircle, Users } from "lucide-react";
+import MessageCircle from "lucide-react/dist/esm/icons/message-circle.js";
+import Users from "lucide-react/dist/esm/icons/users.js";
 
 type FloatingChatPreviewProps = {
   phase: number;

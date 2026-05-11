@@ -1,12 +1,10 @@
-import {
-  Bell,
-  Kanban as KanbanIcon,
-  LayoutDashboard,
-  MessageSquare,
-  Search,
-  Settings,
-  Wallet,
-} from "lucide-react";
+import Bell from "lucide-react/dist/esm/icons/bell.js";
+import KanbanIcon from "lucide-react/dist/esm/icons/kanban.js";
+import LayoutDashboard from "lucide-react/dist/esm/icons/layout-dashboard.js";
+import MessageSquare from "lucide-react/dist/esm/icons/message-square.js";
+import Search from "lucide-react/dist/esm/icons/search.js";
+import Settings from "lucide-react/dist/esm/icons/settings.js";
+import Wallet from "lucide-react/dist/esm/icons/wallet.js";
 import { AutomationToast } from "./AutomationToast";
 import { FloatingChatPreview } from "./FloatingChatPreview";
 import { KanbanPreview } from "./KanbanPreview";

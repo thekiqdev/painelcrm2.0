@@ -840,6 +840,8 @@ const App = () => (
                 <Route path="comercial" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
                 <Route path="financeiro" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
                 <Route path="comunicacao" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
+                <Route path="chat" element={<Suspense fallback={<LoadingFallback />}><Chat scope="platform" /></Suspense>} />
+                <Route path="chat/:conversationId" element={<Suspense fallback={<LoadingFallback />}><Chat scope="platform" /></Suspense>} />
                 <Route path="conexoes" element={<Suspense fallback={<LoadingFallback />}><ConnectionsPage /></Suspense>} />
                 <Route path="conexoes/whatsapp-oficial" element={<Suspense fallback={<LoadingFallback />}><WhatsappOfficialConnectionPage /></Suspense>} />
                 <Route path="conexoes/whatsapp-oficial/modelos" element={<Suspense fallback={<LoadingFallback />}><WhatsappOfficialModelosPage /></Suspense>} />

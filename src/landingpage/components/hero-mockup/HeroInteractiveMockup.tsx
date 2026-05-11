@@ -25,7 +25,7 @@ export function HeroInteractiveMockup() {
         }`}
         aria-live="polite"
       >
-        <span className="font-medium text-foreground/90">{caption}</span>
+        <span className="font-medium text-foreground">{caption}</span>
       </p>
       <p className="sr-only">
         Demonstração animada do fluxo: conversa WhatsApp, Kanban comercial, proposta, fatura e fechamento.
