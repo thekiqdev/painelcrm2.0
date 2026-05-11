@@ -19,6 +19,7 @@ import superadminAnnouncementRoutes from './superadminAnnouncementRoutes.js';
 import * as superadminLegalPagesController from '../controllers/superadminLegalPagesController.js';
 import * as superadminWhatsappAvatarBackfillController from '../controllers/superadminWhatsappAvatarBackfillController.js';
 import * as smtpSuperadminSettingsController from '../controllers/smtpSuperadminSettingsController.js';
+import * as superadminPlatformTrackingController from '../controllers/superadminPlatformTrackingController.js';
 import * as superadminPlatformSupportController from '../controllers/superadminPlatformSupportController.js';
 import * as superadminLeadsController from '../controllers/superadminLeadsController.js';
 import rateLimit from 'express-rate-limit';
@@ -173,6 +174,9 @@ router.use('/chat', superadminChatRoutes);
 router.get('/smtp-settings', smtpSuperadminSettingsController.getSmtpSuperadminSettingsHandler);
 router.put('/smtp-settings', smtpSuperadminSettingsController.putSmtpSuperadminSettingsHandler);
 router.post('/smtp-settings/test', smtpSuperadminSettingsController.postSmtpSuperadminTestEmailHandler);
+router.get('/tracking-settings', superadminPlatformTrackingController.getSuperadminPlatformTrackingSettings);
+router.put('/tracking-settings', superadminPlatformTrackingController.putSuperadminPlatformTrackingSettings);
+router.post('/tracking-settings/test', superadminPlatformTrackingController.postSuperadminPlatformTrackingTest);
 
 router.get('/platform-support/settings', superadminPlatformSupportController.getSuperadminPlatformSupportSettings);
 router.put('/platform-support/settings', superadminPlatformSupportController.putSuperadminPlatformSupportSettings);

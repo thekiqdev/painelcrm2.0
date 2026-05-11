@@ -17,6 +17,11 @@ import {
   schedulePublishPlatformAccountCreated,
   schedulePublishPlatformTrialStarted,
 } from '../services/platformNotifications/platformBusinessNotifications.js';
+import {
+  marketingAttributionInputSchema,
+  parseMarketingAttributionFromBody,
+  persistTenantMarketingAttribution,
+} from '../services/marketingAttributionService.js';
 
 const checkAdminSchema = z.object({
   admin_email: z.string().email(),
@@ -44,6 +49,7 @@ const registerOrganizationSchema = z.object({
       responsible_name: z.string().optional().nullable(),
     })
     .optional(),
+  marketing_attribution: marketingAttributionInputSchema.optional().nullable(),
 });
 
 function slugify(name: string): string {
@@ -313,6 +319,12 @@ export async function registerOrganization(req: Request, res: Response): Promise
       'INSERT INTO tenant_plan (tenant_id, plan_id, starts_at) VALUES ($1, $2, now())',
       [tenantId, planId]
     );
+
+    await persistTenantMarketingAttribution(client, {
+      tenantId,
+      userId: user.id,
+      attribution: parseMarketingAttributionFromBody({ marketing_attribution: parsed.marketing_attribution }),
+    });
 
     await client.query('COMMIT');
     transactionStarted = false;

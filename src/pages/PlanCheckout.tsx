@@ -7,6 +7,8 @@ import { Label } from '@/components/ui/label';
 import { apiClient } from '@/integrations/api/client';
 import { toast } from '@/components/ui/sonner';
 import { useAuth } from '@/contexts/AuthContext';
+import { withMarketingAttribution } from '@/lib/marketingAttribution';
+import { buildSignupSuccessNavigation } from '@/lib/signupSuccessNavigation';
 import {
   Loader2,
   Copy,
@@ -1086,7 +1088,8 @@ export default function PlanCheckout() {
         const pwd = checkoutPasswordRef.current;
         const path = await signIn(email, pwd);
         if (path !== '/login') {
-          navigate('/dashboard', { replace: true });
+          const dest = buildSignupSuccessNavigation('/dashboard');
+          navigate(dest.pathname, { replace: true, state: dest.state });
           return;
         }
         toast.error('Pagamento confirmado, mas o login automático falhou. Acesse com seu e-mail e senha.');
@@ -1237,7 +1240,7 @@ export default function PlanCheckout() {
     setLoading(true);
     try {
       const docDigits = billingCpf.replace(/\D/g, '');
-      const body: Record<string, unknown> = {
+      const body = withMarketingAttribution({
         plan_id: plan.id,
         billing_interval: billingInterval,
         company_name: company.company_name.trim(),
@@ -1245,10 +1248,10 @@ export default function PlanCheckout() {
         responsible_name: company.responsible_name.trim(),
         password,
         whatsapp: adminWhatsapp.trim(),
-      };
-      if (isCustom) body.users_count = usersCount;
-      if (docDigits) body.cpf_cnpj = docDigits;
-      if (company.phone?.trim()) body.phone = company.phone.trim();
+        ...(isCustom ? { users_count: usersCount } : {}),
+        ...(docDigits ? { cpf_cnpj: docDigits } : {}),
+        ...(company.phone?.trim() ? { phone: company.phone.trim() } : {}),
+      });
 
       const res = await apiClient.post<TrialSignupResponse>('/api/plan-purchase/complete-signup-trial', body);
       if (res.error) {
@@ -1263,7 +1266,8 @@ export default function PlanCheckout() {
         await refreshUser();
         persistCheckout(null);
         toast.success(`Bem-vindo! Seu trial de ${effectiveCheckoutTrialDays(plan)} dias começou.`);
-        navigate('/dashboard', { replace: true });
+        const dest = buildSignupSuccessNavigation('/dashboard');
+        navigate(dest.pathname, { replace: true, state: dest.state });
       }
     } finally {
       setLoading(false);
@@ -1423,27 +1427,29 @@ export default function PlanCheckout() {
     }
 
     setLoading(true);
-    const body: Record<string, unknown> = {
+    const body = withMarketingAttribution({
       plan_id: plan.id,
       billing_interval: billingInterval,
       payment_method: method,
-    };
-    if (isCustom) body.users_count = usersCount;
-    if (!isCheckoutUpgrade) {
-      body.company_name = company.company_name.trim();
-      body.email = company.email.trim();
-      body.responsible_name = company.responsible_name.trim();
-      body.cpf_cnpj = docDigits;
-      body.password = password;
-      body.whatsapp = adminWhatsapp.trim();
-      if (company.phone?.trim()) body.phone = company.phone.trim();
-    } else {
-      if (company.company_name?.trim()) body.company_name = company.company_name.trim();
-      if (company.email?.trim()) body.email = company.email.trim();
-      if (company.responsible_name?.trim()) body.responsible_name = company.responsible_name.trim();
-      if (docDigits) body.cpf_cnpj = docDigits;
-      if (company.phone?.trim()) body.phone = company.phone.trim();
-    }
+      ...(isCustom ? { users_count: usersCount } : {}),
+      ...(!isCheckoutUpgrade
+        ? {
+            company_name: company.company_name.trim(),
+            email: company.email.trim(),
+            responsible_name: company.responsible_name.trim(),
+            cpf_cnpj: docDigits,
+            password,
+            whatsapp: adminWhatsapp.trim(),
+            ...(company.phone?.trim() ? { phone: company.phone.trim() } : {}),
+          }
+        : {
+            ...(company.company_name?.trim() ? { company_name: company.company_name.trim() } : {}),
+            ...(company.email?.trim() ? { email: company.email.trim() } : {}),
+            ...(company.responsible_name?.trim() ? { responsible_name: company.responsible_name.trim() } : {}),
+            ...(docDigits ? { cpf_cnpj: docDigits } : {}),
+            ...(company.phone?.trim() ? { phone: company.phone.trim() } : {}),
+          }),
+    });
 
     const res = await apiClient.post<PurchaseResult>('/api/plan-purchase', body);
     setLoading(false);
@@ -1516,7 +1522,8 @@ export default function PlanCheckout() {
             const pwd = checkoutPasswordRef.current;
             const path = await signIn(email, pwd);
             if (path !== '/login') {
-              navigate('/dashboard', { replace: true });
+              const dest = buildSignupSuccessNavigation('/dashboard');
+              navigate(dest.pathname, { replace: true, state: dest.state });
               return;
             }
             toast.error('Pagamento confirmado, mas o login automático falhou. Acesse com seu e-mail e senha.');

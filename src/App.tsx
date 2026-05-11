@@ -16,6 +16,7 @@ import { RouteLoadingFallback as LoadingFallback } from "@/components/RouteLoadi
 import HomeOrRedirect from "./components/HomeOrRedirect";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
+import { MetaPixelTrackingBridge } from "@/components/MetaPixelTrackingBridge";
 
 /**
  * Fase 2 — bundle inicial do CRM:
@@ -154,6 +155,8 @@ const WhatsappOfficialChatFull = lazyWithReload(() => import("./pages/superadmin
 const SuperAdminLegalPages = lazyWithReload(() => import("./pages/superadmin/SuperAdminLegalPages"));
 const SuperAdminHubPage = lazyWithReload(() => import("./pages/superadmin/SuperAdminHubPage"));
 const SuperAdminSmtpSettings = lazyWithReload(() => import("./pages/superadmin/SuperAdminSmtpSettings"));
+const SuperAdminTrackingSettings = lazyWithReload(() => import("./pages/superadmin/SuperAdminTrackingSettings"));
+const SignupSuccess = lazyWithReload(() => import("./pages/SignupSuccess"));
 const SuperAdminAdvancedScriptsPage = lazyWithReload(() => import("./pages/superadmin/SuperAdminAdvancedScriptsPage"));
 const PublicPrivacyPolicyPage = lazyWithReload(() =>
   import("./pages/legal/PublicLegalPage").then((m) => ({ default: m.PublicPrivacyPolicyPage })),
@@ -185,6 +188,7 @@ const App = () => (
         <ThemeProvider>
         <AuthProvider>
           <ModulePermissionsProvider>
+          <MetaPixelTrackingBridge />
           <Suspense fallback={<LoadingFallback />}>
           <Routes>
             <Route path="/" element={<HomeOrRedirect />} />
@@ -236,6 +240,16 @@ const App = () => (
               }
             />
             <Route path="/checkout" element={<Suspense fallback={<LoadingFallback />}><PlanCheckout /></Suspense>} />
+            <Route
+              path="/signup-success"
+              element={
+                <AuthGuard requireAuth={true} requireComplete={false} redirectTo="/login">
+                  <Suspense fallback={<LoadingFallback />}>
+                    <SignupSuccess />
+                  </Suspense>
+                </AuthGuard>
+              }
+            />
             <Route
               path="/suporte"
               element={
@@ -918,6 +932,14 @@ const App = () => (
                 <Route path="subscription-cycles" element={<Suspense fallback={<LoadingFallback />}><SuperAdminSubscriptionCyclesSettings /></Suspense>} />
                 <Route path="platform-notifications" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlatformNotifications /></Suspense>} />
                 <Route path="smtp" element={<Suspense fallback={<LoadingFallback />}><SuperAdminSmtpSettings /></Suspense>} />
+                <Route
+                  path="marketing/tracking"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SuperAdminTrackingSettings />
+                    </Suspense>
+                  }
+                />
                 <Route
                   path="platform-support"
                   element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlatformSupport /></Suspense>}

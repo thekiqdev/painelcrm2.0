@@ -7,6 +7,7 @@ import { clearAllCachedAppData } from '@/lib/queryClient';
 import { clearAuthState, getCurrentUserProfile } from '@/utils/auth-helpers';
 import { getPostAuthHomePath } from '@/utils/superAdminRedirect';
 import { COMMERCIAL_402_REDIRECT_FLAG } from '@/lib/commercialAccessPaths';
+import { withMarketingAttribution } from '@/lib/marketingAttribution';
 
 interface User {
   id: string;
@@ -263,9 +264,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         company_name: companyName,
       };
       
-      const response = await apiClient.post<{ user: User; token: string }>('/api/auth/register', {
-        ...payload,
-      });
+      const response = await apiClient.post<{ user: User; token: string }>(
+        '/api/auth/register',
+        withMarketingAttribution(payload),
+      );
 
       if (response.error) {
         toast.error(response.error || 'Falha no cadastro');

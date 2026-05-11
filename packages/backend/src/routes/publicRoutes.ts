@@ -36,6 +36,7 @@ import {
   getPublicRescheduleConflictsByToken,
   postPublicAppointmentConfirmationByToken,
 } from '../controllers/publicAppointmentsConfirmationController.js';
+import { getPublicPlatformTrackingSettings } from '../controllers/publicPlatformTrackingController.js';
 
 const router = Router();
 
@@ -60,6 +61,7 @@ const catalogMediaPublicRawLimiter = rateLimit({
 });
 
 router.get('/catalog-media/raw', catalogMediaPublicRawLimiter, getPublicCatalogMediaRaw);
+router.get('/tracking-settings', getPublicPlatformTrackingSettings);
 
 router.get('/legal/:page', legalPublicLimiter, getPublicLegalPage);
 

@@ -37,6 +37,11 @@ import {
 } from '../services/platformNotifications/platformBusinessNotifications.js';
 import { effectiveCheckoutTrialDays } from '../utils/checkoutTrialPlan.js';
 import { getMyTenantAndPrimary } from './myTenantPlanController.js';
+import {
+  marketingAttributionInputSchema,
+  parseMarketingAttributionFromBody,
+  persistTenantMarketingAttribution,
+} from '../services/marketingAttributionService.js';
 
 const validateCheckoutAdminBodySchema = z.object({
   email: z.string().email(),
@@ -59,6 +64,7 @@ const planPurchaseBodySchema = z.object({
   password: z.string().min(6).optional(),
   /** WhatsApp do admin (normalizado no backend); alternativa legada: só `phone`. */
   whatsapp: z.string().optional(),
+  marketing_attribution: marketingAttributionInputSchema.optional().nullable(),
 });
 
 function slugify(name: string): string {
@@ -806,6 +812,12 @@ export async function postCompleteSignupTrial(req: AuthRequest, res: Response): 
       },
       { db: client }
     );
+
+    await persistTenantMarketingAttribution(client, {
+      tenantId,
+      userId,
+      attribution: parseMarketingAttributionFromBody({ marketing_attribution: body.marketing_attribution }),
+    });
 
     await client.query('COMMIT');
 

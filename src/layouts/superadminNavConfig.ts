@@ -207,6 +207,17 @@ export const superAdminNavGroups: SuperAdminNavGroup[] = [
     ],
   },
   {
+    id: "marketing",
+    label: "Marketing",
+    items: [
+      {
+        label: "Tracking",
+        to: "/superadmin/marketing/tracking",
+        icon: RadioTower,
+      },
+    ],
+  },
+  {
     id: "plataforma",
     label: "Plataforma",
     items: [

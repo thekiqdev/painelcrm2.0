@@ -7,6 +7,8 @@ import { Label } from "@/components/ui/label";
 import { toast } from "@/components/ui/sonner";
 import { apiClient } from "@/integrations/api/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { withMarketingAttribution } from "@/lib/marketingAttribution";
+import { buildSignupSuccessNavigation } from "@/lib/signupSuccessNavigation";
 import { formatPhoneBrDigits, formatCpfCnpjDigits } from "@/lib/brazilInputMasks";
 import { isValidCpfOrCnpj } from "@/utils/cpfCnpj";
 import {
@@ -212,26 +214,29 @@ export default function RegisterOrganizationWizard() {
           default_profile_id?: string | null;
           tenant_id?: string | null;
         };
-      }>("/api/auth/register/organization", {
-        plan_id: planId,
-        company: {
-          name: companyName.trim(),
-          cpf_cnpj: companyCpfCnpjDigits,
-          email: companyEmail.trim().toLowerCase(),
-          phone: companyPhone.replace(/\D/g, ""),
-        },
-        admin: {
-          first_name: adminFirstName.trim(),
-          last_name: adminLastName.trim() || null,
-          email: adminEmail.trim().toLowerCase(),
-          whatsapp: adminWhatsapp.replace(/\D/g, ""),
-          password: adminPassword,
-        },
-        billing_finalize: {
-          billing_phone: bp,
-          responsible_name: responsibleName.trim() || null,
-        },
-      });
+      }>(
+        "/api/auth/register/organization",
+        withMarketingAttribution({
+          plan_id: planId,
+          company: {
+            name: companyName.trim(),
+            cpf_cnpj: companyCpfCnpjDigits,
+            email: companyEmail.trim().toLowerCase(),
+            phone: companyPhone.replace(/\D/g, ""),
+          },
+          admin: {
+            first_name: adminFirstName.trim(),
+            last_name: adminLastName.trim() || null,
+            email: adminEmail.trim().toLowerCase(),
+            whatsapp: adminWhatsapp.replace(/\D/g, ""),
+            password: adminPassword,
+          },
+          billing_finalize: {
+            billing_phone: bp,
+            responsible_name: responsibleName.trim() || null,
+          },
+        }),
+      );
 
       if (res.error) {
         toast.error(res.error);
@@ -247,7 +252,8 @@ export default function RegisterOrganizationWizard() {
         });
         await refreshUser();
         toast.success("Conta criada com sucesso!");
-        navigate("/register/steps", { replace: true });
+        const dest = buildSignupSuccessNavigation("/register/steps");
+        navigate(dest.pathname, { replace: true, state: dest.state });
       }
     } finally {
       setSubmitting(false);

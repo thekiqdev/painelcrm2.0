@@ -17,6 +17,11 @@ import {
 import { z } from 'zod';
 import { normalizeEmailForUniqueness, normalizeWhatsappDigits } from '../utils/userIdentity.js';
 import { refreshCatalogMediaRelativeSignedUrl } from '../utils/catalogMediaPublicSignedUrl.js';
+import {
+  marketingAttributionInputSchema,
+  parseMarketingAttributionFromBody,
+  persistTenantMarketingAttribution,
+} from '../services/marketingAttributionService.js';
 
 const registerSchema = z.object({
   email: z.string().email(),
@@ -25,6 +30,7 @@ const registerSchema = z.object({
   first_name: z.string().optional(),
   last_name: z.string().optional(),
   company_name: z.string().optional(),
+  marketing_attribution: marketingAttributionInputSchema.optional().nullable(),
 });
 
 const loginSchema = z.object({
@@ -76,6 +82,7 @@ export async function register(req: Request, res: Response): Promise<void> {
       first_name,
       last_name,
       company_name,
+      marketing_attribution,
     } = registerSchema.parse(req.body);
 
     const normalizedEmail = normalizeEmailForUniqueness(email);
@@ -235,6 +242,11 @@ export async function register(req: Request, res: Response): Promise<void> {
         [tenantId, planId]
       );
       setImmediate(() => notifySuperAdminsNewTenant(inferredCompanyName, tenantId).catch(() => {}));
+      await persistTenantMarketingAttribution(client, {
+        tenantId,
+        userId: user.id,
+        attribution: parseMarketingAttributionFromBody({ marketing_attribution }),
+      });
     }
 
     await client.query('COMMIT');

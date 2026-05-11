@@ -358,6 +358,10 @@ const order = [
   '229_platform_notifications_email_business_events.sql',
   /** Suporte da plataforma (chamados + WhatsApp Super Admin) */
   '230_platform_support.sql',
+  /** Meta Pixel / tracking (Super Admin) */
+  '231_platform_tracking_settings.sql',
+  /** UTM / fbclid no cadastro */
+  '232_tenant_marketing_attribution.sql',
   'create-admin-user.sql',
 ];
 
