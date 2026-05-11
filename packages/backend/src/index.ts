@@ -24,6 +24,7 @@ import cartRoutes from './routes/cartRoutes.js';
 import ordersRoutes from './routes/ordersRoutes.js';
 import ticketsRoutes from './routes/ticketsRoutes.js';
 import ticketCategoriesRoutes from './routes/ticketCategoriesRoutes.js';
+import platformSupportRoutes from './routes/platformSupportRoutes.js';
 import contractsRoutes from './routes/contractsRoutes.js';
 import contractTemplatesRoutes from './routes/contractTemplatesRoutes.js';
 import proposalTemplatesRoutes from './routes/proposalTemplatesRoutes.js';
@@ -105,6 +106,7 @@ import {
   resolveExistingWhatsappTemplateMediaAbsolutePath,
 } from './services/whatsappTemplateMediaStorageService.js';
 import { syncOverdueBillingStatuses } from './services/billingOverdueStatusService.js';
+import { notifyPlatformTrialsExpiringSoon } from './services/platformNotifications/platformTrialExpiringNotificationService.js';
 import { processAnnouncementSendRecipientsBatch } from './services/announcements/announcementSendWorker.js';
 import { runAppointmentRemindersOnce } from './services/appointmentReminderWorkerService.js';
 import { runPendingConfirmationAutomationOnce } from './services/appointmentAutomationService.js';
@@ -157,6 +159,9 @@ app.use(cors({
 /** Webhook Meta WhatsApp Cloud API — corpo bruto para assinatura X-Hub-Signature-256 (antes do JSON global). */
 app.use('/api/webhooks/whatsapp-official', whatsappOfficialWebhookRoutes);
 app.use('/webhooks/whatsapp-official', whatsappOfficialWebhookRoutes);
+/** Alias canónico pedido para o painel Meta (mesmo router: verificação GET + POST com assinatura). */
+app.use('/api/webhooks/meta/whatsapp', whatsappOfficialWebhookRoutes);
+app.use('/webhooks/meta/whatsapp', whatsappOfficialWebhookRoutes);
 
 /** Base64 de imagem no JSON de POST /api/chat/messages excede o padrão do body-parser (100kb). */
 const jsonBodyLimit = process.env.API_JSON_BODY_LIMIT || '25mb';
@@ -380,6 +385,7 @@ app.use('/api/cart', cartRoutes);
 app.use('/api/orders', ordersRoutes);
 app.use('/api/tickets', ticketsRoutes);
 app.use('/api/ticket-categories', ticketCategoriesRoutes);
+app.use('/api/platform-support', platformSupportRoutes);
 app.use('/api/contracts', contractsRoutes);
 app.use('/api/contract-templates', contractTemplatesRoutes);
 app.use('/api/project-templates', projectTemplatesRoutes);
@@ -483,10 +489,22 @@ void (async () => {
   try {
     await pool.query('SELECT 1');
     console.log('✅ Connected to PostgreSQL database');
+    console.log(
+      '[boot] Runtime target:',
+      JSON.stringify({
+        API_PORT: PORT,
+        POSTGRES_HOST: process.env.POSTGRES_HOST || 'localhost',
+        POSTGRES_PORT: process.env.POSTGRES_PORT || '5432',
+        POSTGRES_DB: process.env.POSTGRES_DB || 'painelcrm',
+        NODE_ENV: process.env.NODE_ENV || 'development',
+      }),
+    );
     const { ensureWhatsappOfficialEncryptionMaterial } = await import(
       './services/whatsappOfficial/whatsappOfficialEncryptionBootstrap.js'
     );
     await ensureWhatsappOfficialEncryptionMaterial(pool);
+    const { ensureSmtpEncryptionMaterial } = await import('./services/smtpEncryptionBootstrap.js');
+    await ensureSmtpEncryptionMaterial(pool);
     await refreshSystemFeatureFlagsFromPool(pool);
     console.log('[boot] Flags globais (system_feature_flags) e cifra WhatsApp oficial carregadas.');
   } catch (err) {
@@ -556,6 +574,20 @@ void (async () => {
       })
       .catch((err) => console.error('[billing-overdue-sync] batch error', err));
   }, overdueSyncPollMs);
+
+  const trialExpiringPollMs = Math.max(
+    60_000,
+    parseInt(process.env.PLATFORM_TRIAL_EXPIRING_NOTIFICATION_POLL_MS || '21600000', 10),
+  );
+  setInterval(() => {
+    void notifyPlatformTrialsExpiringSoon()
+      .then((result) => {
+        if (result.notified > 0) {
+          console.log(`[platform-trial-expiring] notified=${result.notified}`);
+        }
+      })
+      .catch((err) => console.error('[platform-trial-expiring] tick error', err));
+  }, trialExpiringPollMs);
 
   const announcementsPollMs = Math.max(2000, parseInt(process.env.ANNOUNCEMENTS_SEND_POLL_MS || '4000', 10));
   setInterval(() => {

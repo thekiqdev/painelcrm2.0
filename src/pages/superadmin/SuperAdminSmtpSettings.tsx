@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiClient } from '@/integrations/api/client';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -56,7 +56,6 @@ export default function SuperAdminSmtpSettings() {
   const [replyTo, setReplyTo] = useState('');
 
   const [passwordConfigured, setPasswordConfigured] = useState(false);
-  const [encryptionConfigured, setEncryptionConfigured] = useState(false);
 
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
@@ -74,7 +73,6 @@ export default function SuperAdminSmtpSettings() {
     setFromEmail(d.smtp_from_email ?? '');
     setReplyTo(d.smtp_reply_to_email ?? '');
     setPasswordConfigured(d.smtp_password_configured);
-    setEncryptionConfigured(d.smtp_password_encryption_configured);
   }, []);
 
   const load = useCallback(async () => {
@@ -92,16 +90,21 @@ export default function SuperAdminSmtpSettings() {
     void load();
   }, [load]);
 
+  const smtpConfigured = useMemo(
+    () => Boolean(host.trim() && isValidEmail(fromEmail) && passwordConfigured),
+    [host, fromEmail, passwordConfigured],
+  );
+
   const validate = (): boolean => {
     const err: Record<string, string> = {};
     if (enabled) {
-      if (!host.trim()) err.host = 'Obrigatório quando SMTP está ativo.';
+      if (!host.trim()) err.host = 'Obrigatório quando os envios automáticos estão ativos.';
       const p = parseInt(port.trim(), 10);
       if (!port.trim() || Number.isNaN(p) || p < 1 || p > 65535) {
         err.port = 'Indique uma porta entre 1 e 65535.';
       }
       if (!isValidEmail(fromEmail)) {
-        err.fromEmail = 'E-mail do remetente é obrigatório e deve ser válido quando SMTP está ativo.';
+        err.fromEmail = 'E-mail do remetente é obrigatório e deve ser válido quando os envios automáticos estão ativos.';
       }
     }
     if (replyTo.trim() && !isValidEmail(replyTo)) {
@@ -177,45 +180,53 @@ export default function SuperAdminSmtpSettings() {
           SMTP
         </h1>
         <p className="text-muted-foreground mt-1">
-          Configure o servidor de envio de e-mail da plataforma. As credenciais são guardadas no servidor; a senha não é
-          mostrada depois de gravada.
+          Servidor SMTP global da plataforma: e-mail de teste manual e envios automáticos do motor{' '}
+          <code className="text-xs">platform_notification_*</code> (canal e-mail).
         </p>
       </div>
 
-      <Alert className="border-border bg-card">
-        <AlertTitle>Envio automático</AlertTitle>
-        <AlertDescription>
-          Esta configuração prepara o envio por e-mail, mas ainda não ativa notificações automáticas por SMTP.
-        </AlertDescription>
-      </Alert>
-
-      {!encryptionConfigured ? (
-        <Alert variant="destructive">
-          <AlertTitle>Criptografia da senha</AlertTitle>
+      {!loading && smtpConfigured && !enabled ? (
+        <Alert variant="destructive" className="border-destructive/40 bg-destructive/5">
+          <AlertTitle>Envios automáticos desativados</AlertTitle>
           <AlertDescription>
-            Configure SMTP_SETTINGS_SECRET no servidor para permitir salvar senha SMTP.
+            O SMTP está configurado, mas os envios automáticos do sistema estão desativados. O e-mail de teste pode
+            funcionar; notificações transacionais da plataforma ficam em <strong>skipped</strong> até ativar o interruptor
+            abaixo e guardar.
           </AlertDescription>
         </Alert>
       ) : null}
 
       <Card className="border-border bg-card">
         <CardHeader>
-          <CardTitle className="text-foreground">Status</CardTitle>
-          <CardDescription>Ligar ou desligar o uso da configuração SMTP na plataforma (sem alterar o motor de WhatsApp).</CardDescription>
+          <CardTitle className="text-foreground">Envios automáticos do sistema</CardTitle>
+          <CardDescription>
+            Liga ou desliga o envio transacional por SMTP do motor da plataforma. Não altera o motor de WhatsApp.
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {loading ? (
             <p className="text-sm text-muted-foreground">A carregar…</p>
           ) : (
-            <div className="flex items-center justify-between gap-4">
-              <div className="space-y-1">
-                <Label className="text-base">SMTP ativo</Label>
-                <p className="text-sm text-muted-foreground">
-                  Quando ativo, os campos do servidor e remetente tornam-se obrigatórios para guardar com valores válidos.
-                </p>
+            <>
+              <div className="flex items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <Label className="text-base">Envios automáticos ativados</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Quando ativo, o motor <code className="text-xs">platform_notification_*</code> pode enviar e-mail
+                    (respeitando gates e templates). Com host, remetente e senha válidos, o servidor fica pronto para
+                    envio.
+                  </p>
+                </div>
+                <Switch checked={enabled} onCheckedChange={setEnabled} />
               </div>
-              <Switch checked={enabled} onCheckedChange={setEnabled} />
-            </div>
+              <p className="text-sm text-muted-foreground">
+                SMTP configurado:{' '}
+                <span className="font-medium text-foreground">{smtpConfigured ? 'sim' : 'incompleto'}</span>
+                {' · '}
+                Envios automáticos:{' '}
+                <span className="font-medium text-foreground">{enabled ? 'ativados' : 'desativados'}</span>
+              </p>
+            </>
           )}
         </CardContent>
       </Card>
@@ -306,7 +317,7 @@ export default function SuperAdminSmtpSettings() {
       <Card className="border-border bg-card">
         <CardHeader>
           <CardTitle className="text-foreground">Remetente</CardTitle>
-          <CardDescription>Cabeçalhos apresentados aos destinatários quando o envio por SMTP estiver disponível.</CardDescription>
+          <CardDescription>Cabeçalhos apresentados aos destinatários.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {loading ? (
@@ -349,8 +360,8 @@ export default function SuperAdminSmtpSettings() {
             E-mail de teste
           </CardTitle>
           <CardDescription>
-            Envia uma mensagem pontual usando a configuração SMTP <strong className="text-foreground">já guardada</strong>{' '}
-            na base de dados (não usa valores apenas no formulário sem gravar). Não ativa notificações automáticas.
+            Envia uma mensagem pontual com a configuração <strong className="text-foreground">já guardada</strong>. Não
+            depende do interruptor de envios automáticos; valida apenas host, credenciais e remetente.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-end">

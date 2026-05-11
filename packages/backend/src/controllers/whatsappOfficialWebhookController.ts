@@ -12,6 +12,7 @@ export async function getWhatsappOfficialWebhook(req: Request, res: Response): P
   if (mode === 'subscribe' && typeof token === 'string' && typeof challenge === 'string') {
     const ok = await matchWebhookVerifyToken(token);
     if (ok) {
+      console.log(JSON.stringify({ event: 'meta_webhook_verified', hub_mode: mode }));
       res.status(200).type('text/plain').send(challenge);
       return;
     }
@@ -27,6 +28,7 @@ export async function postWhatsappOfficialWebhook(req: Request, res: Response): 
       return;
     }
     const sig = req.get('x-hub-signature-256');
+    console.log(JSON.stringify({ event: 'meta_webhook_received', bytes: raw.length }));
     const okSig = await verifyWebhookSignature(raw, sig);
     if (!okSig) {
       res.status(403).json({ error: 'Assinatura inválida' });

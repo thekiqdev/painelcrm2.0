@@ -17,7 +17,7 @@ function stripAccessTokenFromUrl(urlString: string): string {
   }
 }
 
-async function graphFetch(
+export async function graphFetch(
   method: 'GET' | 'POST',
   path: string,
   accessToken: string,
@@ -149,6 +149,29 @@ export async function getPhoneNumberInfo(phoneNumberId: string, accessToken: str
     return { ok: false, error: err.error?.message || 'Graph error' };
   }
   return { ok: true, data: json as { display_phone_number?: string; verified_name?: string } };
+}
+
+/**
+ * Regista o callback do webhook ao nível da App na Graph API (quando o token tem permissões).
+ * Nem todos os access tokens o permitem — nesse caso devolver instruções manuais.
+ */
+export async function subscribeAppWhatsappBusinessAccountWebhook(
+  appId: string,
+  accessToken: string,
+  input: { callbackUrl: string; verifyToken: string }
+): Promise<{ ok: boolean; status: number; error?: string; json: unknown }> {
+  const path = `/${appId.trim()}/subscriptions`;
+  const body: Record<string, unknown> = {
+    object: 'whatsapp_business_account',
+    callback_url: input.callbackUrl,
+    fields: 'messages',
+    verify_token: input.verifyToken,
+  };
+  const { ok, status, json } = await graphFetch('POST', path, accessToken, body);
+  if (!ok) {
+    return { ok: false, status, error: graphErrorMessage(json), json };
+  }
+  return { ok: true, status, json };
 }
 
 export async function sendTextMessage(

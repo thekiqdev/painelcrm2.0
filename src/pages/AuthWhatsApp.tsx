@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, FormEvent } from 'react';
-import { useNavigate, useLocation, Link } from 'react-router-dom';
+import { useNavigate, useLocation, Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { getPostAuthHomePath } from '@/utils/superAdminRedirect';
 import { Button } from '@/components/ui/button';
@@ -75,13 +75,28 @@ const AuthWhatsApp = () => {
   const { user, signIn, signUp } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const redirectParam = searchParams.get('redirect');
   const fromState = (location.state as LocationFrom | null)?.from;
 
+  const safeRedirectPath = (raw: string | null | undefined): string | null => {
+    if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return null;
+    return raw;
+  };
+
   useEffect(() => {
-    if (user) {
-      navigate(getPostAuthHomePath(user), { replace: true });
+    if (!user) return;
+    const fromQuery = safeRedirectPath(redirectParam);
+    if (fromQuery) {
+      navigate(fromQuery, { replace: true });
+      return;
     }
-  }, [user, navigate]);
+    if (fromState?.pathname && fromState.pathname !== '/login') {
+      navigate(`${fromState.pathname}${fromState.search || ''}`, { replace: true });
+      return;
+    }
+    navigate(getPostAuthHomePath(user), { replace: true });
+  }, [user, navigate, redirectParam, fromState]);
 
   const startResendCooldown = useCallback(() => {
     setResendCooldown(60);
@@ -97,6 +112,8 @@ const AuthWhatsApp = () => {
   }, []);
 
   const resolvePostLoginTarget = (dest: string) => {
+    const fromQuery = safeRedirectPath(redirectParam);
+    if (fromQuery) return fromQuery;
     if (fromState?.pathname && fromState.pathname !== '/login') {
       return `${fromState.pathname}${fromState.search || ''}`;
     }

@@ -19,10 +19,13 @@ import superadminAnnouncementRoutes from './superadminAnnouncementRoutes.js';
 import * as superadminLegalPagesController from '../controllers/superadminLegalPagesController.js';
 import * as superadminWhatsappAvatarBackfillController from '../controllers/superadminWhatsappAvatarBackfillController.js';
 import * as smtpSuperadminSettingsController from '../controllers/smtpSuperadminSettingsController.js';
+import * as superadminPlatformSupportController from '../controllers/superadminPlatformSupportController.js';
 import * as superadminLeadsController from '../controllers/superadminLeadsController.js';
+import rateLimit from 'express-rate-limit';
 import superadminWhatsappOfficialRoutes from './superadminWhatsappOfficialRoutes.js';
 import connectionsRoutes from './connectionsRoutes.js';
 import superadminChatRoutes from './superadminChatRoutes.js';
+import * as superadminWhatsappOfficialController from '../controllers/superadminWhatsappOfficialController.js';
 import * as adminScriptsController from '../controllers/adminScriptsController.js';
 import {
   getSuperadminMediaStorageDiagnostics,
@@ -31,6 +34,14 @@ import {
 } from '../services/media/mediaController.js';
 
 const router = Router();
+
+const metaIntegrationWriteLimit = rateLimit({
+  windowMs: 60_000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'development',
+});
 
 router.use(...superadminAuth);
 
@@ -163,6 +174,20 @@ router.get('/smtp-settings', smtpSuperadminSettingsController.getSmtpSuperadminS
 router.put('/smtp-settings', smtpSuperadminSettingsController.putSmtpSuperadminSettingsHandler);
 router.post('/smtp-settings/test', smtpSuperadminSettingsController.postSmtpSuperadminTestEmailHandler);
 
+router.get('/platform-support/settings', superadminPlatformSupportController.getSuperadminPlatformSupportSettings);
+router.put('/platform-support/settings', superadminPlatformSupportController.putSuperadminPlatformSupportSettings);
+router.get('/platform-support/summary', superadminPlatformSupportController.getSuperadminPlatformSupportSummary);
+router.get('/platform-support/tickets', superadminPlatformSupportController.getSuperadminPlatformSupportTickets);
+router.get('/platform-support/tickets/:id', superadminPlatformSupportController.getSuperadminPlatformSupportTicketDetail);
+router.post(
+  '/platform-support/tickets/:id/messages',
+  superadminPlatformSupportController.postSuperadminPlatformSupportTicketMessage,
+);
+router.put(
+  '/platform-support/tickets/:id/status',
+  superadminPlatformSupportController.patchSuperadminPlatformSupportTicketStatus,
+);
+
 router.put('/legal/:page/draft', superadminLegalPagesController.putSuperadminLegalDraft);
 router.post('/legal/:page/publish', superadminLegalPagesController.postSuperadminLegalPublish);
 router.get('/legal/:page', superadminLegalPagesController.getSuperadminLegalPage);
@@ -170,6 +195,12 @@ router.get('/legal/:page', superadminLegalPagesController.getSuperadminLegalPage
 router.use('/announcements', superadminAnnouncementRoutes);
 
 router.use('/connections', connectionsRoutes);
+
+router.post(
+  '/integrations/meta/whatsapp/configure-webhook',
+  metaIntegrationWriteLimit,
+  superadminWhatsappOfficialController.postMetaWhatsappConfigureWebhook,
+);
 
 router.use('/whatsapp-official', superadminWhatsappOfficialRoutes);
 

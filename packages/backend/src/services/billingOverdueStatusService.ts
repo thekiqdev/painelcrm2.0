@@ -1,4 +1,5 @@
 import { pool } from '../utils/db.js';
+import { schedulePublishPlatformBillingChargeOverdue } from './platformNotifications/platformBusinessNotifications.js';
 
 const OVERDUE_TRANSITION_FROM_STATUSES = ['pending', 'waiting_payment', 'processing'] as const;
 
@@ -51,9 +52,9 @@ export async function markOverdueCustomerInvoices(
 
 export async function markOverdueTenantBillings(
   options: MarkOverdueOptions = {}
-): Promise<number> {
+): Promise<string[]> {
   const tenantId = options.tenantId ?? null;
-  const r = await pool.query<{ c: string }>(
+  const r = await pool.query<{ id: string }>(
     `WITH tz_today AS (
        SELECT
          t.id AS tenant_id,
@@ -71,24 +72,29 @@ export async function markOverdueTenantBillings(
        WHERE tb.tenant_id = tt.tenant_id
          AND tb.status = ANY($2::text[])
          AND tb.due_date < tt.tenant_today
-       RETURNING 1
+       RETURNING tb.id::text AS id
      )
-     SELECT COUNT(*)::text AS c FROM updated`,
+     SELECT id FROM updated`,
     [tenantId, OVERDUE_TRANSITION_FROM_STATUSES]
   );
-  return parseCount(r.rows[0]?.c);
+  return r.rows.map((row) => row.id);
 }
 
 export async function syncOverdueBillingStatuses(
   options: MarkOverdueOptions = {}
 ): Promise<OverdueSyncResult> {
-  const [customerInvoicesUpdated, tenantBillingsUpdated] = await Promise.all([
+  const [customerInvoicesUpdated, overdueTenantBillingIds] = await Promise.all([
     markOverdueCustomerInvoices(options),
     markOverdueTenantBillings(options),
   ]);
+
+  for (const billingId of overdueTenantBillingIds) {
+    schedulePublishPlatformBillingChargeOverdue(billingId);
+  }
+
   return {
     customer_invoices_updated: customerInvoicesUpdated,
-    tenant_billing_updated: tenantBillingsUpdated,
+    tenant_billing_updated: overdueTenantBillingIds.length,
   };
 }
 

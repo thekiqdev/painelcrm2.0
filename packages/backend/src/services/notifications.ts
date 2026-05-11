@@ -178,6 +178,9 @@ export function resolveNotificationHrefForRow(n: Notification): string {
   const dataHref = typeof d.href === 'string' ? d.href.trim() : '';
   if (dataHref.startsWith('/')) return dataHref;
 
+  const actionUrl = typeof d.action_url === 'string' ? d.action_url.trim() : '';
+  if (actionUrl.startsWith('/')) return actionUrl;
+
   const type = String(n.type || '');
   const et = n.entity_type != null ? String(n.entity_type) : '';
 
@@ -257,6 +260,15 @@ export function resolveNotificationHrefForRow(n: Notification): string {
 
   const ticketId =
     typeof d.ticket_id === 'string' ? d.ticket_id : typeof d.ticketId === 'string' ? d.ticketId : '';
+  if (
+    ticketId &&
+    (type === 'platform_support_reply' || type === 'platform_support.ticket_replied')
+  ) {
+    return `/suporte/${ticketId}`;
+  }
+  if (ticketId && type === 'platform_support_new_ticket') {
+    return `/superadmin/platform-support/tickets/${ticketId}`;
+  }
   if (ticketId) return `/support/tickets/${ticketId}`;
 
   if (type.startsWith('superadmin_')) {

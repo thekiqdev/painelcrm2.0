@@ -40,6 +40,12 @@ export function isPlatformNotificationsWhatsAppSendEnabled(): boolean {
   return getCachedPlatformNotificationsFlags().whatsappSend;
 }
 
+/** Envio de e-mail transacional (SMTP Super Admin). Kill switch: PLATFORM_NOTIFICATIONS_EMAIL_SEND_ENABLED=false */
+export function isPlatformNotificationsEmailSendEnabled(): boolean {
+  if (envExplicitlyOff(process.env.PLATFORM_NOTIFICATIONS_EMAIL_SEND_ENABLED)) return false;
+  return true;
+}
+
 /**
  * Log verboso: env PLATFORM_NOTIFICATIONS_VERBOSE_LOG=true OU flag em superadmin_settings
  * (cache já incorpora DB; env tem precedência para diagnóstico rápido).

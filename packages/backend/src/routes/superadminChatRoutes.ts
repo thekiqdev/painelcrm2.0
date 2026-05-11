@@ -22,6 +22,7 @@ import {
   getMessageComments,
   postMessageComment,
 } from '../controllers/chatCollaborationController.js';
+import { getSuperadminChatMetaIntegrationStatus } from '../controllers/superadminChatMetaController.js';
 
 const router = Router();
 
@@ -70,6 +71,7 @@ function platformUnsupportedCrmAction(_req: AuthRequest, res: Response): void {
 }
 
 router.get('/runtime-config', getChatRuntimeConfig);
+router.get('/meta-integration-status', getSuperadminChatMetaIntegrationStatus);
 
 router.get('/instances', listInstances);
 router.post('/instances', createInstance);

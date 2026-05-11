@@ -14,6 +14,7 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import { Logo } from "@/components/Logo";
 import { cn } from "@/lib/utils";
+import { platformSupportHref } from "@/lib/platformSupportNav";
 
 const Navbar = () => {
   const [open, setOpen] = useState(false);
@@ -59,6 +60,18 @@ const Navbar = () => {
           <a href="#planos" className="text-sm text-muted-foreground transition-colors hover:text-foreground">
             Planos
           </a>
+          {isLoggedIn ? (
+            <Link to="/suporte" className="text-sm text-muted-foreground transition-colors hover:text-foreground">
+              Suporte
+            </Link>
+          ) : (
+            <Link
+              to={platformSupportHref(false)}
+              className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+            >
+              Suporte
+            </Link>
+          )}
         </div>
 
         <div className="hidden items-center gap-3 md:flex">

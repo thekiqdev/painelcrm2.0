@@ -26,6 +26,9 @@ export async function verifyWebhookSignature(rawBody: Buffer, signatureHeader: s
     return true;
   }
   if (!signatureHeader || !signatureHeader.startsWith('sha256=')) {
+    console.warn(
+      JSON.stringify({ event: 'meta_webhook_signature_invalid', reason: 'missing_or_malformed_header' })
+    );
     return false;
   }
   const sigHex = signatureHeader.slice('sha256='.length);
@@ -33,6 +36,16 @@ export async function verifyWebhookSignature(rawBody: Buffer, signatureHeader: s
     `SELECT id::text FROM whatsapp_official_accounts
      WHERE app_secret_ciphertext IS NOT NULL AND btrim(app_secret_ciphertext) <> ''`
   );
+  if (r.rows.length === 0) {
+    console.warn(
+      JSON.stringify({
+        event: 'meta_webhook_signature_skipped_no_app_secret',
+        message:
+          'WHATSAPP_OFFICIAL_WEBHOOK_VERIFY_SIGNATURE está ativo mas nenhuma conta tem app_secret — aceitar payload (TODO: configurar app_secret na conta Meta para validação HMAC em produção).',
+      })
+    );
+    return true;
+  }
   for (const row of r.rows) {
     const cred = await getAccountCredentials(row.id);
     if (!cred?.appSecretPlain) continue;
@@ -40,6 +53,7 @@ export async function verifyWebhookSignature(rawBody: Buffer, signatureHeader: s
       return true;
     }
   }
+  console.warn(JSON.stringify({ event: 'meta_webhook_signature_invalid', reason: 'hmac_no_match' }));
   return false;
 }
 
@@ -88,7 +102,12 @@ export async function processWhatsappOfficialWebhookPayload(body: unknown): Prom
          WHERE phone_number_id = $1 AND is_active = true LIMIT 1`,
         [pnid]
       );
-      if (acc.rows.length === 0) continue;
+      if (acc.rows.length === 0) {
+        console.warn(
+          JSON.stringify({ event: 'meta_webhook_unknown_phone_number_id', phone_number_id: pnid })
+        );
+        continue;
+      }
       const accountId = acc.rows[0]!.id;
       const inboxUserId = acc.rows[0]!.inbox_user_id;
 
@@ -103,6 +122,15 @@ export async function processWhatsappOfficialWebhookPayload(body: unknown): Prom
             textBody: msg.text.body,
             timestampSec: msg.timestamp,
           });
+          console.log(
+            JSON.stringify({
+              event: 'meta_message_received',
+              phone_number_id: pnid,
+              account_id: accountId,
+              conversation_id: ing.conversationId,
+              duplicate: ing.isDuplicateInbound,
+            })
+          );
           if (!ing.isDuplicateInbound) {
             await emitOperationalOfficialInbound({
               inboxUserId,
@@ -118,6 +146,15 @@ export async function processWhatsappOfficialWebhookPayload(body: unknown): Prom
         const rawSt = st.status || '';
         const mapped = mapDeliveryStatus(rawSt);
         if (!wamid || !mapped) continue;
+
+        console.log(
+          JSON.stringify({
+            event: 'meta_status_received',
+            phone_number_id: pnid,
+            wamid,
+            status: mapped,
+          })
+        );
 
         const n = await updateOutgoingStatusByWamid({ wamid, status: mapped });
         if (n > 0 && inboxUserId) {

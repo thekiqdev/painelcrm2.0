@@ -16,6 +16,7 @@ import {
   generatePasswordResetCompletionToken,
   verifyPasswordResetCompletionToken,
 } from '../utils/jwt.js';
+import { buildPlatformSupportLink } from '../utils/platformPublicUrls.js';
 
 const EVENT_KEY = 'platform.auth.password_reset_code_issued';
 const CODE_TTL_MINUTES = 60;
@@ -29,13 +30,6 @@ const GENERIC_CODE_ERROR = 'Código inválido ou expirado. Solicite um novo cód
 
 function platformPublicName(): string {
   return (process.env.APP_PUBLIC_NAME || 'PainelCRM').trim() || 'PainelCRM';
-}
-
-function platformSupportLink(): string {
-  const u = (process.env.PLATFORM_SUPPORT_URL || '').trim();
-  if (u) return u;
-  const fe = String(process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
-  return `${fe}/login`;
 }
 
 function displayNameFromRow(row: { first_name: string | null; last_name: string | null; email: string }): string {
@@ -132,7 +126,7 @@ async function sendPasswordResetCodeNotification(params: {
 
   const mergeContext: Record<string, string> = {
     'platform.name': platformPublicName(),
-    'platform.support_link': platformSupportLink(),
+    'platform.support_link': buildPlatformSupportLink(),
     'user.name': params.displayName,
     'auth.reset_code': params.plainCode,
     'auth.code_expires_in_minutes': String(CODE_TTL_MINUTES),

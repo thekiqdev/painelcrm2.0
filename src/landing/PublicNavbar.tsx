@@ -31,6 +31,9 @@ export default function PublicNavbar() {
           <a href="#planos" className="text-sm text-muted-foreground transition-colors hover:text-foreground">
             Planos
           </a>
+          <a href="/login?redirect=%2Fsuporte" className="text-sm text-muted-foreground transition-colors hover:text-foreground">
+            Suporte
+          </a>
         </div>
 
         <div className="hidden items-center gap-3 md:flex">
@@ -75,6 +78,9 @@ export default function PublicNavbar() {
             </a>
             <a href="#planos" className="text-sm text-muted-foreground" onClick={() => setOpen(false)}>
               Planos
+            </a>
+            <a href="/login?redirect=%2Fsuporte" className="text-sm text-muted-foreground" onClick={() => setOpen(false)}>
+              Suporte
             </a>
             <Button size="sm" asChild>
               <a href="/checkout" onClick={() => setOpen(false)}>

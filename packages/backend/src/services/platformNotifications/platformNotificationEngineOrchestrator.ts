@@ -17,10 +17,14 @@ import { dispatchPlatformWhatsAppText } from '../notificationsEngine/whatsappCha
 import { tryPlatformBillingPixWhatsappFollowupAfterText } from './platformNotificationWhatsappPixFollowup.js';
 import {
   isPlatformNotificationsEnabled,
+  isPlatformNotificationsBusinessEventsEnabled,
   isPlatformNotificationsWhatsAppSendEnabled,
+  isPlatformNotificationsEmailSendEnabled,
   getPlatformNotificationsWhatsAppMaxSendAttempts,
   getPlatformNotificationsRetryBaseMs,
 } from '../../config/platformNotificationsEnv.js';
+import { sendTransactionalEmail } from '../email/emailDeliveryService.js';
+import { isSmtpReadyForSystemEmail } from '../smtpSuperadminSettingsService.js';
 import { classifyWhatsAppDispatchError } from '../notificationsEngine/whatsappDispatchErrorClassifier.js';
 import { pnLogInfo, pnLogWarn } from './platformNotificationLog.js';
 import {
@@ -331,6 +335,285 @@ export async function runPlatformTransactionalNotification(params: {
     deliveryId,
     status: st,
     renderedSubject: rendered.subject,
+    renderedBody: rendered.body,
+    providerMessageId: null,
+    errorMessage: send.error,
+  };
+}
+
+/**
+ * Entrega por e-mail (canal `email` em `platform_notification_template_system`).
+ * Histórico em `platform_notification_deliveries`; envio síncrono (sem fila de retry específica de SMTP).
+ */
+export async function runPlatformTransactionalEmailDelivery(params: {
+  pool: Pool;
+  targetTenantId: string;
+  eventKey: string;
+  entityType: string;
+  entityId: string | null;
+  idempotencyKey: string;
+  toEmail: string;
+  recipientType: string;
+  mergeContext: Record<string, string>;
+  eventOccurredAt: Date | null;
+  actor: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+}): Promise<PlatformSimulateResult> {
+  if (!isPlatformNotificationsEnabled()) {
+    return { ok: false, error: 'Motor de notificações da plataforma desligado.' };
+  }
+
+  const pilotApplies = params.entityType === 'simulate' || params.metadata?.simulate === true;
+  if (pilotApplies && !isPlatformNotificationPilotTargetAllowed(params.targetTenantId)) {
+    return {
+      ok: false,
+      error: 'Tenant alvo fora do piloto configurado (platform_notifications_pilot_target_tenant_ids).',
+      details: { target_tenant_id: params.targetTenantId },
+    };
+  }
+
+  const businessEvent = params.entityType !== 'simulate' && params.metadata?.simulate !== true;
+  if (businessEvent && !isPlatformNotificationsBusinessEventsEnabled()) {
+    return { ok: false, error: 'Eventos comerciais da plataforma desligados.' };
+  }
+
+  const to = String(params.toEmail ?? '').trim().toLowerCase();
+  if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+    return { ok: false, error: 'E-mail de destino inválido.' };
+  }
+
+  const event = await getPlatformEventByKey(params.pool, params.eventKey);
+  if (!event || !event.is_active) {
+    return { ok: false, error: 'Evento da plataforma não encontrado ou inativo.' };
+  }
+
+  const systemTpl = await getPlatformSystemTemplate(params.pool, params.eventKey, 'email', DEFAULT_LOCALE);
+  if (!systemTpl) {
+    pnLogWarn('platform_notification_email_template_missing', {
+      event_key: params.eventKey,
+      channel: 'email',
+      locale: DEFAULT_LOCALE,
+      target_tenant_id: params.targetTenantId,
+    });
+    const { created, row: deliveryRow } = await insertPlatformDelivery(params.pool, {
+      targetTenantId: params.targetTenantId,
+      eventKey: params.eventKey,
+      entityType: params.entityType,
+      entityId: params.entityId,
+      idempotencyKey: params.idempotencyKey,
+      channel: 'email',
+      recipientType: params.recipientType,
+      recipientAddress: to,
+      status: 'skipped',
+      renderedSubject: null,
+      renderedBody: '',
+      errorMessage: 'template_not_found',
+      providerMessageId: null,
+      actor: params.actor,
+      metadata: {
+        ...params.metadata,
+        delivery_transport: 'smtp_superadmin',
+        skip_reason: 'template_not_found',
+      },
+      eventOccurredAt: params.eventOccurredAt,
+      dispatchSenderUserId: null,
+      dispatchNotBefore: null,
+    });
+    if (created) {
+      await insertPlatformDeliveryAttempt(params.pool, {
+        deliveryId: deliveryRow.id,
+        attemptNumber: 1,
+        status: 'skipped',
+        errorMessage: 'template_not_found',
+        providerResponse: { reason: 'template_not_found' },
+        durationMs: 0,
+      });
+    }
+    return {
+      ok: true,
+      duplicate: !created,
+      deliveryId: deliveryRow.id,
+      status: 'skipped',
+      renderedSubject: null,
+      renderedBody: '',
+      providerMessageId: null,
+      errorMessage: 'template_not_found',
+    };
+  }
+
+  const override = await getPlatformOverride(params.pool, params.eventKey, 'email', DEFAULT_LOCALE);
+  const subjectTpl = override?.subject_template ?? systemTpl.subject_template;
+  const bodyTpl = override?.body_template ?? systemTpl.body_template;
+
+  const rendered = renderStrictTemplates({
+    subjectTemplate: subjectTpl,
+    bodyTemplate: bodyTpl,
+    context: params.mergeContext,
+    allowedMergeFields: event.merge_field_list,
+  });
+
+  if (!rendered.ok) {
+    pnLogWarn('platform_email_render_strict_failed', {
+      target_tenant_id: params.targetTenantId,
+      event_key: params.eventKey,
+      error: rendered.error,
+    });
+    return {
+      ok: false,
+      error: rendered.error,
+      details: {
+        disallowedPlaceholders: rendered.disallowedPlaceholders,
+        missingKeys: rendered.missingKeys,
+      },
+    };
+  }
+
+  const subjectFinal = (rendered.subject ?? '').trim() || 'Notificação PainelCRM';
+
+  const smtpGate = await isSmtpReadyForSystemEmail();
+  const emailSendEnabled = isPlatformNotificationsEmailSendEnabled();
+
+  const skipReason = !emailSendEnabled
+    ? 'PLATFORM_NOTIFICATIONS_EMAIL_SEND_ENABLED=false'
+    : !smtpGate.ok
+      ? `smtp_not_ready:${smtpGate.reason ?? 'unknown'}`
+      : null;
+
+  const { created, row: deliveryRow } = await insertPlatformDelivery(params.pool, {
+    targetTenantId: params.targetTenantId,
+    eventKey: params.eventKey,
+    entityType: params.entityType,
+    entityId: params.entityId,
+    idempotencyKey: params.idempotencyKey,
+    channel: 'email',
+    recipientType: params.recipientType,
+    recipientAddress: to,
+    status: skipReason ? 'skipped' : 'queued',
+    renderedSubject: subjectFinal,
+    renderedBody: rendered.body,
+    errorMessage: skipReason,
+    providerMessageId: null,
+    actor: params.actor,
+    metadata: {
+      ...params.metadata,
+      delivery_transport: 'smtp_superadmin',
+    },
+    eventOccurredAt: params.eventOccurredAt,
+    dispatchSenderUserId: null,
+    dispatchNotBefore: null,
+  });
+
+  if (!created) {
+    pnLogInfo('platform_email_idempotent_duplicate', {
+      target_tenant_id: params.targetTenantId,
+      event_key: params.eventKey,
+      idempotency_key: params.idempotencyKey,
+      delivery_id: deliveryRow.id,
+    });
+    return {
+      ok: true,
+      duplicate: true,
+      deliveryId: deliveryRow.id,
+      status: deliveryRow.status,
+      renderedSubject: deliveryRow.rendered_subject,
+      renderedBody: deliveryRow.rendered_body,
+      providerMessageId: deliveryRow.provider_message_id,
+      errorMessage: deliveryRow.error_message,
+    };
+  }
+
+  const deliveryId = deliveryRow.id;
+  const t0 = Date.now();
+
+  if (skipReason) {
+    await insertPlatformDeliveryAttempt(params.pool, {
+      deliveryId,
+      attemptNumber: 1,
+      status: 'skipped',
+      errorMessage: skipReason,
+      providerResponse: { reason: skipReason },
+      durationMs: Date.now() - t0,
+    });
+    pnLogInfo('platform_email_skipped', { delivery_id: deliveryId, reason: skipReason });
+    return {
+      ok: true,
+      duplicate: false,
+      deliveryId,
+      status: 'skipped',
+      renderedSubject: subjectFinal,
+      renderedBody: rendered.body,
+      providerMessageId: null,
+      errorMessage: null,
+    };
+  }
+
+  await updatePlatformDeliveryOutcome(params.pool, deliveryId, {
+    status: 'processing',
+    errorMessage: null,
+    providerMessageId: null,
+    sentAt: null,
+  });
+
+  const send = await sendTransactionalEmail({
+    to,
+    subject: subjectFinal,
+    html: rendered.body,
+    eventKey: params.eventKey,
+    tenantId: params.targetTenantId,
+  });
+
+  const durationMs = Date.now() - t0;
+
+  if (send.ok) {
+    const attemptNo = await getNextPlatformDeliveryAttemptNumber(params.pool, deliveryId);
+    await updatePlatformDeliveryOutcome(params.pool, deliveryId, {
+      status: 'sent',
+      errorMessage: null,
+      providerMessageId: send.messageId ?? null,
+      sentAt: new Date(),
+    });
+    await insertPlatformDeliveryAttempt(params.pool, {
+      deliveryId,
+      attemptNumber: attemptNo,
+      status: 'success',
+      errorMessage: null,
+      providerResponse: { provider_message_id: send.messageId ?? null, transport: 'smtp' },
+      durationMs,
+    });
+    return {
+      ok: true,
+      duplicate: false,
+      deliveryId,
+      status: 'sent',
+      renderedSubject: subjectFinal,
+      renderedBody: rendered.body,
+      providerMessageId: send.messageId ?? null,
+      errorMessage: null,
+    };
+  }
+
+  const failedNo = await getNextPlatformDeliveryAttemptNumber(params.pool, deliveryId);
+  await insertPlatformDeliveryAttempt(params.pool, {
+    deliveryId,
+    attemptNumber: failedNo,
+    status: 'failed',
+    errorMessage: send.error,
+    providerResponse: { transport: 'smtp' },
+    durationMs,
+  });
+  await updatePlatformDeliveryOutcome(params.pool, deliveryId, {
+    status: 'failed',
+    errorMessage: send.error,
+    providerMessageId: null,
+    sentAt: null,
+  });
+
+  return {
+    ok: true,
+    duplicate: false,
+    deliveryId,
+    status: 'failed',
+    renderedSubject: subjectFinal,
     renderedBody: rendered.body,
     providerMessageId: null,
     errorMessage: send.error,

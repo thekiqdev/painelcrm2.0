@@ -409,6 +409,7 @@ export async function listPlatformDeliveriesDueForRetry(
     `SELECT id::text AS id
      FROM platform_notification_deliveries
      WHERE status = 'queued'
+       AND channel = 'whatsapp'
        AND (dispatch_not_before IS NULL OR dispatch_not_before <= now())
        AND (
          (next_retry_at IS NOT NULL AND next_retry_at <= now())

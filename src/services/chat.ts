@@ -917,6 +917,63 @@ export const chatService = {
     };
   },
 
+  async getSuperadminChatMetaIntegrationStatus(): Promise<{
+    feature_enabled: boolean;
+    encryption_configured: boolean;
+    account: {
+      id: string;
+      status: string;
+      is_active: boolean;
+      phone_number_id: string;
+      display_phone_number: string | null;
+      verified_name: string | null;
+      has_app_secret: boolean;
+      has_app_id: boolean;
+      inbox_user_assigned: boolean;
+      webhook_status: string | null;
+      webhook_last_configured_at: string | null;
+    } | null;
+    recommended_callback_url: string | null;
+  }> {
+    const response = await apiClient.get<{
+      feature_enabled: boolean;
+      encryption_configured: boolean;
+      account: {
+        id: string;
+        status: string;
+        is_active: boolean;
+        phone_number_id: string;
+        display_phone_number: string | null;
+        verified_name: string | null;
+        has_app_secret: boolean;
+        has_app_id: boolean;
+        inbox_user_assigned: boolean;
+        webhook_status: string | null;
+        webhook_last_configured_at: string | null;
+      } | null;
+      recommended_callback_url: string | null;
+    }>('/api/superadmin/chat/meta-integration-status');
+    if (response.error) throw new Error(response.error);
+    return response.data as {
+      feature_enabled: boolean;
+      encryption_configured: boolean;
+      account: {
+        id: string;
+        status: string;
+        is_active: boolean;
+        phone_number_id: string;
+        display_phone_number: string | null;
+        verified_name: string | null;
+        has_app_secret: boolean;
+        has_app_id: boolean;
+        inbox_user_assigned: boolean;
+        webhook_status: string | null;
+        webhook_last_configured_at: string | null;
+      } | null;
+      recommended_callback_url: string | null;
+    };
+  },
+
   async getConversationGroupDetails(
     conversationId: string,
     opts?: { refresh?: boolean },

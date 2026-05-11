@@ -35,6 +35,7 @@ import {
   TrendingUp,
   TrendingDown,
   CalendarDays,
+  LifeBuoy,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -1180,6 +1181,10 @@ const Header = () => {
             <DropdownMenuItem className="cursor-pointer rounded-lg" onClick={() => navigate('/settings')}>
               <Settings className="mr-2 h-4 w-4 shrink-0" />
               <span>Configurações</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem className="cursor-pointer rounded-lg" onClick={() => navigate('/suporte')}>
+              <LifeBuoy className="mr-2 h-4 w-4 shrink-0" />
+              <span>Suporte</span>
             </DropdownMenuItem>
             {user?.can_manage_plan && canView('meu_plano') && (
               <DropdownMenuItem className="cursor-pointer rounded-lg" onClick={() => navigate('/meu-plano')}>

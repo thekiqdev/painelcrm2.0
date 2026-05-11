@@ -65,7 +65,11 @@ export const EVENT_TITLES: Record<string, string> = {
   'platform.account.created': 'Conta criada na plataforma',
   'platform.plan.activated': 'Plano ativado',
   'platform.billing.charge.created': 'Cobrança criada (SaaS)',
+  'platform.billing.charge.overdue': 'Fatura vencida (SaaS)',
   'platform.billing.payment_confirmed': 'Pagamento confirmado (SaaS)',
+  'platform.trial.started': 'Trial iniciado',
+  'platform.trial.ended': 'Trial encerrado',
+  'platform.trial.expiring': 'Trial a vencer',
   'platform.auth.login_link.issued': 'Link de login emitido',
 };
 
@@ -79,11 +83,15 @@ export function eventTitle(key: string) {
 
 export function channelLabel(ch: string) {
   if (ch === 'whatsapp') return 'WhatsApp';
+  if (ch === 'email') return 'E-mail';
   return ch;
 }
 
 export function buildSampleMergeContext(fields: string[]): Record<string, string> {
   const samples: Record<string, string> = {
+    'platform.name': 'PainelCRM',
+    'platform.support_link': 'https://exemplo.app/suporte',
+    'auth.login_link': 'https://exemplo.app/login',
     tenant_name: 'Empresa Exemplo Lda',
     tenant_id: '00000000-0000-4000-8000-000000000001',
     user_name: 'Maria Silva',

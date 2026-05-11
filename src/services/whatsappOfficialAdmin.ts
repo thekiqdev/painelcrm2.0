@@ -15,6 +15,8 @@ export type WhatsappOfficialAccountDto = {
   inbox_user_id: string | null;
   app_id: string | null;
   has_app_secret: boolean;
+  webhook_status?: string | null;
+  webhook_last_configured_at?: string | null;
   created_at: string;
   updated_at: string;
   access_token_preview: string;
@@ -28,6 +30,56 @@ export const whatsappOfficialAdminService = {
     );
     if (r.error) throw new Error(r.error);
     return r.data ?? { account: null, encryption_configured: false };
+  },
+  /** Tenta registar o callback na Graph API; devolve avisos e passos manuais se a Meta não permitir. */
+  async configureMetaWebhook(): Promise<{
+    ok: boolean;
+    callback_url: string | null;
+    verify_token_configured: boolean;
+    subscribed_messages: boolean;
+    graph_attempted: boolean;
+    graph_ok: boolean | null;
+    graph_error: string | null;
+    webhook_status: string;
+    warnings: string[];
+    manual_steps_pt: string[];
+  }> {
+    const r = await apiClient.post<{
+      ok: boolean;
+      callback_url: string | null;
+      verify_token_configured: boolean;
+      subscribed_messages: boolean;
+      graph_attempted: boolean;
+      graph_ok: boolean | null;
+      graph_error: string | null;
+      webhook_status: string;
+      warnings: string[];
+      manual_steps_pt: string[];
+    }>('/api/superadmin/integrations/meta/whatsapp/configure-webhook', {});
+    if (r.error) throw new Error(r.error);
+    return (r.data ?? {
+      ok: false,
+      callback_url: null,
+      verify_token_configured: false,
+      subscribed_messages: false,
+      graph_attempted: false,
+      graph_ok: null,
+      graph_error: null,
+      webhook_status: 'unknown',
+      warnings: [],
+      manual_steps_pt: [],
+    }) as {
+      ok: boolean;
+      callback_url: string | null;
+      verify_token_configured: boolean;
+      subscribed_messages: boolean;
+      graph_attempted: boolean;
+      graph_ok: boolean | null;
+      graph_error: string | null;
+      webhook_status: string;
+      warnings: string[];
+      manual_steps_pt: string[];
+    };
   },
   async saveAccount(body: {
     business_account_id: string;

@@ -8,7 +8,10 @@ import { checkTenantUsersLimit, checkTenantProfilesLimit, checkTenantWhatsAppIns
 import { getActiveGateway, getActiveAsaasConfigForSaas } from '../modules/payments/gatewayProvider.js';
 import { getActiveConfig } from '../services/paymentGatewayConfigService.js';
 import { ensureCustomerForTenant } from '../modules/gateways/asaas/index.js';
-import { schedulePublishPlatformBillingChargeCreated } from '../services/platformNotifications/platformBusinessNotifications.js';
+import {
+  schedulePublishPlatformAccountCreated,
+  schedulePublishPlatformBillingChargeCreated,
+} from '../services/platformNotifications/platformBusinessNotifications.js';
 import { yyyyMmDdFromDbDateValue } from '../utils/calendarDateBr.js';
 import { z } from 'zod';
 
@@ -142,6 +145,7 @@ export async function createTenant(req: AuthRequest, res: Response): Promise<voi
       });
     }
     notifySuperAdminsNewTenant(tenant.name, tenant.id).catch(() => {});
+    schedulePublishPlatformAccountCreated(tenant.id);
     res.status(201).json(tenant);
   } catch (error) {
     if (error instanceof z.ZodError) {

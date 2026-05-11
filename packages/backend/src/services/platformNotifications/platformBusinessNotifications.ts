@@ -1,21 +1,23 @@
 /**
  * Fase 3 — publicação de eventos reais da plataforma (domínio separado do motor do tenant).
  */
-import type { Pool } from 'pg';
 import { pool } from '../../utils/db.js';
-import { runPlatformTransactionalNotification } from './platformNotificationEngineOrchestrator.js';
-import {
-  isPlatformNotificationsEnabled,
-  isPlatformNotificationsBusinessEventsEnabled,
-} from '../../config/platformNotificationsEnv.js';
+import { publishPlatformBusinessEventMultiChannel } from './platformBusinessEventMultiChannel.js';
 import { ensureTenantBillingPublicPayToken, getInvoiceById } from '../invoiceService.js';
-import { pnLogInfo, pnLogWarn } from './platformNotificationLog.js';
-import { normalizeWhatsappDigits } from '../../utils/userIdentity.js';
+import { pnLogWarn } from './platformNotificationLog.js';
 import { pickGatewayFallbackUrlFromBilling } from '../saasBillingLinkHelpers.js';
 import { buildPlatformSaasInvoiceUrl } from '../../utils/saasPlatformInvoiceUrl.js';
 import { formatBillingDueDatePtBr, formatYmdToPtBr } from '../../utils/calendarDateBr.js';
+import { buildPlatformSupportLink } from '../../utils/platformPublicUrls.js';
+import {
+  adminDisplayName,
+  loadPrimaryTenantAdminForNotify,
+  resolveRecipientWhatsapp,
+  type TenantAdminNotifyRow,
+} from './platformTenantAdminForNotify.js';
 
-const ACTOR_SYSTEM = { type: 'system', source: 'platform_business_events' };
+export type { TenantAdminNotifyRow } from './platformTenantAdminForNotify.js';
+export { loadPrimaryTenantAdminForNotify } from './platformTenantAdminForNotify.js';
 
 function feBase(): string {
   return String(process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
@@ -23,12 +25,6 @@ function feBase(): string {
 
 function platformPublicName(): string {
   return (process.env.APP_PUBLIC_NAME || 'PainelCRM').trim() || 'PainelCRM';
-}
-
-function platformSupportLink(): string {
-  const s = process.env.PLATFORM_SUPPORT_URL?.trim();
-  if (s) return s.replace(/\/$/, '');
-  return feBase();
 }
 
 function formatBrlFromCents(cents: number): string {
@@ -60,116 +56,6 @@ async function loadTenantTrialEndsAtIso(tenantId: string): Promise<string | null
   return r.rows[0]?.t ?? null;
 }
 
-function shouldPublish(): boolean {
-  return isPlatformNotificationsEnabled() && isPlatformNotificationsBusinessEventsEnabled();
-}
-
-export type TenantAdminNotifyRow = {
-  user_id: string;
-  email: string;
-  whatsapp_digits: string | null;
-  first_name: string | null;
-  last_name: string | null;
-  tenant_name: string;
-  billing_phone: string | null;
-};
-
-export async function loadPrimaryTenantAdminForNotify(client: Pool, tenantId: string): Promise<TenantAdminNotifyRow | null> {
-  const r = await client.query<TenantAdminNotifyRow>(
-    `SELECT u.id::text AS user_id, u.email,
-            regexp_replace(
-              COALESCE(
-                NULLIF(trim(COALESCE(u.whatsapp_number, '')), ''),
-                NULLIF(trim(COALESCE(p.whatsapp_number, '')), ''),
-                ''
-              ),
-              '\\D', '', 'g'
-            ) AS whatsapp_digits,
-            p.first_name, p.last_name,
-            t.name AS tenant_name,
-            regexp_replace(COALESCE(t.billing_phone, ''), '\\D', '', 'g') AS billing_phone
-     FROM users u
-     INNER JOIN tenants t ON t.id = u.tenant_id
-     LEFT JOIN profiles p ON p.id = u.id
-     WHERE u.tenant_id = $1::uuid
-     ORDER BY u.created_at ASC
-     LIMIT 1`,
-    [tenantId],
-  );
-  return r.rows[0] ?? null;
-}
-
-function resolveRecipientWhatsapp(row: TenantAdminNotifyRow): string | null {
-  const fromUser = normalizeWhatsappDigits(row.whatsapp_digits);
-  if (fromUser) return fromUser;
-  const fromBilling = normalizeWhatsappDigits(row.billing_phone);
-  return fromBilling;
-}
-
-function adminDisplayName(row: TenantAdminNotifyRow): string {
-  const fn = (row.first_name ?? '').trim();
-  const ln = (row.last_name ?? '').trim();
-  const joined = [fn, ln].filter(Boolean).join(' ').trim();
-  if (joined) return joined;
-  return row.email?.trim() || 'Administrador';
-}
-
-async function publishEvent(params: {
-  targetTenantId: string;
-  eventKey: string;
-  entityType: string;
-  entityId: string | null;
-  idempotencyKey: string;
-  mergeContext: Record<string, string>;
-  eventOccurredAt: Date | null;
-  metadata?: Record<string, unknown>;
-}): Promise<void> {
-  if (!shouldPublish()) {
-    return;
-  }
-  const admin = await loadPrimaryTenantAdminForNotify(pool, params.targetTenantId);
-  if (!admin) {
-    pnLogWarn('platform_business_skip_no_admin', { tenant_id: params.targetTenantId, event_key: params.eventKey });
-    return;
-  }
-  const phone = resolveRecipientWhatsapp(admin);
-  if (!phone) {
-    pnLogWarn('platform_business_skip_no_whatsapp', { tenant_id: params.targetTenantId, event_key: params.eventKey });
-    return;
-  }
-
-  const res = await runPlatformTransactionalNotification({
-    pool,
-    targetTenantId: params.targetTenantId,
-    eventKey: params.eventKey,
-    entityType: params.entityType,
-    entityId: params.entityId,
-    idempotencyKey: params.idempotencyKey,
-    recipientPhone: phone,
-    recipientType: 'tenant_admin',
-    mergeContext: params.mergeContext,
-    eventOccurredAt: params.eventOccurredAt,
-    actor: ACTOR_SYSTEM,
-    metadata: { engine: 'platform_notifications', phase: 3, ...(params.metadata ?? {}) },
-  });
-
-  if (!res.ok) {
-    pnLogWarn('platform_business_publish_failed', {
-      tenant_id: params.targetTenantId,
-      event_key: params.eventKey,
-      error: res.error,
-    });
-    return;
-  }
-  pnLogInfo('platform_business_publish_ok', {
-    tenant_id: params.targetTenantId,
-    event_key: params.eventKey,
-    delivery_id: res.deliveryId,
-    duplicate: res.duplicate,
-    status: res.status,
-  });
-}
-
 export async function publishPlatformAccountCreated(tenantId: string): Promise<void> {
   const admin = await loadPrimaryTenantAdminForNotify(pool, tenantId);
   if (!admin) {
@@ -177,15 +63,15 @@ export async function publishPlatformAccountCreated(tenantId: string): Promise<v
     return;
   }
   const fe = feBase();
-  await publishEvent({
+  await publishPlatformBusinessEventMultiChannel({
     targetTenantId: tenantId,
     eventKey: 'platform.account.created',
     entityType: 'tenant',
     entityId: tenantId,
-    idempotencyKey: `platform:tenant:${tenantId}:account_created`,
+    idempotencyBaseKey: `platform:tenant:${tenantId}:account_created`,
     mergeContext: {
       'platform.name': platformPublicName(),
-      'platform.support_link': platformSupportLink(),
+      'platform.support_link': buildPlatformSupportLink(),
       'tenant.name': admin.tenant_name,
       'tenant.admin_name': adminDisplayName(admin),
       'tenant.admin_email': admin.email ?? '',
@@ -209,14 +95,49 @@ export async function publishPlatformBillingChargeCreated(billingId: string): Pr
     pnLogWarn('platform_billing_public_token_failed', { billing_id: billingId, error: String(e) });
   }
   const gatewayFallback = pickGatewayFallbackUrlFromBilling(row);
-  await publishEvent({
+  await publishPlatformBusinessEventMultiChannel({
     targetTenantId: row.tenant_id,
     eventKey: 'platform.billing.charge.created',
     entityType: 'tenant_billing',
     entityId: billingId,
-    idempotencyKey: `platform:tenant_billing:${billingId}:charge_created`,
+    idempotencyBaseKey: `platform:tenant_billing:${billingId}:charge_created`,
     mergeContext: {
       'platform.name': platformPublicName(),
+      'tenant.name': admin.tenant_name,
+      'tenant.admin_name': adminDisplayName(admin),
+      'billing.amount': formatBrlFromCents(row.amount_cents),
+      'billing.due_date': formatBillingDueDatePtBr(row.due_date),
+      'billing.payment_link': gatewayFallback,
+      'billing.platform_invoice_url': platformInvoiceUrl,
+      'billing.invoice_number': row.invoice_number ?? '',
+    },
+    eventOccurredAt: new Date(),
+    metadata: { billing_id: billingId },
+  });
+}
+
+export async function publishPlatformBillingChargeOverdue(billingId: string): Promise<void> {
+  const row = await getInvoiceById(billingId);
+  if (!row || row.status !== 'overdue') return;
+  const admin = await loadPrimaryTenantAdminForNotify(pool, row.tenant_id);
+  if (!admin) return;
+  let platformInvoiceUrl = '';
+  try {
+    const tok = await ensureTenantBillingPublicPayToken(billingId);
+    platformInvoiceUrl = buildPlatformSaasInvoiceUrl(tok);
+  } catch (e) {
+    pnLogWarn('platform_billing_public_token_failed', { billing_id: billingId, error: String(e) });
+  }
+  const gatewayFallback = pickGatewayFallbackUrlFromBilling(row);
+  await publishPlatformBusinessEventMultiChannel({
+    targetTenantId: row.tenant_id,
+    eventKey: 'platform.billing.charge.overdue',
+    entityType: 'tenant_billing',
+    entityId: billingId,
+    idempotencyBaseKey: `platform:tenant_billing:${billingId}:charge_overdue`,
+    mergeContext: {
+      'platform.name': platformPublicName(),
+      'platform.support_link': buildPlatformSupportLink(),
       'tenant.name': admin.tenant_name,
       'tenant.admin_name': adminDisplayName(admin),
       'billing.amount': formatBrlFromCents(row.amount_cents),
@@ -259,15 +180,15 @@ export async function publishPlatformBillingPaymentConfirmed(billingId: string):
   }
   const paidAt = row.paid_at ? new Date(row.paid_at) : new Date();
   const fe = feBase();
-  await publishEvent({
+  await publishPlatformBusinessEventMultiChannel({
     targetTenantId: row.tenant_id,
     eventKey: 'platform.billing.payment_confirmed',
     entityType: 'tenant_billing',
     entityId: billingId,
-    idempotencyKey: `platform:tenant_billing:${billingId}:payment_confirmed`,
+    idempotencyBaseKey: `platform:tenant_billing:${billingId}:payment_confirmed`,
     mergeContext: {
       'platform.name': platformPublicName(),
-      'platform.support_link': platformSupportLink(),
+      'platform.support_link': buildPlatformSupportLink(),
       'tenant.name': admin.tenant_name,
       'tenant.admin_name': adminDisplayName(admin),
       'tenant.admin_email': admin.email ?? '',
@@ -296,15 +217,15 @@ export async function publishPlatformPlanActivated(params: { tenantId: string; b
     planLabel = pr.rows[0]?.name ?? '';
   }
   const fe = feBase();
-  await publishEvent({
+  await publishPlatformBusinessEventMultiChannel({
     targetTenantId: params.tenantId,
     eventKey: 'platform.plan.activated',
     entityType: 'tenant',
     entityId: params.tenantId,
-    idempotencyKey: `platform:tenant:${params.tenantId}:plan_activated:${params.billingId}`,
+    idempotencyBaseKey: `platform:tenant:${params.tenantId}:plan_activated:${params.billingId}`,
     mergeContext: {
       'platform.name': platformPublicName(),
-      'platform.support_link': platformSupportLink(),
+      'platform.support_link': buildPlatformSupportLink(),
       'tenant.name': admin.tenant_name,
       'tenant.admin_name': adminDisplayName(admin),
       'plan.name': planLabel,
@@ -328,15 +249,15 @@ export async function publishPlatformTrialStarted(tenantId: string): Promise<voi
   }
   const fe = feBase();
   const endsKey = endsRaw.slice(0, 10);
-  await publishEvent({
+  await publishPlatformBusinessEventMultiChannel({
     targetTenantId: tenantId,
     eventKey: 'platform.trial.started',
     entityType: 'tenant',
     entityId: tenantId,
-    idempotencyKey: `platform:tenant:${tenantId}:trial_started:${endsKey}`,
+    idempotencyBaseKey: `platform:tenant:${tenantId}:trial_started:${endsKey}`,
     mergeContext: {
       'platform.name': platformPublicName(),
-      'platform.support_link': platformSupportLink(),
+      'platform.support_link': buildPlatformSupportLink(),
       'tenant.name': admin.tenant_name,
       'tenant.admin_name': adminDisplayName(admin),
       'trial.ends_at': formatDateBr(endsRaw),
@@ -355,18 +276,51 @@ export async function publishPlatformTrialEnded(tenantId: string): Promise<void>
   }
   const fe = feBase();
   const endsKey = (endsRaw ?? '').slice(0, 10) || 'unknown';
-  await publishEvent({
+  await publishPlatformBusinessEventMultiChannel({
     targetTenantId: tenantId,
     eventKey: 'platform.trial.ended',
     entityType: 'tenant',
     entityId: tenantId,
-    idempotencyKey: `platform:tenant:${tenantId}:trial_ended:${endsKey}`,
+    idempotencyBaseKey: `platform:tenant:${tenantId}:trial_ended:${endsKey}`,
     mergeContext: {
       'platform.name': platformPublicName(),
-      'platform.support_link': platformSupportLink(),
+      'platform.support_link': buildPlatformSupportLink(),
       'tenant.name': admin.tenant_name,
       'tenant.admin_name': adminDisplayName(admin),
       'trial.ends_at': formatDateBr(endsRaw),
+      'auth.login_link': `${fe}/login`,
+    },
+    eventOccurredAt: new Date(),
+  });
+}
+
+export async function publishPlatformTrialExpiring(tenantId: string, daysLeft: number): Promise<void> {
+  const endsRaw = await loadTenantTrialEndsAtIso(tenantId);
+  if (!endsRaw) {
+    pnLogWarn('platform_trial_expiring_skip', { tenant_id: tenantId, reason: 'no_trial_ends_at' });
+    return;
+  }
+  const admin = await loadPrimaryTenantAdminForNotify(pool, tenantId);
+  if (!admin) {
+    pnLogWarn('platform_business_skip_no_admin', { tenant_id: tenantId, event_key: 'platform.trial.expiring' });
+    return;
+  }
+  const fe = feBase();
+  const endsKey = endsRaw.slice(0, 10);
+  await publishPlatformBusinessEventMultiChannel({
+    targetTenantId: tenantId,
+    eventKey: 'platform.trial.expiring',
+    entityType: 'tenant',
+    entityId: tenantId,
+    idempotencyBaseKey: `platform:tenant:${tenantId}:trial_expiring:${endsKey}`,
+    mergeContext: {
+      'platform.name': platformPublicName(),
+      'platform.support_link': buildPlatformSupportLink(),
+      'tenant.name': admin.tenant_name,
+      'tenant.admin_name': adminDisplayName(admin),
+      'tenant.admin_email': admin.email ?? '',
+      'trial.ends_at': formatDateBr(endsRaw),
+      'trial.days_left': String(daysLeft),
       'auth.login_link': `${fe}/login`,
     },
     eventOccurredAt: new Date(),
@@ -385,6 +339,14 @@ export function schedulePublishPlatformBillingChargeCreated(billingId: string): 
   setImmediate(() => {
     void publishPlatformBillingChargeCreated(billingId).catch((e) =>
       console.error('[platform-notifications/business] charge.created', e),
+    );
+  });
+}
+
+export function schedulePublishPlatformBillingChargeOverdue(billingId: string): void {
+  setImmediate(() => {
+    void publishPlatformBillingChargeOverdue(billingId).catch((e) =>
+      console.error('[platform-notifications/business] charge.overdue', e),
     );
   });
 }
@@ -417,6 +379,14 @@ export function schedulePublishPlatformTrialEnded(tenantId: string): void {
   setImmediate(() => {
     void publishPlatformTrialEnded(tenantId).catch((e) =>
       console.error('[platform-notifications/business] trial.ended', e),
+    );
+  });
+}
+
+export function schedulePublishPlatformTrialExpiring(tenantId: string, daysLeft: number): void {
+  setImmediate(() => {
+    void publishPlatformTrialExpiring(tenantId, daysLeft).catch((e) =>
+      console.error('[platform-notifications/business] trial.expiring', e),
     );
   });
 }

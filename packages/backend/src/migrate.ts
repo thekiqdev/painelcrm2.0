@@ -352,6 +352,12 @@ const order = [
   '226_users_chat_show_sender_name.sql',
   /** Auditoria: admin altera perfil/senha de utilizadores do tenant */
   '227_tenant_user_admin_audit.sql',
+  /** Motor da plataforma: canal e-mail + template account.created */
+  '228_platform_notifications_email_channel.sql',
+  /** Motor da plataforma: templates e-mail comerciais + trial.expiring / charge.overdue */
+  '229_platform_notifications_email_business_events.sql',
+  /** Suporte da plataforma (chamados + WhatsApp Super Admin) */
+  '230_platform_support.sql',
   'create-admin-user.sql',
 ];
 

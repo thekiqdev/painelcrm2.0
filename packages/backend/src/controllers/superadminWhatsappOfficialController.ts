@@ -3,7 +3,10 @@ import type { AuthRequest } from '../middleware/auth.js';
 import { z } from 'zod';
 import { pool } from '../utils/db.js';
 import { isWhatsappOfficialSuperadminEnabled } from '../config/whatsappOfficialEnv.js';
-import { validateAccessToken } from '../services/whatsappOfficial/whatsappOfficialClient.js';
+import {
+  validateAccessToken,
+  subscribeAppWhatsappBusinessAccountWebhook,
+} from '../services/whatsappOfficial/whatsappOfficialClient.js';
 import {
   getSuperadminAccount,
   getAccountCredentials,
@@ -924,5 +927,124 @@ export async function postWhatsappOfficialCampaignImportCsv(req: AuthRequest, re
     }
     console.error('[wa-official] import csv preview', e);
     res.status(500).json({ error: 'Erro ao processar CSV' });
+  }
+}
+
+const META_WEBHOOK_CALLBACK_SUFFIX = '/api/webhooks/meta/whatsapp';
+
+function resolvePublicApiBaseForMetaWebhook(): string | null {
+  const u = (
+    process.env.API_PUBLIC_BASE_URL ||
+    process.env.WHATSAPP_OFFICIAL_PUBLIC_BASE_URL ||
+    ''
+  )
+    .trim()
+    .replace(/\/$/, '');
+  return u || null;
+}
+
+/**
+ * Tenta registar o callback do webhook na Graph API (POST /{app-id}/subscriptions).
+ * Quando o token não tiver permissão ou faltar App ID, devolve passos manuais sem falhar silenciosamente.
+ */
+export async function postMetaWhatsappConfigureWebhook(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    if (!gate(res)) return;
+    const manualStepsPt = [
+      'No Meta for Developers: App → WhatsApp → Configuration → Webhook: cole o URL de callback e o mesmo Verify Token guardado no PainelCRM.',
+      'Ative o campo "messages" (e confirme receção de "statuses" se o painel o listar) para mensagens e estados sent/delivered/read.',
+      `URL canónico do callback: https://{seu-dominio}${META_WEBHOOK_CALLBACK_SUFFIX} (alias legado: /api/webhooks/whatsapp-official).`,
+    ];
+    const base = resolvePublicApiBaseForMetaWebhook();
+    if (!base) {
+      res.json({
+        ok: false,
+        callback_url: null,
+        verify_token_configured: false,
+        subscribed_messages: false,
+        graph_attempted: false,
+        graph_ok: null,
+        graph_error: null,
+        webhook_status: 'manual_required',
+        warnings: [
+          'Defina API_PUBLIC_BASE_URL (ou WHATSAPP_OFFICIAL_PUBLIC_BASE_URL) no servidor com o URL público HTTPS do PainelCRM.',
+        ],
+        manual_steps_pt: manualStepsPt,
+      });
+      return;
+    }
+    const callbackUrl = `${base}${META_WEBHOOK_CALLBACK_SUFFIX}`;
+    const row = await pool.query<{
+      id: string;
+      app_id: string | null;
+      webhook_verify_token: string;
+    }>(
+      `SELECT id::text, nullif(trim(app_id), '') AS app_id, webhook_verify_token
+       FROM whatsapp_official_accounts
+       WHERE owner_scope = 'superadmin' AND tenant_id IS NULL
+       ORDER BY created_at DESC
+       LIMIT 1`
+    );
+    if (row.rows.length === 0) {
+      res.status(400).json({ error: 'Configure primeiro a conta WhatsApp Oficial (Super Admin).' });
+      return;
+    }
+    const acc = row.rows[0]!;
+    const verifyTokenConfigured = Boolean(acc.webhook_verify_token?.trim());
+    const cred = await getAccountCredentials(acc.id);
+    if (!cred?.accessToken) {
+      res.status(400).json({ error: 'Access token indisponível — guarde novamente a conta.' });
+      return;
+    }
+    const warnings: string[] = [];
+    let graphAttempted = false;
+    let graphOk: boolean | null = null;
+    let graphError: string | null = null;
+    if (!acc.app_id) {
+      warnings.push(
+        'App ID não está guardado na conta — a Meta exige o App ID para POST /{app-id}/subscriptions. Guarde o App ID nas conexões WhatsApp Oficial.'
+      );
+    } else {
+      graphAttempted = true;
+      const sub = await subscribeAppWhatsappBusinessAccountWebhook(acc.app_id, cred.accessToken, {
+        callbackUrl,
+        verifyToken: acc.webhook_verify_token.trim(),
+      });
+      graphOk = sub.ok;
+      graphError = sub.error || null;
+      if (!sub.ok) {
+        warnings.push(sub.error || 'Falha ao registar webhook na Graph API.');
+      }
+    }
+    const webhookStatus =
+      graphOk === true
+        ? 'graph_callback_registered'
+        : graphAttempted && graphOk === false
+          ? 'graph_error'
+          : 'manual_required';
+    await pool.query(
+      `UPDATE whatsapp_official_accounts SET
+         webhook_status = $2,
+         webhook_last_configured_at = NOW(),
+         webhook_last_error = $3,
+         updated_at = NOW()
+       WHERE id = $1::uuid`,
+      [acc.id, webhookStatus, graphError]
+    );
+    res.json({
+      ok: graphOk === true,
+      callback_url: callbackUrl,
+      verify_token_configured: verifyTokenConfigured,
+      subscribed_messages: graphOk === true,
+      graph_attempted: graphAttempted,
+      graph_ok: graphOk,
+      graph_error: graphError,
+      webhook_status: webhookStatus,
+      warnings,
+      manual_steps_pt: graphOk === true ? [] : manualStepsPt,
+    });
+  } catch (e) {
+    console.error('[wa-official] configure meta webhook', e);
+    res.status(500).json({ error: 'Erro ao configurar webhook' });
   }
 }

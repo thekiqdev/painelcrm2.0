@@ -9281,6 +9281,14 @@ export async function sendMessage(req: AuthRequest, res: Response) {
         }
         queuedMessageRowId = savedRowId;
 
+        console.log(
+          JSON.stringify({
+            event: 'meta_message_send_started',
+            conversation_id: data.conversationId,
+            account_id: accountId,
+            phone_number_id: cred.phoneNumberId,
+          })
+        );
         const sendResult = await graphOfficialSendText(
           cred.phoneNumberId,
           cred.accessToken,
@@ -9306,12 +9314,28 @@ export async function sendMessage(req: AuthRequest, res: Response) {
               ]
             );
           }
+          console.warn(
+            JSON.stringify({
+              event: 'meta_message_send_failed',
+              conversation_id: data.conversationId,
+              account_id: accountId,
+              error: sendResult.error || 'Meta send failed',
+            })
+          );
           res.status(502).json({
             error: sendResult.error || 'Falha ao enviar pela Meta Cloud API',
           });
           return;
         }
 
+        console.log(
+          JSON.stringify({
+            event: 'meta_message_send_success',
+            conversation_id: data.conversationId,
+            account_id: accountId,
+            wamid: sendResult.messages?.[0]?.id ?? null,
+          })
+        );
         const wamid = sendResult.messages?.[0]?.id;
         messageResponse = {
           source: 'whatsapp_official',

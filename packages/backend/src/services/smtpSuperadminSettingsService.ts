@@ -1,6 +1,6 @@
 /**
  * Configuração SMTP do Super Admin em `superadmin_settings`.
- * Não envia e-mails nem altera o motor de notificações (Etapa 2 — apenas persistência).
+ * Usada pelo teste SMTP e pelo `emailDeliveryService` (notificações transacionais).
  */
 import type { Pool, PoolClient } from 'pg';
 import { pool } from '../utils/db.js';
@@ -9,6 +9,7 @@ import {
   encryptSmtpPassword,
   isSmtpPasswordEncryptionConfigured,
 } from './smtpSettingsCrypto.js';
+import { ensureSmtpEncryptionMaterial } from './smtpEncryptionBootstrap.js';
 
 export const SMTP_KEY_ENABLED = 'smtp_enabled';
 export const SMTP_KEY_HOST = 'smtp_host';
@@ -134,9 +135,10 @@ function mapToPublic(map: Record<string, string | null>): SmtpSettingsPublic {
 
 /**
  * Carrega credenciais desencriptadas para envio pontual (ex.: e-mail de teste).
- * Requer host, utilizador, senha gravada, SMTP_SETTINGS_SECRET e remetente.
+ * Requer host, utilizador, senha gravada e remetente (chave de cifra via bootstrap ou env).
  */
 export async function getSmtpRuntimeConfigForSendOrThrow(): Promise<SmtpRuntimeSendConfig> {
+  await ensureSmtpEncryptionMaterial(pool);
   const map = await loadKeyMap(pool);
   const host = map[SMTP_KEY_HOST]?.trim() ?? '';
   const user = map[SMTP_KEY_USERNAME]?.trim() ?? '';
@@ -156,16 +158,14 @@ export async function getSmtpRuntimeConfigForSendOrThrow(): Promise<SmtpRuntimeS
     throw new Error('Configure e guarde a senha SMTP antes de enviar um teste.');
   }
   if (!isSmtpPasswordEncryptionConfigured()) {
-    throw new Error(
-      'SMTP_SETTINGS_SECRET não está definida no servidor; não é possível usar a senha armazenada.',
-    );
+    throw new Error('Chave de cifra SMTP indisponível; não é possível usar a senha armazenada.');
   }
 
   let password: string;
   try {
     password = decryptSmtpPassword(enc);
   } catch {
-    throw new Error('Não foi possível desencriptar a senha SMTP (verifique SMTP_SETTINGS_SECRET).');
+    throw new Error('Não foi possível desencriptar a senha SMTP (chave de cifra desatualizada ou inválida).');
   }
 
   return {
@@ -180,8 +180,31 @@ export async function getSmtpRuntimeConfigForSendOrThrow(): Promise<SmtpRuntimeS
   };
 }
 
+/** Verificação leve (sem desencriptar) para decidir se o motor pode tentar enviar e-mail. */
+export async function isSmtpReadyForSystemEmail(): Promise<{ ok: boolean; reason?: string }> {
+  try {
+    await ensureSmtpEncryptionMaterial(pool);
+    const map = await loadKeyMap(pool);
+    if (!parseBool(map[SMTP_KEY_ENABLED], false)) {
+      return { ok: false, reason: 'smtp_disabled' };
+    }
+    if (!map[SMTP_KEY_HOST]?.trim()) return { ok: false, reason: 'smtp_host_missing' };
+    if (!map[SMTP_KEY_USERNAME]?.trim()) return { ok: false, reason: 'smtp_username_missing' };
+    if (!map[SMTP_KEY_FROM_EMAIL]?.trim()) return { ok: false, reason: 'smtp_from_email_missing' };
+    if (!map[SMTP_KEY_PASSWORD_ENCRYPTED]?.trim()) return { ok: false, reason: 'smtp_password_missing' };
+    if (!isSmtpPasswordEncryptionConfigured()) return { ok: false, reason: 'smtp_encryption_not_configured' };
+    return { ok: true };
+  } catch (e: unknown) {
+    if (isMissingSuperadminSettingsTable(e)) {
+      return { ok: false, reason: 'superadmin_settings_missing' };
+    }
+    return { ok: false, reason: 'load_error' };
+  }
+}
+
 export async function getSmtpSuperadminSettings(): Promise<SmtpSettingsPublic> {
   try {
+    await ensureSmtpEncryptionMaterial(pool);
     const map = await loadKeyMap(pool);
     return mapToPublic(map);
   } catch (e: unknown) {
@@ -211,16 +234,11 @@ export async function updateSmtpSuperadminSettings(input: SmtpSettingsUpdateInpu
   const pwdProvided = Object.prototype.hasOwnProperty.call(input, 'smtp_password');
   const rawPwd = input.smtp_password;
 
-  if (pwdProvided) {
-    if (rawPwd != null && String(rawPwd).length > 0 && !isSmtpPasswordEncryptionConfigured()) {
-      throw new Error(
-        'Defina SMTP_SETTINGS_SECRET no servidor (mín. 16 caracteres) antes de guardar a senha SMTP.',
-      );
-    }
-  }
-
   const client = await pool.connect();
   try {
+    if (pwdProvided && rawPwd != null && String(rawPwd).length > 0) {
+      await ensureSmtpEncryptionMaterial(client);
+    }
     await client.query('BEGIN');
 
     if (input.smtp_enabled !== undefined) {

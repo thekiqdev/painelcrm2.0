@@ -1,6 +1,6 @@
 /**
  * Cifra a senha SMTP para armazenamento em `superadmin_settings` (AES-256-GCM).
- * Exige SMTP_SETTINGS_SECRET (≥16 caracteres) para gravar ou alterar senha.
+ * Material: `smtp_settings_encryption_key` (gerado no servidor), SMTP_SETTINGS_SECRET ou fallback de dev.
  */
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypto';
 
@@ -8,12 +8,25 @@ const ALGO = 'aes-256-gcm';
 const IV_LEN = 16;
 const AUTH_TAG_LEN = 16;
 
+let masterSecretOverride: string | null = null;
+
+export function setSmtpMasterSecret(material: string): void {
+  masterSecretOverride = material.trim().length >= 16 ? material.trim() : null;
+}
+
+function getRawKeyMaterial(): string {
+  return (
+    masterSecretOverride ||
+    process.env.SMTP_SETTINGS_SECRET ||
+    process.env.PROPOSAL_WEBHOOK_SECRET_KEY ||
+    ''
+  );
+}
+
 function deriveKey(): Buffer {
-  const raw = process.env.SMTP_SETTINGS_SECRET || '';
+  const raw = getRawKeyMaterial();
   if (raw.length < 16) {
-    throw new Error(
-      'SMTP_SETTINGS_SECRET não configurada ou muito curta (mín. 16 caracteres). Não é possível gravar a senha SMTP.',
-    );
+    throw new Error('Chave de cifra SMTP indisponível (mín. 16 caracteres).');
   }
   return createHash('sha256').update(raw, 'utf8').digest();
 }
@@ -43,5 +56,5 @@ export function decryptSmtpPassword(ciphertextB64: string): string {
 }
 
 export function isSmtpPasswordEncryptionConfigured(): boolean {
-  return (process.env.SMTP_SETTINGS_SECRET || '').length >= 16;
+  return getRawKeyMaterial().length >= 16;
 }

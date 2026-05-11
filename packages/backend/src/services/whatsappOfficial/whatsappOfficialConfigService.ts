@@ -25,6 +25,8 @@ export type WhatsappOfficialAccountRow = {
   inbox_user_id: string | null;
   app_id: string | null;
   has_app_secret: boolean;
+  webhook_status: string | null;
+  webhook_last_configured_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -46,6 +48,8 @@ export async function getSuperadminAccount(): Promise<{
     `SELECT id::text, tenant_id::text, owner_scope, business_account_id, phone_number_id,
             display_phone_number, verified_name, status, is_active, inbox_user_id::text, app_id,
             (app_secret_ciphertext IS NOT NULL AND btrim(app_secret_ciphertext) <> '') AS has_app_secret,
+            webhook_status,
+            webhook_last_configured_at::text,
             created_at::text, updated_at::text
      FROM whatsapp_official_accounts
      WHERE owner_scope = 'superadmin' AND tenant_id IS NULL

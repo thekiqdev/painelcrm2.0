@@ -17,6 +17,8 @@ import {
   PlugZap,
 } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
+import { PlatformSupportSummaryCard } from '@/components/superadmin/PlatformSupportSummaryCard';
+import { useSuperadminPlatformSupportSummary } from '@/hooks/useSuperadminPlatformSupportSummary';
 import {
   ResponsiveContainer,
   LineChart,
@@ -284,6 +286,12 @@ export default function SuperAdminDashboard() {
   const [data, setData] = useState<SuperadminDashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const {
+    summary: supportSummary,
+    loading: supportSummaryLoading,
+    error: supportSummaryError,
+    refresh: refreshSupportSummary,
+  } = useSuperadminPlatformSupportSummary();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -318,6 +326,10 @@ export default function SuperAdminDashboard() {
         <section className="space-y-3">
           <SectionHeading title="Indicadores principais" description="MRR, caixa do mês, base ativa e risco de cobrança." />
           <ExecutiveKpiSkeleton />
+        </section>
+        <section className="space-y-3">
+          <SectionHeading title="Suporte da plataforma" description="Fila de chamados e último atendimento recebido." />
+          <PlatformSupportSummaryCard summary={null} loading />
         </section>
         <section className="space-y-3">
           <SectionHeading title="Crescimento e planos" description="Série de 30 dias e distribuição por plano contratado." />
@@ -499,6 +511,16 @@ export default function SuperAdminDashboard() {
           }
         />
         </div>
+      </section>
+
+      <section className="space-y-3">
+        <SectionHeading title="Suporte da plataforma" description="Fila de chamados e último atendimento recebido." />
+        <PlatformSupportSummaryCard
+          summary={supportSummary}
+          loading={supportSummaryLoading}
+          error={supportSummaryError}
+          onRetry={() => void refreshSupportSummary()}
+        />
       </section>
 
       <section className="space-y-3">

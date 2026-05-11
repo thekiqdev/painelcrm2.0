@@ -169,6 +169,12 @@ const MeuPlano = lazyWithReload(() => import("./pages/MeuPlano"));
 const InternalBillingCheckout = lazyWithReload(() => import("./pages/InternalBillingCheckout"));
 const PlanCheckout = lazyWithReload(() => import("./pages/PlanCheckout"));
 const Onboarding = lazyWithReload(() => import("./pages/Onboarding"));
+const PlatformSupport = lazyWithReload(() => import("./pages/PlatformSupport"));
+const PlatformSupportTicketDetail = lazyWithReload(() => import("./pages/PlatformSupportTicketDetail"));
+const SuperAdminPlatformSupport = lazyWithReload(() => import("./pages/superadmin/SuperAdminPlatformSupport"));
+const SuperAdminPlatformSupportTicketDetail = lazyWithReload(
+  () => import("./pages/superadmin/SuperAdminPlatformSupportTicketDetail"),
+);
 
 const LandingPage = lazyWithReload(() => import("./landingpage").then(m => ({ default: m.LandingPage })));
 
@@ -230,6 +236,30 @@ const App = () => (
               }
             />
             <Route path="/checkout" element={<Suspense fallback={<LoadingFallback />}><PlanCheckout /></Suspense>} />
+            <Route
+              path="/suporte"
+              element={
+                <AuthGuard requireAuth={true} redirectTo="/login?redirect=%2Fsuporte">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <PlatformSupport />
+                    </Suspense>
+                  </AppLayout>
+                </AuthGuard>
+              }
+            />
+            <Route
+              path="/suporte/:id"
+              element={
+                <AuthGuard requireAuth={true} redirectTo="/login?redirect=%2Fsuporte">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <PlatformSupportTicketDetail />
+                    </Suspense>
+                  </AppLayout>
+                </AuthGuard>
+              }
+            />
             <Route path="/onboarding" element={<Suspense fallback={<LoadingFallback />}><Onboarding /></Suspense>} />
             <Route path="/pay/:token" element={<Suspense fallback={<LoadingFallback />}><CustomerInvoicePay /></Suspense>} />
             <Route path="/saas-pay/:token" element={<Suspense fallback={<LoadingFallback />}><PublicSaasBillingPay /></Suspense>} />
@@ -888,6 +918,18 @@ const App = () => (
                 <Route path="subscription-cycles" element={<Suspense fallback={<LoadingFallback />}><SuperAdminSubscriptionCyclesSettings /></Suspense>} />
                 <Route path="platform-notifications" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlatformNotifications /></Suspense>} />
                 <Route path="smtp" element={<Suspense fallback={<LoadingFallback />}><SuperAdminSmtpSettings /></Suspense>} />
+                <Route
+                  path="platform-support"
+                  element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlatformSupport /></Suspense>}
+                />
+                <Route
+                  path="platform-support/tickets/:id"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SuperAdminPlatformSupportTicketDetail />
+                    </Suspense>
+                  }
+                />
                 <Route path="platform-billings" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlatformBillings /></Suspense>} />
                 <Route path="announcements/groups" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAnnouncementGroups /></Suspense>} />
                 <Route path="announcements/sends/:sendId" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAnnouncementSendDetail /></Suspense>} />

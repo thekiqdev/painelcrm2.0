@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState, useRef } from 'react';
-import { useNavigate, useLocation, useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useLocation, useParams, useSearchParams, Link } from 'react-router-dom';
 import { useQueryClient, useQuery } from '@tanstack/react-query';
 import { addMinutes, format, parse, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -41,6 +41,7 @@ import {
 } from 'lucide-react';
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -103,6 +104,7 @@ import {
   type ChatInternalComment,
   type ChatKanbanTagUi,
 } from '@/services/chat';
+import { whatsappOfficialAdminService } from '@/services/whatsappOfficialAdmin';
 import { chatKanbanService } from '@/services/chatKanban';
 import { useAuth } from '@/contexts/AuthContext';
 import { useModulePermissions } from '@/contexts/ModulePermissionsContext';
@@ -665,6 +667,49 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       channelQueryAppliedRef.current = true;
     }
   }, [searchParams]);
+
+  type PlatformMetaIntegrationStatus = Awaited<ReturnType<typeof chatService.getSuperadminChatMetaIntegrationStatus>>;
+  const [platformMetaStatus, setPlatformMetaStatus] = useState<PlatformMetaIntegrationStatus | null>(null);
+  const [platformMetaStatusLoading, setPlatformMetaStatusLoading] = useState(false);
+  const [metaManualStepsOpen, setMetaManualStepsOpen] = useState(false);
+  const [metaManualSteps, setMetaManualSteps] = useState<string[]>([]);
+  const [metaConfigureBusy, setMetaConfigureBusy] = useState(false);
+
+  useEffect(() => {
+    if (!isPlatformScope || !isPlatformSuperAdmin) return;
+    let cancelled = false;
+    setPlatformMetaStatusLoading(true);
+    void (async () => {
+      try {
+        const s = await chatService.getSuperadminChatMetaIntegrationStatus();
+        if (!cancelled) setPlatformMetaStatus(s);
+      } catch (e) {
+        console.error(e);
+        if (!cancelled) setPlatformMetaStatus(null);
+      } finally {
+        if (!cancelled) setPlatformMetaStatusLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isPlatformScope, isPlatformSuperAdmin]);
+
+  const showMainChatLayout = useMemo(() => {
+    if (!isPlatformScope) return instances.length > 0;
+    return instances.length > 0 || chatChannelOrigin === 'official' || chatChannelOrigin === 'all';
+  }, [isPlatformScope, instances.length, chatChannelOrigin]);
+
+  const platformConversationRestoreAllowed = useMemo(
+    () =>
+      !isPlatformScope
+        ? enabledInstanceIds.size > 0
+        : enabledInstanceIds.size > 0 ||
+          chatChannelOrigin === 'official' ||
+          chatChannelOrigin === 'all',
+    [isPlatformScope, enabledInstanceIds.size, chatChannelOrigin],
+  );
+
   const [slaUiContext, setSlaUiContext] = useState<SlaContextForUi | null>(null);
   const [operationsRefreshTick, setOperationsRefreshTick] = useState(0);
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
@@ -2936,7 +2981,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     const pending = pendingConversationRestoreRef.current;
     if (!pending) return;
     if (loadingConversations) return;
-    if (enabledInstanceIds.size === 0) return;
+    if (!platformConversationRestoreAllowed) return;
     if (!conversationsHydratedRef.current) return;
 
     const resolved = resolveRestoreConversationId(conversations, pending);
@@ -2948,7 +2993,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     }
     pendingConversationRestoreRef.current = null;
     void handleSelectConversationRef.current(resolved);
-  }, [conversations, loadingConversations, enabledInstanceIds.size]);
+  }, [conversations, loadingConversations, platformConversationRestoreAllowed]);
 
   /** Listas CRM: `/chat?openLeadId=` ou `?openClientId=` abre a conversa WhatsApp ligada ao registo. */
   const openLeadIdQ = searchParams.get('openLeadId')?.trim() ?? '';
@@ -2957,7 +3002,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     if (!openLeadIdQ && !openClientIdQ) return;
     if (loadingConversations) return;
     if (!conversationsHydratedRef.current) return;
-    if (enabledInstanceIds.size === 0) return;
+    if (!platformConversationRestoreAllowed) return;
 
     const returnRaw = searchParams.get('returnTo')?.trim() ?? '';
     const chatListReturn = isChatListReturnPath(returnRaw) ? returnRaw : undefined;
@@ -3010,7 +3055,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     openClientIdQ,
     conversations,
     loadingConversations,
-    enabledInstanceIds.size,
+    platformConversationRestoreAllowed,
     searchParams,
     setSearchParams,
     navigate,
@@ -3054,7 +3099,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     if (selectedConversationId === cidQ) return;
     if (loadingConversations) return;
     if (!conversationsHydratedRef.current) return;
-    if (enabledInstanceIds.size === 0) return;
+    if (!platformConversationRestoreAllowed) return;
 
     const next = new URLSearchParams(searchParams);
     next.delete('conversationId');
@@ -3068,7 +3113,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     conversationIdFromQuery,
     selectedConversationId,
     loadingConversations,
-    enabledInstanceIds.size,
+    platformConversationRestoreAllowed,
     searchParams,
     setSearchParams,
   ]);
@@ -4184,6 +4229,37 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     navigate('/settings?section=whatsapp&openAddConnection=1');
   };
 
+  const handleNavigateToMetaOfficialSettings = () => {
+    navigate('/superadmin/conexoes/whatsapp-oficial');
+  };
+
+  const handleConfigureMetaWebhook = useCallback(async () => {
+    setMetaConfigureBusy(true);
+    try {
+      const r = await whatsappOfficialAdminService.configureMetaWebhook();
+      setMetaManualSteps(Array.isArray(r.manual_steps_pt) ? r.manual_steps_pt : []);
+      if (r.ok) {
+        toast.success('Webhook Meta registado na Graph API.');
+      } else {
+        toast.message('Webhook Meta — verifique o resultado', {
+          description:
+            (r.warnings && r.warnings.length > 0 && r.warnings.join(' ')) ||
+            'A Meta pode exigir configuração manual no painel do desenvolvedor.',
+        });
+      }
+      try {
+        const s = await chatService.getSuperadminChatMetaIntegrationStatus();
+        setPlatformMetaStatus(s);
+      } catch {
+        /* ignore */
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Falha ao configurar webhook');
+    } finally {
+      setMetaConfigureBusy(false);
+    }
+  }, []);
+
   const mergeAttendanceFromPayload = useCallback((raw: Record<string, unknown>) => {
     const id = typeof raw.id === 'string' ? raw.id : null;
     if (!id) return;
@@ -4901,13 +4977,25 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <Badge variant="secondary">UazAPI</Badge>
-                <Badge variant="outline">Meta Oficial em preparação</Badge>
+                {platformMetaStatusLoading ? (
+                  <Badge variant="outline">Meta — a carregar…</Badge>
+                ) : !platformMetaStatus?.feature_enabled ? (
+                  <Badge variant="outline">API Oficial Meta (desativada)</Badge>
+                ) : platformMetaStatus.account?.is_active && platformMetaStatus.account.status === 'connected' ? (
+                  <Badge variant="default" className="bg-emerald-700 hover:bg-emerald-700">
+                    API Oficial Meta — {platformMetaStatus.account.display_phone_number || 'ligada'}
+                  </Badge>
+                ) : platformMetaStatus.account?.status === 'error' ? (
+                  <Badge variant="destructive">Meta — token / conta em erro</Badge>
+                ) : (
+                  <Badge variant="outline">API Oficial Meta — não ligada</Badge>
+                )}
               </div>
             </div>
           </div>
         </div>
       ) : null}
-      {instances.length > 0 ? (
+      {showMainChatLayout ? (
         <div className="flex flex-1 flex-col min-h-0 overflow-hidden max-md:h-full max-md:min-h-0 md:h-full">
           {/* Renderizar conteúdo do chat - apenas uma vez, reutilizado para todas as abas */}
             <div
@@ -5201,7 +5289,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                         <SelectContent>
                           <SelectItem value="all">Todas (UazAPI + Oficial)</SelectItem>
                           <SelectItem value="uazapi">UazAPI</SelectItem>
-                          <SelectItem value="official">WhatsApp Oficial (Meta)</SelectItem>
+                          <SelectItem value="official">API Oficial Meta</SelectItem>
                         </SelectContent>
                       </Select>
       </div>
@@ -5309,6 +5397,117 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                   </CardHeader>
                   <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0 max-md:min-h-0">
                     <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain touch-pan-y [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border/50">
+                      {isPlatformScope && chatChannelOrigin === 'official' ? (
+                        <div className="shrink-0 space-y-2 border-b border-border/60 bg-muted/15 px-3 py-2.5">
+                          {platformMetaStatusLoading ? (
+                            <p className="text-xs text-muted-foreground">A carregar estado da API Oficial…</p>
+                          ) : null}
+                          {!platformMetaStatusLoading && platformMetaStatus && !platformMetaStatus.feature_enabled ? (
+                            <Alert>
+                              <AlertTitle>API Oficial Meta desativada</AlertTitle>
+                              <AlertDescription className="text-xs">
+                                Ative a flag de sistema <code className="rounded bg-muted px-1">whatsapp_official_enabled</code>{' '}
+                                para usar este canal.
+                              </AlertDescription>
+                            </Alert>
+                          ) : null}
+                          {!platformMetaStatusLoading &&
+                          platformMetaStatus?.feature_enabled &&
+                          !platformMetaStatus.encryption_configured ? (
+                            <Alert variant="destructive">
+                              <AlertTitle>Cifragem não configurada</AlertTitle>
+                              <AlertDescription className="text-xs">
+                                Configure o material de cifragem do WhatsApp Oficial no servidor antes de guardar tokens.
+                              </AlertDescription>
+                            </Alert>
+                          ) : null}
+                          {!platformMetaStatusLoading &&
+                          platformMetaStatus?.feature_enabled &&
+                          platformMetaStatus.encryption_configured &&
+                          (!platformMetaStatus.account || !platformMetaStatus.account.is_active) ? (
+                            <Alert>
+                              <AlertTitle>API Oficial Meta ainda não conectada</AlertTitle>
+                              <AlertDescription className="flex flex-col gap-2 text-xs">
+                                <span>Guarde o número Cloud API, tokens e verify token em Conexões.</span>
+                                <Button type="button" size="sm" className="w-fit" asChild>
+                                  <Link to="/superadmin/conexoes/whatsapp-oficial">Configurar API Oficial</Link>
+                                </Button>
+                              </AlertDescription>
+                            </Alert>
+                          ) : null}
+                          {!platformMetaStatusLoading &&
+                          platformMetaStatus?.account?.is_active &&
+                          platformMetaStatus.account.status === 'error' ? (
+                            <Alert variant="destructive">
+                              <AlertTitle>Token da Meta inválido ou expirado</AlertTitle>
+                              <AlertDescription className="flex flex-col gap-2 text-xs">
+                                <span>Atualize o access token na página de conexões.</span>
+                                <Button type="button" size="sm" className="w-fit" asChild>
+                                  <Link to="/superadmin/conexoes/whatsapp-oficial">Abrir conexões WhatsApp Oficial</Link>
+                                </Button>
+                              </AlertDescription>
+                            </Alert>
+                          ) : null}
+                          {!platformMetaStatusLoading &&
+                          platformMetaStatus?.account?.is_active &&
+                          platformMetaStatus.account.status === 'connected' &&
+                          platformMetaStatus.account.webhook_status !== 'graph_callback_registered' ? (
+                            <Alert>
+                              <AlertTitle>Webhook da Meta pode não estar ativo</AlertTitle>
+                              <AlertDescription className="flex flex-col gap-2 text-xs">
+                                <span>
+                                  URL sugerido:{' '}
+                                  <span className="font-mono text-[11px] break-all">
+                                    {platformMetaStatus.recommended_callback_url ||
+                                      '(defina API_PUBLIC_BASE_URL no servidor)'}
+                                  </span>
+                                </span>
+                                <div className="flex flex-wrap gap-2">
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    disabled={metaConfigureBusy}
+                                    onClick={() => void handleConfigureMetaWebhook()}
+                                  >
+                                    {metaConfigureBusy ? 'A configurar…' : 'Configurar webhook'}
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => {
+                                      setMetaManualSteps([
+                                        'No Meta for Developers → a sua App → WhatsApp → Configuration → Webhook.',
+                                        `Callback URL: ${platformMetaStatus.recommended_callback_url || 'https://{domínio}/api/webhooks/meta/whatsapp'}`,
+                                        'Cole o mesmo Verify Token guardado no PainelCRM (Super Admin → WhatsApp Oficial).',
+                                        'Inscreva o campo "messages" (e "statuses", se disponível).',
+                                      ]);
+                                      setMetaManualStepsOpen(true);
+                                    }}
+                                  >
+                                    Ver instruções manuais
+                                  </Button>
+                                  <Button type="button" size="sm" variant="secondary" asChild>
+                                    <Link to="/superadmin/conexoes/whatsapp-oficial">Abrir conexões</Link>
+                                  </Button>
+                                </div>
+                              </AlertDescription>
+                            </Alert>
+                          ) : null}
+                          {!platformMetaStatusLoading &&
+                          platformMetaStatus?.account?.is_active &&
+                          platformMetaStatus.account.status === 'connected' &&
+                          !platformMetaStatus.account.inbox_user_assigned ? (
+                            <Alert variant="destructive">
+                              <AlertTitle>Inbox não atribuído</AlertTitle>
+                              <AlertDescription className="text-xs">
+                                Guarde novamente a conta WhatsApp Oficial: o inbox do Super Admin deve ficar associado ao
+                                seu utilizador para as mensagens entrarem no chat.
+                              </AlertDescription>
+                            </Alert>
+                          ) : null}
+                        </div>
+                      ) : null}
                       {loadingConversations ? (
                         <div className="flex min-h-[12rem] flex-col items-center justify-center gap-3 px-6 py-10 text-center text-muted-foreground">
                           <RefreshCw className="h-8 w-8 animate-spin text-primary/70" aria-hidden />
@@ -5317,7 +5516,9 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                             <p className="mt-1 text-xs">Aguarde um momento.</p>
                           </div>
                         </div>
-                      ) : enabledInstanceIds.size === 0 && chatChannelOrigin !== 'official' ? (
+                      ) : enabledInstanceIds.size === 0 &&
+                        chatChannelOrigin !== 'official' &&
+                        !(isPlatformScope && chatChannelOrigin === 'all') ? (
                         <div className="flex min-h-[12rem] flex-col items-center justify-center gap-3 px-6 py-10 text-center">
                           <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
                             <ListFilter className="h-7 w-7 text-muted-foreground" aria-hidden />
@@ -6339,15 +6540,55 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
           <CardContent className="py-10 text-center text-muted-foreground space-y-4">
             <p>
               {isPlatformScope
-                ? 'Configure uma instância UazAPI da plataforma no Super Admin para operar este chat.'
+                ? chatChannelOrigin === 'official'
+                  ? 'O filtro está em “API Oficial Meta”. Abra as conexões WhatsApp Oficial ou mude a origem da lista para “Todas” se também usar UazAPI.'
+                  : 'Não há instância UazAPI da plataforma ativa. Crie uma em Conexões UazAPI ou mude a origem da lista para “Todas” / “API Oficial Meta” para usar só a Cloud API.'
                 : 'Configure sua primeira conexão WhatsApp em Configurações (fluxo completo com sincronização).'}
             </p>
-            <Button type="button" onClick={handleNavigateToSettings}>
-              {isPlatformScope ? 'Abrir Conexões — UazAPI' : 'Abrir Configurações — WhatsApp'}
-            </Button>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <Button type="button" onClick={handleNavigateToSettings}>
+                {isPlatformScope ? 'Abrir Conexões — UazAPI' : 'Abrir Configurações — WhatsApp'}
+              </Button>
+              {isPlatformScope ? (
+                <Button type="button" variant="outline" onClick={handleNavigateToMetaOfficialSettings}>
+                  Abrir WhatsApp Oficial (Meta)
+                </Button>
+              ) : null}
+            </div>
                   </CardContent>
                 </Card>
       )}
+
+      <Dialog open={metaManualStepsOpen} onOpenChange={setMetaManualStepsOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Instruções manuais — Webhook Meta</DialogTitle>
+            <DialogDescription>
+              Se a configuração automática não for permitida pelo token, siga estes passos no Meta for Developers.
+            </DialogDescription>
+          </DialogHeader>
+          <ol className="list-decimal space-y-2 pl-5 text-sm text-foreground">
+            {(metaManualSteps.length > 0
+              ? metaManualSteps
+              : [
+                  'App → WhatsApp → Configuration → Webhook.',
+                  'Defina o URL de callback e o Verify Token iguais aos do PainelCRM.',
+                  'Subscreva o campo messages (e statuses, se existir).',
+                ]
+            ).map((step, i) => (
+              <li key={i}>{step}</li>
+            ))}
+          </ol>
+          <DialogFooter>
+            <Button type="button" variant="secondary" asChild>
+              <Link to="/superadmin/conexoes/whatsapp-oficial">Abrir WhatsApp Oficial</Link>
+            </Button>
+            <Button type="button" onClick={() => setMetaManualStepsOpen(false)}>
+              Fechar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <ChatWhatsappModelPickerDialog
         open={whatsappModelPickerOpen}

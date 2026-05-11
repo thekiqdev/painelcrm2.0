@@ -27,6 +27,7 @@ import {
   RadioTower,
   Terminal,
   FileCode2,
+  LifeBuoy,
 } from "lucide-react";
 
 /** Item da sidebar do Super Admin — `to` deve coincidir com rotas em `App.tsx`. */
@@ -197,6 +198,11 @@ export const superAdminNavGroups: SuperAdminNavGroup[] = [
         label: "SMTP",
         to: "/superadmin/smtp",
         icon: Mail,
+      },
+      {
+        label: "Suporte",
+        to: "/superadmin/platform-support",
+        icon: LifeBuoy,
       },
     ],
   },
