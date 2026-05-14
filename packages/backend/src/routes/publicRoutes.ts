@@ -37,6 +37,11 @@ import {
   postPublicAppointmentConfirmationByToken,
 } from '../controllers/publicAppointmentsConfirmationController.js';
 import { getPublicPlatformTrackingSettings } from '../controllers/publicPlatformTrackingController.js';
+import {
+  getPublicSupportPortalBySlug,
+  postPublicSupportTicket,
+  postPublicSupportTicketLookup,
+} from '../controllers/publicSupportPortalController.js';
 
 const router = Router();
 
@@ -228,5 +233,55 @@ router.post(
   appointmentPublicConfirmWriteLimiter,
   postPublicAppointmentConfirmationByToken,
 );
+
+const supportPublicReadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_PUBLIC_SUPPORT_READ_MAX || '120', 10),
+  message: { ok: false, error: 'Muitas consultas. Aguarde.', code: 'rate_limited' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'development',
+  keyGenerator: (req) => {
+    const ip = req.ip || req.socket.remoteAddress || '';
+    const slug = (req.params as { slug?: string }).slug || '';
+    return `${ip}:${slug}`;
+  },
+});
+
+const supportPublicTicketPostLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_PUBLIC_SUPPORT_TICKET_POST_MAX || '12', 10),
+  message: { ok: false, error: 'Muitas tentativas. Aguarde alguns minutos.', code: 'rate_limited' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'development',
+  keyGenerator: (req) => {
+    const ip = req.ip || req.socket.remoteAddress || '';
+    const slug = (req.params as { slug?: string }).slug || '';
+    return `${ip}:${slug}`;
+  },
+});
+
+const supportPublicTicketLookupLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_PUBLIC_SUPPORT_TICKET_LOOKUP_MAX || '36', 10),
+  message: { ok: false, error: 'Muitas consultas. Aguarde alguns minutos.', code: 'rate_limited' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'development',
+  keyGenerator: (req) => {
+    const ip = req.ip || req.socket.remoteAddress || '';
+    const slug = (req.params as { slug?: string }).slug || '';
+    return `${ip}:${slug}`;
+  },
+});
+
+router.get('/support/:slug', supportPublicReadLimiter, getPublicSupportPortalBySlug);
+router.post(
+  '/support/:slug/tickets/lookup',
+  supportPublicTicketLookupLimiter,
+  postPublicSupportTicketLookup,
+);
+router.post('/support/:slug/tickets', supportPublicTicketPostLimiter, postPublicSupportTicket);
 
 export default router;

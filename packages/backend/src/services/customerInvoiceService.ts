@@ -42,6 +42,7 @@ export interface CustomerInvoiceRow {
   description: string | null;
   payment_token: string | null;
   charge_id: string | null;
+  project_id: string | null;
   created_at: string;
   updated_at: string;
   /** Preenchido em `listInvoices` (JOIN subscriptions): próxima cobrança da assinatura CRM. */
@@ -103,6 +104,8 @@ export interface CreateManualCustomerInvoiceInput {
   charge_id?: string | null;
   /** Proposta de origem (Etapa 2 — migração 118+). */
   proposal_id?: string | null;
+  /** Projeto vinculado (migração 235). */
+  project_id?: string | null;
   /** Se informado, amount_cents é ignorado e calculado como soma dos total_cents dos itens. */
   items?: CreateManualCustomerInvoiceItemInput[];
   /**
@@ -276,25 +279,35 @@ export async function createManualCustomerInvoice(
     data.initial_status === 'waiting_payment' ? 'waiting_payment' : 'pending';
 
   const paymentToken = crypto.randomUUID();
+  const schema = await getCustomerInvoiceSchema();
+  if (data.project_id && !schema.hasProjectIdColumn) {
+    throw new Error('Coluna customer_invoices.project_id não encontrada. Execute a migração 235_project_financial_links.');
+  }
+  const projectColumns = schema.hasProjectIdColumn ? ', project_id' : '';
+  const projectValue = schema.hasProjectIdColumn ? ', $12' : '';
+  const params: unknown[] = [
+    data.tenant_id,
+    data.client_id ?? null,
+    amountCents,
+    data.due_date,
+    data.description ?? null,
+    data.payment_method ?? null,
+    data.gateway_metadata ? JSON.stringify(data.gateway_metadata) : null,
+    paymentToken,
+    data.charge_id ?? null,
+    data.proposal_id ?? null,
+    initialStatus,
+  ];
+  if (schema.hasProjectIdColumn) {
+    params.push(data.project_id ?? null);
+  }
   const r = await pool.query<{ id: string; created_at: string }>(
     `INSERT INTO customer_invoices (
       tenant_id, client_id, subscription_id, period_start, period_end, amount_cents, due_date,
-      status, origin, invoice_type, description, payment_method, gateway_metadata, payment_token, charge_id, proposal_id
-    ) VALUES ($1, $2, NULL, NULL, NULL, $3, $4, $11, 'manual', 'manual', $5, $6, $7, $8, $9, $10)
+      status, origin, invoice_type, description, payment_method, gateway_metadata, payment_token, charge_id, proposal_id${projectColumns}
+    ) VALUES ($1, $2, NULL, NULL, NULL, $3, $4, $11, 'manual', 'manual', $5, $6, $7, $8, $9, $10${projectValue})
     RETURNING id, created_at`,
-    [
-      data.tenant_id,
-      data.client_id ?? null,
-      amountCents,
-      data.due_date,
-      data.description ?? null,
-      data.payment_method ?? null,
-      data.gateway_metadata ? JSON.stringify(data.gateway_metadata) : null,
-      paymentToken,
-      data.charge_id ?? null,
-      data.proposal_id ?? null,
-      initialStatus,
-    ]
+    params
   );
   const inserted = r.rows[0];
   if (!inserted) throw new Error('createManualCustomerInvoice: INSERT retornou vazio');
@@ -304,8 +317,6 @@ export async function createManualCustomerInvoice(
     `UPDATE customer_invoices SET invoice_number = $1, updated_at = now() WHERE id = $2`,
     [invoiceNumber, inserted.id]
   );
-
-  const schema = await getCustomerInvoiceSchema();
 
   for (let i = 0; i < items.length; i++) {
     const it = items[i];

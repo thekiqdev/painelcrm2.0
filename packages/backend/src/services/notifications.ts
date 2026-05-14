@@ -28,7 +28,9 @@ export type NotificationType =
   | 'agenda_pending_confirmation_alert'
   | 'chat_assigned'
   | 'chat_transferred'
-  | 'chat_sla_breach';
+  | 'chat_sla_breach'
+  | 'tenant_ticket_new'
+  | 'tenant_ticket_reply';
 
 /**
  * Interface para criar notificação

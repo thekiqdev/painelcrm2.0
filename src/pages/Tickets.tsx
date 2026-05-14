@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Search, Filter, LayoutGrid, List } from 'lucide-react';
+import { Plus, Search, LayoutGrid, List } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
@@ -15,6 +15,7 @@ import {
   ticketPriorityLabels,
   ticketStatusColors,
   ticketPriorityColors,
+  ticketChannelLabels,
 } from '@/types/tickets';
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -26,21 +27,27 @@ export default function Tickets() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [viewMode, setViewMode] = useState<'table' | 'kanban'>('table');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedSearch(searchQuery.trim()), 350);
+    return () => window.clearTimeout(t);
+  }, [searchQuery]);
 
   useEffect(() => {
     if (user) {
       loadTickets();
     }
-  }, [user, statusFilter]);
+  }, [user, statusFilter, debouncedSearch]);
 
   const loadTickets = async () => {
     try {
       setLoading(true);
       const data = await ticketsService.getTickets({
         status: statusFilter !== 'all' ? statusFilter : undefined,
-        search: searchQuery || undefined,
+        search: debouncedSearch || undefined,
       });
       setTickets(data);
     } catch (error: any) {
@@ -53,17 +60,6 @@ export default function Tickets() {
       setLoading(false);
     }
   };
-
-  const filteredTickets = tickets.filter((ticket) => {
-    const matchesSearch = 
-      ticket.ticket_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      ticket.subject.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      ticket.contact_name.toLowerCase().includes(searchQuery.toLowerCase());
-    
-    const matchesStatus = statusFilter === 'all' || ticket.status === statusFilter;
-    
-    return matchesSearch && matchesStatus;
-  });
 
   const getSLABadge = (ticket: Ticket) => {
     if (!ticket.resolution_due_at) return null;
@@ -185,7 +181,7 @@ export default function Tickets() {
                 </tr>
               </thead>
               <tbody>
-                {filteredTickets.map((ticket) => (
+                {tickets.map((ticket) => (
                   <tr
                     key={ticket.id}
                     className="border-b hover:bg-muted/50 cursor-pointer"
@@ -195,9 +191,14 @@ export default function Tickets() {
                     <td className="p-4">{ticket.subject}</td>
                     <td className="p-4">{ticket.contact_name}</td>
                     <td className="p-4">
-                      <Badge className={ticketPriorityColors[ticket.priority]}>
-                        {ticketPriorityLabels[ticket.priority]}
-                      </Badge>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge className={ticketPriorityColors[ticket.priority]}>
+                          {ticketPriorityLabels[ticket.priority]}
+                        </Badge>
+                        <Badge variant="outline" className="text-xs font-normal">
+                          {ticketChannelLabels[ticket.channel]}
+                        </Badge>
+                      </div>
                     </td>
                     <td className="p-4">
                       <Badge className={ticketStatusColors[ticket.status]}>
@@ -227,11 +228,11 @@ export default function Tickets() {
               <div className="font-semibold">
                 {ticketStatusLabels[status as keyof typeof ticketStatusLabels]}
                 <span className="ml-2 text-sm text-muted-foreground">
-                  ({filteredTickets.filter((t) => t.status === status).length})
+                  ({tickets.filter((t) => t.status === status).length})
                 </span>
               </div>
               <div className="space-y-2">
-                {filteredTickets
+                {tickets
                   .filter((t) => t.status === status)
                   .map((ticket) => (
                     <Card
@@ -260,7 +261,7 @@ export default function Tickets() {
         </div>
       )}
 
-      {filteredTickets.length === 0 && (
+      {tickets.length === 0 && (
         <Card className="p-12 text-center">
           <p className="text-muted-foreground">Nenhum ticket encontrado</p>
         </Card>

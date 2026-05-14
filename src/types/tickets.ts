@@ -169,7 +169,7 @@ export const ticketPriorityLabels: Record<TicketPriority, string> = {
 };
 
 export const ticketChannelLabels: Record<TicketChannel, string> = {
-  portal: 'Portal',
+  portal: 'Portal público',
   email: 'E-mail',
   whatsapp: 'WhatsApp',
   internal: 'Interno'

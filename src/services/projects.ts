@@ -40,6 +40,43 @@ export interface Project {
   team_id?: string | null;
   team_ids?: string[];
   areas?: ProjectArea[];
+  versions?: ProjectVersion[];
+}
+
+export interface ProjectVersionMetrics {
+  total_tasks: number;
+  completed_tasks: number;
+  overdue_tasks: number;
+  open_tasks?: number;
+  feature_tasks?: number;
+  fix_tasks?: number;
+  improvement_tasks?: number;
+  internal_tasks?: number;
+  days_remaining?: number | null;
+  ready_to_publish?: boolean;
+}
+
+export interface ProjectVersion {
+  id: string;
+  project_id: string;
+  name: string;
+  description: string | null;
+  status: 'planning' | 'development' | 'qa' | 'published' | 'archived';
+  start_date: string | null;
+  due_date: string | null;
+  release_date: string | null;
+  is_default: boolean;
+  sort_order: number;
+  published_at: string | null;
+  published_by: string | null;
+  archived_at: string | null;
+  archived_by: string | null;
+  release_notes: string | null;
+  frozen: boolean;
+  created_by: string | null;
+  created_at?: string;
+  updated_at?: string;
+  metrics: ProjectVersionMetrics;
 }
 
 export interface ProjectList {
@@ -56,6 +93,7 @@ export interface ProjectTask {
   list_id: string;
   project_id: string;
   area_id?: string | null;
+  version_id?: string | null;
   title: string;
   description: string | null;
   status: string;
@@ -86,6 +124,8 @@ export interface ProjectTask {
   task_type: string;
   meeting_location: string | null;
   meeting_link: string | null;
+  include_in_release_notes?: boolean;
+  release_note_type?: 'feature' | 'fix' | 'improvement' | 'internal' | null;
   created_at: string;
   updated_at: string;
 }
@@ -183,6 +223,102 @@ export class ProjectsService {
     if (response.error) throw new Error(response.error);
   }
 
+  async getProjectVersions(projectId: string, includeArchived = false): Promise<ProjectVersion[]> {
+    const query = includeArchived ? '?includeArchived=true' : '';
+    const response = await apiClient.get<ProjectVersion[]>(`/api/projects/${projectId}/versions${query}`);
+    if (response.error) throw new Error(response.error);
+    return response.data || [];
+  }
+
+  async createProjectVersion(
+    projectId: string,
+    data: {
+      name: string;
+      description?: string | null;
+      start_date?: string | null;
+      due_date?: string | null;
+      status?: ProjectVersion['status'];
+    },
+  ): Promise<ProjectVersion> {
+    const response = await apiClient.post<ProjectVersion>(`/api/projects/${projectId}/versions`, data);
+    if (response.error) throw new Error(response.error);
+    return response.data!;
+  }
+
+  async updateProjectVersion(
+    projectId: string,
+    versionId: string,
+    data: {
+      name?: string;
+      description?: string | null;
+      status?: ProjectVersion['status'];
+      start_date?: string | null;
+      due_date?: string | null;
+      release_date?: string | null;
+      is_default?: boolean;
+      sort_order?: number;
+      release_notes?: string | null;
+      frozen?: boolean;
+    },
+  ): Promise<ProjectVersion> {
+    const response = await apiClient.patch<ProjectVersion>(
+      `/api/projects/${projectId}/versions/${versionId}`,
+      data,
+    );
+    if (response.error) throw new Error(response.error);
+    return response.data!;
+  }
+
+  async archiveProjectVersion(projectId: string, versionId: string): Promise<ProjectVersion> {
+    const response = await apiClient.patch<ProjectVersion>(
+      `/api/projects/${projectId}/versions/${versionId}/archive`,
+      {},
+    );
+    if (response.error) throw new Error(response.error);
+    return response.data!;
+  }
+
+  async deleteProjectVersion(projectId: string, versionId: string): Promise<void> {
+    const response = await apiClient.delete(`/api/projects/${projectId}/versions/${versionId}`);
+    if (response.error) throw new Error(response.error);
+  }
+
+  async publishProjectVersion(
+    projectId: string,
+    versionId: string,
+    data: {
+      move_incomplete_to_version_id?: string | null;
+      archive_after_publish?: boolean;
+      freeze_version?: boolean;
+      generate_release_notes?: boolean;
+    },
+  ): Promise<ProjectVersion> {
+    const response = await apiClient.post<ProjectVersion>(
+      `/api/projects/${projectId}/versions/${versionId}/publish`,
+      data,
+    );
+    if (response.error) throw new Error(response.error);
+    return response.data!;
+  }
+
+  async duplicateProjectVersion(
+    projectId: string,
+    versionId: string,
+    data: {
+      name: string;
+      copy_open_tasks?: boolean;
+      copy_completed_tasks?: boolean;
+      copy_checklists?: boolean;
+    },
+  ): Promise<ProjectVersion> {
+    const response = await apiClient.post<ProjectVersion>(
+      `/api/projects/${projectId}/versions/${versionId}/duplicate`,
+      data,
+    );
+    if (response.error) throw new Error(response.error);
+    return response.data!;
+  }
+
   /** Comentários da área (estilo rede social). */
   async getAreaComments(projectId: string, areaId: string): Promise<AreaComment[]> {
     const response = await apiClient.get<AreaComment[]>(`/api/projects/${projectId}/areas/${areaId}/comments`);
@@ -238,17 +374,29 @@ export class ProjectsService {
   }
 
   // Tarefas de Projetos
-  async getProjectTasks(listId: string, options?: { areaId?: string }): Promise<ProjectTask[]> {
-    const url = options?.areaId
-      ? `/api/projects/lists/${listId}/tasks?areaId=${encodeURIComponent(options.areaId)}`
-      : `/api/projects/lists/${listId}/tasks`;
+  async getProjectTasks(
+    listId: string,
+    options?: { areaId?: string; versionId?: string },
+  ): Promise<ProjectTask[]> {
+    const params = new URLSearchParams();
+    if (options?.areaId) params.set('areaId', options.areaId);
+    if (options?.versionId) params.set('versionId', options.versionId);
+    const query = params.toString();
+    const url = query ? `/api/projects/lists/${listId}/tasks?${query}` : `/api/projects/lists/${listId}/tasks`;
     const response = await apiClient.get<ProjectTask[]>(url);
     if (response.error) throw new Error(response.error);
     return response.data || [];
   }
 
-  async getProjectTasksByArea(projectId: string, areaId: string): Promise<ProjectTask[]> {
-    const response = await apiClient.get<ProjectTask[]>(`/api/projects/${projectId}/areas/${areaId}/tasks`);
+  async getProjectTasksByArea(
+    projectId: string,
+    areaId: string,
+    options?: { versionId?: string },
+  ): Promise<ProjectTask[]> {
+    const query = options?.versionId ? `?versionId=${encodeURIComponent(options.versionId)}` : '';
+    const response = await apiClient.get<ProjectTask[]>(
+      `/api/projects/${projectId}/areas/${areaId}/tasks${query}`,
+    );
     if (response.error) throw new Error(response.error);
     return response.data || [];
   }
@@ -269,6 +417,7 @@ export class ProjectsService {
       due_date?: string | null;
       assignee_id?: string | null;
       area_id?: string | null;
+      version_id?: string | null;
       tags?: string[];
       start_date?: string | null;
       start_time?: string | null;
@@ -293,6 +442,8 @@ export class ProjectsService {
       task_type?: string;
       meeting_location?: string | null;
       meeting_link?: string | null;
+      include_in_release_notes?: boolean;
+      release_note_type?: 'feature' | 'fix' | 'improvement' | 'internal' | null;
     }
   ): Promise<ProjectTask> {
     const response = await apiClient.post<ProjectTask>(`/api/projects/lists/${listId}/tasks`, data);
@@ -304,6 +455,8 @@ export class ProjectsService {
     taskId: string,
     data: {
       list_id?: string;
+      area_id?: string | null;
+      version_id?: string | null;
       title?: string;
       description?: string | null;
       status?: string;
@@ -334,6 +487,8 @@ export class ProjectsService {
       task_type?: string;
       meeting_location?: string | null;
       meeting_link?: string | null;
+      include_in_release_notes?: boolean;
+      release_note_type?: 'feature' | 'fix' | 'improvement' | 'internal' | null;
     }
   ): Promise<ProjectTask> {
     const response = await apiClient.patch<ProjectTask>(`/api/projects/tasks/${taskId}`, data);
@@ -344,6 +499,36 @@ export class ProjectsService {
   async deleteProjectTask(taskId: string): Promise<void> {
     const response = await apiClient.delete(`/api/projects/tasks/${taskId}`);
     if (response.error) throw new Error(response.error);
+  }
+
+  async moveProjectTask(
+    taskId: string,
+    data: {
+      list_id: string;
+      version_id?: string | null;
+      area_id?: string | null;
+    },
+  ): Promise<ProjectTask> {
+    const response = await apiClient.patch<ProjectTask>(`/api/projects/tasks/${taskId}/move`, data);
+    if (response.error) throw new Error(response.error);
+    return response.data!;
+  }
+
+  async copyProjectTask(
+    taskId: string,
+    data: {
+      version_id: string;
+      list_id: string;
+      area_id?: string | null;
+      copy_checklist?: boolean;
+      copy_assignee?: boolean;
+      copy_due_date?: boolean;
+      copy_metadata?: boolean;
+    },
+  ): Promise<ProjectTask> {
+    const response = await apiClient.post<ProjectTask>(`/api/projects/tasks/${taskId}/copy`, data);
+    if (response.error) throw new Error(response.error);
+    return response.data!;
   }
 }
 

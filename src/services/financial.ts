@@ -100,6 +100,7 @@ export interface FinancialTransactionDto {
   gateway_reference_id?: string | null;
   created_at: string;
   updated_at: string;
+  project_id?: string | null;
 }
 
 export interface FinancialTransferDto {

@@ -73,6 +73,7 @@ const PublicContractView = lazyWithReload(() => import("./pages/PublicContractVi
 const PublicContractSign = lazyWithReload(() => import("./pages/PublicContractSign"));
 const PublicProposalView = lazyWithReload(() => import("./pages/PublicProposalView"));
 const PublicAppointmentConfirmation = lazyWithReload(() => import("./pages/PublicAppointmentConfirmation"));
+const SuportePublicOrPlatformTicket = lazyWithReload(() => import("./pages/SuportePublicOrPlatformTicket"));
 const CustomerCharges = lazyWithReload(() => import("./pages/CustomerCharges"));
 const CustomerChargeDetail = lazyWithReload(() => import("./pages/CustomerChargeDetail"));
 const Finance = lazyWithReload(() => import("./pages/Finance"));
@@ -173,7 +174,6 @@ const InternalBillingCheckout = lazyWithReload(() => import("./pages/InternalBil
 const PlanCheckout = lazyWithReload(() => import("./pages/PlanCheckout"));
 const Onboarding = lazyWithReload(() => import("./pages/Onboarding"));
 const PlatformSupport = lazyWithReload(() => import("./pages/PlatformSupport"));
-const PlatformSupportTicketDetail = lazyWithReload(() => import("./pages/PlatformSupportTicketDetail"));
 const SuperAdminPlatformSupport = lazyWithReload(() => import("./pages/superadmin/SuperAdminPlatformSupport"));
 const SuperAdminPlatformSupportTicketDetail = lazyWithReload(
   () => import("./pages/superadmin/SuperAdminPlatformSupportTicketDetail"),
@@ -265,13 +265,9 @@ const App = () => (
             <Route
               path="/suporte/:id"
               element={
-                <AuthGuard requireAuth={true} redirectTo="/login?redirect=%2Fsuporte">
-                  <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
-                      <PlatformSupportTicketDetail />
-                    </Suspense>
-                  </AppLayout>
-                </AuthGuard>
+                <Suspense fallback={<LoadingFallback />}>
+                  <SuportePublicOrPlatformTicket />
+                </Suspense>
               }
             />
             <Route path="/onboarding" element={<Suspense fallback={<LoadingFallback />}><Onboarding /></Suspense>} />
@@ -407,6 +403,15 @@ const App = () => (
                   </AppLayout>
               </AuthGuard>
             } />
+            <Route path="/projetos/:projectId" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <Projects />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
             <Route path="/projects/new" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
@@ -417,6 +422,15 @@ const App = () => (
               </AuthGuard>
             } />
             <Route path="/projects/:projectId/area/:areaId" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <ProjectAreaPage />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/projetos/:projectId/area/:areaId" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
                     <Suspense fallback={<LoadingFallback />}>

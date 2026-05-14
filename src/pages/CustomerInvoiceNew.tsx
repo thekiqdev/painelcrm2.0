@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useNavigate, Link, useSearchParams, useMatch } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -20,6 +21,7 @@ import { customerInvoicesService } from "@/services/customerInvoices";
 import { customerChargesService } from "@/services/customerCharges";
 import { clientsService } from "@/services/clients";
 import { productsService } from "@/services/products";
+import { projectsService } from "@/services/projects";
 import { apiClient } from "@/integrations/api/client";
 import type {
   CreateCustomerInvoiceBody,
@@ -214,6 +216,7 @@ const CustomerInvoiceNew = ({
   onCreated,
 }: CustomerInvoiceNewProps = {}) => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const isMobile = useIsMobile();
   const { setSuppressMobileBottomNav } = useMobileShellChrome();
   const editMatch = useMatch({ path: "/customer-invoices/:id/edit", end: true });
@@ -222,6 +225,9 @@ const CustomerInvoiceNew = ({
   const [searchParams] = useSearchParams();
   const editFlowQuery = searchParams.get("flow");
   const queryClientId = searchParams.get("client_id");
+  const queryProjectId = searchParams.get("projectId")?.trim() || "";
+  const projectInvoiceMode = (searchParams.get("mode") || "").trim().toLowerCase();
+  const projectReturnTo = searchParams.get("returnTo")?.trim() || "";
   /** `one_off` | `subscription` — pré-seleciona o tipo ao entrar com `client_id`. */
   const billingKindQuery = (searchParams.get("billing") || "").trim().toLowerCase();
   const returnToConversation = searchParams.get("return_to")?.trim() || "";
@@ -517,6 +523,33 @@ const CustomerInvoiceNew = ({
       return;
     }
   }, [embedded, prefillClientId, onBack]);
+
+  useEffect(() => {
+    if (isEditMode || embedded || !queryProjectId) return;
+    let cancelled = false;
+    projectsService
+      .getProjectById(queryProjectId)
+      .then((project) => {
+        if (cancelled) return;
+        const useLinkMode = projectInvoiceMode === "link" || !project.client_id;
+        setInvoiceByLink(useLinkMode);
+        setForm((current) => ({
+          ...current,
+          project_id: queryProjectId,
+          client_id: useLinkMode ? "" : current.client_id || project.client_id || "",
+          description: current.description || project.name || null,
+        }));
+        setCreationKind("one_off");
+        setStep("form");
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        toast.error(error instanceof Error ? error.message : "Erro ao carregar projeto");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [queryProjectId, projectInvoiceMode, isEditMode, embedded]);
 
   useEffect(() => {
     if (isEditMode || !prefillClientId) return;
@@ -822,6 +855,8 @@ const CustomerInvoiceNew = ({
                 : null),
         allowed_payment_methods: allowedPaymentMethods.length > 0 ? allowedPaymentMethods : null,
       };
+      if (queryProjectId) body.project_id = queryProjectId;
+      body.billing_mode = isInvoiceByLink ? "link" : "client";
       if (!isInvoiceByLink && resolvedClientId) body.client_id = resolvedClientId;
       else if (isInvoiceByLink) body.client_id = null;
       if (!isInvoiceByLink && form.gateway_key) body.gateway_key = form.gateway_key;
@@ -857,6 +892,12 @@ const CustomerInvoiceNew = ({
       }
       if (form.charge_id) body.charge_id = form.charge_id;
       const result = await customerInvoicesService.create(body);
+      if (queryProjectId) {
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["project-financial-summary", queryProjectId] }),
+          queryClient.invalidateQueries({ queryKey: ["project-financial-invoices", queryProjectId] }),
+        ]);
+      }
       toast.success(
         result.subscription_id
           ? isInvoiceByLink
@@ -869,6 +910,8 @@ const CustomerInvoiceNew = ({
       if (result.invoice?.id) {
         if (embedded) {
           onCreated?.(result.invoice.id);
+        } else if (projectReturnTo) {
+          navigate(projectReturnTo);
         } else if (originChat && returnToConversation) {
           navigate(`/customer-invoices/${result.invoice.id}`, {
             state: { chatReturnTo: returnToConversation },

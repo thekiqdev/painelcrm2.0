@@ -30,6 +30,7 @@ interface PrimaryUser {
   first_name: string;
   last_name: string;
   company_name: string;
+  billing_phone?: string | null;
 }
 
 interface PlanHistoryItem {
@@ -70,7 +71,7 @@ export default function SuperAdminClientConfiguracoes() {
     locale: '',
     logo_url: '',
   });
-  const [formUser, setFormUser] = useState({ email: '', first_name: '', last_name: '', company_name: '' });
+  const [formUser, setFormUser] = useState({ email: '', first_name: '', last_name: '', company_name: '', billing_phone: '' });
   const [newPassword, setNewPassword] = useState('');
 
   useEffect(() => {
@@ -104,6 +105,7 @@ export default function SuperAdminClientConfiguracoes() {
           first_name: uRes.data.first_name || '',
           last_name: uRes.data.last_name || '',
           company_name: uRes.data.company_name || '',
+          billing_phone: uRes.data.billing_phone ?? '',
         });
       } else setPrimaryUser(null);
       if (hRes.data?.history) setPlanHistory(hRes.data.history);
@@ -146,6 +148,7 @@ export default function SuperAdminClientConfiguracoes() {
       first_name: formUser.first_name || undefined,
       last_name: formUser.last_name || undefined,
       company_name: formUser.company_name || undefined,
+      billing_phone: formUser.billing_phone.trim() === '' ? null : formUser.billing_phone.trim(),
     });
     setSavingUser(false);
     if (res.error) {
@@ -154,6 +157,7 @@ export default function SuperAdminClientConfiguracoes() {
     }
     if (res.data) setPrimaryUser(res.data);
     toast.success('Contato principal atualizado.');
+    refresh();
   };
 
   const savePassword = async () => {
@@ -365,12 +369,24 @@ export default function SuperAdminClientConfiguracoes() {
       <Card>
         <CardHeader>
           <CardTitle>Contato principal</CardTitle>
-          <CardDescription>E-mail e nome do primeiro usuário vinculado à empresa.</CardDescription>
+          <CardDescription>E-mail, telefone da empresa e nome do primeiro usuário vinculado.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {primaryUser ? (
             <>
               <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2 sm:col-span-2">
+                  <Label>Telefone da empresa</Label>
+                  <Input
+                    value={formUser.billing_phone}
+                    onChange={(e) => setFormUser((f) => ({ ...f, billing_phone: e.target.value }))}
+                    placeholder="(11) 99999-9999"
+                    inputMode="tel"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Usado em faturamento e cadastro da empresa no painel.
+                  </p>
+                </div>
                 <div className="space-y-2 sm:col-span-2">
                   <Label>E-mail</Label>
                   <Input value={formUser.email} onChange={(e) => setFormUser((f) => ({ ...f, email: e.target.value }))} placeholder="email@empresa.com" />

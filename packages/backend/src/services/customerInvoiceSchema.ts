@@ -8,6 +8,8 @@ export interface CustomerInvoiceSchemaInfo {
   hasParentInvoiceColumns: boolean;
   /** true se migração 80 aplicou is_recurring, recurring_interval, scheduled_due_date em customer_invoice_items */
   hasInvoiceItemAdvancedColumns: boolean;
+  /** true se migração 235 aplicou project_id em customer_invoices */
+  hasProjectIdColumn: boolean;
   /** SELECT ... FROM customer_invoices ci — lista com prefixo ci. */
   selectListFromCi: string;
   /** SELECT ... FROM customer_invoices (sem prefixo). */
@@ -18,37 +20,40 @@ export interface CustomerInvoiceSchemaInfo {
 
 let cached: Promise<CustomerInvoiceSchemaInfo> | null = null;
 
-function buildSelectListFromCi(hasParent: boolean): string {
+function buildSelectListFromCi(hasParent: boolean, hasProjectId: boolean): string {
   const mid = hasParent
     ? 'ci.parent_invoice_id, ci.parent_invoice_item_id,'
     : 'NULL::uuid AS parent_invoice_id, NULL::uuid AS parent_invoice_item_id,';
+  const project = hasProjectId ? 'ci.project_id,' : 'NULL::uuid AS project_id,';
   return `ci.id, ci.tenant_id, ci.client_id, ci.subscription_id, ${mid} ci.period_start, ci.period_end, ci.amount_cents, ci.due_date,
    ci.status, ci.paid_at, ci.invoice_number, ci.gateway, ci.payment_method,
    ci.gateway_reference_id, ci.gateway_metadata, ci.gateway_status, ci.idempotency_key,
-   ci.origin, ci.invoice_type, ci.description, ci.payment_token, ci.charge_id, ci.created_at, ci.updated_at`;
+   ci.origin, ci.invoice_type, ci.description, ci.payment_token, ci.charge_id, ${project} ci.created_at, ci.updated_at`;
 }
 
-function buildSelectListBare(hasParent: boolean): string {
+function buildSelectListBare(hasParent: boolean, hasProjectId: boolean): string {
   const mid = hasParent
     ? 'parent_invoice_id, parent_invoice_item_id,'
     : 'NULL::uuid AS parent_invoice_id, NULL::uuid AS parent_invoice_item_id,';
+  const project = hasProjectId ? 'project_id,' : 'NULL::uuid AS project_id,';
   return `id, tenant_id, client_id, subscription_id, ${mid} period_start, period_end, amount_cents, due_date,
    status, paid_at, invoice_number, gateway, payment_method,
    gateway_reference_id, gateway_metadata, gateway_status, idempotency_key,
-   origin, invoice_type, description, payment_token, charge_id, created_at, updated_at`;
+   origin, invoice_type, description, payment_token, charge_id, ${project} created_at, updated_at`;
 }
 
-function buildInsertReturning(hasParent: boolean): string {
+function buildInsertReturning(hasParent: boolean, hasProjectId: boolean): string {
+  const project = hasProjectId ? 'project_id,' : 'NULL::uuid AS project_id,';
   if (hasParent) {
     return `id, tenant_id, client_id, subscription_id, parent_invoice_id, parent_invoice_item_id, period_start, period_end, amount_cents, due_date,
    status, paid_at, invoice_number, gateway, payment_method,
    gateway_reference_id, gateway_metadata, gateway_status, idempotency_key,
-   origin, invoice_type, description, payment_token, charge_id, created_at, updated_at`;
+   origin, invoice_type, description, payment_token, charge_id, ${project} created_at, updated_at`;
   }
   return `id, tenant_id, client_id, subscription_id, period_start, period_end, amount_cents, due_date,
    status, paid_at, invoice_number, gateway, payment_method,
    gateway_reference_id, gateway_metadata, gateway_status, idempotency_key,
-   origin, invoice_type, description, payment_token, charge_id, created_at, updated_at`;
+   origin, invoice_type, description, payment_token, charge_id, ${project} created_at, updated_at`;
 }
 
 export async function getCustomerInvoiceSchema(): Promise<CustomerInvoiceSchemaInfo> {
@@ -70,12 +75,20 @@ export async function getCustomerInvoiceSchema(): Promise<CustomerInvoiceSchemaI
       const nItems = parseInt(rItems.rows[0]?.c ?? '0', 10);
       const hasItemAdvanced = nItems === 3;
 
+      const rProject = await pool.query<{ c: string }>(
+        `SELECT COUNT(*)::text AS c FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'customer_invoices'
+         AND column_name = 'project_id'`
+      );
+      const hasProjectId = parseInt(rProject.rows[0]?.c ?? '0', 10) === 1;
+
       return {
         hasParentInvoiceColumns: hasParent,
         hasInvoiceItemAdvancedColumns: hasItemAdvanced,
-        selectListFromCi: buildSelectListFromCi(hasParent),
-        selectListBare: buildSelectListBare(hasParent),
-        insertReturning: buildInsertReturning(hasParent),
+        hasProjectIdColumn: hasProjectId,
+        selectListFromCi: buildSelectListFromCi(hasParent, hasProjectId),
+        selectListBare: buildSelectListBare(hasParent, hasProjectId),
+        insertReturning: buildInsertReturning(hasParent, hasProjectId),
       };
     })();
   }

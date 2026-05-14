@@ -57,6 +57,7 @@ export interface FinanceExpenseEntry {
   paid_at: string | null;
   description: string;
   status: FinanceExpenseStatus;
+  project_id?: string | null;
   supplier_name: string | null;
   notes: string | null;
   created_at: string;
@@ -219,6 +220,7 @@ export const financeModuleService = {
     to?: string;
     account_id?: string;
     status?: string;
+    project_id?: string;
   }): Promise<FinanceExpenseEntry[]> {
     const r = await apiClient.get<FinanceExpenseEntry[]>(`${BASE}/expense-entries${qs(filters ?? {})}`);
     if (r.error) throw new Error(r.error);
@@ -227,6 +229,7 @@ export const financeModuleService = {
 
   async createExpenseEntry(body: {
     finance_account_id?: string | null;
+    financial_account_id?: string | null;
     category_id?: string | null;
     amount_cents: number;
     expense_date: string;
@@ -234,6 +237,7 @@ export const financeModuleService = {
     paid_at?: string | null;
     description: string;
     status: FinanceExpenseStatus;
+    project_id?: string | null;
     supplier_name?: string | null;
     notes?: string | null;
   }): Promise<FinanceExpenseEntry> {
@@ -254,6 +258,7 @@ export const financeModuleService = {
       paid_at: string | null;
       description: string;
       status: FinanceExpenseStatus;
+      project_id: string | null;
       supplier_name: string | null;
       notes: string | null;
     }>

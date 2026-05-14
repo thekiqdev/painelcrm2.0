@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { AuthRequest } from '../middleware/auth.js';
 import { assertModulePermission, ModulePermissionError } from '../permissions/index.js';
 import { isTenantAdmin } from '../utils/tenant.js';
+import { listProjectVersionsForProjectDetail } from './projectVersionsController.js';
 
 const MODULE_PROJECTS = 'projects';
 
@@ -270,6 +271,12 @@ export const getProjectById = async (req: Request, res: Response) => {
       (project as any).areas = [];
     }
 
+    if (projectType === 'advanced') {
+      (project as any).versions = await listProjectVersionsForProjectDetail(id);
+    } else {
+      (project as any).versions = [];
+    }
+
     res.json(project);
   } catch (error) {
     console.error('Error fetching project:', error);
@@ -429,10 +436,16 @@ export const createProject = async (req: Request, res: Response) => {
         }
       }
 
-      if (projectType === 'advanced' && createFirstVersion && firstVersionName) {
+      if (projectType === 'advanced') {
         await client.query(
-          `INSERT INTO project_versions (project_id, name, release_date, status, sort_order) VALUES ($1, $2, $3::timestamptz, 'planned', 0)`,
-          [projectId, firstVersionName, firstVersionDate]
+          `INSERT INTO project_versions (project_id, name, release_date, status, sort_order, is_default, created_by)
+           VALUES ($1, $2, $3::timestamptz, 'planning', 0, true, $4)`,
+          [
+            projectId,
+            createFirstVersion && firstVersionName ? firstVersionName : 'Backlog',
+            createFirstVersion && firstVersionName ? firstVersionDate : null,
+            userId,
+          ]
         );
       }
 

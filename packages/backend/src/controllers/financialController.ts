@@ -180,6 +180,7 @@ const createTransactionBody = z.object({
   reference_name: z.string().nullable().optional(),
   transaction_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   status: transactionStatusSchema.optional(),
+  project_id: z.string().uuid().nullable().optional(),
 });
 
 const patchTransactionBody = z.object({
@@ -1016,6 +1017,7 @@ export async function createFinancialTransactionHandler(req: AuthRequest, res: R
       transaction_date: parsed.data.transaction_date,
       status: parsed.data.status,
       transaction_kind: parsed.data.transaction_kind as FinancialTransactionKind | undefined,
+      project_id: parsed.data.project_id ?? null,
     });
     res.status(201).json(row);
   } catch (e: unknown) {

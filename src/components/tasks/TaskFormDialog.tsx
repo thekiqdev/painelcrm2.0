@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
@@ -116,6 +117,8 @@ export function TaskFormDialog({
   const [tagsInput, setTagsInput] = useState<string[]>([]);
   const [newTagText, setNewTagText] = useState('');
   const [taskType, setTaskType] = useState('task');
+  const [includeInReleaseNotes, setIncludeInReleaseNotes] = useState(true);
+  const [releaseNoteType, setReleaseNoteType] = useState<'feature' | 'fix' | 'improvement' | 'internal'>('feature');
   const [assigneeTeamFilter, setAssigneeTeamFilter] = useState<string | null>(null);
   const [teamMembers, setTeamMembers] = useState<{ id: string; name: string }[]>([]);
   const [advancedFormValue, setAdvancedFormValue] = useState<TaskAdvancedFormValue>(
@@ -169,6 +172,8 @@ export function TaskFormDialog({
     setTagsInput([]);
     setNewTagText('');
     setTaskType('task');
+    setIncludeInReleaseNotes(true);
+    setReleaseNoteType('feature');
     setAssigneeTeamFilter(null);
     setAdvancedFormValue(DEFAULT_TASK_ADVANCED_FORM_VALUE);
   }, [open, context, initialValues]);
@@ -297,6 +302,7 @@ export function TaskFormDialog({
           tags: tagsInput,
           task_type: taskType,
           area_id: context.areaId ?? null,
+          version_id: context.versionId ?? null,
           checklist,
           start_date: (adv.start_date as string | null) ?? null,
           start_time: (adv.start_time as string | null) ?? null,
@@ -312,6 +318,8 @@ export function TaskFormDialog({
           meeting_location: adv.meeting_location as string | null,
           meeting_link: adv.meeting_link as string | null,
           severity: adv.severity as string | null,
+          include_in_release_notes: includeInReleaseNotes,
+          release_note_type: releaseNoteType,
         });
         toast.success('Tarefa criada');
         onOpenChange(false);
@@ -513,6 +521,29 @@ export function TaskFormDialog({
                 </SelectContent>
               </Select>
             </div>
+            <div className="space-y-2">
+              <Label>Changelog</Label>
+              <Select value={releaseNoteType} onValueChange={(value) => setReleaseNoteType(value as typeof releaseNoteType)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="feature">Feature</SelectItem>
+                  <SelectItem value="fix">Correção</SelectItem>
+                  <SelectItem value="improvement">Melhoria</SelectItem>
+                  <SelectItem value="internal">Interno</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 rounded-md border border-border p-3">
+            <Checkbox
+              id="include-release-notes"
+              checked={includeInReleaseNotes}
+              onCheckedChange={(checked) => setIncludeInReleaseNotes(Boolean(checked))}
+            />
+            <Label htmlFor="include-release-notes">Incluir no changelog</Label>
           </div>
 
           <div className="space-y-2">

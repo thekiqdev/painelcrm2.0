@@ -16,7 +16,6 @@ import {
   Briefcase,
   MessageSquare,
   Calendar,
-  DollarSign,
   FileCheck,
   Settings,
   History,
@@ -24,6 +23,7 @@ import {
   CalendarSync,
   PieChart,
   FolderOpen,
+  Ticket,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -31,6 +31,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { chatOpenQueryFromClientProfile } from "@/lib/chatListNavigation";
 import { navigateBackFromClientProfile } from "@/utils/clientProfileNavigation";
+import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
+import { useFeatureFlag } from "@/hooks/useFeatureFlag";
 
 interface ClientSidebarProps {
   clientId: string;
@@ -71,6 +73,9 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
 }) => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { canView } = useModulePermissions();
+  const hasTicketsModule = useFeatureFlag("tickets");
+  const showTicketsNav = hasTicketsModule && canView("tickets");
 
   const menuItems = useMemo((): MenuItem[] => {
     const base = `/clients/${clientId}`;
@@ -116,6 +121,17 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
         path: `${base}/tasks`,
         description: "Tarefas relacionadas",
       },
+      ...(showTicketsNav
+        ? [
+            {
+              id: "tickets",
+              label: "Chamados",
+              icon: Ticket,
+              path: `${base}/tickets`,
+              description: "Tickets de suporte do cliente",
+            } satisfies MenuItem,
+          ]
+        : []),
       {
         id: "opportunities",
         label: "Propostas",
@@ -173,7 +189,7 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
         description: "Configurações do cliente",
       },
     ];
-  }, [clientId, showBilling]);
+  }, [clientId, showBilling, showTicketsNav]);
 
   const isActive = (path: string) => {
     if (path === `/clients/${clientId}`) {

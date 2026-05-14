@@ -38,6 +38,8 @@ import {
   Check,
   Clock,
   LayoutList,
+  ArrowRightLeft,
+  Copy,
 } from "lucide-react";
 import { TaskAdvancedFields, unifiedTaskToFormValue, formValueToApiPayload } from "./TaskAdvancedFields";
 import type { TaskAdvancedFormValue } from "./TaskAdvancedFields";
@@ -75,6 +77,8 @@ export interface TaskSidePanelProps {
   onUpdate?: (taskId: string, updates: Record<string, unknown>) => void | Promise<void>;
   onDelete?: (taskId: string) => void | Promise<void>;
   onToggleStatus?: (taskId: string) => void | Promise<void>;
+  onMoveToVersion?: () => void;
+  onCopyToVersion?: () => void;
 }
 
 const STATUS_OPTIONS: { value: UnifiedTaskStatus; label: string }[] = [
@@ -322,6 +326,8 @@ export function TaskSidePanel({
   onUpdate,
   onDelete,
   onToggleStatus,
+  onMoveToVersion,
+  onCopyToVersion,
 }: TaskSidePanelProps) {
   const [editTitle, setEditTitle] = useState("");
   const [editDescription, setEditDescription] = useState("");
@@ -484,6 +490,38 @@ export function TaskSidePanel({
                   placeholder="Título da tarefa"
                 />
                 <div className="flex items-center gap-0.5 shrink-0 relative z-10">
+                  {onMoveToVersion && isProject && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-muted-foreground shrink-0"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onMoveToVersion();
+                      }}
+                      aria-label="Transferir para versão"
+                    >
+                      <ArrowRightLeft className="h-4 w-4" />
+                    </Button>
+                  )}
+                  {onCopyToVersion && isProject && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-muted-foreground shrink-0"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onCopyToVersion();
+                      }}
+                      aria-label="Copiar para versão"
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                  )}
                   {onDelete && (
                     <Button
                       type="button"

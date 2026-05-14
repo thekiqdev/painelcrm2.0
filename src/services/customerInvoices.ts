@@ -31,6 +31,7 @@ export interface CustomerInvoice {
   description: string | null;
   payment_token: string | null;
   charge_id: string | null;
+  project_id?: string | null;
   created_at: string;
   updated_at: string;
   /** Lista (GET /customer-invoices): próxima cobrança da assinatura quando houver JOIN. */
@@ -73,6 +74,10 @@ export interface CreateCustomerInvoiceBody {
   gateway_key?: string | null;
   /** Vincular à cobrança (Fase 10). */
   charge_id?: string | null;
+  /** Vincular a projeto (opcional). */
+  project_id?: string | null;
+  /** Modo explícito para faturas públicas sem cliente. */
+  billing_mode?: 'link' | 'client';
 }
 
 /** Item retornado no GET :id (customer_invoice_items). */
@@ -237,6 +242,7 @@ export interface UpdateCustomerInvoiceBody {
   items?: CreateCustomerInvoiceItemBody[];
   payment_method?: 'PIX' | 'BOLETO' | 'CREDIT_CARD' | null;
   allowed_payment_methods?: Array<'PIX' | 'BOLETO' | 'CREDIT_CARD'> | null;
+  project_id?: string | null;
 }
 
 /** Motivos quando o backend não enfileirou job logo após o PATCH (regras do scheduler / janela local). */
@@ -287,6 +293,7 @@ export interface CreateCustomerInvoiceResult {
 
 export interface ListCustomerInvoicesParams {
   client_id?: string | null;
+  project_id?: string | null;
   status?: string | null;
   /** Vários estados (query `status_in` no backend). */
   status_in?: string[] | null;
@@ -327,6 +334,7 @@ export const customerInvoicesService = {
   async list(params: ListCustomerInvoicesParams = {}): Promise<CustomerInvoice[]> {
     const search = new URLSearchParams();
     if (params.client_id) search.set('client_id', params.client_id);
+    if (params.project_id) search.set('project_id', params.project_id);
     if (params.status_in && params.status_in.length > 0) {
       search.set('status_in', params.status_in.join(','));
     } else if (params.status) {

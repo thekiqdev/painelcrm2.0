@@ -36,6 +36,7 @@ interface Tenant {
   created_via?: 'registration' | 'superadmin';
   primary_contact_email?: string | null;
   primary_contact_name?: string | null;
+  billing_phone?: string | null;
 }
 
 const statusLabels: Record<string, string> = {
@@ -119,6 +120,7 @@ export default function SuperAdminClients() {
                 <TableRow>
                   <TableHead>Nome</TableHead>
                   <TableHead>Contato</TableHead>
+                  <TableHead>Telefone</TableHead>
                   <TableHead>E-mail</TableHead>
                   <TableHead>Slug</TableHead>
                   <TableHead>Domínio</TableHead>
@@ -138,6 +140,7 @@ export default function SuperAdminClients() {
                   >
                     <TableCell className="font-medium">{tenant.name}</TableCell>
                     <TableCell className="text-muted-foreground">{tenant.primary_contact_name?.trim() || '—'}</TableCell>
+                    <TableCell className="text-muted-foreground">{tenant.billing_phone?.trim() || '—'}</TableCell>
                     <TableCell className="text-muted-foreground">{tenant.primary_contact_email || '—'}</TableCell>
                     <TableCell className="text-muted-foreground">{tenant.slug}</TableCell>
                     <TableCell>{tenant.domain || '—'}</TableCell>

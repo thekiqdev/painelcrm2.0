@@ -76,6 +76,15 @@ export default function SuperAdminClientResumo() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
+            <CardTitle className="text-base">Telefone</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="font-medium">{tenant.billing_phone?.trim() || '—'}</p>
+            <p className="mt-1 text-xs text-muted-foreground">Editar em Configurações → Contato principal</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
             <CardTitle className="text-base">Data de criação</CardTitle>
           </CardHeader>
           <CardContent>

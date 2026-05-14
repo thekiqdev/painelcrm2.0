@@ -3,7 +3,31 @@ import { pool } from '../utils/db.js';
 import { z } from 'zod';
 import { AuthRequest } from '../middleware/auth.js';
 import { assertModulePermission, assertPermissionKey, ModulePermissionError } from '../permissions/index.js';
+import {
+  assertAreaInProject,
+  assertListInProject,
+  assertVersionInProject,
+  appendProjectTaskVersionFilter,
+  getDefaultProjectVersionId,
+  projectAllowsAreas,
+  projectAllowsVersions,
+} from '../services/projectVersionsScope.js';
 const MODULE_TASKS = 'tasks';
+const MODULE_PROJECTS = 'projects';
+const RELEASE_NOTE_TYPES = ['feature', 'fix', 'improvement', 'internal'] as const;
+
+async function isProjectVersionFrozen(projectId: string, versionId: string | null | undefined): Promise<boolean> {
+  let effectiveVersionId = versionId ?? null;
+  if (!effectiveVersionId) {
+    effectiveVersionId = await getDefaultProjectVersionId(projectId);
+  }
+  if (!effectiveVersionId) return false;
+  const result = await pool.query<{ frozen: boolean }>(
+    `SELECT frozen FROM project_versions WHERE id = $1 AND project_id = $2`,
+    [effectiveVersionId, projectId],
+  );
+  return result.rows[0]?.frozen === true;
+}
 
 /** Valor para coluna jsonb: null, string JSON como está, objeto stringificado. */
 function formatJsonbForDb(value: unknown): string | null {
@@ -48,14 +72,18 @@ const taskSchema = z.object({
   meeting_location: z.string().optional().nullable(),
   meeting_link: z.string().optional().nullable(),
   area_id: z.string().uuid().optional().nullable(),
+  version_id: z.string().uuid().optional().nullable(),
   list_id: z.string().uuid().optional().nullable(),
+  include_in_release_notes: z.boolean().optional(),
+  release_note_type: z.enum(RELEASE_NOTE_TYPES).optional().nullable(),
 });
 
-const TASK_SELECT = `id, list_id, project_id, area_id, title, description, status, priority, due_date, assignee_id,
+const TASK_SELECT = `id, list_id, project_id, area_id, version_id, title, description, status, priority, due_date, assignee_id,
   tags, start_date, start_time, end_time, estimated_effort_hours, estimated_story_points,
   checklist, attachments, dependencies, watchers, reminders, recurrence_rule,
   milestone_id, parent_task_id, sprint_id, visibility, billable, hourly_rate,
   budget_cap, custom_fields, severity, task_type, meeting_location, meeting_link,
+  include_in_release_notes, release_note_type,
   created_at, updated_at`;
 
 function mapTaskRow(row: any) {
@@ -77,7 +105,7 @@ function mapTaskRow(row: any) {
   };
 }
 
-// GET /api/projects/lists/:listId/tasks?areaId=uuid (areaId opcional: filtra por área)
+// GET /api/projects/lists/:listId/tasks?areaId=uuid&versionId=uuid|none
 export const getProjectTasks = async (req: Request, res: Response) => {
   try {
     const userId = (req as AuthRequest).userId;
@@ -96,6 +124,7 @@ export const getProjectTasks = async (req: Request, res: Response) => {
     const tenantId = (req as any).tenantId ?? null;
     const { listId } = req.params;
     const areaId = (req.query.areaId as string) || null;
+    const versionIdRaw = (req.query.versionId as string) || null;
 
     if (!tenantId) {
       return res.status(404).json({ error: 'Lista não encontrada' });
@@ -113,24 +142,19 @@ export const getProjectTasks = async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Lista não encontrada' });
     }
 
-    let result;
+    let sql = `SELECT ${TASK_SELECT}
+         FROM project_tasks
+         WHERE list_id = $1`;
+    const params: unknown[] = [listId];
+    const projectId = listCheck.rows[0].project_id as string;
     if (areaId) {
-      result = await pool.query(
-        `SELECT ${TASK_SELECT}
-         FROM project_tasks
-         WHERE list_id = $1 AND area_id = $2
-         ORDER BY created_at ASC`,
-        [listId, areaId]
-      );
-    } else {
-      result = await pool.query(
-        `SELECT ${TASK_SELECT}
-         FROM project_tasks
-         WHERE list_id = $1
-         ORDER BY created_at ASC`,
-        [listId]
-      );
+      params.push(areaId);
+      sql += ` AND area_id = $${params.length}`;
     }
+    sql = await appendProjectTaskVersionFilter(sql, params, versionIdRaw, projectId);
+    sql += ' ORDER BY created_at ASC';
+
+    const result = await pool.query(sql, params);
 
     res.json(result.rows.map(mapTaskRow));
   } catch (error) {
@@ -220,20 +244,47 @@ export const createProjectTask = async (req: Request, res: Response) => {
 
     const projectId = listCheck.rows[0].project_id;
     const validated = taskSchema.parse(req.body);
-    const areaId = validated.area_id ?? null;
+    const projectRow = await pool.query<{ project_type: string }>(
+      `SELECT project_type FROM projects WHERE id = $1`,
+      [projectId],
+    );
+    const projectType = projectRow.rows[0]?.project_type ?? 'simple';
+    let areaId = validated.area_id ?? null;
+    let versionId = validated.version_id ?? null;
+
+    if (projectAllowsVersions(projectType) && !versionId) {
+      versionId = await getDefaultProjectVersionId(projectId);
+    }
+
+    if (versionId && !projectAllowsVersions(projectType)) {
+      return res.status(400).json({ error: 'Este tipo de projeto não aceita versão em tarefas' });
+    }
+    if (versionId && !(await assertVersionInProject(versionId, projectId))) {
+      return res.status(400).json({ error: 'Versão não pertence ao projeto' });
+    }
+    if (versionId && await isProjectVersionFrozen(projectId, versionId)) {
+      return res.status(400).json({ error: 'Não é possível criar tarefa em versão congelada' });
+    }
+    if (areaId && !projectAllowsAreas(projectType)) {
+      return res.status(400).json({ error: 'Este tipo de projeto não aceita área em tarefas' });
+    }
+    if (areaId && !(await assertAreaInProject(areaId, projectId))) {
+      return res.status(400).json({ error: 'Área não pertence ao projeto' });
+    }
 
     const result = await pool.query(
       `INSERT INTO project_tasks (
-        list_id, project_id, user_id, area_id, title, description, status, priority, due_date, assignee_id,
+        list_id, project_id, user_id, area_id, version_id, title, description, status, priority, due_date, assignee_id,
         tags, start_date, start_time, end_time, estimated_effort_hours, estimated_story_points,
         checklist, attachments, dependencies, watchers, reminders, recurrence_rule,
         milestone_id, parent_task_id, sprint_id, visibility, billable, hourly_rate,
-        budget_cap, custom_fields, severity, task_type, meeting_location, meeting_link
+        budget_cap, custom_fields, severity, task_type, meeting_location, meeting_link,
+        include_in_release_notes, release_note_type
       )
       VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14, $15, $16,
-        $17::jsonb, $18::jsonb, $19::jsonb, $20::jsonb, $21::jsonb, $22::jsonb,
-        $23, $24, $25, $26, $27, $28, $29, $30, $31::jsonb, $32, $33, $34
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15, $16, $17,
+        $18::jsonb, $19::jsonb, $20::jsonb, $21::jsonb, $22::jsonb, $23::jsonb,
+        $24, $25, $26, $27, $28, $29, $30, $31, $32::jsonb, $33, $34, $35, $36, $37
       )
       RETURNING ${TASK_SELECT}`,
       [
@@ -241,6 +292,7 @@ export const createProjectTask = async (req: Request, res: Response) => {
         projectId,
         userId,
         areaId,
+        versionId,
         validated.title,
         validated.description || null,
         validated.status,
@@ -271,6 +323,8 @@ export const createProjectTask = async (req: Request, res: Response) => {
         validated.task_type,
         validated.meeting_location || null,
         validated.meeting_link || null,
+        validated.include_in_release_notes ?? true,
+        validated.release_note_type || null,
       ]
     );
 
@@ -307,6 +361,44 @@ export const updateProjectTask = async (req: Request, res: Response) => {
     }, req as AuthRequest);
     const validated = taskSchema.partial().parse(req.body);
 
+    const taskCheck = await pool.query(
+      `SELECT t.id, t.project_id, t.version_id, p.project_type ${TASK_ACCESS_WHERE}`,
+      [taskId, userId]
+    );
+
+    if (taskCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Tarefa não encontrada' });
+    }
+
+    const projectId = taskCheck.rows[0].project_id as string;
+    const projectType = taskCheck.rows[0].project_type as string;
+    const currentVersionId = taskCheck.rows[0].version_id as string | null;
+
+    if (projectAllowsVersions(projectType) && await isProjectVersionFrozen(projectId, currentVersionId)) {
+      return res.status(400).json({ error: 'Não é possível editar tarefa de versão congelada' });
+    }
+
+    if (validated.version_id !== undefined) {
+      if (validated.version_id && !projectAllowsVersions(projectType)) {
+        return res.status(400).json({ error: 'Este tipo de projeto não aceita versão em tarefas' });
+      }
+      if (validated.version_id && !(await assertVersionInProject(validated.version_id, projectId))) {
+        return res.status(400).json({ error: 'Versão não pertence ao projeto' });
+      }
+      if (validated.version_id && await isProjectVersionFrozen(projectId, validated.version_id)) {
+        return res.status(400).json({ error: 'Não é possível mover tarefa para versão congelada' });
+      }
+    }
+
+    if (validated.area_id !== undefined) {
+      if (validated.area_id && !projectAllowsAreas(projectType)) {
+        return res.status(400).json({ error: 'Este tipo de projeto não aceita área em tarefas' });
+      }
+      if (validated.area_id && !(await assertAreaInProject(validated.area_id, projectId))) {
+        return res.status(400).json({ error: 'Área não pertence ao projeto' });
+      }
+    }
+
     const updates: string[] = [];
     const values: any[] = [];
     let paramCount = 1;
@@ -314,6 +406,8 @@ export const updateProjectTask = async (req: Request, res: Response) => {
     // Construir updates dinamicamente
     const fieldMappings: Record<string, any> = {
       list_id: validated.list_id,
+      area_id: validated.area_id,
+      version_id: validated.version_id,
       title: validated.title,
       description: validated.description,
       status: validated.status,
@@ -344,6 +438,8 @@ export const updateProjectTask = async (req: Request, res: Response) => {
       task_type: validated.task_type,
       meeting_location: validated.meeting_location,
       meeting_link: validated.meeting_link,
+      include_in_release_notes: validated.include_in_release_notes,
+      release_note_type: validated.release_note_type,
     };
 
     for (const [key, value] of Object.entries(fieldMappings)) {
@@ -361,21 +457,9 @@ export const updateProjectTask = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Nenhum campo para atualizar' });
     }
 
-    const taskCheck = await pool.query(
-      `SELECT t.id, t.project_id ${TASK_ACCESS_WHERE}`,
-      [taskId, userId]
-    );
-
-    if (taskCheck.rows.length === 0) {
-      return res.status(404).json({ error: 'Tarefa não encontrada' });
-    }
-
     if (validated.list_id) {
-      const listCheck = await pool.query(
-        `SELECT id FROM project_lists WHERE id = $1 AND project_id = $2`,
-        [validated.list_id, taskCheck.rows[0].project_id]
-      );
-      if (listCheck.rows.length === 0) {
+      const listOk = await assertListInProject(validated.list_id, projectId);
+      if (!listOk) {
         return res.status(400).json({ error: 'Lista não pertence ao projeto da tarefa' });
       }
     }
@@ -455,6 +539,8 @@ export const getTasksByArea = async (req: Request, res: Response) => {
     const tenantId = (req as any).tenantId ?? null;
     const { projectId, areaId } = req.params;
 
+    const versionIdRaw = (req.query.versionId as string) || null;
+
     if (!tenantId) {
       return res.status(404).json({ error: 'Área não encontrada' });
     }
@@ -469,18 +555,272 @@ export const getTasksByArea = async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Área não encontrada' });
     }
 
-    const result = await pool.query(
-      `SELECT ${TASK_SELECT}
+    let sql = `SELECT ${TASK_SELECT}
        FROM project_tasks
-       WHERE project_id = $1 AND area_id = $2
-       ORDER BY list_id, created_at ASC`,
-      [projectId, areaId]
-    );
+       WHERE project_id = $1 AND area_id = $2`;
+    const params: unknown[] = [projectId, areaId];
+    sql = await appendProjectTaskVersionFilter(sql, params, versionIdRaw, projectId);
+    sql += ' ORDER BY list_id, created_at ASC';
+
+    const result = await pool.query(sql, params);
 
     res.json(result.rows.map(mapTaskRow));
   } catch (error) {
     console.error('Error fetching tasks by area:', error);
     res.status(500).json({ error: 'Erro ao buscar tarefas da área' });
+  }
+};
+
+const moveTaskSchema = z.object({
+  list_id: z.string().uuid(),
+  version_id: z.union([z.string().uuid(), z.null()]).optional(),
+  area_id: z.union([z.string().uuid(), z.null()]).optional(),
+});
+
+// PATCH /api/projects/tasks/:taskId/move
+export const moveProjectTask = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as AuthRequest).userId;
+    const { taskId } = req.params;
+    if (!userId) {
+      return res.status(401).json({ error: 'Não autenticado' });
+    }
+    const taskRow = await pool.query(
+      `SELECT t.user_id, t.assignee_id, t.project_id, t.version_id, p.project_type ${TASK_ACCESS_WHERE}`,
+      [taskId, userId]
+    );
+    if (taskRow.rows.length === 0) {
+      return res.status(404).json({ error: 'Tarefa não encontrada' });
+    }
+    await assertModulePermission(userId, MODULE_TASKS, 'edit', {
+      ownerId: taskRow.rows[0].user_id,
+      assigneeId: taskRow.rows[0].assignee_id,
+    }, req as AuthRequest);
+
+    const validated = moveTaskSchema.parse(req.body);
+    const projectId = taskRow.rows[0].project_id as string;
+    const projectType = taskRow.rows[0].project_type as string;
+    const currentVersionId = taskRow.rows[0].version_id as string | null;
+
+    if (projectAllowsVersions(projectType) && await isProjectVersionFrozen(projectId, currentVersionId)) {
+      return res.status(400).json({ error: 'Não é possível mover tarefa de versão congelada' });
+    }
+
+    if (!(await assertListInProject(validated.list_id, projectId))) {
+      return res.status(400).json({ error: 'Lista não pertence ao projeto da tarefa' });
+    }
+
+    let nextVersionId: string | null | undefined = validated.version_id;
+    if (nextVersionId !== undefined) {
+      if (nextVersionId && !projectAllowsVersions(projectType)) {
+        return res.status(400).json({ error: 'Este tipo de projeto não aceita versão em tarefas' });
+      }
+      if (nextVersionId && !(await assertVersionInProject(nextVersionId, projectId))) {
+        return res.status(400).json({ error: 'Versão não pertence ao projeto' });
+      }
+      if (nextVersionId && await isProjectVersionFrozen(projectId, nextVersionId)) {
+        return res.status(400).json({ error: 'Não é possível mover tarefa para versão congelada' });
+      }
+    }
+
+    let nextAreaId: string | null | undefined = validated.area_id;
+    if (nextAreaId !== undefined) {
+      if (nextAreaId && !projectAllowsAreas(projectType)) {
+        return res.status(400).json({ error: 'Este tipo de projeto não aceita área em tarefas' });
+      }
+      if (nextAreaId && !(await assertAreaInProject(nextAreaId, projectId))) {
+        return res.status(400).json({ error: 'Área não pertence ao projeto' });
+      }
+    }
+
+    const updates: string[] = ['list_id = $1', 'updated_at = now()'];
+    const values: unknown[] = [validated.list_id];
+    if (nextVersionId !== undefined) {
+      updates.push(`version_id = $${values.length + 1}`);
+      values.push(nextVersionId);
+    }
+    if (nextAreaId !== undefined) {
+      updates.push(`area_id = $${values.length + 1}`);
+      values.push(nextAreaId);
+    }
+    values.push(taskId);
+
+    const result = await pool.query(
+      `UPDATE project_tasks
+       SET ${updates.join(', ')}
+       WHERE id = $${values.length}
+       RETURNING ${TASK_SELECT}`,
+      values,
+    );
+
+    console.info('[project-task-moved]', { taskId, projectId });
+    res.json(mapTaskRow(result.rows[0]));
+  } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      return res.status(error.statusCode).json({ error: error.message });
+    }
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Validation error', details: error.errors });
+    }
+    console.error('Error moving project task:', error);
+    res.status(500).json({ error: 'Erro ao mover tarefa' });
+  }
+};
+
+const copyTaskSchema = z.object({
+  version_id: z.string().uuid(),
+  list_id: z.string().uuid(),
+  area_id: z.union([z.string().uuid(), z.null()]).optional(),
+  copy_checklist: z.boolean().default(true),
+  copy_assignee: z.boolean().default(true),
+  copy_due_date: z.boolean().default(true),
+  copy_metadata: z.boolean().default(true),
+});
+
+// POST /api/projects/tasks/:taskId/copy
+export const copyProjectTask = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as AuthRequest).userId;
+    const tenantId = (req as AuthRequest).tenantId ?? null;
+    const { taskId } = req.params;
+    if (!userId) {
+      return res.status(401).json({ error: 'Não autenticado' });
+    }
+    try {
+      await assertPermissionKey(userId, 'tasks.view', req as AuthRequest);
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        return res.status(e.statusCode).json({ error: e.message });
+      }
+      throw e;
+    }
+    await assertModulePermission(userId, MODULE_TASKS, 'create', undefined, req as AuthRequest);
+
+    const taskRow = await pool.query(
+      `SELECT t.user_id, t.assignee_id, t.project_id, t.version_id, p.user_id AS project_owner_id, p.project_type
+       ${TASK_ACCESS_WHERE}`,
+      [taskId, userId],
+    );
+    if (taskRow.rows.length === 0) {
+      return res.status(404).json({ error: 'Tarefa não encontrada' });
+    }
+
+    const access = taskRow.rows[0];
+    const projectId = access.project_id as string;
+    const projectType = access.project_type as string;
+    const currentVersionId = access.version_id as string | null;
+    await assertModulePermission(userId, MODULE_PROJECTS, 'view', {
+      ownerId: access.project_owner_id,
+    }, req as AuthRequest);
+
+    const validated = copyTaskSchema.parse(req.body);
+    if (!(await assertListInProject(validated.list_id, projectId))) {
+      return res.status(400).json({ error: 'Lista não pertence ao projeto da tarefa' });
+    }
+    if (!projectAllowsVersions(projectType)) {
+      return res.status(400).json({ error: 'Este tipo de projeto não aceita versão em tarefas' });
+    }
+    if (!(await assertVersionInProject(validated.version_id, projectId))) {
+      return res.status(400).json({ error: 'Versão não pertence ao projeto' });
+    }
+    if (await isProjectVersionFrozen(projectId, currentVersionId)) {
+      return res.status(400).json({ error: 'Não é possível copiar tarefa de versão congelada' });
+    }
+    if (await isProjectVersionFrozen(projectId, validated.version_id)) {
+      return res.status(400).json({ error: 'Não é possível copiar tarefa para versão congelada' });
+    }
+
+    let nextAreaId = validated.area_id ?? null;
+    if (nextAreaId && !projectAllowsAreas(projectType)) {
+      return res.status(400).json({ error: 'Este tipo de projeto não aceita área em tarefas' });
+    }
+    if (nextAreaId && !(await assertAreaInProject(nextAreaId, projectId))) {
+      return res.status(400).json({ error: 'Área não pertence ao projeto' });
+    }
+
+    const sourceResult = await pool.query(`SELECT ${TASK_SELECT} FROM project_tasks WHERE id = $1`, [taskId]);
+    if (sourceResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Tarefa não encontrada' });
+    }
+    const source = sourceResult.rows[0];
+
+    const sameDestination =
+      (source.version_id ?? null) === validated.version_id &&
+      source.list_id === validated.list_id &&
+      (source.area_id ?? null) === nextAreaId;
+    const title = sameDestination ? `${source.title} (cópia)` : source.title;
+
+    const result = await pool.query(
+      `INSERT INTO project_tasks (
+        list_id, project_id, user_id, area_id, version_id, title, description, status, priority, due_date, assignee_id,
+        tags, start_date, start_time, end_time, estimated_effort_hours, estimated_story_points,
+        checklist, attachments, dependencies, watchers, reminders, recurrence_rule,
+        milestone_id, parent_task_id, sprint_id, visibility, billable, hourly_rate,
+        budget_cap, custom_fields, severity, task_type, meeting_location, meeting_link,
+        include_in_release_notes, release_note_type
+      )
+      VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15, $16, $17,
+        $18::jsonb, $19::jsonb, $20::jsonb, $21::jsonb, $22::jsonb, $23::jsonb,
+        $24, $25, $26, $27, $28, $29, $30, $31, $32::jsonb, $33, $34, $35, $36, $37
+      )
+      RETURNING ${TASK_SELECT}`,
+      [
+        validated.list_id,
+        projectId,
+        userId,
+        nextAreaId,
+        validated.version_id,
+        title,
+        source.description || null,
+        source.status,
+        source.priority,
+        validated.copy_due_date ? source.due_date || null : null,
+        validated.copy_assignee ? source.assignee_id || null : null,
+        JSON.stringify(validated.copy_metadata ? source.tags || [] : []),
+        validated.copy_metadata ? source.start_date || null : null,
+        validated.copy_metadata ? source.start_time || null : null,
+        validated.copy_metadata ? source.end_time || null : null,
+        validated.copy_metadata && source.estimated_effort_hours != null
+          ? parseFloat(source.estimated_effort_hours)
+          : null,
+        validated.copy_metadata && source.estimated_story_points != null
+          ? parseFloat(source.estimated_story_points)
+          : null,
+        JSON.stringify(validated.copy_checklist ? source.checklist || [] : []),
+        JSON.stringify(validated.copy_metadata ? source.attachments || [] : []),
+        JSON.stringify(validated.copy_metadata ? source.dependencies || [] : []),
+        JSON.stringify(validated.copy_metadata ? source.watchers || [] : []),
+        JSON.stringify(validated.copy_metadata ? source.reminders || [] : []),
+        validated.copy_metadata ? formatJsonbForDb(source.recurrence_rule) : null,
+        validated.copy_metadata ? source.milestone_id || null : null,
+        null,
+        validated.copy_metadata ? source.sprint_id || null : null,
+        validated.copy_metadata ? source.visibility || 'internal' : 'internal',
+        validated.copy_metadata ? Boolean(source.billable) : false,
+        validated.copy_metadata && source.hourly_rate != null ? parseFloat(source.hourly_rate) : null,
+        validated.copy_metadata && source.budget_cap != null ? parseFloat(source.budget_cap) : null,
+        JSON.stringify(validated.copy_metadata ? source.custom_fields || {} : {}),
+        validated.copy_metadata ? source.severity || null : null,
+        validated.copy_metadata ? source.task_type || 'task' : 'task',
+        validated.copy_metadata ? source.meeting_location || null : null,
+        validated.copy_metadata ? source.meeting_link || null : null,
+        source.include_in_release_notes ?? true,
+        source.release_note_type || null,
+      ],
+    );
+
+    console.info('[project-task-copied]', { taskId, projectId, newTaskId: result.rows[0].id });
+    res.status(201).json(mapTaskRow(result.rows[0]));
+  } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      return res.status(error.statusCode).json({ error: error.message });
+    }
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Validation error', details: error.errors });
+    }
+    console.error('Error copying project task:', error);
+    res.status(500).json({ error: 'Erro ao copiar tarefa' });
   }
 };
 

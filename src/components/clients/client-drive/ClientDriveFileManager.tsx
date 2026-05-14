@@ -45,6 +45,9 @@ type Props = {
   clientId: string;
   clientDisplayName: string;
   canUpload: boolean;
+  title?: string;
+  description?: React.ReactNode;
+  compact?: boolean;
 };
 
 const MAX_MB = 20;
@@ -63,7 +66,7 @@ function parseDropFolderId(overId: string | number): string | null {
   return null;
 }
 
-export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload }: Props) {
+export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload, title, description, compact = false }: Props) {
   const queryClient = useQueryClient();
   const [folderId, setFolderId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -74,6 +77,7 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload 
   const retryTargetFileIdRef = useRef<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
+  const [isFileDragOver, setIsFileDragOver] = useState(false);
   const [moveDialogItem, setMoveDialogItem] = useState<ClientGoogleDriveBrowserItem | null>(null);
   const [deleteItem, setDeleteItem] = useState<ClientGoogleDriveBrowserItem | null>(null);
 
@@ -144,6 +148,14 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload 
       ok.push(f);
     }
     if (ok.length > 0) uploadQueue.queueFiles(ok);
+  };
+
+  const handleUploadDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsFileDragOver(false);
+    if (!canUpload) return;
+    handleFilesSelected(event.dataTransfer.files);
   };
 
   const createMutation = useMutation({
@@ -281,21 +293,25 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload 
 
   return (
     <div className="space-y-4">
-      <Card>
-        <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+      <Card className={compact ? 'border-border/60 bg-background/60 shadow-none' : undefined}>
+        <CardHeader className={cn('flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between', compact && 'px-4 py-3')}>
           <div>
-            <CardTitle className="flex items-center gap-2 text-xl">
+            <CardTitle className={cn('flex items-center gap-2', compact ? 'text-base' : 'text-xl')}>
               <FolderOpen className="h-5 w-5 opacity-80" aria-hidden />
-              Arquivos do cliente
+              {title ?? 'Arquivos do cliente'}
             </CardTitle>
-            <CardDescription className="mt-1.5 max-w-2xl text-sm leading-relaxed">
-              Organize documentos, imagens e anexos de{' '}
-              <span className="font-medium text-foreground/90">{clientDisplayName}</span> em pastas sincronizadas com o
-              Google Drive.
+            <CardDescription className={cn('mt-1.5 max-w-2xl leading-relaxed', compact ? 'text-xs' : 'text-sm')}>
+              {description ?? (
+                <>
+                  Organize documentos, imagens e anexos de{' '}
+                  <span className="font-medium text-foreground/90">{clientDisplayName}</span> em pastas sincronizadas com o
+                  Google Drive.
+                </>
+              )}
             </CardDescription>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className={cn('space-y-4', compact && 'px-4 pb-4')}>
           {browserQuery.isPending ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
@@ -324,7 +340,28 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload 
           ) : null}
 
           {browserQuery.data ? (
-            <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+            <div
+              className={cn(
+                'relative rounded-xl transition-all',
+                isFileDragOver && canUpload && 'ring-2 ring-primary/40 ring-offset-2 ring-offset-background',
+              )}
+              onDragOver={(event) => {
+                event.preventDefault();
+                if (canUpload) setIsFileDragOver(true);
+              }}
+              onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                  setIsFileDragOver(false);
+                }
+              }}
+              onDrop={handleUploadDrop}
+            >
+              {isFileDragOver && canUpload ? (
+                <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-xl border border-primary/40 bg-primary/10 text-sm font-medium text-primary backdrop-blur-sm">
+                  Solte os arquivos para enviar ao Google Drive
+                </div>
+              ) : null}
+              <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -416,7 +453,8 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload 
                   </div>
                 ) : null}
               </DragOverlay>
-            </DndContext>
+              </DndContext>
+            </div>
           ) : null}
         </CardContent>
       </Card>

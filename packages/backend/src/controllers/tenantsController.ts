@@ -35,6 +35,8 @@ const createTenantSchema = z.object({
   company_state: z.string().optional().nullable(),
   company_postal_code: z.string().optional().nullable(),
   company_whatsapp: z.string().optional().nullable(),
+  billing_email: z.union([z.string().email(), z.literal(''), z.null()]).optional(),
+  billing_phone: z.union([z.string().max(64), z.literal(''), z.null()]).optional(),
   max_users_override: z.number().int().min(0).optional().nullable(),
   max_whatsapp_instances_override: z.number().int().min(0).optional().nullable(),
 });
@@ -49,7 +51,8 @@ export async function listTenants(_req: AuthRequest, res: Response): Promise<voi
         (SELECT COUNT(*)::int FROM users u WHERE u.tenant_id = t.id) AS users_count,
         (SELECT u.id FROM users u WHERE u.tenant_id = t.id ORDER BY u.created_at ASC LIMIT 1) AS primary_user_id,
         (SELECT u.email FROM users u WHERE u.tenant_id = t.id ORDER BY u.created_at ASC LIMIT 1) AS primary_contact_email,
-        (SELECT TRIM(COALESCE(pr.first_name, '') || ' ' || COALESCE(pr.last_name, '')) FROM users u JOIN profiles pr ON pr.id = u.id WHERE u.tenant_id = t.id ORDER BY u.created_at ASC LIMIT 1) AS primary_contact_name
+        (SELECT TRIM(COALESCE(pr.first_name, '') || ' ' || COALESCE(pr.last_name, '')) FROM users u JOIN profiles pr ON pr.id = u.id WHERE u.tenant_id = t.id ORDER BY u.created_at ASC LIMIT 1) AS primary_contact_name,
+        NULLIF(TRIM(t.billing_phone), '') AS billing_phone
        FROM tenants t
        JOIN plans p ON p.id = t.plan_id
        ORDER BY t.created_at DESC, t.name ASC`
@@ -214,6 +217,8 @@ export async function updateTenant(req: AuthRequest, res: Response): Promise<voi
       'company_state',
       'company_postal_code',
       'company_whatsapp',
+      'billing_email',
+      'billing_phone',
     ];
     for (const key of fields) {
       if (body[key] !== undefined) {
@@ -223,6 +228,14 @@ export async function updateTenant(req: AuthRequest, res: Response): Promise<voi
         } else if (key === 'trial_ends_at') {
           const v = body[key];
           values.push(v == null || v === '' ? null : new Date(v as string));
+        } else if (key === 'billing_email') {
+          const v = body[key];
+          const s = typeof v === 'string' ? v.trim() : '';
+          values.push(s === '' ? null : s);
+        } else if (key === 'billing_phone') {
+          const v = body[key];
+          const s = typeof v === 'string' ? v.trim() : '';
+          values.push(s === '' ? null : s);
         } else if (nullableStringFields.has(key as string)) {
           const v = body[key];
           values.push(v == null || v === '' ? null : v);
@@ -291,6 +304,7 @@ const updatePrimaryUserSchema = z.object({
   first_name: z.string().optional(),
   last_name: z.string().optional(),
   company_name: z.string().optional(),
+  billing_phone: z.union([z.string().max(64), z.literal(''), z.null()]).optional(),
 });
 
 /** GET /tenants/:id/primary-user - Dados do primeiro usuário (contato) da empresa */
@@ -303,7 +317,12 @@ export async function getPrimaryUser(req: AuthRequest, res: Response): Promise<v
       return;
     }
     const userResult = await pool.query(
-      `SELECT u.id, u.email FROM users u WHERE u.tenant_id = $1 ORDER BY u.created_at ASC LIMIT 1`,
+      `SELECT u.id, u.email, NULLIF(TRIM(t.billing_phone), '') AS billing_phone
+       FROM users u
+       INNER JOIN tenants t ON t.id = u.tenant_id
+       WHERE u.tenant_id = $1
+       ORDER BY u.created_at ASC
+       LIMIT 1`,
       [id]
     );
     if (userResult.rows.length === 0) {
@@ -322,6 +341,7 @@ export async function getPrimaryUser(req: AuthRequest, res: Response): Promise<v
       first_name: profile.first_name ?? '',
       last_name: profile.last_name ?? '',
       company_name: profile.company_name ?? '',
+      billing_phone: user.billing_phone ?? '',
     });
   } catch (error: any) {
     console.error('getPrimaryUser error:', error);
@@ -395,12 +415,21 @@ export async function updatePrimaryUser(req: AuthRequest, res: Response): Promis
         }
       }
     }
+    if (body.billing_phone !== undefined) {
+      const raw = body.billing_phone;
+      const phone =
+        raw === null || raw === undefined ? null : typeof raw === 'string' && raw.trim() === '' ? null : String(raw).trim();
+      await pool.query('UPDATE tenants SET billing_phone = $1, updated_at = now() WHERE id = $2', [phone, id]);
+    }
     if (req.user?.id) {
       await logSuperAdminAction(req.user.id, 'tenant.primary_user_updated', 'tenant', id, { user_id: userId, changes: body });
     }
     const updated = await pool.query(
-      `SELECT u.id, u.email, p.first_name, p.last_name, p.company_name
-       FROM users u LEFT JOIN profiles p ON p.id = u.id WHERE u.id = $1`,
+      `SELECT u.id, u.email, NULLIF(TRIM(t.billing_phone), '') AS billing_phone, p.first_name, p.last_name, p.company_name
+       FROM users u
+       INNER JOIN tenants t ON t.id = u.tenant_id
+       LEFT JOIN profiles p ON p.id = u.id
+       WHERE u.id = $1`,
       [userId]
     );
     const row = updated.rows[0];
@@ -410,6 +439,7 @@ export async function updatePrimaryUser(req: AuthRequest, res: Response): Promis
       first_name: row.first_name ?? '',
       last_name: row.last_name ?? '',
       company_name: row.company_name ?? '',
+      billing_phone: row.billing_phone ?? '',
     });
   } catch (error) {
     if (error instanceof z.ZodError) {

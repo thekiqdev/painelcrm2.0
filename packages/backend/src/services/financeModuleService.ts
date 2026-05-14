@@ -3,6 +3,12 @@
  * Todos os métodos exigem tenantId explícito (camada de API valida tenant).
  */
 import { pool } from '../utils/db.js';
+import { getFinancialAccount } from './financialAccountsService.js';
+import {
+  createFinancialTransaction,
+  updateFinancialTransaction,
+  type FinancialTransactionRow,
+} from './financialTransactionsService.js';
 
 export type FinanceAccountType = 'bank' | 'cash' | 'wallet' | 'digital';
 
@@ -57,10 +63,54 @@ export interface FinanceExpenseEntryRow {
   paid_at: string | null;
   description: string;
   status: FinanceExpenseStatus;
+  project_id: string | null;
   supplier_name: string | null;
   notes: string | null;
   created_at: string;
   updated_at: string;
+}
+
+async function assertProjectBelongsToTenant(tenantId: string, projectId: string | null | undefined): Promise<void> {
+  if (!projectId) return;
+  const r = await pool.query(
+    `SELECT 1
+     FROM projects p
+     INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = $1
+     WHERE p.id = $2
+     LIMIT 1`,
+    [tenantId, projectId]
+  );
+  if (r.rowCount === 0) throw new Error('Projeto não pertence à empresa');
+}
+
+function mapFinancialTransactionToFinanceExpenseEntryRow(
+  tx: FinancialTransactionRow,
+  input: {
+    due_date: string;
+    supplier_name?: string | null;
+    notes?: string | null;
+    status: FinanceExpenseStatus;
+  }
+): FinanceExpenseEntryRow {
+  const paidAt =
+    tx.status === 'completed' && tx.updated_at && tx.updated_at.length >= 10 ? tx.updated_at.slice(0, 10) : null;
+  return {
+    id: tx.id,
+    tenant_id: tx.tenant_id,
+    finance_account_id: tx.account_id,
+    category_id: tx.category_id,
+    amount_cents: tx.amount_cents,
+    expense_date: tx.transaction_date,
+    due_date: input.due_date,
+    paid_at: paidAt,
+    description: tx.description,
+    status: input.status,
+    project_id: tx.project_id ?? null,
+    supplier_name: input.supplier_name?.trim() || null,
+    notes: input.notes?.trim() || null,
+    created_at: tx.created_at,
+    updated_at: tx.updated_at,
+  };
 }
 
 const DEFAULT_CATEGORY_NAMES: { name: string; sort_order: number }[] = [
@@ -499,10 +549,10 @@ export async function deleteIncomeEntry(tenantId: string, id: string): Promise<b
 
 export async function listExpenseEntries(
   tenantId: string,
-  filters: { from?: string; to?: string; account_id?: string; status?: string }
+  filters: { from?: string; to?: string; account_id?: string; status?: string; project_id?: string }
 ): Promise<FinanceExpenseEntryRow[]> {
   let q = `SELECT id, tenant_id, finance_account_id, category_id, amount_cents,
-                  expense_date::text, due_date::text, paid_at::text, description, status,
+                  expense_date::text, due_date::text, paid_at::text, description, status, project_id,
                   supplier_name, notes, created_at, updated_at
            FROM finance_expense_entries WHERE tenant_id = $1`;
   const params: unknown[] = [tenantId];
@@ -527,6 +577,11 @@ export async function listExpenseEntries(
     params.push(filters.status);
     n++;
   }
+  if (filters.project_id) {
+    q += ` AND project_id = $${n}`;
+    params.push(filters.project_id);
+    n++;
+  }
   q += ` ORDER BY expense_date DESC, created_at DESC LIMIT 500`;
   const r = await pool.query<FinanceExpenseEntryRow>(q, params);
   return r.rows.map((row) => ({
@@ -539,6 +594,7 @@ export async function createExpenseEntry(
   tenantId: string,
   body: {
     finance_account_id?: string | null;
+    financial_account_id?: string | null;
     category_id?: string | null;
     amount_cents: number;
     expense_date: string;
@@ -546,10 +602,64 @@ export async function createExpenseEntry(
     paid_at?: string | null;
     description: string;
     status: FinanceExpenseStatus;
+    project_id?: string | null;
     supplier_name?: string | null;
     notes?: string | null;
   }
 ): Promise<FinanceExpenseEntryRow> {
+  await assertProjectBelongsToTenant(tenantId, body.project_id);
+
+  const useUnifiedProject = Boolean(body.project_id);
+  if (useUnifiedProject) {
+    if (body.status === 'cancelled') throw new Error('Não é possível criar despesa cancelada');
+    const accountId = body.financial_account_id?.trim();
+    if (!accountId) throw new Error('Conta financeira de saída é obrigatória para despesas do projeto');
+
+    const fa = await getFinancialAccount(tenantId, accountId);
+    if (!fa) throw new Error('Conta não encontrada');
+
+    const paidAtSet = body.paid_at != null && String(body.paid_at).trim() !== '';
+    const wantsPaid = body.status === 'paid' || paidAtSet;
+    const txStatus: 'pending' | 'completed' = wantsPaid ? 'completed' : 'pending';
+    const metadata: Record<string, unknown> = {
+      project_expense: true,
+      due_date: body.due_date,
+      expense_ui_status: body.status,
+    };
+    if (body.supplier_name?.trim()) metadata.supplier_name = body.supplier_name.trim();
+
+    let tx = await createFinancialTransaction(tenantId, {
+      account_id: accountId,
+      type: 'expense',
+      amount_cents: body.amount_cents,
+      description: body.description.trim(),
+      category_id: null,
+      transaction_date: body.expense_date,
+      status: txStatus,
+      transaction_kind: 'regular',
+      project_id: body.project_id!,
+      metadata,
+    });
+
+    if (wantsPaid && tx.status !== 'completed') {
+      const fixed = await updateFinancialTransaction(tenantId, tx.id, { status: 'completed' });
+      if (!fixed) {
+        throw new Error('Não foi possível gravar a despesa como paga no financeiro unificado');
+      }
+      tx = fixed;
+    }
+
+    const resolvedUiStatus: FinanceExpenseStatus =
+      tx.status === 'completed' ? 'paid' : body.status;
+
+    return mapFinancialTransactionToFinanceExpenseEntryRow(tx, {
+      due_date: body.due_date,
+      supplier_name: body.supplier_name,
+      notes: body.notes,
+      status: resolvedUiStatus,
+    });
+  }
+
   if (body.finance_account_id) {
     const acc = await getAccount(tenantId, body.finance_account_id);
     if (!acc) throw new Error('Conta não encontrada');
@@ -564,11 +674,11 @@ export async function createExpenseEntry(
   const r = await pool.query<FinanceExpenseEntryRow>(
     `INSERT INTO finance_expense_entries (
        tenant_id, finance_account_id, category_id, amount_cents, expense_date, due_date, paid_at,
-       description, status, supplier_name, notes
-     ) VALUES ($1, $2, $3, $4, $5::date, $6::date, $7::date, $8, $9, $10, $11)
+       description, status, project_id, supplier_name, notes
+     ) VALUES ($1, $2, $3, $4, $5::date, $6::date, $7::date, $8, $9, $10, $11, $12)
      RETURNING id, tenant_id, finance_account_id, category_id, amount_cents,
                expense_date::text, due_date::text, paid_at::text, description, status,
-               supplier_name, notes, created_at, updated_at`,
+               project_id, supplier_name, notes, created_at, updated_at`,
     [
       tenantId,
       body.finance_account_id ?? null,
@@ -579,6 +689,7 @@ export async function createExpenseEntry(
       body.paid_at ?? null,
       body.description.trim(),
       body.status,
+      body.project_id ?? null,
       body.supplier_name?.trim() || null,
       body.notes?.trim() || null,
     ]
@@ -599,6 +710,7 @@ export async function updateExpenseEntry(
     paid_at: string | null;
     description: string;
     status: FinanceExpenseStatus;
+    project_id: string | null;
     supplier_name: string | null;
     notes: string | null;
   }>
@@ -613,6 +725,9 @@ export async function updateExpenseEntry(
       patch.category_id,
     ]);
     if (c.rowCount === 0) throw new Error('Categoria inválida');
+  }
+  if (patch.project_id !== undefined) {
+    await assertProjectBelongsToTenant(tenantId, patch.project_id);
   }
   const fields: string[] = [];
   const params: unknown[] = [];
@@ -649,6 +764,10 @@ export async function updateExpenseEntry(
     fields.push(`status = $${i++}`);
     params.push(patch.status);
   }
+  if (patch.project_id !== undefined) {
+    fields.push(`project_id = $${i++}`);
+    params.push(patch.project_id);
+  }
   if (patch.supplier_name !== undefined) {
     fields.push(`supplier_name = $${i++}`);
     params.push(patch.supplier_name?.trim() || null);
@@ -661,7 +780,7 @@ export async function updateExpenseEntry(
     const cur = await pool.query<FinanceExpenseEntryRow>(
       `SELECT id, tenant_id, finance_account_id, category_id, amount_cents,
               expense_date::text, due_date::text, paid_at::text, description, status,
-              supplier_name, notes, created_at, updated_at
+              project_id, supplier_name, notes, created_at, updated_at
        FROM finance_expense_entries WHERE tenant_id = $1 AND id = $2`,
       [tenantId, id]
     );
@@ -678,7 +797,7 @@ export async function updateExpenseEntry(
      WHERE tenant_id = $${whereTenant} AND id = $${whereId}
      RETURNING id, tenant_id, finance_account_id, category_id, amount_cents,
                expense_date::text, due_date::text, paid_at::text, description, status,
-               supplier_name, notes, created_at, updated_at`,
+               project_id, supplier_name, notes, created_at, updated_at`,
     params
   );
   if (r.rows.length === 0) return null;

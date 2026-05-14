@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate, useLocation, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useLocation, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, X, Users, Kanban, ClipboardList, File, DollarSign, Calendar as CalendarIcon2, LayoutGrid, Filter, Settings, MoreVertical, ChevronDown, ChevronUp, Upload } from "lucide-react";
@@ -23,7 +23,7 @@ import { EditListDialog } from "@/components/projects/EditListDialog";
 // Importações de tipos e dados
 import { Project, ProjectList, Task, ChecklistItem, TaskStatus } from "@/components/projects/types";
 import { Member } from "@/components/shared/types";
-import { projectsService, Project as ApiProject, ProjectList as ApiProjectList, ProjectTask as ApiProjectTask } from "@/services/projects";
+import { projectsService, Project as ApiProject, ProjectList as ApiProjectList, ProjectTask as ApiProjectTask, type ProjectVersion } from "@/services/projects";
 import { membersService } from "@/services/members";
 import { teamsService, type Team } from "@/services/teams";
 
@@ -32,7 +32,23 @@ import { ProjectFinance } from "@/components/projects/ProjectFinance";
 import { ProjectSettingsDialog } from "@/components/projects/ProjectSettingsDialog";
 import { SaveAsTemplateDialog } from "@/components/projects/SaveAsTemplateDialog";
 import { ProjectAreasSection, AreaProgress } from "@/components/projects/ProjectAreasSection";
-import { hasAreas } from "@/lib/projectFeatures";
+import { ProjectVersionDialog } from "@/components/projects/ProjectVersionDialog";
+import { MoveProjectTaskDialog } from "@/components/projects/MoveProjectTaskDialog";
+import { CopyProjectTaskDialog } from "@/components/projects/CopyProjectTaskDialog";
+import { ProjectPublishVersionDialog } from "@/components/projects/ProjectPublishVersionDialog";
+import { ProjectDuplicateVersionDialog } from "@/components/projects/ProjectDuplicateVersionDialog";
+import { ProjectHeader } from "@/components/projects/ProjectHeader";
+import { ProjectVersionControlPanel } from "@/components/projects/ProjectVersionControlPanel";
+import { ProjectDriveWorkspace } from "@/components/projects/ProjectDriveWorkspace";
+import { hasAreas, hasVersions } from "@/lib/projectFeatures";
+import {
+  deriveInitialVersionSelection,
+  versionSelectionToQuery,
+  versionSelectionToTaskFilter,
+  versionIdForTaskCreate,
+  normalizeVersionSelection,
+  type ProjectVersionSelection,
+} from "@/lib/projectVersionSelection";
 import { TaskSidePanel } from "@/components/tasks";
 import type { UnifiedTask } from "@/lib/taskUnified";
 import { projectUITaskToUnified } from "@/lib/taskUnified";
@@ -51,12 +67,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { clientsService } from "@/services/clients";
 import { prepareProjectsFromCsv } from "@/utils/importProjectsCsv";
 import {
   prepareTasksFromProjectTasksCsv,
   prepareTasksFromProjectTasksXlsx,
 } from "@/utils/importProjectTasksXlsx";
+import { getProjectUrl } from "@/lib/projectRoutes";
 
 // Padrão de página única para toda a funcionalidade de projetos
 const MODULE_PROJECTS = "projects";
@@ -67,6 +85,7 @@ const PROJECTS_QUERY_KEY = ["projects"] as const;
 const Projects = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { projectId: routeProjectId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const restoringFromUrlRef = useRef(false);
   const queryClient = useQueryClient();
@@ -121,6 +140,30 @@ const Projects = () => {
   const [areaProgress, setAreaProgress] = useState<Record<string, AreaProgress>>({});
   const [teamFilter, setTeamFilter] = useState<string | null>(null);
   const [fullViewTask, setFullViewTask] = useState<UnifiedTask | null>(null);
+  const [projectVersions, setProjectVersions] = useState<ProjectVersion[]>([]);
+  const [versionSelection, setVersionSelection] = useState<ProjectVersionSelection>({ mode: "none" });
+  const [versionDialogOpen, setVersionDialogOpen] = useState(false);
+  const [editingVersion, setEditingVersion] = useState<ProjectVersion | null>(null);
+  const [versionSaving, setVersionSaving] = useState(false);
+  const [publishVersionOpen, setPublishVersionOpen] = useState(false);
+  const [duplicateVersionOpen, setDuplicateVersionOpen] = useState(false);
+  const [versionActionSaving, setVersionActionSaving] = useState(false);
+  const [moveTaskDialogOpen, setMoveTaskDialogOpen] = useState(false);
+  const [taskToMove, setTaskToMove] = useState<{
+    taskId: string;
+    listId: string;
+    areaId: string | null;
+    versionId: string | null;
+  } | null>(null);
+  const [moveTaskSaving, setMoveTaskSaving] = useState(false);
+  const [copyTaskDialogOpen, setCopyTaskDialogOpen] = useState(false);
+  const [taskToCopy, setTaskToCopy] = useState<{
+    taskId: string;
+    listId: string;
+    areaId: string | null;
+    versionId: string | null;
+  } | null>(null);
+  const [copyTaskSaving, setCopyTaskSaving] = useState(false);
 
   // Lista de projetos e equipes em cache – ao voltar na página os dados aparecem na hora
   const { data: teamsData } = useQuery({
@@ -149,6 +192,7 @@ const Projects = () => {
         financeItems: [],
         kanbanStage: apiProject.kanban_stage || "backlog",
         project_type: (apiProject.project_type as Project["project_type"]) || "simple",
+        client_id: apiProject.client_id ?? null,
         areas: [],
         team_id: apiProject.team_id ?? null,
         teamName: apiProject.team_id ? teamMap.get(apiProject.team_id) ?? null : null,
@@ -166,6 +210,11 @@ const Projects = () => {
 
   const canImportProjectsCsv = canCreateProject(MODULE_PROJECTS);
   const canImportProjectTasksXlsx = canCreateProject(MODULE_TASKS);
+  const currentSelectedVersion =
+    selectedProject && hasVersions(selectedProject.project_type) && versionSelection.versionId
+      ? projectVersions.find((version) => version.id === versionSelection.versionId) ?? null
+      : null;
+  const currentSelectedVersionFrozen = currentSelectedVersion?.frozen === true;
 
   const handleProjectsCsvChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -411,9 +460,9 @@ const Projects = () => {
     }
   }, [searchParams, selectedProject, fullViewTask?.id]);
 
-  // Deep link: /projects?project=id (com ou sem task) abre o projeto em modo detalhe
+  // Deep link: /projects?project=id ou /projetos/:projectId abre o projeto em modo detalhe
   useEffect(() => {
-    const projectId = searchParams.get("project");
+    const projectId = routeProjectId ?? searchParams.get("project");
     if (!projectId || projects.length === 0) return;
     if (selectedProject?.id === projectId) {
       if (viewMode === "list") setViewMode("detail");
@@ -423,8 +472,44 @@ const Projects = () => {
     if (project) {
       setSelectedProject(project);
       setViewMode("detail");
+      return;
     }
-  }, [searchParams, projects, selectedProject?.id, viewMode]);
+    projectsService.getProjectById(projectId)
+      .then((apiProject) => {
+        setSelectedProject({
+          id: apiProject.id,
+          name: apiProject.name,
+          description: apiProject.description || "",
+          status: apiProject.status,
+          dueDate: apiProject.due_date || undefined,
+          members: [],
+          tags: apiProject.tags || [],
+          lists: [],
+          files: [],
+          financeItems: [],
+          kanbanStage: apiProject.kanban_stage || "backlog",
+          project_type: (apiProject.project_type as Project["project_type"]) || "simple",
+          client_id: apiProject.client_id ?? null,
+          areas: apiProject.areas || [],
+          versions: apiProject.versions,
+          team_id: apiProject.team_id ?? null,
+          teamName: apiProject.team_id ? teams.find(t => t.id === apiProject.team_id)?.name ?? null : null,
+        });
+        setViewMode("detail");
+      })
+      .catch(() => toast.error("Projeto não encontrado"));
+  }, [routeProjectId, searchParams, projects, selectedProject?.id, viewMode, teams]);
+
+  useEffect(() => {
+    const tab = searchParams.get("tab");
+    if (tab === "financeiro" || tab === "finance") {
+      setActiveTab("finance");
+    } else if (tab === "documentos" || tab === "files") {
+      setActiveTab("files");
+    } else if (tab === "calendario" || tab === "calendar") {
+      setActiveTab("calendar");
+    }
+  }, [searchParams]);
 
   // Membros em cache para carregamento rápido
   const { data: membersData } = useQuery({
@@ -469,6 +554,7 @@ const Projects = () => {
             financeItems: [],
             kanbanStage: project.kanban_stage || "backlog",
             project_type: (project.project_type as Project["project_type"]) || "simple",
+            client_id: project.client_id ?? null,
             areas: project.areas || [],
             team_id: project.team_id ?? null,
             teamName: teamName ?? null,
@@ -491,6 +577,27 @@ const Projects = () => {
       try {
         const apiProjectFull = await projectsService.getProjectById(selectedProject.id);
         const projectType = (apiProjectFull.project_type as Project["project_type"]) || "simple";
+        const versionsList = apiProjectFull.versions ?? [];
+        let effectiveVersionSelection = versionSelection;
+        if (hasVersions(projectType)) {
+          setProjectVersions(versionsList);
+          if (
+            versionSelection.mode !== "all" &&
+            !(
+              versionSelection.mode === "version" &&
+              versionSelection.versionId &&
+              versionsList.some((version) => version.id === versionSelection.versionId && !version.archived_at)
+            )
+          ) {
+            effectiveVersionSelection = deriveInitialVersionSelection(versionsList);
+            setVersionSelection(effectiveVersionSelection);
+          }
+        } else {
+          setProjectVersions([]);
+        }
+        const versionFilter = hasVersions(projectType)
+          ? versionSelectionToTaskFilter(effectiveVersionSelection, versionsList)
+          : undefined;
 
         // Projetos com áreas: não carregar listas/tarefas na tela principal (só na página da área)
         if (hasAreas(projectType)) {
@@ -499,7 +606,9 @@ const Projects = () => {
           setSelectedProject({
             ...selectedProject,
             project_type: projectType,
+            client_id: apiProjectFull.client_id ?? null,
             areas: areasList,
+            versions: hasVersions(projectType) ? versionsList : undefined,
             lists: [],
             team_id: apiProjectFull.team_id ?? null,
             teamName: teamName ?? null,
@@ -510,7 +619,11 @@ const Projects = () => {
             await Promise.all(
               areasList.map(async (a: { id: string }) => {
                 try {
-                  const tasks = await projectsService.getProjectTasksByArea(selectedProject.id, a.id);
+                  const tasks = await projectsService.getProjectTasksByArea(
+                    selectedProject.id,
+                    a.id,
+                    versionFilter,
+                  );
                   const completed = tasks.filter((t: { status: string }) => t.status === "completed").length;
                   progressMap[a.id] = { total: tasks.length, completed };
                 } catch {
@@ -530,7 +643,7 @@ const Projects = () => {
 
         const listsWithTasks = await Promise.all(
           apiLists.map(async (apiList) => {
-            const apiTasks = await projectsService.getProjectTasks(apiList.id);
+            const apiTasks = await projectsService.getProjectTasks(apiList.id, versionFilter);
             
             // Converter tarefas da API para o formato do frontend
             const tasks: Task[] = apiTasks.map(apiTask => ({
@@ -563,7 +676,9 @@ const Projects = () => {
         setSelectedProject({
           ...selectedProject,
           project_type: (apiProjectFull.project_type as Project["project_type"]) || "simple",
+          client_id: apiProjectFull.client_id ?? null,
           areas: apiProjectFull.areas || [],
+          versions: hasVersions(projectType) ? versionsList : undefined,
           lists: listsWithTasks,
           team_id: apiProjectFull.team_id ?? null,
           teamName: teamName ?? null,
@@ -575,7 +690,239 @@ const Projects = () => {
     };
 
     loadProjectDetails();
-  }, [selectedProject?.id, teams]);
+  }, [selectedProject?.id, teams, versionSelection]);
+
+  useEffect(() => {
+    setProjectVersions([]);
+    setVersionSelection({ mode: "version" });
+  }, [selectedProject?.id]);
+
+  const reloadProjectVersions = async () => {
+    if (!selectedProject || !hasVersions(selectedProject.project_type)) return;
+    const versions = await projectsService.getProjectVersions(selectedProject.id);
+    setProjectVersions(versions);
+    setSelectedProject((prev) => (prev ? { ...prev, versions } : prev));
+  };
+
+  const handleSaveProjectVersion = async (payload: {
+    name: string;
+    description: string | null;
+    status: ProjectVersion["status"];
+    start_date: string | null;
+    due_date: string | null;
+    is_default?: boolean;
+  }) => {
+    if (!selectedProject) return;
+    setVersionSaving(true);
+    try {
+      if (editingVersion) {
+        await projectsService.updateProjectVersion(selectedProject.id, editingVersion.id, payload);
+        toast.success("Versão atualizada");
+      } else {
+        const created = await projectsService.createProjectVersion(selectedProject.id, payload);
+        setVersionSelection({ mode: "version", versionId: created.id });
+        toast.success("Versão criada");
+      }
+      setVersionDialogOpen(false);
+      setEditingVersion(null);
+      await reloadProjectVersions();
+    } catch (error) {
+      console.error(error);
+      toast.error("Erro ao salvar versão");
+    } finally {
+      setVersionSaving(false);
+    }
+  };
+
+  const handleArchiveProjectVersion = async (version: ProjectVersion) => {
+    if (!selectedProject) return;
+    setVersionSaving(true);
+    try {
+      await projectsService.archiveProjectVersion(selectedProject.id, version.id);
+      toast.success("Versão arquivada");
+      setVersionDialogOpen(false);
+      setEditingVersion(null);
+      if (versionSelection.mode === "version" && versionSelection.versionId === version.id) {
+        setVersionSelection(deriveInitialVersionSelection(projectVersions));
+      }
+      await reloadProjectVersions();
+    } catch (error) {
+      console.error(error);
+      toast.error("Erro ao arquivar versão");
+    } finally {
+      setVersionSaving(false);
+    }
+  };
+
+  const handlePublishProjectVersion = async (payload: {
+    move_incomplete_to_version_id?: string | null;
+    archive_after_publish: boolean;
+    freeze_version: boolean;
+    generate_release_notes: boolean;
+  }) => {
+    if (!selectedProject || !currentSelectedVersion) return;
+    setVersionActionSaving(true);
+    try {
+      await projectsService.publishProjectVersion(selectedProject.id, currentSelectedVersion.id, payload);
+      toast.success("Versão publicada");
+      setPublishVersionOpen(false);
+      await reloadProjectVersions();
+    } catch (error) {
+      console.error(error);
+      toast.error("Erro ao publicar versão");
+    } finally {
+      setVersionActionSaving(false);
+    }
+  };
+
+  const handleDuplicateProjectVersion = async (payload: {
+    name: string;
+    copy_open_tasks: boolean;
+    copy_completed_tasks: boolean;
+    copy_checklists: boolean;
+  }) => {
+    if (!selectedProject || !currentSelectedVersion) return;
+    setVersionActionSaving(true);
+    try {
+      const created = await projectsService.duplicateProjectVersion(selectedProject.id, currentSelectedVersion.id, payload);
+      toast.success("Versão duplicada");
+      setVersionSelection({ mode: "version", versionId: created.id });
+      setDuplicateVersionOpen(false);
+      await reloadProjectVersions();
+    } catch (error) {
+      console.error(error);
+      toast.error("Erro ao duplicar versão");
+    } finally {
+      setVersionActionSaving(false);
+    }
+  };
+
+  const handleMoveProjectTask = async (payload: {
+    list_id: string;
+    version_id: string;
+    area_id: string | null;
+  }) => {
+    if (!taskToMove) return;
+    setMoveTaskSaving(true);
+    try {
+      await projectsService.moveProjectTask(taskToMove.taskId, payload);
+      toast.success("Tarefa transferida");
+      setMoveTaskDialogOpen(false);
+      setTaskToMove(null);
+      setFullViewTask(null);
+      if (selectedProject) {
+        const apiProjectFull = await projectsService.getProjectById(selectedProject.id);
+        const projectType = (apiProjectFull.project_type as Project["project_type"]) || "simple";
+        if (!hasAreas(projectType)) {
+          const versionFilter = hasVersions(projectType)
+            ? versionSelectionToTaskFilter(versionSelection, projectVersions)
+            : undefined;
+          const apiLists = await projectsService.getProjectLists(selectedProject.id);
+          const listsWithTasks = await Promise.all(
+            apiLists.map(async (apiList) => {
+              const apiTasks = await projectsService.getProjectTasks(apiList.id, versionFilter);
+              const tasks: Task[] = apiTasks.map((apiTask: ApiProjectTask) => ({
+                id: apiTask.id,
+                title: apiTask.title,
+                description: apiTask.description || "",
+                status: apiTask.status as TaskStatus,
+                priority: apiTask.priority as Task["priority"],
+                dueDate: apiTask.due_date || undefined,
+                assignee: apiTask.assignee_id ? members.find((m) => m.id === apiTask.assignee_id) : undefined,
+                tags: apiTask.tags || [],
+                customFields: apiTask.custom_fields ?? {},
+                checklist: (apiTask.checklist || []).map(
+                  (
+                    item: { id?: string; text?: string; title?: string; completed?: boolean },
+                    index: number,
+                  ) => ({
+                    id: item.id || `checklist-${index}`,
+                    text: item.text || item.title || "",
+                    completed: item.completed || false,
+                  }),
+                ),
+              }));
+              return {
+                id: apiList.id,
+                name: apiList.name,
+                tasks,
+                order: apiList.order_position,
+              };
+            }),
+          );
+          setSelectedProject((prev) => (prev ? { ...prev, lists: listsWithTasks } : prev));
+        }
+      }
+    } catch (error) {
+      console.error(error);
+      toast.error("Erro ao transferir tarefa");
+    } finally {
+      setMoveTaskSaving(false);
+    }
+  };
+
+  const handleCopyProjectTask = async (payload: {
+    list_id: string;
+    version_id: string;
+    area_id: string | null;
+    copy_checklist: boolean;
+    copy_assignee: boolean;
+    copy_due_date: boolean;
+    copy_metadata: boolean;
+  }) => {
+    if (!taskToCopy) return;
+    setCopyTaskSaving(true);
+    try {
+      await projectsService.copyProjectTask(taskToCopy.taskId, payload);
+      toast.success("Tarefa copiada");
+      setCopyTaskDialogOpen(false);
+      setTaskToCopy(null);
+      if (selectedProject && !hasAreas(selectedProject.project_type)) {
+        const versionFilter = hasVersions(selectedProject.project_type)
+          ? versionSelectionToTaskFilter(versionSelection, projectVersions)
+          : undefined;
+        const apiLists = await projectsService.getProjectLists(selectedProject.id);
+        const listsWithTasks = await Promise.all(
+          apiLists.map(async (apiList) => {
+            const apiTasks = await projectsService.getProjectTasks(apiList.id, versionFilter);
+            const tasks: Task[] = apiTasks.map((apiTask: ApiProjectTask) => ({
+              id: apiTask.id,
+              title: apiTask.title,
+              description: apiTask.description || "",
+              status: apiTask.status as TaskStatus,
+              priority: apiTask.priority as Task["priority"],
+              dueDate: apiTask.due_date || undefined,
+              assignee: apiTask.assignee_id ? members.find((m) => m.id === apiTask.assignee_id) : undefined,
+              tags: apiTask.tags || [],
+              customFields: apiTask.custom_fields ?? {},
+              checklist: (apiTask.checklist || []).map(
+                (
+                  item: { id?: string; text?: string; title?: string; completed?: boolean },
+                  index: number,
+                ) => ({
+                  id: item.id || `checklist-${index}`,
+                  text: item.text || item.title || "",
+                  completed: item.completed || false,
+                }),
+              ),
+            }));
+            return {
+              id: apiList.id,
+              name: apiList.name,
+              tasks,
+              order: apiList.order_position,
+            };
+          }),
+        );
+        setSelectedProject((prev) => (prev ? { ...prev, lists: listsWithTasks } : prev));
+      }
+    } catch (error) {
+      console.error(error);
+      toast.error("Erro ao copiar tarefa");
+    } finally {
+      setCopyTaskSaving(false);
+    }
+  };
 
   // Funções para gestão de listas e etapas do kanban
   const handleCreateList = async (event: React.FormEvent) => {
@@ -1394,110 +1741,120 @@ const Projects = () => {
 
     // Filtrar listas conforme necessário
     const filteredLists = getFilteredLists(selectedProject.lists);
+    const selectedVersion = currentSelectedVersion;
+    const selectedVersionFrozen = currentSelectedVersionFrozen;
+    const isAdvancedProject = selectedProject.project_type === "advanced";
+
+    const handleBackToProjects = () => {
+      if (routeProjectId) {
+        navigate("/projects", { replace: true });
+        return;
+      }
+      setViewMode("list");
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete("project");
+          next.delete("task");
+          return next;
+        },
+        { replace: true }
+      );
+    };
 
     return (
       <div>
-        <div className="mb-6">
-          <div className="flex items-start justify-between mb-4">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <Button 
-                  variant="outline" 
-                  size="icon" 
-                  onClick={() => {
-                    setViewMode("list");
-                    setSearchParams(
-                      (prev) => {
-                        const next = new URLSearchParams(prev);
-                        next.delete("project");
-                        next.delete("task");
-                        return next;
-                      },
-                      { replace: true }
-                    );
-                  }}
+        <div className="mb-4 space-y-3">
+          <ProjectHeader
+            project={selectedProject}
+            onBack={handleBackToProjects}
+            onSettings={() => setProjectSettingsOpen(true)}
+            onSaveAsTemplate={() => setSaveAsTemplateOpen(true)}
+            onNewVersion={
+              hasVersions(selectedProject.project_type)
+                ? () => {
+                    setEditingVersion(null);
+                    setVersionDialogOpen(true);
+                  }
+                : undefined
+            }
+          />
+
+          {selectedProject.description ? (
+            <div className="rounded-xl border border-border/60 bg-muted/20 px-3 py-2.5">
+              <div
+                className={`text-sm text-muted-foreground ${
+                  expandedDescriptions[selectedProject.id] ? "" : "line-clamp-2"
+                }`}
+                style={
+                  !expandedDescriptions[selectedProject.id]
+                    ? {
+                        display: "-webkit-box",
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: "vertical",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        wordBreak: "break-word",
+                      }
+                    : { wordBreak: "break-word" }
+                }
+                dangerouslySetInnerHTML={{ __html: sanitizeHtml(selectedProject.description) }}
+              />
+              {needsTruncation(selectedProject.description) ? (
+                <button
+                  type="button"
+                  className="mt-2 inline-flex items-center text-xs text-primary hover:text-primary/80"
+                  onClick={() =>
+                    setExpandedDescriptions((prev) => ({
+                      ...prev,
+                      [selectedProject.id]: !prev[selectedProject.id],
+                    }))
+                  }
                 >
-                  <X className="h-4 w-4" />
-                </Button>
-                <h2 className="text-xl font-bold">{selectedProject.name}</h2>
-              </div>
-              <div className="flex flex-wrap gap-2 mt-1">
-                {selectedProject.tags && selectedProject.tags.map(tag => (
-                  <span key={tag} className="text-xs bg-muted px-2 py-0.5 rounded">
-                    {tag}
-                  </span>
-                ))}
-              </div>
-              {selectedProject.description && (
-                <div className="mt-2">
-                  <div 
-                    className={`text-sm text-muted-foreground ${
-                      expandedDescriptions[selectedProject.id] 
-                        ? '' 
-                        : 'line-clamp-2'
-                    }`}
-                    style={!expandedDescriptions[selectedProject.id] ? {
-                      display: '-webkit-box',
-                      WebkitLineClamp: 2,
-                      WebkitBoxOrient: 'vertical',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      wordBreak: 'break-word',
-                    } : {
-                      wordBreak: 'break-word',
-                    }}
-                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(selectedProject.description) }} 
-                  />
-                  {selectedProject.description && needsTruncation(selectedProject.description) && (
-                    <button
-                      type="button"
-                      className="mt-1 inline-flex items-center text-xs text-primary hover:text-primary/80 transition-colors cursor-pointer bg-transparent border-0 p-0 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 rounded"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        const newState = !expandedDescriptions[selectedProject.id];
-                        setExpandedDescriptions(prev => ({
-                          ...prev,
-                          [selectedProject.id]: newState
-                        }));
-                      }}
-                    >
-                      {expandedDescriptions[selectedProject.id] ? (
-                        <>
-                          <ChevronUp className="h-3 w-3 mr-1" />
-                          Ler menos
-                        </>
-                      ) : (
-                        <>
-                          <ChevronDown className="h-3 w-3 mr-1" />
-                          Ler mais
-                        </>
-                      )}
-                    </button>
+                  {expandedDescriptions[selectedProject.id] ? (
+                    <>
+                      <ChevronUp className="mr-1 h-3 w-3" />
+                      Ler menos
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="mr-1 h-3 w-3" />
+                      Ler mais
+                    </>
                   )}
-                </div>
-              )}
+                </button>
+              ) : null}
             </div>
-            <div className="flex items-center gap-2">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button size="sm" variant="ghost">
-                    <MoreVertical className="h-4 w-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => setSaveAsTemplateOpen(true)}>
-                    <File className="h-4 w-4 mr-2" />
-                    Salvar como Modelo
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-              <Button size="sm" variant="secondary" onClick={() => setProjectSettingsOpen(true)}>
-                <Settings className="h-4 w-4 mr-1" />
-                Configurações do Projeto
-              </Button>
-            </div>
-          </div>
+          ) : null}
+
+          {hasVersions(selectedProject.project_type) ? (
+            <ProjectVersionControlPanel
+              projectId={selectedProject.id}
+              tenantId={user?.tenant_id ?? null}
+              versions={projectVersions}
+              selection={versionSelection}
+              selectedVersion={selectedVersion}
+              onSelectionChange={(selection) =>
+                setVersionSelection(normalizeVersionSelection(selection, projectVersions))
+              }
+              onCreateVersion={() => {
+                setEditingVersion(null);
+                setVersionDialogOpen(true);
+              }}
+              onEditVersion={(version) => {
+                setEditingVersion(version);
+                setVersionDialogOpen(true);
+              }}
+              onPublish={() => setPublishVersionOpen(true)}
+              onDuplicate={() => setDuplicateVersionOpen(true)}
+              onUnfreeze={async () => {
+                if (!selectedVersion) return;
+                await projectsService.updateProjectVersion(selectedProject.id, selectedVersion.id, { frozen: false });
+                toast.success("Versão descongelada");
+                await reloadProjectVersions();
+              }}
+            />
+          ) : null}
         
           {!hasAreas(selectedProject.project_type) && (
             <div className="mb-4 flex items-center">
@@ -1525,44 +1882,90 @@ const Projects = () => {
             onCreateArea={handleCreateArea}
             onUpdateArea={handleUpdateArea}
             onDeleteArea={handleDeleteArea}
+            versionQuery={
+              hasVersions(selectedProject.project_type)
+                ? versionSelectionToQuery(versionSelection)
+                : undefined
+            }
           />
 
           {hasAreas(selectedProject.project_type) && (
-            <p className="text-sm text-muted-foreground mt-4">
-              Clique em <strong>Abrir</strong> em uma área para ver e gerenciar as tarefas dessa área.
+            <p className="mt-1 text-xs text-muted-foreground">
+              {isAdvancedProject
+                ? "Clique em uma área para ver e gerenciar as tarefas dessa release."
+                : (
+                    <>
+                      Clique em <strong>Abrir</strong> em uma área para ver e gerenciar as tarefas dessa área.
+                    </>
+                  )}
             </p>
           )}
 
-          <div className="mb-6 mt-6">
+          <Collapsible defaultOpen={!isAdvancedProject} className={isAdvancedProject ? "mb-4 mt-2 rounded-2xl border border-border/70 bg-card/70 shadow-sm" : "mb-4 mt-2 rounded-xl border border-border/70 bg-card/80 shadow-sm"}>
+            <CollapsibleTrigger className={isAdvancedProject ? "flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-muted/25" : "flex w-full items-center justify-between px-3 py-2.5 text-left hover:bg-muted/30"}>
+              <div className="min-w-0">
+                <h3 className={isAdvancedProject ? "text-base font-semibold" : "text-sm font-semibold"}>
+                  {isAdvancedProject ? "Workspace do projeto" : hasAreas(selectedProject.project_type) ? "Complementos do projeto" : "Módulos do projeto"}
+                </h3>
+                <p className={isAdvancedProject ? "mt-0.5 text-xs text-muted-foreground" : "text-xs text-muted-foreground"}>
+                  {isAdvancedProject
+                    ? "Documentos, calendário e financeiro conectados à release ativa."
+                    : "Documentos, calendário e financeiro ficam separados da gestão de releases."}
+                </p>
+              </div>
+              <ChevronDown className="h-4 w-4 text-muted-foreground" />
+            </CollapsibleTrigger>
+            <CollapsibleContent className={isAdvancedProject ? "px-4 pb-4" : "px-3 pb-3"}>
+            {isAdvancedProject ? (
+              <div className="mb-3 grid gap-2 md:grid-cols-3">
+                <div className="rounded-xl border border-border/60 bg-background/60 p-3">
+                  <p className="text-xs font-medium text-muted-foreground">Documentos</p>
+                  <p className="mt-1 text-sm font-semibold">Drive do projeto</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {selectedProject.client_id ? "Upload, pastas e browser Google Drive." : "Vincule um cliente para ativar o Drive."}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-border/60 bg-background/60 p-3">
+                  <p className="text-xs font-medium text-muted-foreground">Calendário</p>
+                  <p className="mt-1 text-sm font-semibold">{selectedVersion?.due_date ? "Entrega prevista" : "Sem entrega definida"}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{selectedVersion?.due_date ?? "Defina prazos na release para montar a agenda."}</p>
+                </div>
+                <div className="rounded-xl border border-border/60 bg-background/60 p-3">
+                  <p className="text-xs font-medium text-muted-foreground">Financeiro</p>
+                  <p className="mt-1 text-sm font-semibold">{selectedProject.financeItems?.length ?? 0} lançamentos</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Resumo financeiro do projeto.</p>
+                </div>
+              </div>
+            ) : null}
             <Tabs
               defaultValue="board"
-              value={activeTab}
+              value={hasAreas(selectedProject.project_type) && (activeTab === "board" || activeTab === "list") ? "files" : activeTab}
               onValueChange={setActiveTab}
               className="w-full"
             >
-              <TabsList className={`grid w-full ${hasAreas(selectedProject.project_type) ? 'grid-cols-3' : 'grid-cols-5'}`}>
+              <TabsList className={`${isAdvancedProject ? "flex h-9 w-full justify-start overflow-x-auto rounded-full bg-muted/50 p-1" : `grid h-9 w-full ${hasAreas(selectedProject.project_type) ? 'grid-cols-3' : 'grid-cols-5'}`}`}>
                 {!hasAreas(selectedProject.project_type) && (
                   <>
-                    <TabsTrigger value="board">
-                      <Kanban className="h-4 w-4 mr-2" />
+                    <TabsTrigger value="board" className="h-7 text-xs">
+                      <Kanban className="mr-1.5 h-3.5 w-3.5" />
                       Etapas
                     </TabsTrigger>
-                    <TabsTrigger value="list">
-                      <ClipboardList className="h-4 w-4 mr-2" />
+                    <TabsTrigger value="list" className="h-7 text-xs">
+                      <ClipboardList className="mr-1.5 h-3.5 w-3.5" />
                       Tarefas
                     </TabsTrigger>
                   </>
                 )}
-                <TabsTrigger value="files">
-                  <File className="h-4 w-4 mr-2" />
+                <TabsTrigger value="files" className={isAdvancedProject ? "h-7 rounded-full px-3 text-xs" : "h-7 text-xs"}>
+                  <File className="mr-1.5 h-3.5 w-3.5" />
                   Documentos
                 </TabsTrigger>
-                <TabsTrigger value="calendar">
-                  <CalendarIcon2 className="h-4 w-4 mr-2" />
+                <TabsTrigger value="calendar" className={isAdvancedProject ? "h-7 rounded-full px-3 text-xs" : "h-7 text-xs"}>
+                  <CalendarIcon2 className="mr-1.5 h-3.5 w-3.5" />
                   Calendário
                 </TabsTrigger>
-                <TabsTrigger value="finance">
-                  <DollarSign className="h-4 w-4 mr-2" />
+                <TabsTrigger value="finance" className={isAdvancedProject ? "h-7 rounded-full px-3 text-xs" : "h-7 text-xs"}>
+                  <DollarSign className="mr-1.5 h-3.5 w-3.5" />
                   Financeiro
                 </TabsTrigger>
               </TabsList>
@@ -1577,6 +1980,10 @@ const Projects = () => {
                       projectId={selectedProject.id}
                       onOpenFull={setFullViewTask}
                       onAddTask={(listId) => {
+                        if (selectedVersionFrozen) {
+                          toast.error("Versão congelada: não é possível criar tarefas.");
+                          return;
+                        }
                         setSelectedListId(listId);
                         setNewTaskDialogOpen(true);
                       }}
@@ -1595,7 +2002,7 @@ const Projects = () => {
                           : undefined
                       }
                       onAddList={() => setNewListDialogOpen(true)}
-                      onMoveTask={moveTask}
+                      onMoveTask={selectedVersionFrozen ? undefined : moveTask}
                     />
                   </TabsContent>
                   <TabsContent value="list">
@@ -1611,7 +2018,22 @@ const Projects = () => {
               )}
 
               <TabsContent value="files">
-                {selectedProject.files && selectedProject.files.length > 0 ? (
+                {isAdvancedProject ? (
+                  selectedProject.client_id ? (
+                    activeTab === "files" ? (
+                      <ProjectDriveWorkspace
+                        clientId={selectedProject.client_id}
+                        projectName={selectedProject.name}
+                        selectedVersion={selectedVersion}
+                        canUpload={canCreateProject(MODULE_PROJECTS)}
+                      />
+                    ) : null
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-border p-6 text-sm text-muted-foreground">
+                      Vincule este projeto a um cliente para usar a central Google Drive existente do CRM.
+                    </div>
+                  )
+                ) : selectedProject.files && selectedProject.files.length > 0 ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {selectedProject.files.map(file => (
                       <div key={file.id} className="border rounded-md p-4 flex flex-col">
@@ -1640,20 +2062,25 @@ const Projects = () => {
               </TabsContent>
 
               <TabsContent value="calendar">
-                <CalendarView
-                  project={selectedProject}
-                  onTaskClick={openTaskDetail}
-                />
+                {isAdvancedProject && activeTab !== "calendar" ? null : (
+                  <CalendarView
+                    project={selectedProject}
+                    onTaskClick={openTaskDetail}
+                  />
+                )}
               </TabsContent>
 
               <TabsContent value="finance">
-                <ProjectFinance
-                  project={selectedProject}
-                  onUpdateProject={handleUpdateProject}
-                />
+                {isAdvancedProject && activeTab !== "finance" ? null : (
+                  <ProjectFinance
+                    project={selectedProject}
+                    onUpdateProject={handleUpdateProject}
+                  />
+                )}
               </TabsContent>
             </Tabs>
-          </div>
+            </CollapsibleContent>
+          </Collapsible>
         </div>
       </div>
     );
@@ -1834,6 +2261,7 @@ const Projects = () => {
             onViewDetails={(project) => {
               setSelectedProject(project);
               setViewMode("detail");
+              navigate(getProjectUrl(project.id));
             }}
             onNewProject={() => navigate("/projects/new")}
           />
@@ -1854,6 +2282,7 @@ const Projects = () => {
             onProjectClick={(project) => {
               setSelectedProject(project);
               setViewMode("detail");
+              navigate(getProjectUrl(project.id));
             }}
             onAddProject={() => navigate("/projects/new")}
             onMoveProject={moveProject}
@@ -1882,12 +2311,15 @@ const Projects = () => {
           key={selectedListId}
           open={newTaskDialogOpen}
           onOpenChange={setNewTaskDialogOpen}
-          canSubmit={canCreateProject(MODULE_TASKS)}
+          canSubmit={canCreateProject(MODULE_TASKS) && !currentSelectedVersionFrozen}
           context={{
             origin: "project",
             projectId: selectedProject.id,
             listId: selectedListId,
             areaId: null,
+            versionId: hasVersions(selectedProject.project_type)
+              ? versionIdForTaskCreate(versionSelection, projectVersions)
+              : undefined,
             projectName: selectedProject.name,
             teams: teams.map((t) => ({ id: t.id, name: t.name })),
           }}
@@ -1928,9 +2360,9 @@ const Projects = () => {
           selectedProject?.lists?.map((l) => ({ id: l.id, name: l.name })) ?? []
         }
         members={members.map((m) => ({ id: m.id, name: m.name }))}
-        onUpdate={handleFullViewUpdate}
+        onUpdate={currentSelectedVersionFrozen ? undefined : handleFullViewUpdate}
         onDelete={
-          fullViewTask
+          fullViewTask && !currentSelectedVersionFrozen
             ? (taskId) =>
                 deleteTask(fullViewTask.listId, taskId).then(() =>
                   setFullViewTask(null)
@@ -1938,7 +2370,7 @@ const Projects = () => {
             : undefined
         }
         onToggleStatus={
-          fullViewTask
+          fullViewTask && !currentSelectedVersionFrozen
             ? (taskId) => {
                 toggleTaskStatus(fullViewTask.listId, taskId);
                 setFullViewTask((prev) =>
@@ -1953,7 +2385,91 @@ const Projects = () => {
               }
             : undefined
         }
+        onMoveToVersion={
+          fullViewTask &&
+          selectedProject &&
+          hasVersions(selectedProject.project_type) &&
+          !currentSelectedVersionFrozen
+            ? () => {
+                setTaskToMove({
+                  taskId: fullViewTask.id,
+                  listId: fullViewTask.listId ?? "",
+                  areaId: fullViewTask.areaId ?? null,
+                  versionId: null,
+                });
+                setMoveTaskDialogOpen(true);
+              }
+            : undefined
+        }
+        onCopyToVersion={
+          fullViewTask &&
+          selectedProject &&
+          hasVersions(selectedProject.project_type) &&
+          !currentSelectedVersionFrozen
+            ? () => {
+                setTaskToCopy({
+                  taskId: fullViewTask.id,
+                  listId: fullViewTask.listId ?? "",
+                  areaId: fullViewTask.areaId ?? null,
+                  versionId: versionSelection.versionId ?? null,
+                });
+                setCopyTaskDialogOpen(true);
+              }
+            : undefined
+        }
       />
+
+      {selectedProject && hasVersions(selectedProject.project_type) ? (
+        <>
+          <ProjectVersionDialog
+            open={versionDialogOpen}
+            onOpenChange={setVersionDialogOpen}
+            version={editingVersion}
+            saving={versionSaving}
+            onSave={handleSaveProjectVersion}
+            onArchive={editingVersion ? handleArchiveProjectVersion : undefined}
+          />
+          <ProjectPublishVersionDialog
+            open={publishVersionOpen}
+            onOpenChange={setPublishVersionOpen}
+            version={currentSelectedVersion}
+            versions={projectVersions}
+            saving={versionActionSaving}
+            onPublish={handlePublishProjectVersion}
+          />
+          <ProjectDuplicateVersionDialog
+            open={duplicateVersionOpen}
+            onOpenChange={setDuplicateVersionOpen}
+            version={currentSelectedVersion}
+            saving={versionActionSaving}
+            onDuplicate={handleDuplicateProjectVersion}
+          />
+          <MoveProjectTaskDialog
+            open={moveTaskDialogOpen}
+            onOpenChange={setMoveTaskDialogOpen}
+            versions={projectVersions}
+            areas={selectedProject.areas ?? []}
+            lists={selectedProject.lists}
+            currentListId={taskToMove?.listId ?? ""}
+            currentAreaId={taskToMove?.areaId}
+            currentVersionId={taskToMove?.versionId}
+            saving={moveTaskSaving}
+            onMove={handleMoveProjectTask}
+          />
+          <CopyProjectTaskDialog
+            open={copyTaskDialogOpen}
+            onOpenChange={setCopyTaskDialogOpen}
+            versions={projectVersions}
+            areas={selectedProject.areas ?? []}
+            lists={selectedProject.lists}
+            currentListId={taskToCopy?.listId ?? ""}
+            currentAreaId={taskToCopy?.areaId}
+            currentVersionId={taskToCopy?.versionId}
+            saving={copyTaskSaving}
+            onCopy={handleCopyProjectTask}
+          />
+        </>
+      ) : null}
       
       {selectedProject && (
         <>

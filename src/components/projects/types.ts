@@ -57,6 +57,7 @@ export interface ProjectFinanceItem {
 
 // Interface Project
 import { Member } from "@/components/shared/types";
+import type { ProjectVersion } from "@/services/projects";
 
 export interface ProjectArea {
   id: string;
@@ -84,7 +85,9 @@ export interface Project {
   financeItems: ProjectFinanceItem[];
   kanbanStage?: string;
   project_type?: ProjectType;
+  client_id?: string | null;
   areas?: ProjectArea[];
+  versions?: ProjectVersion[];
   /** Equipe responsável (opcional). */
   team_id?: string | null;
   teamName?: string | null;

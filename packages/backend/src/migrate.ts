@@ -362,6 +362,22 @@ const order = [
   '231_platform_tracking_settings.sql',
   /** UTM / fbclid no cadastro */
   '232_tenant_marketing_attribution.sql',
+  /** Versões de projeto avançado + version_id em tarefas */
+  '233_project_versions_phase2.sql',
+  /** Ciclo de vida de versões/releases de projetos avançados */
+  '234_project_versions_lifecycle.sql',
+  /** Financeiro real do projeto: customer_invoices + finance_expense_entries */
+  '235_project_financial_links.sql',
+  /** project_id em financial_transactions (despesa projeto → financeiro unificado) */
+  '236_financial_transactions_project_id.sql',
+  /** Corrige status completed em despesas de projeto marcadas como pagas só no metadata */
+  '237_fix_project_expense_paid_status.sql',
+  /** Portal público de tickets por slug do tenant (/suporte/:slug) */
+  '238_tenant_support_public_portal.sql',
+  /** Coluna clients.whatsapp para matching com portal público */
+  '239_clients_whatsapp.sql',
+  /** Portal suporte: alinhar slug guardado ao tenants.slug */
+  '240_support_portal_sync_slug_to_tenant.sql',
   'create-admin-user.sql',
 ];
 

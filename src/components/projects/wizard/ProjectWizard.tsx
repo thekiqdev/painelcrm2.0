@@ -23,6 +23,7 @@ import {
   type WizardSpecificConfig,
   WIZARD_STEP_LABELS,
 } from "./types";
+import { getProjectUrl } from "@/lib/projectRoutes";
 import {
   saveWizardDraft,
   loadWizardDraft,
@@ -208,10 +209,10 @@ export function ProjectWizard() {
         payload.first_version_date =
           state.specificConfig.firstVersionDate || null;
       }
-      await projectsService.createProject(payload);
+      const createdProject = await projectsService.createProject(payload);
       clearWizardDraft();
       toast.success("Projeto criado com sucesso!");
-      navigate("/projects");
+      navigate(getProjectUrl(createdProject.id));
     } catch (err) {
       const message = err instanceof Error ? err.message : "Erro ao criar projeto";
       setCreateError(message);
@@ -304,45 +305,43 @@ export function ProjectWizard() {
         </p>
       )}
 
-      <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={handleCancel}
-            disabled={creating}
-          >
-            Cancelar
-          </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={handleCancel}
+          disabled={creating}
+        >
+          Cancelar
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={handleSaveDraft}
+          disabled={creating}
+        >
+          Salvar rascunho
+        </Button>
+        <button
+          type="button"
+          className="text-sm text-muted-foreground underline hover:text-foreground"
+          onClick={handleStartFromZero}
+        >
+          Começar do zero
+        </button>
+        {state.step > 1 && (
           <Button
             type="button"
             variant="ghost"
-            size="sm"
-            onClick={handleSaveDraft}
+            onClick={handleBack}
             disabled={creating}
+            aria-label="Voltar etapa"
           >
-            Salvar rascunho
+            <ChevronLeft className="mr-1 h-4 w-4" />
+            Voltar
           </Button>
-          <button
-            type="button"
-            className="text-sm text-muted-foreground underline hover:text-foreground"
-            onClick={handleStartFromZero}
-          >
-            Começar do zero
-          </button>
-          {state.step > 1 && (
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={handleBack}
-              disabled={creating}
-              aria-label="Voltar etapa"
-            >
-              <ChevronLeft className="mr-1 h-4 w-4" />
-              Voltar
-            </Button>
-          )}
-        </div>
+        )}
         {isStep4 ? (
           <Button
             type="button"

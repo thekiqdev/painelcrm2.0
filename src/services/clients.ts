@@ -8,6 +8,7 @@ export interface Client {
   company?: string;
   email?: string;
   phone?: string;
+  whatsapp?: string | null;
   status?: string;
   source?: string;
   funnel_stage?: string;

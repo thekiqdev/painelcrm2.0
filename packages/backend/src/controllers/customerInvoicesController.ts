@@ -74,6 +74,8 @@ const createBodySchema = z.object({
   recurring: z.boolean().optional(),
   billing_interval: billingIntervalSchema.optional(),
   charge_id: z.string().uuid('charge_id inválido').optional().nullable(),
+  project_id: z.string().uuid('project_id inválido').optional().nullable(),
+  billing_mode: z.enum(['link', 'client']).optional(),
   cycles_unlimited: z.boolean().optional(),
   max_cycles: z.number().int().positive().nullable().optional(),
 })
@@ -189,9 +191,10 @@ export async function listCustomerInvoices(req: AuthRequest, res: Response): Pro
       console.error('[customerInvoicesController] listCustomerInvoices overdue sync:', err)
     );
 
-    const { client_id, status, status_in, limit, offset } = req.query;
+    const { client_id, project_id, status, status_in, limit, offset } = req.query;
     const filters: ListCustomerInvoicesFilters = {};
     if (typeof client_id === 'string') filters.client_id = client_id;
+    if (typeof project_id === 'string') filters.project_id = project_id;
     const statusInParts: string[] = [];
     if (typeof status_in === 'string' && status_in.trim()) {
       statusInParts.push(...status_in.split(',').map((s) => s.trim()).filter(Boolean));
@@ -321,6 +324,7 @@ export async function createCustomerInvoice(req: AuthRequest, res: Response): Pr
           gateway_key: parsed.data.gateway_key ?? null,
           billing_interval: parsed.data.billing_interval!,
           items: parsed.data.items,
+          project_id: parsed.data.project_id ?? null,
           cycles_unlimited: parsed.data.cycles_unlimited,
           max_cycles: parsed.data.max_cycles ?? null,
         })
@@ -334,6 +338,7 @@ export async function createCustomerInvoice(req: AuthRequest, res: Response): Pr
           items: parsed.data.items,
           gateway_key: parsed.data.gateway_key ?? null,
           charge_id: parsed.data.charge_id ?? null,
+          project_id: parsed.data.project_id ?? null,
         });
 
     res.status(201).json({
@@ -342,7 +347,12 @@ export async function createCustomerInvoice(req: AuthRequest, res: Response): Pr
       subscription_id: result.subscription_id ?? undefined,
     });
   } catch (err) {
-    if (err instanceof Error && err.message === 'Cliente não pertence à empresa') {
+    if (
+      err instanceof Error &&
+      (err.message === 'Cliente não pertence à empresa' ||
+        err.message === 'Projeto não pertence à empresa' ||
+        err.message === 'Cliente da fatura não corresponde ao cliente do projeto')
+    ) {
       res.status(403).json({ error: err.message });
       return;
     }
@@ -382,6 +392,7 @@ const patchBodySchema = z
     items: z.array(createItemSchema).optional(),
     payment_method: paymentMethodSchema.optional().nullable(),
     allowed_payment_methods: z.array(paymentMethodSchema).min(1).max(3).optional().nullable(),
+    project_id: z.string().uuid('project_id inválido').optional().nullable(),
   })
   .refine(
     (d) =>
@@ -391,7 +402,8 @@ const patchBodySchema = z
       d.amount_cents !== undefined ||
       d.items !== undefined ||
       d.payment_method !== undefined ||
-      d.allowed_payment_methods !== undefined,
+      d.allowed_payment_methods !== undefined ||
+      d.project_id !== undefined,
     { message: 'Informe ao menos um campo para atualizar' }
   )
   .superRefine((d, ctx) => {
@@ -430,6 +442,10 @@ export async function updateCustomerInvoice(req: AuthRequest, res: Response): Pr
     const msg = err instanceof Error ? err.message : String(err);
     if (msg === 'Fatura não encontrada') {
       res.status(404).json({ error: msg });
+      return;
+    }
+    if (msg === 'Projeto não pertence à empresa' || msg === 'Cliente da fatura não corresponde ao cliente do projeto') {
+      res.status(403).json({ error: msg });
       return;
     }
     if (

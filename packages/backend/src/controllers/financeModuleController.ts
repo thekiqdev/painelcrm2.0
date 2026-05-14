@@ -63,8 +63,9 @@ const createIncomeBody = z.object({
   notes: z.string().nullable().optional(),
 });
 
-const createExpenseBody = z.object({
+const createExpenseFields = z.object({
   finance_account_id: z.string().uuid().nullable().optional(),
+  financial_account_id: z.string().uuid().optional(),
   category_id: z.string().uuid().nullable().optional(),
   amount_cents: z.number().int().nonnegative(),
   expense_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -72,9 +73,22 @@ const createExpenseBody = z.object({
   paid_at: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   description: z.string().min(1),
   status: expenseStatusSchema,
+  project_id: z.string().uuid().nullable().optional(),
   supplier_name: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
 });
+
+const createExpenseBody = createExpenseFields.superRefine((data, ctx) => {
+  if (data.project_id && !data.financial_account_id) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Conta financeira de saída é obrigatória para despesas do projeto',
+      path: ['financial_account_id'],
+    });
+  }
+});
+
+const patchExpenseBody = createExpenseFields.partial();
 
 function tenantOr401(req: AuthRequest, res: Response): string | null {
   const tenantId = req.tenantId ?? null;
@@ -419,7 +433,7 @@ export async function listFinanceExpenseEntriesHandler(req: AuthRequest, res: Re
     res.status(401).json({ error: 'Usuário não identificado' });
     return;
   }
-  const { from, to, account_id, status } = req.query;
+  const { from, to, account_id, status, project_id } = req.query;
   try {
     await assertPermissionKey(req.userId, 'finance.view_expenses', req);
     const rows = await listExpenseEntries(tenantId, {
@@ -427,6 +441,7 @@ export async function listFinanceExpenseEntriesHandler(req: AuthRequest, res: Re
       to: typeof to === 'string' ? to : undefined,
       account_id: typeof account_id === 'string' ? account_id : undefined,
       status: typeof status === 'string' ? status : undefined,
+      project_id: typeof project_id === 'string' ? project_id : undefined,
     });
     res.json(rows);
   } catch (e: unknown) {
@@ -455,6 +470,10 @@ export async function createFinanceExpenseEntryHandler(req: AuthRequest, res: Re
   } catch (e: unknown) {
     if (respondPerm(res, e)) return;
     const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes('não pertence')) {
+      res.status(403).json({ error: msg });
+      return;
+    }
     if (msg.includes('não encontrada') || msg.includes('inválida')) {
       res.status(400).json({ error: msg });
       return;
@@ -471,7 +490,7 @@ export async function patchFinanceExpenseEntryHandler(req: AuthRequest, res: Res
     res.status(401).json({ error: 'Usuário não identificado' });
     return;
   }
-  const parsed = createExpenseBody.partial().safeParse(req.body);
+  const parsed = patchExpenseBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
@@ -487,6 +506,7 @@ export async function patchFinanceExpenseEntryHandler(req: AuthRequest, res: Res
       paid_at: string | null;
       description: string;
       status: FinanceExpenseStatus;
+      project_id: string | null;
       supplier_name: string | null;
       notes: string | null;
     }>);
@@ -498,6 +518,10 @@ export async function patchFinanceExpenseEntryHandler(req: AuthRequest, res: Res
   } catch (e: unknown) {
     if (respondPerm(res, e)) return;
     const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes('não pertence')) {
+      res.status(403).json({ error: msg });
+      return;
+    }
     if (msg.includes('não encontrada') || msg.includes('inválida')) {
       res.status(400).json({ error: msg });
       return;

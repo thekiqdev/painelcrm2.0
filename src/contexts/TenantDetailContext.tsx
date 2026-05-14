@@ -15,6 +15,7 @@ export interface TenantDetailData {
   timezone?: string | null;
   locale?: string | null;
   logo_url?: string | null;
+  billing_phone?: string | null;
 }
 
 interface TenantDetailContextValue {

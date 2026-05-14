@@ -57,6 +57,7 @@ import { format, parseISO, startOfDay, endOfDay, addMonths } from "date-fns";
 import { ClientUpcomingAppointments } from "@/components/clients/ClientUpcomingAppointments";
 import { ClientAppointmentsHistory } from "@/components/clients/ClientAppointmentsHistory";
 import { ClientProfileDriveFilesTab } from "@/components/clients/ClientProfileDriveFilesTab";
+import { ClientProfileTicketsTab } from "@/components/clients/ClientProfileTicketsTab";
 import { formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
 import { ptBR } from "date-fns/locale";
 import { StickyNote, StickyNoteData } from "@/components/clients/StickyNote";
@@ -68,6 +69,7 @@ import {
   navigateBackFromClientProfile,
 } from "@/utils/clientProfileNavigation";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useFeatureFlag } from "@/hooks/useFeatureFlag";
 import { useFloatingChat } from "@/features/floating-chat";
 import { useChatOutboundQueue } from "@/hooks/useChatOutboundQueue";
 import { useForm } from "react-hook-form";
@@ -261,6 +263,7 @@ const ClientProfile = () => {
   const queryClient = useQueryClient();
   const { canDeleteRecord, canView, canCreate, canEdit, canChatReply } = useModulePermissions();
   const isMobile = useIsMobile();
+  const hasTicketsModule = useFeatureFlag("tickets");
 
   const taskDetailForm = useForm<z.infer<typeof taskSchema>>({
     resolver: zodResolver(taskSchema),
@@ -305,6 +308,7 @@ const ClientProfile = () => {
   // Determinar qual aba mostrar baseado na rota
   const getActiveTab = () => {
     if (location.pathname.includes("/tasks")) return "tasks";
+    if (location.pathname.includes("/tickets")) return "tickets";
     if (location.pathname.includes("/files")) return "files";
     if (location.pathname.includes("/notes")) return "notes";
     if (location.pathname.includes("/opportunities")) return "opportunities";
@@ -1702,7 +1706,21 @@ const ClientProfile = () => {
               </CardContent>
             </Card>
           )}
- 
+
+          {activeTab === "tickets" && hasTicketsModule && canView("tickets") && id ? (
+            <ClientProfileTicketsTab clientId={id} />
+          ) : null}
+
+          {activeTab === "tickets" && (!hasTicketsModule || !canView("tickets")) ? (
+            <Card>
+              <CardContent className="py-10 text-center text-sm text-muted-foreground">
+                {!hasTicketsModule
+                  ? "O módulo de chamados não está disponível no plano atual."
+                  : "Sem permissão para ver chamados deste cliente."}
+              </CardContent>
+            </Card>
+          ) : null}
+
           {/* Dialog de detalhes da tarefa */}
       <Dialog open={isTaskDetailOpen} onOpenChange={(open) => (open ? null : closeTaskDetail())}>
             {selectedTask && (

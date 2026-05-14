@@ -8,6 +8,7 @@ export const ticketsService = {
     priority?: string;
     category_id?: string;
     search?: string;
+    client_id?: string;
   }): Promise<Ticket[]> {
     try {
       const params = new URLSearchParams();
@@ -15,6 +16,7 @@ export const ticketsService = {
       if (filters?.priority) params.append('priority', filters.priority);
       if (filters?.category_id) params.append('category_id', filters.category_id);
       if (filters?.search) params.append('search', filters.search);
+      if (filters?.client_id) params.append('client_id', filters.client_id);
 
       const url = `/api/tickets${params.toString() ? `?${params.toString()}` : ''}`;
       const response = await apiClient.get<Ticket[]>(url);
@@ -117,12 +119,15 @@ export const ticketsService = {
   },
 
   // Create ticket message
-  async createTicketMessage(ticketId: string, messageData: {
-    content: string;
-    visibility?: 'public' | 'internal' | 'private';
-    attachments?: any[];
-    mentions?: string[];
-  }): Promise<any> {
+  async createTicketMessage(
+    ticketId: string,
+    messageData: {
+      content: string;
+      visibility?: 'public' | 'internal';
+      attachments?: any[];
+      mentions?: string[];
+    }
+  ): Promise<any> {
     try {
       const response = await apiClient.post<any>(`/api/tickets/${ticketId}/messages`, messageData);
       if (response.error) throw new Error(response.error);

@@ -157,6 +157,7 @@ export interface CreateManualInvoiceResult {
 /** Filtros para listagem de faturas (sempre filtrado por tenant_id na aplicação). */
 export interface ListCustomerInvoicesFilters {
   client_id?: string | null;
+  project_id?: string | null;
   status?: string | null;
   /** Vários estados (ex.: pendente + aguardando pagamento). Tem precedência sobre `status`. */
   status_in?: string[] | null;
@@ -174,6 +175,11 @@ export interface CustomerInvoicesSummary {
   overdue_amount_cents: number;
   total_count: number;
   total_amount_cents: number;
+}
+
+export interface ProjectFinanceScope {
+  id: string;
+  client_id: string | null;
 }
 
 /** Histórico mínimo da recorrência (D1): faturas irmãs por subscription_id. */
@@ -210,6 +216,42 @@ export async function clientBelongsToTenant(
   return r.rows.length > 0;
 }
 
+export async function getProjectFinanceScope(
+  tenantId: string,
+  projectId: string
+): Promise<ProjectFinanceScope | null> {
+  const r = await pool.query<ProjectFinanceScope>(
+    `SELECT p.id, p.client_id
+     FROM projects p
+     INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = $1
+     WHERE p.id = $2
+     LIMIT 1`,
+    [tenantId, projectId]
+  );
+  return r.rows[0] ?? null;
+}
+
+async function resolveInvoiceProjectLink(
+  tenantId: string,
+  projectId: string | null | undefined,
+  clientId: string | null | undefined
+): Promise<{ project_id: string | null; client_id: string | null | undefined }> {
+  if (!projectId) {
+    return { project_id: null, client_id: clientId };
+  }
+  const project = await getProjectFinanceScope(tenantId, projectId);
+  if (!project) {
+    throw new Error('Projeto não pertence à empresa');
+  }
+  if (clientId && project.client_id && clientId !== project.client_id) {
+    throw new Error('Cliente da fatura não corresponde ao cliente do projeto');
+  }
+  return {
+    project_id: project.id,
+    client_id: clientId ?? project.client_id ?? null,
+  };
+}
+
 /**
  * Cria fatura manual (Fase 2): preconditions → gateway obrigatório → customer no gateway → createCharge → só então persiste a fatura.
  * Se body.client_id for null/undefined (Fase 8): cria fatura por link, sem gateway; cliente preenchido depois no link.
@@ -229,6 +271,8 @@ export async function createManualInvoice(
     charge_id?: string | null;
     /** Proposta de origem (Etapa 2). */
     proposal_id?: string | null;
+    /** Projeto vinculado (opcional, migração 235). */
+    project_id?: string | null;
     /** strict: API / ações explícitas; lenient: jobs automáticos (renovação). */
     payment_method_policy?: 'strict' | 'lenient';
     /**
@@ -249,6 +293,8 @@ export async function createManualInvoice(
   const effectiveInvoiceDescription = (body.description && body.description.trim()) || `Cobrança ${body.due_date}`;
   const policyMode = body.payment_method_policy ?? 'strict';
 
+  const projectLink = await resolveInvoiceProjectLink(tenantId, body.project_id, body.client_id ?? null);
+
   const baseInvoiceData = {
     tenant_id: tenantId,
     amount_cents: amountCents,
@@ -261,9 +307,10 @@ export async function createManualInvoice(
     items: body.items,
     charge_id: body.charge_id ?? null,
     proposal_id: body.proposal_id ?? null,
+    project_id: projectLink.project_id,
   };
 
-  if (!body.client_id) {
+  if (!projectLink.client_id) {
     const invoice = await createManualCustomerInvoice({
       ...baseInvoiceData,
       client_id: null,
@@ -271,7 +318,7 @@ export async function createManualInvoice(
     return { invoice };
   }
 
-  const clientId = body.client_id;
+  const clientId = projectLink.client_id;
 
   const belongs = await clientBelongsToTenant(tenantId, clientId);
   if (!belongs) {
@@ -434,9 +481,11 @@ export async function createManualInvoice(
     due_date: body.due_date,
     description: effectiveInvoiceDescription,
     payment_method: chargePaymentMethod,
+    gateway_metadata: baseInvoiceData.gateway_metadata,
     items: body.items,
     charge_id: body.charge_id ?? null,
     proposal_id: body.proposal_id ?? null,
+    project_id: projectLink.project_id,
     ...(body.initial_invoice_status === 'waiting_payment'
       ? { initial_status: 'waiting_payment' as const }
       : {}),
@@ -506,6 +555,7 @@ export async function createRecurringManualInvoice(
     gateway_key?: string | null;
     billing_interval: BillingInterval;
     items?: CreateManualCustomerInvoiceItemInput[];
+    project_id?: string | null;
     cycles_unlimited?: boolean;
     max_cycles?: number | null;
   }
@@ -548,6 +598,7 @@ export async function createRecurringManualInvoice(
     allowed_payment_methods: body.allowed_payment_methods ?? null,
     items: body.items,
     gateway_key: body.gateway_key ?? null,
+    project_id: body.project_id ?? null,
   });
 
   await updateCustomerInvoiceSubscriptionLink(
@@ -1468,6 +1519,11 @@ export async function listInvoices(
     paramIndex++;
     conditions.push(`ci.client_id = $${paramIndex}`);
     params.push(filters.client_id);
+  }
+  if (filters.project_id) {
+    paramIndex++;
+    conditions.push(`ci.project_id = $${paramIndex}`);
+    params.push(filters.project_id);
   }
   if (filters.status_in && filters.status_in.length > 0) {
     paramIndex++;

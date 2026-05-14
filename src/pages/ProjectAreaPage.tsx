@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, Kanban, ClipboardList, MessageCircle, Trash2 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
@@ -10,7 +10,23 @@ import { TaskSidePanel, TaskFormDialog } from "@/components/tasks";
 import type { UnifiedTask } from "@/lib/taskUnified";
 import { ProjectList, Task, TaskStatus } from "@/components/projects/types";
 import { ProjectArea } from "@/components/projects/types";
-import { projectsService, type AreaComment } from "@/services/projects";
+import { projectsService, type AreaComment, type ProjectVersion } from "@/services/projects";
+import { ProjectVersionControlPanel } from "@/components/projects/ProjectVersionControlPanel";
+import { ProjectVersionDialog } from "@/components/projects/ProjectVersionDialog";
+import { MoveProjectTaskDialog } from "@/components/projects/MoveProjectTaskDialog";
+import { CopyProjectTaskDialog } from "@/components/projects/CopyProjectTaskDialog";
+import { ProjectPublishVersionDialog } from "@/components/projects/ProjectPublishVersionDialog";
+import { ProjectDuplicateVersionDialog } from "@/components/projects/ProjectDuplicateVersionDialog";
+import { hasVersions } from "@/lib/projectFeatures";
+import {
+  deriveInitialVersionSelection,
+  parseVersionSelectionFromSearch,
+  versionSelectionToTaskFilter,
+  versionIdForTaskCreate,
+  areVersionSelectionsEqual,
+  normalizeVersionSelection,
+  type ProjectVersionSelection,
+} from "@/lib/projectVersionSelection";
 import { membersService } from "@/services/members";
 import { Member } from "@/components/shared/types";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -18,12 +34,49 @@ import { Progress } from "@/components/ui/progress";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth } from "@/contexts/AuthContext";
 import { Textarea } from "@/components/ui/textarea";
+import { getProjectUrl } from "@/lib/projectRoutes";
 
 export default function ProjectAreaPage() {
   const { projectId, areaId } = useParams<{ projectId: string; areaId: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const versionModeParam = searchParams.get("versionMode");
+  const versionIdParam = searchParams.get("versionId");
   const [area, setArea] = useState<ProjectArea | null>(null);
   const [projectName, setProjectName] = useState("");
+  const [projectType, setProjectType] = useState<string | null>(null);
+  const [projectAreas, setProjectAreas] = useState<ProjectArea[]>([]);
+  const [projectVersions, setProjectVersions] = useState<ProjectVersion[]>([]);
+  const versionSelection = useMemo(
+    () => parseVersionSelectionFromSearch(searchParams.toString(), projectVersions),
+    [searchParams, projectVersions],
+  );
+  const [versionDialogOpen, setVersionDialogOpen] = useState(false);
+  const [editingVersion, setEditingVersion] = useState<ProjectVersion | null>(null);
+  const [versionSaving, setVersionSaving] = useState(false);
+  const [publishVersionOpen, setPublishVersionOpen] = useState(false);
+  const [duplicateVersionOpen, setDuplicateVersionOpen] = useState(false);
+  const [versionActionSaving, setVersionActionSaving] = useState(false);
+  const [moveTaskDialogOpen, setMoveTaskDialogOpen] = useState(false);
+  const [taskToMove, setTaskToMove] = useState<{
+    taskId: string;
+    listId: string;
+    areaId: string | null;
+    versionId: string | null;
+  } | null>(null);
+  const [moveTaskSaving, setMoveTaskSaving] = useState(false);
+  const [copyTaskDialogOpen, setCopyTaskDialogOpen] = useState(false);
+  const [taskToCopy, setTaskToCopy] = useState<{
+    taskId: string;
+    listId: string;
+    areaId: string | null;
+    versionId: string | null;
+  } | null>(null);
+  const [copyTaskSaving, setCopyTaskSaving] = useState(false);
+  const [taskVersionMap, setTaskVersionMap] = useState<Record<string, string | null>>({});
+  const [listColumns, setListColumns] = useState<
+    { id: string; name: string; order_position: number }[]
+  >([]);
   const [lists, setLists] = useState<ProjectList[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
@@ -41,6 +94,77 @@ export default function ProjectAreaPage() {
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [commentSending, setCommentSending] = useState(false);
   const { user: currentUser } = useAuth();
+  const selectedVersion =
+    hasVersions(projectType) && versionSelection.versionId
+      ? projectVersions.find((version) => version.id === versionSelection.versionId) ?? null
+      : null;
+  const selectedVersionFrozen = selectedVersion?.frozen === true;
+
+  const applyVersionSelection = useCallback(
+    (selection: ProjectVersionSelection) => {
+      const normalized = normalizeVersionSelection(selection, projectVersions);
+      setSearchParams(
+        (prev) => {
+          const current = parseVersionSelectionFromSearch(prev.toString(), projectVersions);
+          if (areVersionSelectionsEqual(current, normalized)) {
+            return prev;
+          }
+          const next = new URLSearchParams(prev);
+          next.delete("versionMode");
+          next.delete("versionId");
+          if (normalized.mode === "version" && normalized.versionId) {
+            next.set("versionMode", "version");
+            next.set("versionId", normalized.versionId);
+          }
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams, projectVersions],
+  );
+
+  const mapAreaTasksToLists = useCallback(
+    (
+      apiLists: { id: string; name: string; order_position: number }[],
+      areaTasks: any[],
+      membersList: Member[],
+    ) => {
+      const versionByTask: Record<string, string | null> = {};
+      areaTasks.forEach((task: { id: string; version_id?: string | null }) => {
+        versionByTask[task.id] = task.version_id ?? null;
+      });
+      setTaskVersionMap(versionByTask);
+      return apiLists.map((apiList) => {
+        const listTasks = areaTasks.filter((t: any) => t.list_id === apiList.id);
+        const tasks: Task[] = listTasks.map((apiTask: any) => ({
+          id: apiTask.id,
+          title: apiTask.title,
+          description: apiTask.description || "",
+          status: apiTask.status as TaskStatus,
+          priority: apiTask.priority as any,
+          dueDate: apiTask.due_date || undefined,
+          assignee: apiTask.assignee_id
+            ? membersList.find((m) => m.id === apiTask.assignee_id)
+            : undefined,
+          tags: apiTask.tags || [],
+          customFields: apiTask.custom_fields ?? {},
+          checklist: (apiTask.checklist || []).map((item: any, index: number) => ({
+            id: item.id || `checklist-${index}`,
+            text: item.text || item.title || "",
+            completed: item.completed || false,
+          })),
+        }));
+        return {
+          id: apiList.id,
+          name: apiList.name,
+          tasks,
+          order: apiList.order_position,
+        };
+      });
+    },
+    [],
+  );
 
   const refreshComments = useCallback(async () => {
     if (!projectId || !areaId) return;
@@ -58,59 +182,95 @@ export default function ProjectAreaPage() {
 
   useEffect(() => {
     if (!projectId || !areaId) return;
-    const load = async () => {
+    let cancelled = false;
+
+    const loadProjectShell = async () => {
       setLoading(true);
       try {
-        const [project, apiLists, areaTasks, membersData] = await Promise.all([
-          projectsService.getProjectById(projectId),
+        const project = await projectsService.getProjectById(projectId);
+        const [apiLists, membersData] = await Promise.all([
           projectsService.getProjectLists(projectId),
-          projectsService.getProjectTasksByArea(projectId, areaId),
           membersService.getMembers(),
         ]);
-        setProjectName(project.name);
-        setMembers(membersData || []);
-        const foundArea = (project.areas || []).find((a: ProjectArea) => a.id === areaId);
-        setArea(foundArea || null);
+        if (cancelled) return;
 
-        const listsWithTasks: ProjectList[] = apiLists.map((apiList) => {
-          const listTasks = areaTasks.filter((t: any) => t.list_id === apiList.id);
-          const tasks: Task[] = listTasks.map((apiTask: any) => ({
-            id: apiTask.id,
-            title: apiTask.title,
-            description: apiTask.description || "",
-            status: apiTask.status as TaskStatus,
-            priority: apiTask.priority as any,
-            dueDate: apiTask.due_date || undefined,
-            assignee: apiTask.assignee_id ? membersData?.find((m) => m.id === apiTask.assignee_id) : undefined,
-            tags: apiTask.tags || [],
-            customFields: apiTask.custom_fields ?? {},
-            checklist: (apiTask.checklist || []).map((item: any, index: number) => ({
-              id: item.id || `checklist-${index}`,
-              text: item.text || item.title || "",
-              completed: item.completed || false,
-            })),
-          }));
-          return {
-            id: apiList.id,
-            name: apiList.name,
-            tasks,
-            order: apiList.order_position,
-          };
-        });
-        setLists(listsWithTasks);
+        setProjectName(project.name);
+        setProjectType(project.project_type ?? null);
+        setProjectAreas(project.areas || []);
+        setProjectVersions(project.versions ?? []);
+        setMembers(membersData || []);
+        setListColumns(apiLists);
+        const foundArea = (project.areas || []).find((a: ProjectArea) => a.id === areaId) ?? null;
+        setArea(foundArea);
       } catch (e) {
-        console.error(e);
-        toast.error("Erro ao carregar área");
+        if (!cancelled) {
+          console.error(e);
+          toast.error("Erro ao carregar área");
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     };
-    load();
+
+    void loadProjectShell();
+    return () => {
+      cancelled = true;
+    };
   }, [projectId, areaId]);
 
   useEffect(() => {
-    if (projectId && areaId && area) void refreshComments();
-  }, [projectId, areaId, area, refreshComments]);
+    if (!hasVersions(projectType ?? undefined)) return;
+    if (versionModeParam) return;
+    if (projectVersions.length === 0) return;
+    applyVersionSelection(deriveInitialVersionSelection(projectVersions));
+  }, [projectType, projectVersions, versionModeParam, applyVersionSelection]);
+
+  useEffect(() => {
+    if (!projectId || !areaId || loading) return;
+    let cancelled = false;
+
+    const loadAreaTasks = async () => {
+      try {
+        const versionFilter = hasVersions(projectType ?? undefined)
+          ? versionSelectionToTaskFilter(versionSelection, projectVersions)
+          : undefined;
+        const areaTasks = await projectsService.getProjectTasksByArea(
+          projectId,
+          areaId,
+          versionFilter,
+        );
+        if (cancelled) return;
+        setLists(mapAreaTasksToLists(listColumns, areaTasks, members));
+      } catch (e) {
+        if (!cancelled) {
+          console.error(e);
+          toast.error("Erro ao carregar tarefas da área");
+        }
+      }
+    };
+
+    void loadAreaTasks();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    projectId,
+    areaId,
+    loading,
+    projectType,
+    versionSelection,
+    projectVersions,
+    listColumns,
+    members,
+    mapAreaTasksToLists,
+  ]);
+
+  useEffect(() => {
+    if (!projectId || !areaId) return;
+    void refreshComments();
+  }, [projectId, areaId, refreshComments]);
 
   const handleSendComment = async () => {
     const text = commentInput.trim();
@@ -144,29 +304,15 @@ export default function ProjectAreaPage() {
   const refreshTasks = async () => {
     if (!projectId || !areaId) return;
     try {
-      const areaTasks = await projectsService.getProjectTasksByArea(projectId, areaId);
-      const apiLists = await projectsService.getProjectLists(projectId);
-      const listsWithTasks: ProjectList[] = apiLists.map((apiList) => {
-        const listTasks = areaTasks.filter((t: any) => t.list_id === apiList.id);
-        const tasks: Task[] = listTasks.map((apiTask: any) => ({
-          id: apiTask.id,
-          title: apiTask.title,
-          description: apiTask.description || "",
-          status: apiTask.status as TaskStatus,
-          priority: apiTask.priority as any,
-          dueDate: apiTask.due_date || undefined,
-          assignee: apiTask.assignee_id ? members.find((m) => m.id === apiTask.assignee_id) : undefined,
-          tags: apiTask.tags || [],
-          customFields: apiTask.custom_fields ?? {},
-          checklist: (apiTask.checklist || []).map((item: any, index: number) => ({
-            id: item.id || `checklist-${index}`,
-            text: item.text || item.title || "",
-            completed: item.completed || false,
-          })),
-        }));
-        return { id: apiList.id, name: apiList.name, tasks, order: apiList.order_position };
-      });
-      setLists(listsWithTasks);
+      const versionFilter = hasVersions(projectType ?? undefined)
+        ? versionSelectionToTaskFilter(versionSelection, projectVersions)
+        : undefined;
+      const areaTasks = await projectsService.getProjectTasksByArea(
+        projectId,
+        areaId,
+        versionFilter,
+      );
+      setLists(mapAreaTasksToLists(listColumns, areaTasks, members));
     } catch (e) {
       console.error(e);
     }
@@ -305,6 +451,153 @@ export default function ProjectAreaPage() {
     }
   };
 
+  const reloadProjectVersions = async () => {
+    if (!projectId) return;
+    const versions = await projectsService.getProjectVersions(projectId);
+    setProjectVersions(versions);
+  };
+
+  const handleSaveProjectVersion = async (payload: {
+    name: string;
+    description: string | null;
+    status: ProjectVersion["status"];
+    start_date: string | null;
+    due_date: string | null;
+    is_default?: boolean;
+  }) => {
+    if (!projectId) return;
+    setVersionSaving(true);
+    try {
+      if (editingVersion) {
+        await projectsService.updateProjectVersion(projectId, editingVersion.id, payload);
+        toast.success("Versão atualizada");
+      } else {
+        const created = await projectsService.createProjectVersion(projectId, payload);
+        applyVersionSelection({ mode: "version", versionId: created.id });
+        toast.success("Versão criada");
+      }
+      setVersionDialogOpen(false);
+      setEditingVersion(null);
+      await reloadProjectVersions();
+    } catch (error) {
+      console.error(error);
+      toast.error("Erro ao salvar versão");
+    } finally {
+      setVersionSaving(false);
+    }
+  };
+
+  const handleArchiveProjectVersion = async (version: ProjectVersion) => {
+    if (!projectId) return;
+    setVersionSaving(true);
+    try {
+      await projectsService.archiveProjectVersion(projectId, version.id);
+      toast.success("Versão arquivada");
+      setVersionDialogOpen(false);
+      setEditingVersion(null);
+      if (versionSelection.mode === "version" && versionSelection.versionId === version.id) {
+        applyVersionSelection(deriveInitialVersionSelection(projectVersions));
+      }
+      await reloadProjectVersions();
+    } catch (error) {
+      console.error(error);
+      toast.error("Erro ao arquivar versão");
+    } finally {
+      setVersionSaving(false);
+    }
+  };
+
+  const handlePublishProjectVersion = async (payload: {
+    move_incomplete_to_version_id?: string | null;
+    archive_after_publish: boolean;
+    freeze_version: boolean;
+    generate_release_notes: boolean;
+  }) => {
+    if (!projectId || !selectedVersion) return;
+    setVersionActionSaving(true);
+    try {
+      await projectsService.publishProjectVersion(projectId, selectedVersion.id, payload);
+      toast.success("Versão publicada");
+      setPublishVersionOpen(false);
+      await reloadProjectVersions();
+      await refreshTasks();
+    } catch (error) {
+      console.error(error);
+      toast.error("Erro ao publicar versão");
+    } finally {
+      setVersionActionSaving(false);
+    }
+  };
+
+  const handleDuplicateProjectVersion = async (payload: {
+    name: string;
+    copy_open_tasks: boolean;
+    copy_completed_tasks: boolean;
+    copy_checklists: boolean;
+  }) => {
+    if (!projectId || !selectedVersion) return;
+    setVersionActionSaving(true);
+    try {
+      const created = await projectsService.duplicateProjectVersion(projectId, selectedVersion.id, payload);
+      toast.success("Versão duplicada");
+      applyVersionSelection({ mode: "version", versionId: created.id });
+      setDuplicateVersionOpen(false);
+      await reloadProjectVersions();
+    } catch (error) {
+      console.error(error);
+      toast.error("Erro ao duplicar versão");
+    } finally {
+      setVersionActionSaving(false);
+    }
+  };
+
+  const handleMoveProjectTask = async (payload: {
+    list_id: string;
+    version_id: string;
+    area_id: string | null;
+  }) => {
+    if (!taskToMove) return;
+    setMoveTaskSaving(true);
+    try {
+      await projectsService.moveProjectTask(taskToMove.taskId, payload);
+      toast.success("Tarefa transferida");
+      setMoveTaskDialogOpen(false);
+      setTaskToMove(null);
+      setFullViewTask(null);
+      await refreshTasks();
+    } catch (error) {
+      console.error(error);
+      toast.error("Erro ao transferir tarefa");
+    } finally {
+      setMoveTaskSaving(false);
+    }
+  };
+
+  const handleCopyProjectTask = async (payload: {
+    list_id: string;
+    version_id: string;
+    area_id: string | null;
+    copy_checklist: boolean;
+    copy_assignee: boolean;
+    copy_due_date: boolean;
+    copy_metadata: boolean;
+  }) => {
+    if (!taskToCopy) return;
+    setCopyTaskSaving(true);
+    try {
+      await projectsService.copyProjectTask(taskToCopy.taskId, payload);
+      toast.success("Tarefa copiada");
+      setCopyTaskDialogOpen(false);
+      setTaskToCopy(null);
+      await refreshTasks();
+    } catch (error) {
+      console.error(error);
+      toast.error("Erro ao copiar tarefa");
+    } finally {
+      setCopyTaskSaving(false);
+    }
+  };
+
   const totalTasks = lists.reduce((acc, list) => acc + list.tasks.length, 0);
   const completedTasks = lists.reduce(
     (acc, list) => acc + list.tasks.filter((t) => t.status === "completed").length,
@@ -324,7 +617,7 @@ export default function ProjectAreaPage() {
     return (
       <div className="p-6">
         <p className="text-destructive">Área não encontrada.</p>
-        <Button variant="outline" className="mt-2" onClick={() => navigate("/projects", { state: projectId ? { openProjectId: projectId } : undefined })}>
+        <Button variant="outline" className="mt-2" onClick={() => navigate(projectId ? getProjectUrl(projectId) : "/projects")}>
           Voltar
         </Button>
       </div>
@@ -332,12 +625,12 @@ export default function ProjectAreaPage() {
   }
 
   const goToProjectHome = () => {
-    navigate("/projects", { state: { openProjectId: projectId } });
+    navigate(projectId ? getProjectUrl(projectId) : "/projects");
   };
 
   return (
-    <div className="p-6 space-y-4">
-      <div className="flex items-center gap-4">
+    <div className="space-y-3 p-4 md:p-6">
+      <div className="flex items-center gap-3">
         <Button variant="ghost" size="sm" onClick={goToProjectHome}>
           <ArrowLeft className="h-4 w-4 mr-1" />
           Voltar
@@ -346,11 +639,38 @@ export default function ProjectAreaPage() {
           {projectName}
         </Button>
         <span className="text-muted-foreground">/</span>
-        <h1 className="text-xl font-semibold">{area.name}</h1>
+        <h1 className="text-lg font-semibold">{area.name}</h1>
       </div>
 
-      <div className="rounded-lg border p-4 bg-muted/30">
-        <div className="flex items-center justify-between mb-2">
+      {hasVersions(projectType) ? (
+        <ProjectVersionControlPanel
+            projectId={projectId}
+            tenantId={currentUser?.tenant_id ?? null}
+            versions={projectVersions}
+            selection={versionSelection}
+            onSelectionChange={applyVersionSelection}
+            onCreateVersion={() => {
+              setEditingVersion(null);
+              setVersionDialogOpen(true);
+            }}
+            onEditVersion={(version) => {
+              setEditingVersion(version);
+              setVersionDialogOpen(true);
+            }}
+            selectedVersion={selectedVersion}
+            onPublish={() => setPublishVersionOpen(true)}
+            onDuplicate={() => setDuplicateVersionOpen(true)}
+            onUnfreeze={async () => {
+              if (!projectId || !selectedVersion) return;
+              await projectsService.updateProjectVersion(projectId, selectedVersion.id, { frozen: false });
+              toast.success("Versão descongelada");
+              await reloadProjectVersions();
+            }}
+          />
+      ) : null}
+
+      <div className="rounded-lg border bg-muted/30 p-3">
+        <div className="mb-1.5 flex items-center justify-between">
           <span className="text-sm font-medium">Progresso da área</span>
           <span className="text-sm text-muted-foreground">
             {completedTasks}/{totalTasks} tarefas
@@ -395,13 +715,17 @@ export default function ProjectAreaPage() {
             setTaskDetailOpen(true);
           }}
           onAddTask={(listId) => {
+            if (selectedVersionFrozen) {
+              toast.error("Versão congelada: não é possível criar tarefas.");
+              return;
+            }
             setSelectedListId(listId);
             setNewTaskDialogOpen(true);
           }}
           onEditList={() => {}}
           onDeleteList={() => {}}
           onAddList={() => {}}
-          onMoveTask={moveTask}
+          onMoveTask={selectedVersionFrozen ? undefined : moveTask}
           projectId={projectId}
           areaId={areaId}
           onOpenFull={setFullViewTask}
@@ -497,12 +821,15 @@ export default function ProjectAreaPage() {
           key={`${selectedListId}-${areaId}`}
           open={newTaskDialogOpen}
           onOpenChange={setNewTaskDialogOpen}
-          canSubmit
+          canSubmit={!selectedVersionFrozen}
           context={{
             origin: "project",
             projectId,
             listId: selectedListId,
             areaId,
+            versionId: hasVersions(projectType)
+              ? versionIdForTaskCreate(versionSelection, projectVersions)
+              : undefined,
             projectName,
           }}
           onSuccess={(r) => {
@@ -542,15 +869,15 @@ export default function ProjectAreaPage() {
         }
         lists={lists.map((l) => ({ id: l.id, name: l.name }))}
         members={members.map((m) => ({ id: m.id, name: m.name }))}
-        onUpdate={handleFullViewUpdate}
+        onUpdate={selectedVersionFrozen ? undefined : handleFullViewUpdate}
         onDelete={
-          fullViewTask
+          fullViewTask && !selectedVersionFrozen
             ? (taskId) =>
                 deleteTask(taskId).then(() => setFullViewTask(null))
             : undefined
         }
         onToggleStatus={
-          fullViewTask
+          fullViewTask && !selectedVersionFrozen
             ? (taskId) => {
                 toggleTaskStatus(fullViewTask.listId ?? "", taskId);
                 setFullViewTask((prev) =>
@@ -565,7 +892,85 @@ export default function ProjectAreaPage() {
               }
             : undefined
         }
+        onMoveToVersion={
+          fullViewTask && hasVersions(projectType) && !selectedVersionFrozen
+            ? () => {
+                setTaskToMove({
+                  taskId: fullViewTask.id,
+                  listId: fullViewTask.listId ?? "",
+                  areaId: fullViewTask.areaId ?? areaId ?? null,
+                  versionId: taskVersionMap[fullViewTask.id] ?? null,
+                });
+                setMoveTaskDialogOpen(true);
+              }
+            : undefined
+        }
+        onCopyToVersion={
+          fullViewTask && hasVersions(projectType) && !selectedVersionFrozen
+            ? () => {
+                setTaskToCopy({
+                  taskId: fullViewTask.id,
+                  listId: fullViewTask.listId ?? "",
+                  areaId: fullViewTask.areaId ?? areaId ?? null,
+                  versionId: taskVersionMap[fullViewTask.id] ?? null,
+                });
+                setCopyTaskDialogOpen(true);
+              }
+            : undefined
+        }
       />
+
+      {projectId && hasVersions(projectType) ? (
+        <>
+          <ProjectVersionDialog
+            open={versionDialogOpen}
+            onOpenChange={setVersionDialogOpen}
+            version={editingVersion}
+            saving={versionSaving}
+            onSave={handleSaveProjectVersion}
+            onArchive={editingVersion ? handleArchiveProjectVersion : undefined}
+          />
+          <ProjectPublishVersionDialog
+            open={publishVersionOpen}
+            onOpenChange={setPublishVersionOpen}
+            version={selectedVersion}
+            versions={projectVersions}
+            saving={versionActionSaving}
+            onPublish={handlePublishProjectVersion}
+          />
+          <ProjectDuplicateVersionDialog
+            open={duplicateVersionOpen}
+            onOpenChange={setDuplicateVersionOpen}
+            version={selectedVersion}
+            saving={versionActionSaving}
+            onDuplicate={handleDuplicateProjectVersion}
+          />
+          <MoveProjectTaskDialog
+            open={moveTaskDialogOpen}
+            onOpenChange={setMoveTaskDialogOpen}
+            versions={projectVersions}
+            areas={projectAreas}
+            lists={lists}
+            currentListId={taskToMove?.listId ?? ""}
+            currentAreaId={taskToMove?.areaId}
+            currentVersionId={taskToMove?.versionId}
+            saving={moveTaskSaving}
+            onMove={handleMoveProjectTask}
+          />
+          <CopyProjectTaskDialog
+            open={copyTaskDialogOpen}
+            onOpenChange={setCopyTaskDialogOpen}
+            versions={projectVersions}
+            areas={projectAreas}
+            lists={lists}
+            currentListId={taskToCopy?.listId ?? ""}
+            currentAreaId={taskToCopy?.areaId}
+            currentVersionId={taskToCopy?.versionId}
+            saving={copyTaskSaving}
+            onCopy={handleCopyProjectTask}
+          />
+        </>
+      ) : null}
     </div>
   );
 }

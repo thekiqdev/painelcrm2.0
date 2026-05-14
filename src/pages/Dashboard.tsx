@@ -36,6 +36,7 @@ import {
 } from "@/lib/dashboardQuickActions";
 import { useDashboardQuickActionsPreferences } from "@/hooks/useDashboardQuickActionsPreferences";
 import { useMobileShellChrome } from "@/contexts/MobileShellChromeContext";
+import { getProjectUrl } from "@/lib/projectRoutes";
 
 const axisTickProps = { fill: "hsl(var(--muted-foreground))", fontSize: 11 };
 type PeriodPreset = "current_month" | "last_month" | "ytd";
@@ -510,7 +511,7 @@ const Dashboard = () => {
                 {(overview.projects_overview ?? []).slice(0, 5).map((project) => (
                   <Link
                     key={project.id}
-                    to={`/projects?project=${encodeURIComponent(project.id)}`}
+                    to={getProjectUrl(project.id)}
                     className="block rounded-lg border p-2.5 transition-colors active:scale-[0.99]"
                   >
                     <div className="flex items-center justify-between gap-2">
@@ -1057,7 +1058,7 @@ const Dashboard = () => {
                 (overview?.projects_overview ?? []).slice(0, 5).map((project) => (
                   <Link
                     key={project.id}
-                    to={`/projects?project=${encodeURIComponent(project.id)}`}
+                    to={getProjectUrl(project.id)}
                     className="block rounded-lg border p-2.5 transition-colors hover:bg-muted/50"
                   >
                     <div className="flex items-center justify-between gap-2">

@@ -33,6 +33,7 @@ export interface FinancialTransactionRow {
   gateway_reference_id: string | null;
   external_event_id: string | null;
   metadata: unknown | null;
+  project_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -55,7 +56,7 @@ export async function listFinancialTransactions(
                   status, transaction_kind, transfer_direction, transfer_id::text,
                   COALESCE(entry_source, 'manual') AS entry_source,
                   reference_type, reference_id::text, gateway_provider, gateway_reference_id,
-                  external_event_id, metadata, created_at, updated_at
+                  external_event_id, metadata, project_id::text, created_at, updated_at
            FROM financial_transactions WHERE tenant_id = $1`;
   const params: unknown[] = [tenantId];
   let n = 2;
@@ -121,6 +122,7 @@ export async function createFinancialTransaction(
     gateway_reference_id?: string | null;
     external_event_id?: string | null;
     metadata?: Record<string, unknown> | null;
+    project_id?: string | null;
   }
 ): Promise<FinancialTransactionRow> {
   const acc = await getFinancialAccount(tenantId, body.account_id);
@@ -148,17 +150,18 @@ export async function createFinancialTransaction(
     `INSERT INTO financial_transactions (
        tenant_id, account_id, type, amount_cents, description, category_id, customer_id,
        reference_name, transaction_date, status, transaction_kind, transfer_direction, transfer_id,
-       entry_source, reference_type, reference_id, gateway_provider, gateway_reference_id, external_event_id, metadata
+       entry_source, reference_type, reference_id, gateway_provider, gateway_reference_id, external_event_id, metadata,
+       project_id
      ) VALUES (
        $1, $2, $3, $4, $5, $6, $7, $8, $9::date, COALESCE($10, 'pending'), COALESCE($11, 'regular'), $12, $13::uuid,
-       COALESCE($14, 'manual'), $15, $16::uuid, $17, $18, $19, $20::jsonb
+       COALESCE($14, 'manual'), $15, $16::uuid, $17, $18, $19, $20::jsonb, $21::uuid
      )
      RETURNING id, tenant_id::text, account_id::text, type, amount_cents, description,
                category_id::text, customer_id::text, reference_name, transaction_date::text,
                status, transaction_kind, transfer_direction, transfer_id::text,
                COALESCE(entry_source, 'manual') AS entry_source,
                reference_type, reference_id::text, gateway_provider, gateway_reference_id,
-               external_event_id, metadata, created_at, updated_at`,
+               external_event_id, metadata, project_id::text, created_at, updated_at`,
     [
       tenantId,
       body.account_id,
@@ -180,6 +183,7 @@ export async function createFinancialTransaction(
       body.gateway_reference_id ?? null,
       body.external_event_id ?? null,
       metaJson,
+      body.project_id ?? null,
     ]
   );
   const row = r.rows[0]!;
@@ -193,7 +197,7 @@ export async function getFinancialTransaction(tenantId: string, id: string): Pro
             status, transaction_kind, transfer_direction, transfer_id::text,
             COALESCE(entry_source, 'manual') AS entry_source,
             reference_type, reference_id::text, gateway_provider, gateway_reference_id,
-            external_event_id, metadata, created_at, updated_at
+            external_event_id, metadata, project_id::text, created_at, updated_at
      FROM financial_transactions
      WHERE tenant_id = $1 AND id = $2
      LIMIT 1`,
@@ -258,7 +262,7 @@ export async function updateFinancialTransaction(
                status, transaction_kind, transfer_direction, transfer_id::text,
                COALESCE(entry_source, 'manual') AS entry_source,
                reference_type, reference_id::text, gateway_provider, gateway_reference_id,
-               external_event_id, metadata, created_at, updated_at`,
+               external_event_id, metadata, project_id::text, created_at, updated_at`,
     [
       tenantId,
       next.description,

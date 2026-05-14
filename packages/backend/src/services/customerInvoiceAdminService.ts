@@ -3,7 +3,7 @@
  */
 import { pool } from '../utils/db.js';
 import type { PaymentMethod } from '../modules/payments/paymentGatewayTypes.js';
-import { getInvoiceById } from './customerBillingService.js';
+import { getInvoiceById, getProjectFinanceScope } from './customerBillingService.js';
 import { getCustomerInvoiceSchema } from './customerInvoiceSchema.js';
 import { hasInvoicePaymentAttemptsTable } from './customerInvoicePaymentAttemptsService.js';
 import {
@@ -32,6 +32,7 @@ export interface PatchCustomerInvoiceBody {
   payment_method?: string | null;
   /** Persistido em gateway_metadata.allowed_payment_methods */
   allowed_payment_methods?: string[] | null;
+  project_id?: string | null;
 }
 
 export async function patchCustomerInvoiceWithGateway(
@@ -51,7 +52,8 @@ export async function patchCustomerInvoiceWithGateway(
       body.amount_cents !== undefined ||
       body.items !== undefined ||
       body.payment_method !== undefined ||
-      body.allowed_payment_methods !== undefined
+      body.allowed_payment_methods !== undefined ||
+      body.project_id !== undefined
     ) {
       throw new Error('Não é possível cancelar e alterar outros campos na mesma requisição');
     }
@@ -97,6 +99,7 @@ export async function patchCustomerInvoiceWithGateway(
     body.amount_cents !== undefined && body.items === undefined;
   const wantsPaymentMethod = body.payment_method !== undefined;
   const wantsAllowedMethods = body.allowed_payment_methods !== undefined;
+  const wantsProject = body.project_id !== undefined;
 
   if (
     !wantsDescription &&
@@ -104,7 +107,8 @@ export async function patchCustomerInvoiceWithGateway(
     !wantsAmount &&
     body.items === undefined &&
     !wantsPaymentMethod &&
-    !wantsAllowedMethods
+    !wantsAllowedMethods &&
+    !wantsProject
   ) {
     const row = await getInvoiceById(tenantId, invoiceId);
     if (!row) throw new Error('Fatura não encontrada');
@@ -113,6 +117,14 @@ export async function patchCustomerInvoiceWithGateway(
 
   const invAfter = await getInvoiceById(tenantId, invoiceId);
   if (!invAfter) throw new Error('Fatura não encontrada');
+
+  if (wantsProject && body.project_id) {
+    const project = await getProjectFinanceScope(tenantId, body.project_id);
+    if (!project) throw new Error('Projeto não pertence à empresa');
+    if (invAfter.client_id && project.client_id && invAfter.client_id !== project.client_id) {
+      throw new Error('Cliente da fatura não corresponde ao cliente do projeto');
+    }
+  }
 
   if (inv.gateway_reference_id) {
     const { gatewayKey, gateway } = await resolveCrmGatewayForTenantInvoice(tenantId, inv.gateway);
@@ -214,6 +226,11 @@ export async function patchCustomerInvoiceWithGateway(
   if (wantsPaymentMethod) {
     sets.push(`payment_method = $${i}`);
     params.push(body.payment_method);
+    i++;
+  }
+  if (wantsProject) {
+    sets.push(`project_id = $${i}`);
+    params.push(body.project_id ?? null);
     i++;
   }
   if (sets.length > 0) {

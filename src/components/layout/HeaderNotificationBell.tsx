@@ -249,6 +249,7 @@ export function HeaderNotificationBell({ unreadCount }: Props) {
                     className="h-8 px-2 text-xs text-muted-foreground"
                     onClick={(e) => {
                       e.preventDefault();
+                      setOpen(false);
                       setClearOpen(true);
                     }}
                   >

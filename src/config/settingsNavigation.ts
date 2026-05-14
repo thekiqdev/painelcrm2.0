@@ -13,6 +13,7 @@ import {
   FolderOpen,
   Globe,
   LayoutTemplate,
+  LifeBuoy,
   MessageSquare,
   PanelLeft,
   Settings,
@@ -42,6 +43,7 @@ export type SettingSection =
   | "googleDrive"
   | "agendaAvailability"
   | "chatAttendance"
+  | "publicSupportPortal"
   | "chatAutomation";
 
 /** Grupos do hub mobile (pedido de UX). */
@@ -225,6 +227,16 @@ const BASE_ITEMS: SettingsNavItem[] = [
     pathSegment: "chat",
   },
   {
+    id: "publicSupportPortal",
+    title: "Suporte público",
+    description: "Link amigável para clientes abrirem chamados sem login",
+    icon: LifeBuoy,
+    sidebarCategory: "Integrações",
+    subcategory: "Mensagens",
+    mobileCategory: "Atendimento",
+    pathSegment: "support-public",
+  },
+  {
     id: "domain",
     title: "Domínio",
     description: "Domínio e presença web",
@@ -350,6 +362,7 @@ export const SECTION_QUERY_VALUES: SettingSection[] = [
   "googleDrive",
   "agendaAvailability",
   "chatAttendance",
+  "publicSupportPortal",
   "chatAutomation",
 ];
 

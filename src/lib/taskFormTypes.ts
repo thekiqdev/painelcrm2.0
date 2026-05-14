@@ -8,6 +8,7 @@ export type TaskFormContext =
       projectId: string;
       listId: string;
       areaId?: string | null;
+      versionId?: string | null;
       projectName?: string | null;
       /** Opcional: filtro de responsáveis por equipe (igual fluxo antigo do projeto). */
       teams?: { id: string; name: string }[];

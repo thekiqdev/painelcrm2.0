@@ -3,6 +3,7 @@ import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { assertModulePermission, ModulePermissionError } from '../permissions/index.js';
 import { z } from 'zod';
+import { notifyTenantTicketCreated } from '../services/ticketNotificationsService.js';
 
 const ticketSchema = z.object({
   contact_name: z.string().min(1),
@@ -12,7 +13,9 @@ const ticketSchema = z.object({
   description: z.string().min(1),
   category_id: z.string().uuid().optional().nullable(),
   priority: z.enum(['low', 'normal', 'high', 'urgent']).optional(),
-  status: z.enum(['new', 'open', 'pending', 'waiting_customer', 'in_progress', 'resolved', 'closed', 'cancelled']).optional(),
+  status: z
+    .enum(['new', 'open', 'pending', 'waiting_customer', 'in_progress', 'resolved', 'closed', 'cancelled'])
+    .optional(),
   channel: z.enum(['portal', 'email', 'whatsapp', 'internal']).optional(),
   client_id: z.string().uuid().optional().nullable(),
   team_id: z.string().uuid().optional().nullable(),
@@ -21,21 +24,43 @@ const ticketSchema = z.object({
   custom_fields: z.any().optional(),
 });
 
+function respondPerm(res: Response, error: unknown): boolean {
+  if (error instanceof ModulePermissionError) {
+    res.status(error.statusCode).json({ error: error.message });
+    return true;
+  }
+  return false;
+}
+
 // Get tickets with filters
 export async function getTickets(req: AuthRequest, res: Response): Promise<void> {
   try {
     const tenantId = req.tenantId ?? null;
-    if (!tenantId) {
-      res.json([]);
+    const userId = req.userId;
+    if (!tenantId || !userId) {
+      res.status(401).json({ error: 'Não autenticado' });
       return;
     }
-    const { status, priority, category_id, search } = req.query;
+    await assertModulePermission(userId, 'tickets', 'view', undefined, req);
+
+    const { status, priority, category_id, search, client_id } = req.query;
 
     let query = `SELECT t.* FROM tickets t
        INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1
        WHERE 1=1`;
-    const params: any[] = [tenantId];
+    const params: unknown[] = [tenantId];
     let paramIndex = 2;
+
+    if (client_id && typeof client_id === 'string') {
+      const cid = client_id.trim();
+      if (
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(cid)
+      ) {
+        query += ` AND t.client_id = $${paramIndex}::uuid`;
+        params.push(cid);
+        paramIndex++;
+      }
+    }
 
     if (status && status !== 'all') {
       query += ` AND t.status = $${paramIndex}`;
@@ -55,9 +80,9 @@ export async function getTickets(req: AuthRequest, res: Response): Promise<void>
       paramIndex++;
     }
 
-    if (search) {
+    if (search && typeof search === 'string' && search.trim() !== '') {
       query += ` AND (t.subject ILIKE $${paramIndex} OR t.ticket_number ILIKE $${paramIndex} OR t.contact_name ILIKE $${paramIndex})`;
-      params.push(`%${search}%`);
+      params.push(`%${search.trim()}%`);
       paramIndex++;
     }
 
@@ -66,6 +91,7 @@ export async function getTickets(req: AuthRequest, res: Response): Promise<void>
     const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (error) {
+    if (respondPerm(res, error)) return;
     console.error('Error fetching tickets:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -75,13 +101,20 @@ export async function getTickets(req: AuthRequest, res: Response): Promise<void>
 export async function getTicketById(req: AuthRequest, res: Response): Promise<void> {
   try {
     const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Não autenticado' });
+      return;
+    }
     const { id } = req.params;
+
+    await assertModulePermission(userId, 'tickets', 'view', undefined, req);
 
     const result = await pool.query(
       `SELECT t.* FROM tickets t
-       INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
-       WHERE t.id = $1`,
-      [id, userId]
+       INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1
+       WHERE t.id = $2`,
+      [tenantId, id]
     );
 
     if (result.rows.length === 0) {
@@ -91,6 +124,7 @@ export async function getTicketById(req: AuthRequest, res: Response): Promise<vo
 
     res.json(result.rows[0]);
   } catch (error) {
+    if (respondPerm(res, error)) return;
     console.error('Error fetching ticket:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -98,39 +132,86 @@ export async function getTicketById(req: AuthRequest, res: Response): Promise<vo
 
 // Create ticket
 export async function createTicket(req: AuthRequest, res: Response): Promise<void> {
+  const userId = req.userId!;
+  const tenantId = req.tenantId ?? null;
+  if (!tenantId) {
+    res.status(401).json({ error: 'Não autenticado' });
+    return;
+  }
+
   try {
-    const userId = req.userId!;
     const ticketData = ticketSchema.parse(req.body);
 
     await assertModulePermission(userId, 'tickets', 'create', undefined, req);
 
-    // Generate ticket number (will be auto-generated by trigger, but we can set it explicitly)
-    const ticketNumber = `TICKET-${Date.now()}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
+    const channel = ticketData.channel ?? 'internal';
+    const status = ticketData.status ?? 'new';
 
-    const result = await pool.query(
-      `INSERT INTO tickets (
-        ticket_number, user_id, contact_name, contact_email, contact_phone,
-        subject, description, category_id, priority, status, channel,
-        client_id, team_id, assignee_id, tags, custom_fields
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-      RETURNING *`,
-      [
-        ticketNumber, userId, ticketData.contact_name, ticketData.contact_email,
-        ticketData.contact_phone || null, ticketData.subject, ticketData.description,
-        ticketData.category_id || null, ticketData.priority || 'normal',
-        ticketData.status || 'new', ticketData.channel || 'internal',
-        ticketData.client_id || null, ticketData.team_id || null,
-        ticketData.assignee_id || null, ticketData.tags ? JSON.stringify(ticketData.tags) : '[]',
-        ticketData.custom_fields ? JSON.stringify(ticketData.custom_fields) : '{}'
-      ]
-    );
+    const client = await pool.connect();
+    let created: Record<string, unknown>;
+    try {
+      await client.query('BEGIN');
 
-    res.status(201).json(result.rows[0]);
-  } catch (error) {
-    if (error instanceof ModulePermissionError) {
-      res.status(error.statusCode).json({ error: error.message });
-      return;
+      const insert = await client.query(
+        `INSERT INTO tickets (
+          user_id, contact_name, contact_email, contact_phone,
+          subject, description, category_id, priority, status, channel,
+          client_id, team_id, assignee_id, tags, custom_fields
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15::jsonb)
+        RETURNING *`,
+        [
+          userId,
+          ticketData.contact_name,
+          ticketData.contact_email,
+          ticketData.contact_phone || null,
+          ticketData.subject,
+          ticketData.description,
+          ticketData.category_id || null,
+          ticketData.priority || 'normal',
+          status,
+          channel,
+          ticketData.client_id || null,
+          ticketData.team_id || null,
+          ticketData.assignee_id || null,
+          ticketData.tags ? JSON.stringify(ticketData.tags) : '[]',
+          ticketData.custom_fields ? JSON.stringify(ticketData.custom_fields) : '{}',
+        ]
+      );
+
+      created = insert.rows[0] as Record<string, unknown>;
+      const ticketId = String(created.id);
+
+      await client.query(
+        `INSERT INTO ticket_messages (
+          ticket_id, user_id, content, visibility, attachments, mentions
+        ) VALUES ($1, $2, $3, 'public', '[]'::jsonb, '[]'::jsonb)`,
+        [ticketId, userId, ticketData.description.trim()]
+      );
+
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
     }
+
+    try {
+      await notifyTenantTicketCreated(tenantId, {
+        id: String(created.id),
+        ticket_number: String(created.ticket_number),
+        subject: String(created.subject),
+        user_id: String(created.user_id),
+        assignee_id: created.assignee_id ? String(created.assignee_id) : null,
+        team_id: created.team_id ? String(created.team_id) : null,
+      });
+    } catch (e) {
+      console.warn('[tickets] notifyTenantTicketCreated failed', e);
+    }
+
+    res.status(201).json(created);
+  } catch (error) {
+    if (respondPerm(res, error)) return;
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: 'Validation error', details: error.errors });
       return;
@@ -144,14 +225,19 @@ export async function createTicket(req: AuthRequest, res: Response): Promise<voi
 export async function updateTicket(req: AuthRequest, res: Response): Promise<void> {
   try {
     const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Não autenticado' });
+      return;
+    }
     const { id } = req.params;
     const ticketData = ticketSchema.partial().parse(req.body);
 
     const existing = await pool.query<{ user_id: string; assignee_id: string | null }>(
-      `SELECT user_id, assignee_id FROM tickets t
-       INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
-       WHERE t.id = $1`,
-      [id, userId]
+      `SELECT t.user_id, t.assignee_id FROM tickets t
+       INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1
+       WHERE t.id = $2`,
+      [tenantId, id]
     );
     if (existing.rows.length === 0) {
       res.status(404).json({ error: 'Ticket not found' });
@@ -164,7 +250,7 @@ export async function updateTicket(req: AuthRequest, res: Response): Promise<voi
     }, req);
 
     const updates: string[] = [];
-    const values: any[] = [];
+    const values: unknown[] = [];
     let paramIndex = 1;
 
     Object.entries(ticketData).forEach(([key, value]) => {
@@ -185,12 +271,15 @@ export async function updateTicket(req: AuthRequest, res: Response): Promise<voi
       return;
     }
 
-    values.push(id, userId);
+    const idParam = paramIndex;
+    const tenantParam = paramIndex + 1;
+    values.push(id, tenantId);
     const result = await pool.query(
-      `UPDATE tickets 
+      `UPDATE tickets t
        SET ${updates.join(', ')}, updated_at = now()
-       WHERE id = $${paramIndex} AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $${paramIndex + 1}))
-       RETURNING *`,
+       WHERE t.id = $${idParam}
+         AND EXISTS (SELECT 1 FROM users u WHERE u.id = t.user_id AND u.tenant_id = $${tenantParam})
+       RETURNING t.*`,
       values
     );
 
@@ -201,10 +290,7 @@ export async function updateTicket(req: AuthRequest, res: Response): Promise<voi
 
     res.json(result.rows[0]);
   } catch (error) {
-    if (error instanceof ModulePermissionError) {
-      res.status(error.statusCode).json({ error: error.message });
-      return;
-    }
+    if (respondPerm(res, error)) return;
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: 'Validation error', details: error.errors });
       return;
@@ -218,13 +304,18 @@ export async function updateTicket(req: AuthRequest, res: Response): Promise<voi
 export async function deleteTicket(req: AuthRequest, res: Response): Promise<void> {
   try {
     const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Não autenticado' });
+      return;
+    }
     const { id } = req.params;
 
     const existing = await pool.query<{ user_id: string; assignee_id: string | null }>(
-      `SELECT user_id, assignee_id FROM tickets t
-       INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
-       WHERE t.id = $1`,
-      [id, userId]
+      `SELECT t.user_id, t.assignee_id FROM tickets t
+       INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1
+       WHERE t.id = $2`,
+      [tenantId, id]
     );
     if (existing.rows.length === 0) {
       res.status(404).json({ error: 'Ticket not found' });
@@ -237,8 +328,13 @@ export async function deleteTicket(req: AuthRequest, res: Response): Promise<voi
     }, req);
 
     const result = await pool.query(
-      `DELETE FROM tickets WHERE id = $1 AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $2)) RETURNING id`,
-      [id, userId]
+      `DELETE FROM tickets t
+       USING users u
+       WHERE t.id = $1
+         AND u.id = t.user_id
+         AND u.tenant_id = $2
+       RETURNING t.id`,
+      [id, tenantId]
     );
 
     if (result.rows.length === 0) {
@@ -248,12 +344,8 @@ export async function deleteTicket(req: AuthRequest, res: Response): Promise<voi
 
     res.json({ message: 'Ticket deleted successfully' });
   } catch (error) {
-    if (error instanceof ModulePermissionError) {
-      res.status(error.statusCode).json({ error: error.message });
-      return;
-    }
+    if (respondPerm(res, error)) return;
     console.error('Error deleting ticket:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 }
-
