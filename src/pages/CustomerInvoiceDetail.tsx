@@ -21,6 +21,15 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import { customerInvoicesService } from "@/services/customerInvoices";
 import { apiClient } from "@/integrations/api/client";
 import type {
@@ -36,6 +45,7 @@ import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
   ArrowLeft,
+  CheckCircle2,
   FileText,
   XCircle,
   AlertTriangle,
@@ -62,6 +72,7 @@ import {
   invoiceMethodsFromGatewaySlugs,
   type InvoicePaymentMethodUi,
 } from "@/lib/crmGatewayPaymentMethods";
+import { financialService, type FinancialAccountDto } from "@/services/financial";
 
 function formatAmount(cents: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -159,6 +170,11 @@ const CustomerInvoiceDetail = () => {
   const [loading, setLoading] = useState(true);
   const [cancelling, setCancelling] = useState(false);
   const [statusSaving, setStatusSaving] = useState(false);
+  const [manualConfirmOpen, setManualConfirmOpen] = useState(false);
+  const [manualConfirmSaving, setManualConfirmSaving] = useState(false);
+  const [manualConfirmAccountId, setManualConfirmAccountId] = useState<string>("__none__");
+  const [financialAccounts, setFinancialAccounts] = useState<FinancialAccountDto[]>([]);
+  const [financialAccountsLoaded, setFinancialAccountsLoaded] = useState(false);
   const [recurrenceHistory, setRecurrenceHistory] = useState<RecurrenceHistoryInvoice[]>([]);
   const [deleteSaving, setDeleteSaving] = useState(false);
   const [gatewayEnabledMethods, setGatewayEnabledMethods] = useState<InvoicePaymentMethodUi[]>([
@@ -254,6 +270,15 @@ const CustomerInvoiceDetail = () => {
   }, []);
 
   useEffect(() => {
+    if (!canEditInvoice || financialAccountsLoaded) return;
+    financialService
+      .listAccounts({ account_scope: "business" })
+      .then((rows) => setFinancialAccounts(rows.filter((account) => account.is_active)))
+      .catch(() => setFinancialAccounts([]))
+      .finally(() => setFinancialAccountsLoaded(true));
+  }, [canEditInvoice, financialAccountsLoaded]);
+
+  useEffect(() => {
     let cancelled = false;
     (async () => {
       setMpIntegrationLoading(true);
@@ -333,6 +358,28 @@ const CustomerInvoiceDetail = () => {
       toast.error(err instanceof Error ? err.message : "Erro ao alterar status da fatura");
     } finally {
       setStatusSaving(false);
+    }
+  };
+
+  const handleConfirmManualPayment = async () => {
+    if (!id || !invoice) return;
+    setManualConfirmSaving(true);
+    try {
+      const accountId = manualConfirmAccountId === "__none__" ? null : manualConfirmAccountId;
+      const result = await customerInvoicesService.confirmManualPayment(id, {
+        financial_account_id: accountId,
+      });
+      setInvoice(result.invoice);
+      setManualConfirmOpen(false);
+      toast.success(
+        result.financial_transaction
+          ? "Pagamento confirmado e recebimento lançado no financeiro."
+          : "Pagamento confirmado manualmente."
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao confirmar pagamento manual");
+    } finally {
+      setManualConfirmSaving(false);
     }
   };
 
@@ -419,6 +466,8 @@ const CustomerInvoiceDetail = () => {
     !mpIntegrationLoading &&
     invoice.status !== "paid" &&
     (Boolean(existingMpUrl) || (actionable && canSendInvoice));
+  const manualPaymentAllowed =
+    canEditInvoice && invoice.status !== "paid" && invoice.status !== "cancelled" && invoice.status !== "refunded";
 
   return (
     <div className="space-y-6">
@@ -488,6 +537,17 @@ const CustomerInvoiceDetail = () => {
                     <SelectItem value="refunded">Reembolsado</SelectItem>
                   </SelectContent>
                 </Select>
+              )}
+              {manualPaymentAllowed && (
+                <Button
+                  variant="default"
+                  size="sm"
+                  type="button"
+                  onClick={() => setManualConfirmOpen(true)}
+                >
+                  <CheckCircle2 className="mr-2 h-4 w-4" />
+                  Confirmar pagamento
+                </Button>
               )}
               {invoice.origin === "subscription" &&
                 invoice.status === "paid" &&
@@ -571,6 +631,53 @@ const CustomerInvoiceDetail = () => {
           </div>
         </CardHeader>
       </Card>
+
+      <Dialog open={manualConfirmOpen} onOpenChange={setManualConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirmar pagamento manualmente</DialogTitle>
+            <DialogDescription>
+              Use quando o cliente pagou fora do gateway, por exemplo por Pix direto. A fatura será marcada como paga.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label>Banco / conta financeira (opcional)</Label>
+            <Select
+              value={manualConfirmAccountId}
+              onValueChange={setManualConfirmAccountId}
+              disabled={manualConfirmSaving}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Não lançar no financeiro" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">Não lançar no financeiro</SelectItem>
+                {financialAccounts.map((account) => (
+                  <SelectItem key={account.id} value={account.id}>
+                    {account.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Se uma conta for selecionada, será criado um recebimento concluído vinculado a esta fatura.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setManualConfirmOpen(false)}
+              disabled={manualConfirmSaving}
+            >
+              Cancelar
+            </Button>
+            <Button type="button" onClick={handleConfirmManualPayment} disabled={manualConfirmSaving}>
+              {manualConfirmSaving ? "Confirmando..." : "Confirmar pagamento"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Card>
         <CardHeader className="pb-3">

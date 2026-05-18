@@ -26,6 +26,7 @@ import { getCustomerInvoiceItems } from '../services/customerInvoiceService.js';
 import {
   patchCustomerInvoiceWithGateway,
   deleteCustomerInvoiceWithGateway,
+  confirmCustomerInvoiceManualPayment,
 } from '../services/customerInvoiceAdminService.js';
 import { getCustomerInvoiceRecurrenceInsight } from '../services/customerInvoiceRecurrenceInsightService.js';
 import { patchCustomerSubscriptionNextBillingFromPaidInvoice } from '../services/customerInvoiceRecurrenceNextBillingService.js';
@@ -418,6 +419,10 @@ const patchBodySchema = z
     }
   });
 
+const confirmManualPaymentBodySchema = z.object({
+  financial_account_id: z.string().uuid().optional().nullable(),
+});
+
 /** PATCH /api/customer-invoices/:id — edita descrição/vencimento/valor (com sync no Asaas) ou cancela (cancela cobrança no gateway primeiro). */
 export async function updateCustomerInvoice(req: AuthRequest, res: Response): Promise<void> {
   try {
@@ -464,6 +469,51 @@ export async function updateCustomerInvoice(req: AuthRequest, res: Response): Pr
     console.error('[customerInvoicesController] updateCustomerInvoice error:', err);
     res.status(500).json({
       error: 'Erro ao atualizar fatura',
+      ...(process.env.NODE_ENV !== 'production' ? { detail: msg } : {}),
+    });
+  }
+}
+
+/** POST /api/customer-invoices/:id/confirm-manual-payment — marca como paga e opcionalmente lança recebimento em conta. */
+export async function confirmCustomerInvoiceManualPaymentHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Empresa não identificada' });
+      return;
+    }
+    if (!(await requirePermKey(req, 'billing.edit_invoice', res))) return;
+
+    const { id } = req.params;
+    const parsed = confirmManualPaymentBodySchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Dados inválidos', details: parsed.error.flatten() });
+      return;
+    }
+
+    const result = await confirmCustomerInvoiceManualPayment({
+      tenantId,
+      invoiceId: id,
+      financialAccountId: parsed.data.financial_account_id ?? null,
+    });
+    res.json(result);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg === 'Fatura não encontrada') {
+      res.status(404).json({ error: msg });
+      return;
+    }
+    if (
+      msg.startsWith('Não é possível') ||
+      msg.startsWith('Fatura sem valor') ||
+      msg.startsWith('Conta financeira')
+    ) {
+      res.status(400).json({ error: msg });
+      return;
+    }
+    console.error('[customerInvoicesController] confirmCustomerInvoiceManualPayment error:', err);
+    res.status(500).json({
+      error: 'Erro ao confirmar pagamento manual',
       ...(process.env.NODE_ENV !== 'production' ? { detail: msg } : {}),
     });
   }

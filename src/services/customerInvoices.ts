@@ -291,6 +291,11 @@ export interface CreateCustomerInvoiceResult {
   subscription_id?: string;
 }
 
+export interface ConfirmCustomerInvoiceManualPaymentResult {
+  invoice: CustomerInvoice;
+  financial_transaction: { id: string } | null;
+}
+
 export interface ListCustomerInvoicesParams {
   client_id?: string | null;
   project_id?: string | null;
@@ -437,6 +442,19 @@ export const customerInvoicesService = {
     const response = await apiClient.patch<CustomerInvoice>(`${BASE}/${id}`, data);
     if (response.error) throw new Error(response.error);
     return response.data ?? null;
+  },
+
+  async confirmManualPayment(
+    id: string,
+    body: { financial_account_id?: string | null } = {}
+  ): Promise<ConfirmCustomerInvoiceManualPaymentResult> {
+    const response = await apiClient.post<ConfirmCustomerInvoiceManualPaymentResult>(
+      `${BASE}/${id}/confirm-manual-payment`,
+      body
+    );
+    if (response.error) throw new Error(response.error);
+    if (!response.data?.invoice) throw new Error('Resposta inválida ao confirmar pagamento');
+    return response.data;
   },
 
   /**

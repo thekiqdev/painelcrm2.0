@@ -15,6 +15,8 @@ import {
   type CustomerInvoiceRow,
 } from './customerInvoiceService.js';
 import { resolveCrmGatewayForTenantInvoice } from './invoicePaymentAttemptReuseService.js';
+import { getFinancialAccount } from './financialAccountsService.js';
+import { createFinancialTransaction, type FinancialTransactionRow } from './financialTransactionsService.js';
 
 const CANCELLABLE_STATUSES = new Set(['pending', 'waiting_payment', 'processing', 'overdue']);
 const EDITABLE_STATUSES = new Set(['pending', 'waiting_payment', 'processing', 'overdue']);
@@ -312,6 +314,70 @@ export async function patchCustomerInvoiceWithGateway(
   const row = await getInvoiceById(tenantId, invoiceId);
   if (!row) throw new Error('Fatura não encontrada');
   return row;
+}
+
+export async function confirmCustomerInvoiceManualPayment(params: {
+  tenantId: string;
+  invoiceId: string;
+  financialAccountId?: string | null;
+}): Promise<{ invoice: CustomerInvoiceRow; financial_transaction: FinancialTransactionRow | null }> {
+  const inv = await getInvoiceById(params.tenantId, params.invoiceId);
+  if (!inv) throw new Error('Fatura não encontrada');
+  if (inv.status === 'cancelled' || inv.status === 'refunded') {
+    throw new Error('Não é possível confirmar pagamento de fatura cancelada ou reembolsada');
+  }
+  if (inv.amount_cents <= 0) {
+    throw new Error('Fatura sem valor válido para confirmação');
+  }
+
+  let tx: FinancialTransactionRow | null = null;
+  const accountId = params.financialAccountId?.trim() || null;
+  if (accountId) {
+    const account = await getFinancialAccount(params.tenantId, accountId);
+    if (!account || !account.is_active) {
+      throw new Error('Conta financeira não encontrada ou inativa');
+    }
+
+    const existingTx = await pool.query<{ id: string }>(
+      `SELECT id::text
+       FROM financial_transactions
+       WHERE tenant_id = $1::uuid
+         AND reference_type = 'customer_invoice'
+         AND reference_id = $2::uuid
+       LIMIT 1`,
+      [params.tenantId, params.invoiceId]
+    );
+    if ((existingTx.rowCount ?? 0) === 0) {
+      const invNo = inv.invoice_number?.trim() || inv.id.slice(0, 8);
+      tx = await createFinancialTransaction(params.tenantId, {
+        account_id: accountId,
+        type: 'income',
+        amount_cents: inv.amount_cents,
+        description: `Recebimento manual — Fatura ${invNo}`,
+        transaction_date: new Date().toISOString().slice(0, 10),
+        status: 'completed',
+        transaction_kind: 'regular',
+        customer_id: inv.client_id ?? undefined,
+        entry_source: 'manual',
+        reference_type: 'customer_invoice',
+        reference_id: params.invoiceId,
+        metadata: {
+          manual_invoice_payment: true,
+          invoice_number: inv.invoice_number,
+          confirmed_at: new Date().toISOString(),
+        },
+        project_id: inv.project_id ?? null,
+      });
+    }
+  }
+
+  await updateCustomerInvoiceStatus(params.invoiceId, 'paid', new Date(), 'manual', {
+    skipFinancialSync: true,
+  });
+
+  const row = await getInvoiceById(params.tenantId, params.invoiceId);
+  if (!row) throw new Error('Fatura não encontrada após confirmação');
+  return { invoice: row, financial_transaction: tx };
 }
 
 export async function deleteCustomerInvoiceWithGateway(

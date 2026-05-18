@@ -734,7 +734,8 @@ export async function updateCustomerInvoiceStatus(
   invoiceId: string,
   status: string,
   paidAt?: Date | null,
-  gatewayStatus?: string | null
+  gatewayStatus?: string | null,
+  options?: { skipFinancialSync?: boolean }
 ): Promise<void> {
   const prev = await pool.query<{ status: string; tenant_id: string }>(
     `SELECT status, tenant_id::text AS tenant_id FROM customer_invoices WHERE id = $1 LIMIT 1`,
@@ -781,7 +782,7 @@ export async function updateCustomerInvoiceStatus(
   }
 
   /** Sempre que a fatura está/continua paga: sync idempotente (webhook reenviado, correção manual, etc.) */
-  if (markingPaid && tenantIdRow) {
+  if (markingPaid && tenantIdRow && !options?.skipFinancialSync) {
     try {
       await syncCustomerInvoicePaymentToFinancialAccount(invoiceId);
     } catch (err) {
