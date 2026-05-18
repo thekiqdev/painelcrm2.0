@@ -235,7 +235,7 @@ export interface CustomerInvoiceRecurrenceInsight {
 
 export interface UpdateCustomerInvoiceBody {
   description?: string | null;
-  status?: 'cancelled';
+  status?: 'pending' | 'waiting_payment' | 'processing' | 'paid' | 'overdue' | 'cancelled' | 'failed' | 'refunded';
   due_date?: string;
   amount_cents?: number;
   /** Substitui linhas da fatura; use `[]` + `amount_cents` para valor único sem linhas. */

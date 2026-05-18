@@ -23,6 +23,7 @@ import {
   deleteClientGoogleDriveFile,
   CLIENT_GOOGLE_DRIVE_SOURCE_MODULE,
 } from '../services/clientGoogleDriveFilesService.js';
+import { retryInvoiceGeneration } from '../services/customerBillingService.js';
 
 const MODULE_CLIENTS = 'clients';
 
@@ -1248,8 +1249,8 @@ export async function updateClient(req: AuthRequest, res: Response): Promise<voi
   try {
     const userId = req.userId!;
     const { id } = req.params;
-    const existing = await pool.query(
-      `SELECT c.user_id FROM clients c
+    const existing = await pool.query<{ user_id: string; cpf_cnpj: string | null }>(
+      `SELECT c.user_id, c.cpf_cnpj FROM clients c
        INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
        WHERE c.id = $1`,
       [id, userId]
@@ -1368,6 +1369,43 @@ export async function updateClient(req: AuthRequest, res: Response): Promise<voi
     if (result.rows.length === 0) {
       res.status(404).json({ error: 'Client not found' });
       return;
+    }
+
+    const beforeCpf = normalizeCpfCnpj(existing.rows[0].cpf_cnpj);
+    const afterCpf = normalizeCpfCnpj(result.rows[0].cpf_cnpj);
+    const cpfWasAdded = !beforeCpf && !!afterCpf;
+    if (cpfWasAdded) {
+      try {
+        const pendingInvoices = await pool.query<{ id: string }>(
+          `SELECT ci.id::text AS id
+           FROM customer_invoices ci
+           INNER JOIN clients c ON c.id = ci.client_id
+           INNER JOIN users u ON u.id = c.user_id
+           WHERE ci.client_id = $1
+             AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+             AND ci.gateway_reference_id IS NULL
+             AND ci.status IN ('pending', 'waiting_payment', 'processing', 'overdue')
+           ORDER BY ci.created_at ASC
+           LIMIT 25`,
+          [id, userId]
+        );
+        for (const row of pendingInvoices.rows) {
+          try {
+            await retryInvoiceGeneration(row.id);
+          } catch (retryErr) {
+            console.warn('[clients] retryInvoiceGeneration after cpf update failed', {
+              clientId: id,
+              invoiceId: row.id,
+              error: retryErr instanceof Error ? retryErr.message : retryErr,
+            });
+          }
+        }
+      } catch (retryListErr) {
+        console.warn('[clients] auto retry invoice generation after cpf update failed', {
+          clientId: id,
+          error: retryListErr instanceof Error ? retryListErr.message : retryListErr,
+        });
+      }
     }
 
     res.json(result.rows[0]);

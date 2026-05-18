@@ -4,6 +4,7 @@
  */
 import { pool } from '../utils/db.js';
 import { getActiveConfig } from './paymentGatewayConfigService.js';
+import { isValidCpfOrCnpj, onlyDigits } from '../utils/cpfCnpj.js';
 
 /**
  * Indica se o tenant tem gateway CRM ativo (mesma regra de createCharge / pré-condições).
@@ -21,6 +22,7 @@ export async function isCrmGatewayActiveForTenant(tenantId: string): Promise<boo
 export interface ValidateInvoicePreconditionsResult {
   ok: boolean;
   clientHasCpfCnpj: boolean;
+  clientCpfCnpjValid: boolean;
   gatewayConfigured: boolean;
   errors: string[];
 }
@@ -45,20 +47,26 @@ export async function validateInvoicePreconditions(
     [tenantId, clientId]
   );
   const client = clientRow.rows[0];
+  const clientCpfCnpjDigits = onlyDigits(client?.cpf_cnpj ?? '');
   const clientHasCpfCnpj = !!(
     client &&
     client.cpf_cnpj != null &&
     String(client.cpf_cnpj).trim() !== ''
   );
+  const clientCpfCnpjValid = clientHasCpfCnpj && isValidCpfOrCnpj(clientCpfCnpjDigits);
   const config = await getActiveConfig('crm', tenantId);
   const gatewayConfigured = config != null;
   if (!gatewayConfigured) {
     errors.push('Gateway de pagamento não configurado.');
   }
+  if (clientHasCpfCnpj && !clientCpfCnpjValid) {
+    errors.push('CPF/CNPJ do cliente inválido.');
+  }
 
   return {
-    ok: gatewayConfigured,
+    ok: gatewayConfigured && (!clientHasCpfCnpj || clientCpfCnpjValid),
     clientHasCpfCnpj,
+    clientCpfCnpjValid,
     gatewayConfigured,
     errors,
   };

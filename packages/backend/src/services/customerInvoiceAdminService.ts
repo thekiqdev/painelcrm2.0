@@ -19,6 +19,16 @@ import { resolveCrmGatewayForTenantInvoice } from './invoicePaymentAttemptReuseS
 const CANCELLABLE_STATUSES = new Set(['pending', 'waiting_payment', 'processing', 'overdue']);
 const EDITABLE_STATUSES = new Set(['pending', 'waiting_payment', 'processing', 'overdue']);
 const DELETABLE_STATUSES = new Set(['pending', 'waiting_payment', 'processing', 'overdue']);
+const MANUAL_STATUSES = new Set([
+  'pending',
+  'waiting_payment',
+  'processing',
+  'paid',
+  'overdue',
+  'cancelled',
+  'failed',
+  'refunded',
+]);
 /** Faturas de assinatura já encerradas no fluxo (sem cobrança ativa) — podem ser removidas do CRM a pedido do utilizador. */
 const SUBSCRIPTION_INVOICE_PURGEABLE_STATUSES = new Set(['cancelled', 'failed']);
 
@@ -26,13 +36,45 @@ export interface PatchCustomerInvoiceBody {
   description?: string | null;
   due_date?: string;
   amount_cents?: number;
-  status?: 'cancelled';
+  status?: string;
   /** Substitui linhas (fatura manual). Exige `amount_cents` se o array for vazio (valor único). */
   items?: CreateManualCustomerInvoiceItemInput[];
   payment_method?: string | null;
   /** Persistido em gateway_metadata.allowed_payment_methods */
   allowed_payment_methods?: string[] | null;
   project_id?: string | null;
+}
+
+async function isDueDateBeforeTenantToday(tenantId: string, dueDate: string): Promise<boolean> {
+  const r = await pool.query<{ is_overdue: boolean }>(
+    `SELECT $1::date < (
+       timezone(COALESCE(tz.name, 'UTC'), now())
+     )::date AS is_overdue
+     FROM tenants t
+     LEFT JOIN pg_timezone_names tz
+       ON tz.name = NULLIF(trim(t.timezone), '')
+     WHERE t.id = $2::uuid
+     LIMIT 1`,
+    [dueDate, tenantId]
+  );
+  return r.rows[0]?.is_overdue === true;
+}
+
+async function applyManualInvoiceStatus(invoiceId: string, status: string): Promise<void> {
+  if (!MANUAL_STATUSES.has(status)) {
+    throw new Error('Status de fatura inválido');
+  }
+  await updateCustomerInvoiceStatus(invoiceId, status, status === 'paid' ? new Date() : undefined, null);
+  if (status !== 'paid') {
+    await pool.query(
+      `UPDATE customer_invoices
+       SET paid_at = NULL,
+           updated_at = now()
+       WHERE id = $1
+         AND status <> 'paid'`,
+      [invoiceId]
+    );
+  }
 }
 
 export async function patchCustomerInvoiceWithGateway(
@@ -72,7 +114,18 @@ export async function patchCustomerInvoiceWithGateway(
     return row;
   }
 
-  if (!EDITABLE_STATUSES.has(inv.status)) {
+  const wantsManualStatus = body.status !== undefined;
+  const statusOnlyPatch =
+    wantsManualStatus &&
+    body.description === undefined &&
+    body.due_date === undefined &&
+    body.amount_cents === undefined &&
+    body.items === undefined &&
+    body.payment_method === undefined &&
+    body.allowed_payment_methods === undefined &&
+    body.project_id === undefined;
+
+  if (!statusOnlyPatch && !EDITABLE_STATUSES.has(inv.status)) {
     throw new Error('Só é possível editar fatura pendente ou em cobrança');
   }
 
@@ -108,7 +161,8 @@ export async function patchCustomerInvoiceWithGateway(
     body.items === undefined &&
     !wantsPaymentMethod &&
     !wantsAllowedMethods &&
-    !wantsProject
+    !wantsProject &&
+    !wantsManualStatus
   ) {
     const row = await getInvoiceById(tenantId, invoiceId);
     if (!row) throw new Error('Fatura não encontrada');
@@ -239,6 +293,20 @@ export async function patchCustomerInvoiceWithGateway(
       `UPDATE customer_invoices SET ${sets.join(', ')}, updated_at = now() WHERE id = $${i} AND tenant_id = $${i + 1}`,
       params
     );
+  }
+
+  if (wantsManualStatus && body.status) {
+    await applyManualInvoiceStatus(invoiceId, body.status);
+  } else if (wantsDue && inv.status === 'overdue' && body.due_date) {
+    const stillOverdue = await isDueDateBeforeTenantToday(tenantId, body.due_date);
+    if (!stillOverdue) {
+      await updateCustomerInvoiceStatus(
+        invoiceId,
+        inv.gateway_reference_id ? 'waiting_payment' : 'pending',
+        undefined,
+        null
+      );
+    }
   }
 
   const row = await getInvoiceById(tenantId, invoiceId);

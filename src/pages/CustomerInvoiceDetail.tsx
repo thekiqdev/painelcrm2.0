@@ -4,6 +4,13 @@ import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -19,6 +26,7 @@ import { apiClient } from "@/integrations/api/client";
 import type {
   CustomerInvoice,
   CustomerInvoiceRecurrenceInsight,
+  UpdateCustomerInvoiceBody,
 } from "@/services/customerInvoices";
 import { clientsService } from "@/services/clients";
 import type { RecurrenceHistoryInvoice } from "@/services/customerInvoices";
@@ -150,6 +158,7 @@ const CustomerInvoiceDetail = () => {
   const [client, setClient] = useState<Client | null>(null);
   const [loading, setLoading] = useState(true);
   const [cancelling, setCancelling] = useState(false);
+  const [statusSaving, setStatusSaving] = useState(false);
   const [recurrenceHistory, setRecurrenceHistory] = useState<RecurrenceHistoryInvoice[]>([]);
   const [deleteSaving, setDeleteSaving] = useState(false);
   const [gatewayEnabledMethods, setGatewayEnabledMethods] = useState<InvoicePaymentMethodUi[]>([
@@ -313,6 +322,20 @@ const CustomerInvoiceDetail = () => {
     }
   };
 
+  const handleManualStatusChange = async (nextStatus: UpdateCustomerInvoiceBody["status"]) => {
+    if (!id || !invoice || !nextStatus || nextStatus === invoice.status) return;
+    setStatusSaving(true);
+    try {
+      const updated = await customerInvoicesService.update(id, { status: nextStatus });
+      setInvoice(updated ?? { ...invoice, status: nextStatus });
+      toast.success("Status da fatura atualizado.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao alterar status da fatura");
+    } finally {
+      setStatusSaving(false);
+    }
+  };
+
   const handleDelete = async () => {
     if (!id || !invoice) return;
     setDeleteSaving(true);
@@ -443,6 +466,28 @@ const CustomerInvoiceDetail = () => {
                   <Pencil className="mr-2 h-4 w-4" />
                   {invoice.origin === "subscription" ? "Editar cobrança atual" : "Editar"}
                 </Button>
+              )}
+              {canEditInvoice && (
+                <Select
+                  value={invoice.status}
+                  onValueChange={(value) =>
+                    handleManualStatusChange(value as UpdateCustomerInvoiceBody["status"])
+                  }
+                  disabled={statusSaving}
+                >
+                  <SelectTrigger className="h-9 w-[190px]">
+                    <SelectValue placeholder="Alterar status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="pending">Pendente</SelectItem>
+                    <SelectItem value="waiting_payment">Aguardando pagamento</SelectItem>
+                    <SelectItem value="processing">Processando</SelectItem>
+                    <SelectItem value="paid">Pago</SelectItem>
+                    <SelectItem value="overdue">Vencido</SelectItem>
+                    <SelectItem value="failed">Falhou</SelectItem>
+                    <SelectItem value="refunded">Reembolsado</SelectItem>
+                  </SelectContent>
+                </Select>
               )}
               {invoice.origin === "subscription" &&
                 invoice.status === "paid" &&

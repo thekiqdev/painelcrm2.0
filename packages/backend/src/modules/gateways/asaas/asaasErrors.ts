@@ -3,6 +3,11 @@
  */
 
 export function isAsaasInvalidCustomerError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err);
-  return msg.includes('invalid_customer');
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return (
+    msg.includes('invalid_customer') ||
+    msg.includes('cpfcnpj') ||
+    msg.includes('cpf/cnpj') ||
+    msg.includes('customer.cpf')
+  );
 }

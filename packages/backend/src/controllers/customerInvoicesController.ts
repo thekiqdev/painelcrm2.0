@@ -386,7 +386,9 @@ export async function createCustomerInvoice(req: AuthRequest, res: Response): Pr
 const patchBodySchema = z
   .object({
     description: z.string().optional().nullable(),
-    status: z.literal('cancelled').optional(),
+    status: z
+      .enum(['pending', 'waiting_payment', 'processing', 'paid', 'overdue', 'cancelled', 'failed', 'refunded'])
+      .optional(),
     due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     amount_cents: z.number().int().min(1).optional(),
     items: z.array(createItemSchema).optional(),
@@ -453,7 +455,8 @@ export async function updateCustomerInvoice(req: AuthRequest, res: Response): Pr
       msg.startsWith('Só é possível') ||
       msg.startsWith('Fatura com itens') ||
       msg.startsWith('Gateway de pagamento não suporta') ||
-      msg.startsWith('Não combine cancelamento')
+      msg.startsWith('Não combine cancelamento') ||
+      msg === 'Status de fatura inválido'
     ) {
       res.status(400).json({ error: msg });
       return;

@@ -12,6 +12,7 @@ import {
   switchPaymentMethodByToken,
   payInvoiceWithCardByToken,
   PayWithCardError,
+  InvoiceGenerationError,
 } from '../services/customerBillingService.js';
 import { buildPublicPayPayloadMeta } from '../services/publicPayPayloadMeta.js';
 import { billingLog } from '../services/billingLogger.js';
@@ -304,7 +305,7 @@ export async function getPayByToken(req: Request, res: Response): Promise<void> 
       !!freshData.client_id &&
       !!clientProfile &&
       (!clientProfile.cpf_cnpj || String(clientProfile.cpf_cnpj).trim() === '');
-    const needs_customer = invoice.status === 'pending' && (!client_name || missingLinkedClientCpf);
+    const needs_customer = POLLABLE_STATUSES.has(invoice.status) && (!client_name || missingLinkedClientCpf);
     const needs_customer_reason = !needs_customer
       ? null
       : !client_name
@@ -404,9 +405,16 @@ export async function postSwitchPaymentMethodByToken(req: Request, res: Response
       res.status(404).json({ error: 'Fatura não encontrada ou link inválido' });
       return;
     }
+    const invoiceGatewayRef = await pool.query<{ gateway_reference_id: string | null }>(
+      `SELECT gateway_reference_id FROM customer_invoices WHERE id = $1 LIMIT 1`,
+      [data.invoice_id]
+    );
     if (isPublicPayTelemetryEnabled()) {
       billingLog('invoice', 'public_pay_switch_method_request', {
         tenantId: data.tenant_id,
+        invoice_id: data.invoice_id,
+        client_id: data.client_id ?? undefined,
+        has_gateway_reference_id: Boolean(invoiceGatewayRef.rows[0]?.gateway_reference_id),
         method: parsed.data.payment_method,
       });
     }
@@ -429,6 +437,28 @@ export async function postSwitchPaymentMethodByToken(req: Request, res: Response
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Erro ao trocar método de pagamento';
+    if (err instanceof InvoiceGenerationError) {
+      billingLog('invoice', 'public_pay_switch_method_generation_failed', {
+        reason: err.code,
+        error: err.message,
+      });
+      if (
+        err.code === 'missing_client' ||
+        err.code === 'missing_cpf_cnpj' ||
+        err.code === 'invalid_cpf_cnpj' ||
+        err.code === 'not_payable'
+      ) {
+        res.status(400).json({ error: err.message, code: err.code });
+        return;
+      }
+      if (err.code === 'missing_gateway') {
+        res.status(503).json({ error: err.message, code: err.code });
+        return;
+      }
+      console.error('[publicCustomerInvoices] switch-method provider error:', err);
+      res.status(502).json({ error: 'Erro do provedor ao gerar cobrança', code: err.code });
+      return;
+    }
     if (msg.includes('não encontrada') || msg.includes('inválido')) {
       res.status(404).json({ error: msg });
       return;
@@ -443,7 +473,10 @@ export async function postSwitchPaymentMethodByToken(req: Request, res: Response
       res.status(400).json({ error: msg });
       return;
     }
-    console.error('postSwitchPaymentMethodByToken:', err);
+    console.error('[publicCustomerInvoices] postSwitchPaymentMethodByToken provider/unexpected:', {
+      message: msg,
+      error: err,
+    });
     res.status(500).json({ error: msg });
   }
 }

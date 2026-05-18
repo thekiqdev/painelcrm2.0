@@ -75,6 +75,22 @@ export { PreconditionFailedError };
 export type { PaymentUrls };
 type UiPaymentMethod = 'PIX' | 'BOLETO' | 'CREDIT_CARD';
 
+export class InvoiceGenerationError extends Error {
+  constructor(
+    message: string,
+    public readonly code:
+      | 'missing_client'
+      | 'missing_cpf_cnpj'
+      | 'invalid_cpf_cnpj'
+      | 'missing_gateway'
+      | 'not_payable'
+      | 'provider_error'
+  ) {
+    super(message);
+    this.name = 'InvoiceGenerationError';
+  }
+}
+
 function normalizeAllowedPaymentMethods(
   methods?: string[] | null
 ): UiPaymentMethod[] | null {
@@ -637,8 +653,8 @@ export async function completePaymentByToken(
   if (!data) {
     throw new Error('Fatura não encontrada ou link inválido');
   }
-  if (data.invoice.status !== 'pending') {
-    throw new Error('Só é possível completar fatura pendente');
+  if (!POLLABLE_INVOICE_STATUSES.has(data.invoice.status)) {
+    throw new Error('Só é possível completar fatura pendente ou em cobrança');
   }
 
   const tenantId = data.tenant_id;
@@ -877,10 +893,28 @@ export async function switchPaymentMethodByToken(
 }> {
   const data = await getByPaymentToken(token);
   if (!data) throw new Error('Fatura não encontrada ou link inválido');
-  if (!data.client_id) throw new Error('A fatura ainda requer dados do cliente');
-  if (data.invoice.status === 'paid') throw new Error('Fatura já está paga');
+  if (!data.client_id) {
+    throw new InvoiceGenerationError('A fatura ainda requer dados do cliente', 'missing_client');
+  }
+  if (data.invoice.status === 'paid') throw new InvoiceGenerationError('Fatura já está paga', 'not_payable');
   if (!POLLABLE_INVOICE_STATUSES.has(data.invoice.status)) {
-    throw new Error('Só é possível trocar método em fatura pagável');
+    throw new InvoiceGenerationError('Só é possível trocar método em fatura pagável', 'not_payable');
+  }
+
+  const clientCpf = await pool.query<{ cpf_cnpj: string | null }>(
+    `SELECT c.cpf_cnpj
+     FROM clients c
+     INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $2
+     WHERE c.id = $1
+     LIMIT 1`,
+    [data.client_id, data.tenant_id]
+  );
+  const cpfCnpj = normalizeCpfCnpjDigits(clientCpf.rows[0]?.cpf_cnpj ?? null);
+  if (!cpfCnpj) {
+    throw new InvoiceGenerationError('CPF/CNPJ é obrigatório para gerar a cobrança', 'missing_cpf_cnpj');
+  }
+  if (!isValidCpfOrCnpj(cpfCnpj)) {
+    throw new InvoiceGenerationError('CPF/CNPJ inválido no cadastro do cliente', 'invalid_cpf_cnpj');
   }
 
   const metadata = (data.invoice.gateway_metadata as Record<string, unknown> | null) ?? null;
@@ -934,6 +968,100 @@ export async function switchPaymentMethodByToken(
 }
 
 const POLLABLE_INVOICE_STATUSES = new Set(['pending', 'waiting_payment', 'processing', 'overdue']);
+
+/**
+ * Reprocessa uma fatura que ficou sem cobrança no gateway enquanto faltavam dados do cliente
+ * (ex.: CPF/CNPJ preenchido depois no cadastro).
+ */
+export async function retryInvoiceGeneration(invoiceId: string): Promise<void> {
+  const r = await pool.query<{
+    id: string;
+    tenant_id: string;
+    client_id: string | null;
+    status: string;
+    amount_cents: number;
+    due_date: string;
+    description: string | null;
+    payment_method: string | null;
+    gateway: string | null;
+    gateway_reference_id: string | null;
+    gateway_metadata: Record<string, unknown> | null;
+  }>(
+    `SELECT id::text,
+            tenant_id::text,
+            client_id::text,
+            status,
+            amount_cents,
+            due_date,
+            description,
+            payment_method,
+            gateway,
+            gateway_reference_id,
+            gateway_metadata
+     FROM customer_invoices
+     WHERE id = $1::uuid
+     LIMIT 1`,
+    [invoiceId]
+  );
+  const invoice = r.rows[0];
+  if (!invoice) throw new Error('Fatura não encontrada');
+  if (invoice.gateway_reference_id) return;
+  if (!invoice.client_id) {
+    throw new InvoiceGenerationError('A fatura ainda requer dados do cliente', 'missing_client');
+  }
+  if (!POLLABLE_INVOICE_STATUSES.has(invoice.status)) {
+    throw new InvoiceGenerationError('Só é possível gerar cobrança para fatura pagável', 'not_payable');
+  }
+
+  const clientCpf = await pool.query<{ cpf_cnpj: string | null }>(
+    `SELECT c.cpf_cnpj
+     FROM clients c
+     INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $2
+     WHERE c.id = $1
+     LIMIT 1`,
+    [invoice.client_id, invoice.tenant_id]
+  );
+  const cpfCnpj = normalizeCpfCnpjDigits(clientCpf.rows[0]?.cpf_cnpj ?? null);
+  if (!cpfCnpj) {
+    throw new InvoiceGenerationError('CPF/CNPJ é obrigatório para gerar a cobrança', 'missing_cpf_cnpj');
+  }
+  if (!isValidCpfOrCnpj(cpfCnpj)) {
+    throw new InvoiceGenerationError('CPF/CNPJ inválido no cadastro do cliente', 'invalid_cpf_cnpj');
+  }
+
+  const cfg = await getActiveConfig('crm', invoice.tenant_id);
+  const gatewayPolicy = paymentPolicyFromConfigRow(cfg);
+  const metadata = invoice.gateway_metadata ?? {};
+  const allowedPaymentMethods = mergePublicPayAllowedMethods(
+    normalizeAllowedPaymentMethods(
+      Array.isArray(metadata.allowed_payment_methods)
+        ? (metadata.allowed_payment_methods as string[])
+        : null
+    ),
+    cfg
+  );
+  const requestedMethod = resolveChargeMethodWithGatewayPolicy({
+    explicit: invoice.payment_method,
+    effectiveAllowed: allowedPaymentMethods,
+    gatewayDefaultUi:
+      gatewayPolicy.defaultUi ??
+      pickFirstUiMethodByPreference(allowedPaymentMethods),
+    policy: 'lenient',
+  });
+
+  await ensureReusablePaymentAttemptForSwitch({
+    invoiceId: invoice.id,
+    tenantId: invoice.tenant_id,
+    clientId: invoice.client_id,
+    invoiceGateway: invoice.gateway,
+    requestedMethod,
+    allowedPaymentMethods,
+    idempotencyKey: null,
+    amountCents: invoice.amount_cents,
+    dueDate: invoice.due_date,
+    description: invoice.description ?? `Cobrança ${invoice.due_date}`,
+  });
+}
 
 export class PayWithCardError extends Error {
   constructor(
