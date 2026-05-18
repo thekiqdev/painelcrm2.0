@@ -26,6 +26,8 @@ export interface Contract {
   responsible_id: string | null;
   /** Nome do cliente (listagem); derivado por join no backend. */
   client_name?: string | null;
+  /** Quando o detalhe/enriquecimento expuser o objeto cliente. */
+  client?: { id?: string; name?: string | null; company?: string | null } | null;
   /** Nome para exibição do responsável (listagem/detalhe), com fallback para e-mail. */
   responsible_display_name?: string | null;
   /** Nome do criador (owner) para auditoria/exibição quando necessário. */

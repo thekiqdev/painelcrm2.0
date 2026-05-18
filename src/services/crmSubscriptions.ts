@@ -4,6 +4,8 @@ export interface CrmSubscriptionListItem {
   id: string;
   client_id: string | null;
   client_name: string | null;
+  /** Assinatura sem customer_id no motor (ex.: por link). */
+  link_checkout?: boolean;
   plan_label: string | null;
   amount_cents: number;
   billing_interval: string;

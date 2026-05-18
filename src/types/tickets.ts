@@ -28,6 +28,13 @@ export interface Ticket {
   user_id: string;
   profile_id?: string;
   client_id?: string;
+  lead_id?: string | null;
+  /** Quando a API incluir join com clients (opcional). */
+  client_name?: string | null;
+  /** Quando a API incluir join com leads (opcional). */
+  lead_name?: string | null;
+  client_avatar?: string | null;
+  lead_avatar?: string | null;
   contact_name: string;
   contact_email: string;
   contact_phone?: string;
@@ -53,6 +60,11 @@ export interface Ticket {
   billable_hours: number;
   created_at: string;
   updated_at: string;
+  /** Última mensagem pública: autor (API). */
+  last_message_author_role?: 'customer' | 'support' | null;
+  last_message_at?: string | null;
+  /** Última mensagem pública do cliente (auto-resolve futuro). */
+  last_customer_reply_at?: string | null;
 }
 
 export interface TicketMessage {

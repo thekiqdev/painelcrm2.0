@@ -11,6 +11,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { formatBrazilianPhoneInput } from "@/lib/phone";
 import { textOnAccent } from "./supportBranding";
 import type { PublicPortalPayload } from "./types";
 import type { TicketPriority } from "@/types/tickets";
@@ -132,12 +133,12 @@ export function PublicSupportForm({
               id="ps-phone"
               type="tel"
               required
-              minLength={8}
-              placeholder="(00) 00000-0000"
+              inputMode="tel"
+              autoComplete="tel"
+              placeholder="(11) 98765-4321"
               className={fieldBase}
               value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              autoComplete="tel"
+              onChange={(e) => setPhone(formatBrazilianPhoneInput(e.target.value))}
             />
             <p className="text-xs leading-relaxed text-muted-foreground">
               Usado para localizar seu cadastro, quando existir.

@@ -129,14 +129,19 @@ export default function ProjectAreaPage() {
       apiLists: { id: string; name: string; order_position: number }[],
       areaTasks: any[],
       membersList: Member[],
+      versionFilter?: { versionId?: string },
     ) => {
+      const scopedTasks =
+        versionFilter?.versionId != null
+          ? areaTasks.filter((t: { version_id?: string | null }) => t.version_id === versionFilter.versionId)
+          : areaTasks;
       const versionByTask: Record<string, string | null> = {};
-      areaTasks.forEach((task: { id: string; version_id?: string | null }) => {
+      scopedTasks.forEach((task: { id: string; version_id?: string | null }) => {
         versionByTask[task.id] = task.version_id ?? null;
       });
       setTaskVersionMap(versionByTask);
       return apiLists.map((apiList) => {
-        const listTasks = areaTasks.filter((t: any) => t.list_id === apiList.id);
+        const listTasks = scopedTasks.filter((t: any) => t.list_id === apiList.id);
         const tasks: Task[] = listTasks.map((apiTask: any) => ({
           id: apiTask.id,
           title: apiTask.title,
@@ -242,7 +247,7 @@ export default function ProjectAreaPage() {
           versionFilter,
         );
         if (cancelled) return;
-        setLists(mapAreaTasksToLists(listColumns, areaTasks, members));
+        setLists(mapAreaTasksToLists(listColumns, areaTasks, members, versionFilter));
       } catch (e) {
         if (!cancelled) {
           console.error(e);
@@ -312,7 +317,7 @@ export default function ProjectAreaPage() {
         areaId,
         versionFilter,
       );
-      setLists(mapAreaTasksToLists(listColumns, areaTasks, members));
+      setLists(mapAreaTasksToLists(listColumns, areaTasks, members, versionFilter));
     } catch (e) {
       console.error(e);
     }
@@ -332,7 +337,8 @@ export default function ProjectAreaPage() {
     const newStatus = task.status === "completed" ? "todo" : "completed";
     try {
       await projectsService.updateProjectTask(taskId, { status: newStatus });
-      refreshTasks();
+      await refreshTasks();
+      await reloadProjectVersions();
     } catch (e) {
       toast.error("Erro ao atualizar tarefa");
     }
@@ -341,7 +347,8 @@ export default function ProjectAreaPage() {
   const moveTask = async (taskId: string, sourceListId: string, targetListId: string) => {
     try {
       await projectsService.updateProjectTask(taskId, { list_id: targetListId } as any);
-      refreshTasks();
+      await refreshTasks();
+      await reloadProjectVersions();
     } catch (e) {
       toast.error("Erro ao mover tarefa");
     }
@@ -360,7 +367,8 @@ export default function ProjectAreaPage() {
       });
       toast.success("Tarefa atualizada");
       setEditingTask(false);
-      refreshTasks();
+      await refreshTasks();
+      await reloadProjectVersions();
     } catch (e) {
       toast.error("Erro ao atualizar tarefa");
     }
@@ -433,7 +441,8 @@ export default function ProjectAreaPage() {
           : null
       );
       toast.success("Tarefa atualizada");
-      refreshTasks();
+      await refreshTasks();
+      await reloadProjectVersions();
     } catch (e) {
       toast.error("Erro ao atualizar tarefa");
     }
@@ -445,7 +454,8 @@ export default function ProjectAreaPage() {
       setTaskDetailOpen(false);
       setSelectedTask(null);
       toast.success("Tarefa excluída");
-      refreshTasks();
+      await refreshTasks();
+      await reloadProjectVersions();
     } catch (e) {
       toast.error("Erro ao excluir tarefa");
     }
@@ -453,7 +463,7 @@ export default function ProjectAreaPage() {
 
   const reloadProjectVersions = async () => {
     if (!projectId) return;
-    const versions = await projectsService.getProjectVersions(projectId);
+    const versions = await projectsService.getProjectVersions(projectId, true);
     setProjectVersions(versions);
   };
 
@@ -502,6 +512,23 @@ export default function ProjectAreaPage() {
     } catch (error) {
       console.error(error);
       toast.error("Erro ao arquivar versão");
+    } finally {
+      setVersionSaving(false);
+    }
+  };
+
+  const handleUnarchiveProjectVersion = async (version: ProjectVersion) => {
+    if (!projectId) return;
+    setVersionSaving(true);
+    try {
+      await projectsService.unarchiveProjectVersion(projectId, version.id);
+      toast.success("Versão restaurada");
+      setVersionDialogOpen(false);
+      setEditingVersion(null);
+      await reloadProjectVersions();
+    } catch (error) {
+      console.error(error);
+      toast.error("Erro ao desarquivar versão");
     } finally {
       setVersionSaving(false);
     }
@@ -835,7 +862,10 @@ export default function ProjectAreaPage() {
           onSuccess={(r) => {
             if (r.origin === "project") {
               setNewTaskDialogOpen(false);
-              void refreshTasks();
+              void (async () => {
+                await refreshTasks();
+                await reloadProjectVersions();
+              })();
             }
           }}
         />
@@ -928,7 +958,12 @@ export default function ProjectAreaPage() {
             version={editingVersion}
             saving={versionSaving}
             onSave={handleSaveProjectVersion}
-            onArchive={editingVersion ? handleArchiveProjectVersion : undefined}
+            onArchive={
+              editingVersion && !editingVersion.archived_at ? handleArchiveProjectVersion : undefined
+            }
+            onUnarchive={
+              editingVersion?.archived_at ? handleUnarchiveProjectVersion : undefined
+            }
           />
           <ProjectPublishVersionDialog
             open={publishVersionOpen}

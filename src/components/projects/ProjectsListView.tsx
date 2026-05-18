@@ -6,6 +6,7 @@ import { Plus, Calendar, ChevronDown, ChevronUp } from "lucide-react";
 import { ProjectCard } from "./ProjectCard";
 import { Project } from "./types";
 import { Progress } from "@/components/ui/progress";
+import { ClientEntityLink } from "@/components/entities";
 
 interface ProjectsListViewProps {
   projects: Project[];
@@ -87,6 +88,20 @@ export function ProjectsListView({ projects, onViewDetails, onNewProject }: Proj
                 <Calendar className="h-3.5 w-3.5 mr-1" />
                 {project.dueDate}
               </div>
+
+              {project.client_id ? (
+                <div className="mb-3 min-w-0 text-xs text-muted-foreground">
+                  <span className="mr-1 text-muted-foreground/90">Cliente:</span>
+                  <ClientEntityLink
+                    clientId={project.client_id}
+                    name={project.clientName}
+                    disabledFallbackText="Cliente não identificado"
+                    variant="compact"
+                    stopPropagationOnClick
+                    className="inline min-w-0 max-w-full align-baseline"
+                  />
+                </div>
+              ) : null}
               
               <div className="flex items-center justify-between mb-1 text-xs">
                 <span>Progresso</span>

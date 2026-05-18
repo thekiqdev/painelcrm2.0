@@ -25,6 +25,7 @@ import { AlertTriangle, ArrowRight, CalendarClock, CalendarSync, CheckCircle2, E
 import { MobilePageHeader } from "@/components/mobile/MobilePageHeader";
 import { cn } from "@/lib/utils";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
+import { ClientEntityLink } from "@/components/entities";
 
 const HIDE_ENDED_STORAGE_KEY = "crm_subscriptions_hide_ended";
 
@@ -345,7 +346,21 @@ const SubscriptionsList = () => {
                     onClick={() => navigate(`/crm-subscriptions/${row.id}`)}
                   >
                     <TableCell className="font-medium">
-                      {row.client_name ?? (row.client_id ? "Cliente" : "Sem cliente")}
+                      {row.client_id ? (
+                        <ClientEntityLink
+                          clientId={row.client_id}
+                          name={row.client_name}
+                          variant="table"
+                          stopPropagationOnClick
+                          disabledFallbackText="Abrir cliente"
+                        />
+                      ) : row.link_checkout ? (
+                        <Badge variant="secondary" className="font-normal">
+                          Por link
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground">Sem cliente vinculado</span>
+                      )}
                     </TableCell>
                     <TableCell className="max-w-[280px]">
                       <span className="line-clamp-2 text-sm text-muted-foreground">

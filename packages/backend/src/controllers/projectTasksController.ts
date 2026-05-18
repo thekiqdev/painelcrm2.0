@@ -252,8 +252,13 @@ export const createProjectTask = async (req: Request, res: Response) => {
     let areaId = validated.area_id ?? null;
     let versionId = validated.version_id ?? null;
 
-    if (projectAllowsVersions(projectType) && !versionId) {
-      versionId = await getDefaultProjectVersionId(projectId);
+    if (projectAllowsVersions(projectType)) {
+      if (!versionId) {
+        versionId = await getDefaultProjectVersionId(projectId);
+      }
+      if (!versionId) {
+        return res.status(400).json({ error: 'Projeto avançado exige versão para novas tarefas' });
+      }
     }
 
     if (versionId && !projectAllowsVersions(projectType)) {

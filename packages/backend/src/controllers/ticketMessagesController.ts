@@ -3,7 +3,8 @@ import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { assertModulePermission, ModulePermissionError } from '../permissions/index.js';
 import { z } from 'zod';
-import { notifyTenantTicketReplied } from '../services/ticketNotificationsService.js';
+import { loadTicketForNotify, notifyTicketReply } from '../services/ticketNotificationsService.js';
+import { applySupportMessageSideEffects } from '../services/ticketMessageSideEffects.js';
 
 const messageSchema = z.object({
   content: z.string().min(1),
@@ -26,9 +27,13 @@ function respondPerm(res: Response, error: unknown): boolean {
 async function loadTicketInTenant(
   tenantId: string,
   ticketId: string
-): Promise<{ user_id: string; assignee_id: string | null } | null> {
-  const ticketResult = await pool.query<{ user_id: string; assignee_id: string | null }>(
-    `SELECT t.user_id, t.assignee_id
+): Promise<{ user_id: string; assignee_id: string | null; status: string } | null> {
+  const ticketResult = await pool.query<{
+    user_id: string;
+    assignee_id: string | null;
+    status: string;
+  }>(
+    `SELECT t.user_id, t.assignee_id, t.status::text AS status
      FROM tickets t
      INNER JOIN users creator ON creator.id = t.user_id AND creator.tenant_id = $1
      WHERE t.id = $2
@@ -98,47 +103,56 @@ export async function createTicketMessage(req: AuthRequest, res: Response): Prom
       assigneeId: ticket.assignee_id,
     }, req);
 
-    const result = await pool.query(
-      `INSERT INTO ticket_messages (
-        ticket_id, user_id, content, visibility, attachments, mentions
-      ) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)
-      RETURNING *`,
-      [
+    const visibility = messageData.visibility || 'public';
+    const client = await pool.connect();
+    let row: Record<string, unknown>;
+    try {
+      await client.query('BEGIN');
+
+      const insert = await client.query(
+        `INSERT INTO ticket_messages (
+          ticket_id, user_id, content, visibility, attachments, mentions
+        ) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)
+        RETURNING *`,
+        [
+          ticketId,
+          userId,
+          messageData.content,
+          visibility,
+          JSON.stringify(messageData.attachments ?? []),
+          JSON.stringify(messageData.mentions ?? []),
+        ]
+      );
+      row = insert.rows[0] as Record<string, unknown>;
+
+      await applySupportMessageSideEffects(
+        client,
         ticketId,
         userId,
-        messageData.content,
-        messageData.visibility || 'public',
-        JSON.stringify(messageData.attachments ?? []),
-        JSON.stringify(messageData.mentions ?? []),
-      ]
-    );
+        visibility,
+        ticket.status,
+        ticket.assignee_id
+      );
 
-    const row = result.rows[0];
-    const full = await pool.query(
-      `SELECT t.id, t.ticket_number, t.subject, t.user_id, t.assignee_id, t.team_id
-       FROM tickets t
-       INNER JOIN users creator ON creator.id = t.user_id AND creator.tenant_id = $1
-       WHERE t.id = $2`,
-      [tenantId, ticketId]
-    );
-    const trow = full.rows[0];
-    if (trow) {
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+    if (visibility === 'public') {
       try {
-        await notifyTenantTicketReplied({
-          tenantId,
-          ticket: {
-            id: String(trow.id),
-            ticket_number: String(trow.ticket_number),
-            subject: String(trow.subject),
-            user_id: String(trow.user_id),
-            assignee_id: trow.assignee_id ? String(trow.assignee_id) : null,
-            team_id: trow.team_id ? String(trow.team_id) : null,
-          },
-          authorUserId: userId,
-          preview: messageData.content,
-        });
+        const payload = await loadTicketForNotify(tenantId, ticketId);
+        if (payload) {
+          await notifyTicketReply(tenantId, payload, {
+            role: 'support',
+            userId,
+            preview: messageData.content,
+          });
+        }
       } catch (e) {
-        console.warn('[ticketMessages] notifyTenantTicketReplied failed', e);
+        console.warn('[ticketMessages] notifyTicketReply failed', e);
       }
     }
 

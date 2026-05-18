@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { format, parseISO, addDays, startOfWeek, startOfDay, endOfDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { Video } from 'lucide-react';
+import { Video, User } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Appointment } from '@/services/appointments';
 import type { AvailabilityBlock } from '@/services/appointmentAvailabilityBlocks';
 import type { AppointmentHolidayApi } from '@/services/appointmentHolidays';
+import { ClientEntityLink } from '@/components/entities';
 import {
   TYPE_ACCENT,
   TYPE_BAR,
@@ -383,37 +384,52 @@ export function AgendaWeekView({
                   </li>
                 ) : (
                   <li key={lane.ap.id}>
-                    <button
-                      type="button"
-                      onClick={() => onEventClick(lane.ap.id)}
+                    <div
                       className={cn(
-                        'w-full rounded-md border px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted/50',
+                        'w-full overflow-hidden rounded-md border text-left text-sm transition-colors',
                         'border-l-2',
                         TYPE_ACCENT[lane.ap.type] ?? TYPE_ACCENT.other,
                       )}
                     >
-                      <div className="font-mono text-[11px] text-muted-foreground">
-                        {format(parseISO(lane.ap.starts_at), 'HH:mm')} –{' '}
-                        {format(parseISO(lane.ap.ends_at), 'HH:mm')}
-                      </div>
-                      <div className="line-clamp-1 font-medium leading-tight">{lane.ap.title}</div>
-                      {lane.ap.recurrence_series_id ? (
-                        <div className="text-[10px] text-primary">Recorrente</div>
-                      ) : null}
-                      {lane.ap.client_name || lane.ap.lead_name ? (
-                        <div className="line-clamp-1 text-[11px] text-muted-foreground">
+                      <button
+                        type="button"
+                        onClick={() => onEventClick(lane.ap.id)}
+                        className="w-full px-2 py-1.5 text-left transition-colors hover:bg-muted/50"
+                      >
+                        <div className="font-mono text-[11px] text-muted-foreground">
+                          {format(parseISO(lane.ap.starts_at), 'HH:mm')} –{' '}
+                          {format(parseISO(lane.ap.ends_at), 'HH:mm')}
+                        </div>
+                        <div className="line-clamp-1 font-medium leading-tight">{lane.ap.title}</div>
+                        {lane.ap.recurrence_series_id ? (
+                          <div className="text-[10px] text-primary">Recorrente</div>
+                        ) : null}
+                        <div className="text-[10px] text-muted-foreground">
+                          {appointmentAttendanceLabel(lane.ap.attendance_status)}
+                        </div>
+                        {appointmentPublicConfirmationLabel(lane.ap.public_confirmation_response ?? null) ? (
+                          <div className="text-[10px] text-amber-700 dark:text-amber-300">
+                            {appointmentPublicConfirmationLabel(lane.ap.public_confirmation_response ?? null)}
+                          </div>
+                        ) : null}
+                      </button>
+                      {lane.ap.client_id ? (
+                        <div className="flex min-w-0 items-center gap-1 border-t border-border/50 bg-muted/15 px-2 py-1 text-[11px] text-muted-foreground">
+                          <User className="h-3 w-3 shrink-0 opacity-70" />
+                          <ClientEntityLink
+                            clientId={lane.ap.client_id}
+                            name={lane.ap.client_name}
+                            disabledFallbackText="Cliente"
+                            variant="compact"
+                            className="min-w-0"
+                          />
+                        </div>
+                      ) : lane.ap.client_name || lane.ap.lead_name ? (
+                        <div className="line-clamp-1 border-t border-border/50 bg-muted/15 px-2 py-1 text-[11px] text-muted-foreground">
                           {lane.ap.client_name ?? `Lead: ${lane.ap.lead_name}`}
                         </div>
                       ) : null}
-                      <div className="text-[10px] text-muted-foreground">
-                        {appointmentAttendanceLabel(lane.ap.attendance_status)}
-                      </div>
-                      {appointmentPublicConfirmationLabel(lane.ap.public_confirmation_response ?? null) ? (
-                        <div className="text-[10px] text-amber-700 dark:text-amber-300">
-                          {appointmentPublicConfirmationLabel(lane.ap.public_confirmation_response ?? null)}
-                        </div>
-                      ) : null}
-                    </button>
+                    </div>
                   </li>
                 ),
               )}
@@ -541,13 +557,8 @@ export function AgendaWeekView({
                       const compact = L.heightPct < 7;
                       const bar = TYPE_BAR[ap.type] ?? TYPE_BAR.other;
                       return (
-                        <button
+                        <div
                           key={ap.id}
-                          type="button"
-                          onClick={(ev) => {
-                            ev.stopPropagation();
-                            onEventClick(ap.id);
-                          }}
                           className={cn(
                             'absolute left-1 right-1 z-[3] flex overflow-hidden rounded-md border border-border/65 bg-background/95 text-left shadow-sm transition-all duration-150',
                             'hover:z-[4] hover:border-primary/35 hover:shadow-md',
@@ -556,48 +567,79 @@ export function AgendaWeekView({
                           style={{ top: `${L.topPct}%`, height: `${L.heightPct}%` }}
                         >
                           <div className={cn('w-0.5 shrink-0', bar)} aria-hidden />
-                          <div className="min-w-0 flex-1 overflow-hidden p-0.5 pl-1">
-                            {compact ? (
-                              <div className="truncate font-mono text-[10px] leading-tight">
-                                <span className="text-muted-foreground">{format(parseISO(ap.starts_at), 'HH:mm')}</span>{' '}
-                                <span className="font-semibold text-foreground">{ap.title}</span>
-                              </div>
-                            ) : (
-                              <>
-                                <div className="font-mono text-[9px] font-medium text-muted-foreground">
-                                  {format(parseISO(ap.starts_at), 'HH:mm')}
+                          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                            <div
+                              role="button"
+                              tabIndex={0}
+                              className="min-h-0 flex-1 cursor-pointer overflow-hidden p-0.5 pl-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-0"
+                              onClick={(ev) => {
+                                ev.stopPropagation();
+                                onEventClick(ap.id);
+                              }}
+                              onKeyDown={(ev) => {
+                                if (ev.key === 'Enter' || ev.key === ' ') {
+                                  ev.preventDefault();
+                                  ev.stopPropagation();
+                                  onEventClick(ap.id);
+                                }
+                              }}
+                            >
+                              {compact ? (
+                                <div className="truncate font-mono text-[10px] leading-tight">
+                                  <span className="text-muted-foreground">{format(parseISO(ap.starts_at), 'HH:mm')}</span>{' '}
+                                  <span className="font-semibold text-foreground">{ap.title}</span>
                                 </div>
-                                <div className="line-clamp-2 font-semibold leading-snug text-foreground">{ap.title}</div>
-                                {ap.recurrence_series_id ? (
-                                  <div className="text-[8px] text-primary">Recorrente</div>
-                                ) : null}
-                                {ap.client_name || ap.lead_name ? (
-                                  <div className="line-clamp-1 text-[9px] text-muted-foreground">
-                                    {ap.client_name ?? ap.lead_name}
+                              ) : (
+                                <>
+                                  <div className="font-mono text-[9px] font-medium text-muted-foreground">
+                                    {format(parseISO(ap.starts_at), 'HH:mm')}
                                   </div>
-                                ) : null}
-                                <div className="line-clamp-1 text-[8px] text-muted-foreground">
-                                  {appointmentAttendanceLabel(ap.attendance_status)}
-                                  {publicConfirmationLabel ? ` · ${publicConfirmationLabel}` : ''}
-                                </div>
-                                <div className="mt-0.5 flex flex-wrap gap-0.5">
-                                  {ap.google_meet_link ? (
-                                    <span className="inline-flex items-center gap-0.5 rounded bg-sky-100/80 px-0.5 text-[8px] text-sky-900 dark:bg-sky-950/50 dark:text-sky-200">
-                                      <Video className="h-2 w-2" />
-                                      Meet
-                                    </span>
+                                  <div className="line-clamp-2 font-semibold leading-snug text-foreground">{ap.title}</div>
+                                  {ap.recurrence_series_id ? (
+                                    <div className="text-[8px] text-primary">Recorrente</div>
                                   ) : null}
-                                  {ap.create_google_event && ap.sync_status === 'synced' ? (
-                                    <span className="text-[8px] text-sky-700 dark:text-sky-300">Google</span>
-                                  ) : null}
-                                  {sp.key === 'error' ? (
-                                    <span className="text-[8px] font-medium text-amber-800 dark:text-amber-200">Erro</span>
-                                  ) : null}
-                                </div>
-                              </>
-                            )}
+                                  <div className="line-clamp-1 text-[8px] text-muted-foreground">
+                                    {appointmentAttendanceLabel(ap.attendance_status)}
+                                    {publicConfirmationLabel ? ` · ${publicConfirmationLabel}` : ''}
+                                  </div>
+                                  <div className="mt-0.5 flex flex-wrap gap-0.5">
+                                    {ap.google_meet_link ? (
+                                      <span className="inline-flex items-center gap-0.5 rounded bg-sky-100/80 px-0.5 text-[8px] text-sky-900 dark:bg-sky-950/50 dark:text-sky-200">
+                                        <Video className="h-2 w-2" />
+                                        Meet
+                                      </span>
+                                    ) : null}
+                                    {ap.create_google_event && ap.sync_status === 'synced' ? (
+                                      <span className="text-[8px] text-sky-700 dark:text-sky-300">Google</span>
+                                    ) : null}
+                                    {sp.key === 'error' ? (
+                                      <span className="text-[8px] font-medium text-amber-800 dark:text-amber-200">Erro</span>
+                                    ) : null}
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                            {!compact && ap.client_id ? (
+                              <div
+                                className="shrink-0 border-t border-border/45 bg-background/95 px-1 py-0.5"
+                                onClick={(ev) => ev.stopPropagation()}
+                                onKeyDown={(ev) => ev.stopPropagation()}
+                              >
+                                <ClientEntityLink
+                                  clientId={ap.client_id}
+                                  name={ap.client_name}
+                                  disabledFallbackText="Cliente"
+                                  variant="compact"
+                                  className="text-[9px] leading-tight"
+                                />
+                              </div>
+                            ) : !compact && (ap.client_name || ap.lead_name) && !ap.client_id ? (
+                              <div className="line-clamp-1 shrink-0 border-t border-border/45 bg-background/95 px-1 py-0.5 text-[9px] text-muted-foreground">
+                                {ap.client_name ?? ap.lead_name}
+                              </div>
+                            ) : null}
                           </div>
-                        </button>
+                        </div>
                       );
                     })}
                   </div>

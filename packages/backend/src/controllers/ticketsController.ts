@@ -3,7 +3,16 @@ import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { assertModulePermission, ModulePermissionError } from '../permissions/index.js';
 import { z } from 'zod';
-import { notifyTenantTicketCreated } from '../services/ticketNotificationsService.js';
+import {
+  loadTicketForNotify,
+  notifyTicketCreated,
+  notifyTicketReopened,
+  notifyTicketResolved,
+} from '../services/ticketNotificationsService.js';
+
+const TICKET_ENTITY_AVATAR_SQL = `
+       CASE WHEN ucl.id IS NOT NULL THEN COALESCE(cl.whatsapp_avatar_cached_url, cl.whatsapp_avatar_url) ELSE NULL END AS client_avatar,
+       CASE WHEN uld.id IS NOT NULL THEN COALESCE(ld.whatsapp_avatar_cached_url, ld.whatsapp_avatar_url) ELSE NULL END AS lead_avatar`;
 
 const ticketSchema = z.object({
   contact_name: z.string().min(1),
@@ -32,6 +41,15 @@ function respondPerm(res: Response, error: unknown): boolean {
   return false;
 }
 
+const OPEN_TICKET_STATUSES_SQL = `('new', 'open', 'pending', 'waiting_customer', 'in_progress')`;
+
+const bulkUpdateSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1).max(100),
+  action: z.enum(['resolve', 'assign', 'add_tag']),
+  assignee_id: z.string().uuid().optional().nullable(),
+  tag: z.string().min(1).max(80).optional(),
+});
+
 // Get tickets with filters
 export async function getTickets(req: AuthRequest, res: Response): Promise<void> {
   try {
@@ -43,10 +61,43 @@ export async function getTickets(req: AuthRequest, res: Response): Promise<void>
     }
     await assertModulePermission(userId, 'tickets', 'view', undefined, req);
 
-    const { status, priority, category_id, search, client_id } = req.query;
+    const {
+      status,
+      priority,
+      category_id,
+      search,
+      client_id,
+      assignee_id,
+      unassigned,
+      no_response,
+      my_queue,
+      sla_overdue,
+    } = req.query;
 
-    let query = `SELECT t.* FROM tickets t
+    let query = `SELECT t.*,
+       CASE WHEN ucl.id IS NOT NULL THEN cl.name ELSE NULL END AS client_name,
+       CASE WHEN uld.id IS NOT NULL THEN ld.name ELSE NULL END AS lead_name,
+       ${TICKET_ENTITY_AVATAR_SQL},
+       CASE
+         WHEN last_msg.metadata IS NOT NULL AND last_msg.metadata->>'source' = 'public_portal'
+         THEN 'customer'
+         WHEN last_msg.id IS NOT NULL THEN 'support'
+         ELSE NULL
+       END AS last_message_author_role,
+       last_msg.created_at AS last_message_at
+       FROM tickets t
        INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1
+       LEFT JOIN clients cl ON cl.id = t.client_id
+       LEFT JOIN users ucl ON ucl.id = cl.user_id AND ucl.tenant_id = $1
+       LEFT JOIN leads ld ON ld.id = t.lead_id
+       LEFT JOIN users uld ON uld.id = ld.user_id AND uld.tenant_id = $1
+       LEFT JOIN LATERAL (
+         SELECT tm.id, tm.metadata, tm.created_at
+         FROM ticket_messages tm
+         WHERE tm.ticket_id = t.id AND tm.visibility = 'public'
+         ORDER BY tm.created_at DESC
+         LIMIT 1
+       ) last_msg ON true
        WHERE 1=1`;
     const params: unknown[] = [tenantId];
     let paramIndex = 2;
@@ -68,10 +119,29 @@ export async function getTickets(req: AuthRequest, res: Response): Promise<void>
       paramIndex++;
     }
 
-    if (priority) {
-      query += ` AND t.priority = $${paramIndex}`;
+    if (priority && typeof priority === 'string') {
+      query += ` AND t.priority = $${paramIndex}::ticket_priority`;
       params.push(priority);
       paramIndex++;
+    }
+
+    if (unassigned === 'true' || unassigned === '1') {
+      query += ' AND t.assignee_id IS NULL';
+    }
+
+    if (no_response === 'true' || no_response === '1') {
+      query += ' AND t.first_response_at IS NULL';
+    }
+
+    if (sla_overdue === 'true' || sla_overdue === '1') {
+      query += ' AND t.resolution_due_at IS NOT NULL AND t.resolution_due_at < now()';
+    }
+
+    if (my_queue === 'true' || my_queue === '1') {
+      query += ` AND t.assignee_id = $${paramIndex}::uuid`;
+      params.push(userId);
+      paramIndex++;
+      query += ` AND (t.first_response_at IS NULL OR t.status <> 'waiting_customer'::ticket_status)`;
     }
 
     if (category_id) {
@@ -86,6 +156,21 @@ export async function getTickets(req: AuthRequest, res: Response): Promise<void>
       paramIndex++;
     }
 
+    if (assignee_id === 'me') {
+      query += ` AND t.assignee_id = $${paramIndex}::uuid`;
+      params.push(userId);
+      paramIndex++;
+    } else if (assignee_id && typeof assignee_id === 'string') {
+      const aid = assignee_id.trim();
+      if (
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(aid)
+      ) {
+        query += ` AND t.assignee_id = $${paramIndex}::uuid`;
+        params.push(aid);
+        paramIndex++;
+      }
+    }
+
     query += ' ORDER BY t.created_at DESC';
 
     const result = await pool.query(query, params);
@@ -93,6 +178,179 @@ export async function getTickets(req: AuthRequest, res: Response): Promise<void>
   } catch (error) {
     if (respondPerm(res, error)) return;
     console.error('Error fetching tickets:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+export async function getTicketKanbanStats(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = req.tenantId ?? null;
+    const userId = req.userId;
+    if (!tenantId || !userId) {
+      res.status(401).json({ error: 'Não autenticado' });
+      return;
+    }
+    await assertModulePermission(userId, 'tickets', 'view', undefined, req);
+
+    const result = await pool.query<{
+      open_count: number;
+      no_response_count: number;
+      urgent_count: number;
+      sla_overdue_count: number;
+    }>(
+      `SELECT
+         COUNT(*) FILTER (WHERE t.status IN ${OPEN_TICKET_STATUSES_SQL})::int AS open_count,
+         COUNT(*) FILTER (
+           WHERE t.status IN ${OPEN_TICKET_STATUSES_SQL} AND t.first_response_at IS NULL
+         )::int AS no_response_count,
+         COUNT(*) FILTER (
+           WHERE t.status IN ${OPEN_TICKET_STATUSES_SQL} AND t.priority = 'urgent'::ticket_priority
+         )::int AS urgent_count,
+         COUNT(*) FILTER (
+           WHERE t.status IN ${OPEN_TICKET_STATUSES_SQL}
+             AND t.resolution_due_at IS NOT NULL
+             AND t.resolution_due_at < now()
+         )::int AS sla_overdue_count
+       FROM tickets t
+       INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1`,
+      [tenantId]
+    );
+
+    res.json(result.rows[0] ?? {
+      open_count: 0,
+      no_response_count: 0,
+      urgent_count: 0,
+      sla_overdue_count: 0,
+    });
+  } catch (error) {
+    if (respondPerm(res, error)) return;
+    console.error('Error fetching ticket kanban stats:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+export async function bulkUpdateTickets(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Não autenticado' });
+      return;
+    }
+
+    const body = bulkUpdateSchema.parse(req.body);
+    if (body.action === 'assign' && !body.assignee_id) {
+      res.status(400).json({ error: 'assignee_id é obrigatório para atribuir' });
+      return;
+    }
+    if (body.action === 'add_tag' && !body.tag?.trim()) {
+      res.status(400).json({ error: 'tag é obrigatória' });
+      return;
+    }
+
+    const existing = await pool.query<{
+      id: string;
+      user_id: string;
+      assignee_id: string | null;
+      status: string;
+      tags: unknown;
+    }>(
+      `SELECT t.id::text, t.user_id::text, t.assignee_id::text, t.status::text, t.tags
+       FROM tickets t
+       INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1
+       WHERE t.id = ANY($2::uuid[])`,
+      [tenantId, body.ids]
+    );
+
+    if (existing.rows.length !== body.ids.length) {
+      res.status(400).json({ error: 'Um ou mais tickets não foram encontrados' });
+      return;
+    }
+
+    for (const row of existing.rows) {
+      if (row.status === 'closed') {
+        res.status(403).json({ error: 'Tickets fechados não podem ser alterados em massa' });
+        return;
+      }
+      await assertModulePermission(userId, 'tickets', 'edit', {
+        ownerId: row.user_id,
+        assigneeId: row.assignee_id,
+      }, req);
+    }
+
+    const client = await pool.connect();
+    let updated = 0;
+    try {
+      await client.query('BEGIN');
+
+      const resolvedTicketIds: string[] = [];
+
+      if (body.action === 'resolve') {
+        const r = await client.query<{ id: string }>(
+          `UPDATE tickets t
+           SET status = 'resolved'::ticket_status, updated_at = now()
+           FROM users u
+           WHERE u.id = t.user_id AND u.tenant_id = $1
+             AND t.id = ANY($2::uuid[])
+             AND t.status <> 'closed'::ticket_status
+           RETURNING t.id::text AS id`,
+          [tenantId, body.ids]
+        );
+        updated = r.rowCount ?? 0;
+        resolvedTicketIds.push(...r.rows.map((row) => row.id));
+      } else if (body.action === 'assign') {
+        const r = await client.query(
+          `UPDATE tickets t
+           SET assignee_id = $3::uuid, updated_at = now()
+           FROM users u
+           WHERE u.id = t.user_id AND u.tenant_id = $1
+             AND t.id = ANY($2::uuid[])
+             AND t.status <> 'closed'::ticket_status`,
+          [tenantId, body.ids, body.assignee_id]
+        );
+        updated = r.rowCount ?? 0;
+      } else if (body.action === 'add_tag') {
+        const tag = body.tag!.trim();
+        for (const row of existing.rows) {
+          if (row.status === 'closed') continue;
+          let tags: string[] = [];
+          if (Array.isArray(row.tags)) tags = row.tags.map(String);
+          else if (typeof row.tags === 'string') {
+            try {
+              const p = JSON.parse(row.tags);
+              if (Array.isArray(p)) tags = p.map(String);
+            } catch {
+              /* ignore */
+            }
+          }
+          if (tags.includes(tag)) {
+            updated++;
+            continue;
+          }
+          await client.query(
+            `UPDATE tickets SET tags = $2::jsonb, updated_at = now() WHERE id = $1::uuid`,
+            [row.id, JSON.stringify([...tags, tag])]
+          );
+          updated++;
+        }
+      }
+
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+
+    res.json({ updated_count: updated, ids: body.ids });
+  } catch (error) {
+    if (respondPerm(res, error)) return;
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Validation error', details: error.errors });
+      return;
+    }
+    console.error('Error bulk updating tickets:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 }
@@ -111,8 +369,16 @@ export async function getTicketById(req: AuthRequest, res: Response): Promise<vo
     await assertModulePermission(userId, 'tickets', 'view', undefined, req);
 
     const result = await pool.query(
-      `SELECT t.* FROM tickets t
+      `SELECT t.*,
+        CASE WHEN ucl.id IS NOT NULL THEN cl.name ELSE NULL END AS client_name,
+        CASE WHEN uld.id IS NOT NULL THEN ld.name ELSE NULL END AS lead_name,
+        ${TICKET_ENTITY_AVATAR_SQL}
+       FROM tickets t
        INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1
+       LEFT JOIN clients cl ON cl.id = t.client_id
+       LEFT JOIN users ucl ON ucl.id = cl.user_id AND ucl.tenant_id = $1
+       LEFT JOIN leads ld ON ld.id = t.lead_id
+       LEFT JOIN users uld ON uld.id = ld.user_id AND uld.tenant_id = $1
        WHERE t.id = $2`,
       [tenantId, id]
     );
@@ -197,16 +463,18 @@ export async function createTicket(req: AuthRequest, res: Response): Promise<voi
     }
 
     try {
-      await notifyTenantTicketCreated(tenantId, {
+      await notifyTicketCreated(tenantId, {
         id: String(created.id),
         ticket_number: String(created.ticket_number),
         subject: String(created.subject),
         user_id: String(created.user_id),
         assignee_id: created.assignee_id ? String(created.assignee_id) : null,
         team_id: created.team_id ? String(created.team_id) : null,
+        priority: created.priority ? String(created.priority) : 'normal',
+        contact_name: created.contact_name ? String(created.contact_name) : null,
       });
     } catch (e) {
-      console.warn('[tickets] notifyTenantTicketCreated failed', e);
+      console.warn('[tickets] notifyTicketCreated failed', e);
     }
 
     res.status(201).json(created);
@@ -217,6 +485,48 @@ export async function createTicket(req: AuthRequest, res: Response): Promise<voi
       return;
     }
     console.error('Error creating ticket:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+// Get ticket activity log
+export async function getTicketActivities(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Não autenticado' });
+      return;
+    }
+    const { id } = req.params;
+
+    await assertModulePermission(userId, 'tickets', 'view', undefined, req);
+
+    const ticketExists = await pool.query(
+      `SELECT 1 FROM tickets t
+       INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1
+       WHERE t.id = $2`,
+      [tenantId, id]
+    );
+    if (ticketExists.rows.length === 0) {
+      res.status(404).json({ error: 'Ticket not found' });
+      return;
+    }
+
+    const result = await pool.query(
+      `SELECT ta.*,
+              CASE WHEN u.id IS NOT NULL THEN json_build_object('id', u.id, 'email', u.email) ELSE NULL END AS user
+       FROM ticket_activities ta
+       LEFT JOIN users u ON ta.user_id = u.id
+       WHERE ta.ticket_id = $1
+       ORDER BY ta.created_at ASC`,
+      [id]
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    if (respondPerm(res, error)) return;
+    console.error('Error fetching ticket activities:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 }
@@ -233,8 +543,12 @@ export async function updateTicket(req: AuthRequest, res: Response): Promise<voi
     const { id } = req.params;
     const ticketData = ticketSchema.partial().parse(req.body);
 
-    const existing = await pool.query<{ user_id: string; assignee_id: string | null }>(
-      `SELECT t.user_id, t.assignee_id FROM tickets t
+    const existing = await pool.query<{
+      user_id: string;
+      assignee_id: string | null;
+      status: string;
+    }>(
+      `SELECT t.user_id, t.assignee_id, t.status::text AS status FROM tickets t
        INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1
        WHERE t.id = $2`,
       [tenantId, id]
@@ -248,6 +562,16 @@ export async function updateTicket(req: AuthRequest, res: Response): Promise<voi
       ownerId: row.user_id,
       assigneeId: row.assignee_id,
     }, req);
+
+    if (row.status === 'closed') {
+      res.status(403).json({ error: 'Tickets fechados não podem ser editados.' });
+      return;
+    }
+
+    if (ticketData.status === 'open' && row.status === 'cancelled') {
+      res.status(400).json({ error: 'Não é possível reabrir tickets cancelados.' });
+      return;
+    }
 
     const updates: string[] = [];
     const values: unknown[] = [];
@@ -288,7 +612,26 @@ export async function updateTicket(req: AuthRequest, res: Response): Promise<voi
       return;
     }
 
-    res.json(result.rows[0]);
+    const updated = result.rows[0] as { status?: string };
+    const newStatus = ticketData.status ?? row.status;
+    const statusChanged = ticketData.status !== undefined && newStatus !== row.status;
+
+    if (statusChanged) {
+      try {
+        const payload = await loadTicketForNotify(tenantId, id);
+        if (payload) {
+          if (row.status === 'resolved' && newStatus === 'open') {
+            await notifyTicketReopened(tenantId, payload);
+          } else if (newStatus === 'resolved' && row.status !== 'resolved') {
+            await notifyTicketResolved(tenantId, payload, userId);
+          }
+        }
+      } catch (e) {
+        console.warn('[tickets] status notification failed', e);
+      }
+    }
+
+    res.json(updated);
   } catch (error) {
     if (respondPerm(res, error)) return;
     if (error instanceof z.ZodError) {

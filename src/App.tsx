@@ -17,6 +17,7 @@ import HomeOrRedirect from "./components/HomeOrRedirect";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 import { MetaPixelTrackingBridge } from "@/components/MetaPixelTrackingBridge";
+import { EntityDrawerContainer } from "@/components/entities/EntityDrawerContainer";
 
 /**
  * Fase 2 — bundle inicial do CRM:
@@ -111,6 +112,7 @@ const ProductForm = lazyWithReload(() => import("./pages/ProductForm"));
 const Orders = lazyWithReload(() => import("./pages/Orders"));
 const Tickets = lazyWithReload(() => import("./pages/Tickets"));
 const TicketDetail = lazyWithReload(() => import("./pages/TicketDetail"));
+const TicketsKanban = lazyWithReload(() => import("./pages/TicketsKanban"));
 const NewTicket = lazyWithReload(() => import("./pages/NewTicket"));
 const SuperAdminDashboard = lazyWithReload(() => import("./pages/superadmin/SuperAdminDashboard"));
 const SuperAdminPlans = lazyWithReload(() => import("./pages/superadmin/SuperAdminPlans"));
@@ -872,6 +874,15 @@ const App = () => (
                   </AppLayout>
               </AuthGuard>
             } />
+            <Route path="/support/tickets/kanban" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <TicketsKanban />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
             <Route path="/support/tickets/:id" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
@@ -1015,6 +1026,7 @@ const App = () => (
             />
           </Routes>
           </Suspense>
+          <EntityDrawerContainer />
           </ModulePermissionsProvider>
         </AuthProvider>
         <Toaster />

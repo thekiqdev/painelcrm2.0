@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
@@ -32,7 +32,11 @@ import {
 
 export function ProjectWizard() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const prefillClientId =
+    searchParams.get("client_id")?.trim() || searchParams.get("clientId")?.trim() || "";
   const [state, setState] = useState<WizardState>(getInitialWizardState);
+  const clientPrefillAppliedRef = useRef(false);
   const [showDraftBanner, setShowDraftBanner] = useState(false);
   const draftCheckedRef = useRef(false);
   const [clients, setClients] = useState<Client[]>([]);
@@ -64,6 +68,15 @@ export function ProjectWizard() {
     draftCheckedRef.current = true;
     if (loadWizardDraft()) setShowDraftBanner(true);
   }, []);
+
+  useEffect(() => {
+    if (!prefillClientId || clientPrefillAppliedRef.current) return;
+    clientPrefillAppliedRef.current = true;
+    setState((prev) => ({
+      ...prev,
+      basicConfig: { ...prev.basicConfig, clientId: prefillClientId },
+    }));
+  }, [prefillClientId]);
 
   useEffect(() => {
     const hasData = state.step > 1 || state.projectType != null;

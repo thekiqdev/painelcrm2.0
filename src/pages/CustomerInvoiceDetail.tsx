@@ -46,6 +46,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { INVOICE_ACTIONABLE, canDeleteCustomerInvoice, isSubscriptionInvoicePurgeable } from "@/lib/customerInvoiceActions";
 import { useAuth } from "@/contexts/AuthContext";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
+import { ClientEntityLink } from "@/components/entities";
 import { InvoiceRecurrenceBlock } from "@/components/invoices/InvoiceRecurrenceBlock";
 import {
   effectiveLinkPaymentMethods,
@@ -554,7 +555,13 @@ const CustomerInvoiceDetail = () => {
             </div>
             <div className="rounded-lg border bg-muted/20 p-3">
               <p className="text-xs text-muted-foreground">Cliente</p>
-              <p className="mt-1 font-medium">{clientName}</p>
+              <ClientEntityLink
+                clientId={invoice.client_id}
+                name={clientName}
+                disabledFallbackText="Sem cliente"
+                variant="inline"
+                className="mt-1 font-medium"
+              />
             </div>
             <div className="rounded-lg border bg-muted/20 p-3">
               <p className="text-xs text-muted-foreground">Tipo</p>

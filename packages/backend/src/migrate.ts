@@ -322,6 +322,10 @@ const order = [
   '212_client_google_drive_user_folders.sql',
   /** Google Drive: upload_status / índice local em client_google_drive_files */
   '213_client_google_drive_files_upload_status.sql',
+  /** Google Drive: pasta Projetos por cliente */
+  '242_client_google_drive_folder_projetos.sql',
+  /** Google Drive: pastas por projeto (Releases / versão) */
+  '243_project_google_drive_folders.sql',
   '210_uazapi_webhook_instance_secret_hardening.sql',
   '211_chat_conversations_attendance_status_default_fix.sql',
   /** Chat Fase 2: conversation_type (direct/group/community) para grupos WhatsApp */
@@ -378,6 +382,10 @@ const order = [
   '239_clients_whatsapp.sql',
   /** Portal suporte: alinhar slug guardado ao tenants.slug */
   '240_support_portal_sync_slug_to_tenant.sql',
+  /** Tickets: lead_id (portal / matching telefone) */
+  '241_tickets_lead_id.sql',
+  '242_ticket_messages_metadata.sql',
+  '243_tickets_last_customer_reply_at.sql',
   'create-admin-user.sql',
 ];
 

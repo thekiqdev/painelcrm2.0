@@ -10,6 +10,7 @@ import { PublicSupportForm } from "@/components/public-support/PublicSupportForm
 import { PublicSupportSuccess } from "@/components/public-support/PublicSupportSuccess";
 import type { PublicPortalPayload, TicketPostOk } from "@/components/public-support/types";
 import type { TicketPriority } from "@/types/tickets";
+import { isBrazilianNationalPhoneValid, normalizeBrazilianNationalDigits } from "@/lib/phone";
 
 export default function PublicTenantSupportPortalPage() {
   const { id: slugParam } = useParams<{ id: string }>();
@@ -91,6 +92,11 @@ export default function PublicTenantSupportPortalPage() {
     if (!slug || !portal) return;
     if (portal.categories.length > 0 && !categoryId) {
       setSubmitError("Selecione uma categoria.");
+      return;
+    }
+    const nat = normalizeBrazilianNationalDigits(phone);
+    if (!isBrazilianNationalPhoneValid(nat)) {
+      setSubmitError("Informe um telefone válido com DDD (10 ou 11 dígitos).");
       return;
     }
     setSubmitting(true);

@@ -63,6 +63,7 @@ import { applyUrlPatch } from "@/lib/listFiltersUrl";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { CommercialListingPageShell } from "@/components/listing/CommercialListingPageShell";
+import { ClientEntityLink } from "@/components/entities";
 import { fetchFunnels } from "@/services/funnels";
 import type { SalesFunnel } from "@/components/funnel/types";
 import { MobilePageHeader } from "@/components/mobile/MobilePageHeader";
@@ -1001,10 +1002,22 @@ const Proposals = () => {
                       <span className="line-clamp-2 font-semibold text-sm text-foreground leading-snug">{p.title}</span>
                     </TableCell>
                     <TableCell className="hidden lg:table-cell align-top max-w-[200px]">
-                      <span className="block truncate text-sm text-foreground">{clientLabel}</span>
-                      {clientHint ? (
-                        <span className="mt-0.5 block text-[11px] text-muted-foreground">{clientHint}</span>
-                      ) : null}
+                      {p.client_id ? (
+                        <ClientEntityLink
+                          clientId={p.client_id}
+                          name={p.client_name?.trim() || null}
+                          disabledFallbackText="Cliente CRM"
+                          variant="table"
+                          stopPropagationOnClick
+                        />
+                      ) : (
+                        <>
+                          <span className="block truncate text-sm text-foreground">{clientLabel}</span>
+                          {clientHint ? (
+                            <span className="mt-0.5 block text-[11px] text-muted-foreground">{clientHint}</span>
+                          ) : null}
+                        </>
+                      )}
                     </TableCell>
                     <TableCell className="hidden xl:table-cell align-top max-w-[200px]">
                       <span className="block truncate text-xs text-muted-foreground">
@@ -1085,7 +1098,7 @@ const Proposals = () => {
 
         <div className="space-y-3 pb-[max(0.25rem,env(safe-area-inset-bottom))] md:hidden">
           {list.map((p) => {
-            const clientLabel = p.client_name?.trim() || (p.client_id ? "Cliente" : "—");
+            const clientLabel = p.client_name?.trim() || (p.client_id ? "Cliente CRM" : p.lead_id ? "Lead" : "—");
             const canEdit = user?.id ? canEditRecord("proposals", p.user_id, user.id) : false;
             const canDelete = user?.id ? canDeleteRecord("proposals", p.user_id, user.id) : false;
             const canPublishDraftRow =
@@ -1099,7 +1112,20 @@ const Proposals = () => {
                 <button type="button" onClick={goDetail} className="w-full text-left">
                   <p className="font-mono text-xs text-muted-foreground">{proposalCode(p.id)}</p>
                   <p className="mt-1 font-semibold leading-snug">{p.title}</p>
-                  <p className="mt-1 truncate text-sm text-muted-foreground">{clientLabel}</p>
+                  <p className="mt-1 min-w-0 truncate text-sm text-muted-foreground">
+                    {p.client_id ? (
+                      <ClientEntityLink
+                        clientId={p.client_id}
+                        name={p.client_name?.trim() || null}
+                        disabledFallbackText="Cliente CRM"
+                        variant="compact"
+                        className="text-muted-foreground"
+                        stopPropagationOnClick
+                      />
+                    ) : (
+                      clientLabel
+                    )}
+                  </p>
                   <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                     <span className={proposalStatusBadgeClass(p.status)}>{STATUS_LABELS[p.status]}</span>
                     <span className="text-sm font-semibold tabular-nums">{formatCurrency(p.amount)}</span>

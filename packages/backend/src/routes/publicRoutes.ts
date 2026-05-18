@@ -41,6 +41,7 @@ import {
   getPublicSupportPortalBySlug,
   postPublicSupportTicket,
   postPublicSupportTicketLookup,
+  postPublicSupportTicketMessage,
 } from '../controllers/publicSupportPortalController.js';
 
 const router = Router();
@@ -283,5 +284,26 @@ router.post(
   postPublicSupportTicketLookup,
 );
 router.post('/support/:slug/tickets', supportPublicTicketPostLimiter, postPublicSupportTicket);
+
+const supportPublicTicketMessageLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_PUBLIC_SUPPORT_TICKET_MESSAGE_MAX || '24', 10),
+  message: { ok: false, error: 'Muitas respostas. Aguarde alguns minutos.', code: 'rate_limited' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'development',
+  keyGenerator: (req) => {
+    const ip = req.ip || req.socket.remoteAddress || '';
+    const slug = (req.params as { slug?: string }).slug || '';
+    const ticketNumber = (req.params as { ticketNumber?: string }).ticketNumber || '';
+    return `${ip}:${slug}:${ticketNumber}`;
+  },
+});
+
+router.post(
+  '/support/:slug/tickets/:ticketNumber/messages',
+  supportPublicTicketMessageLimiter,
+  postPublicSupportTicketMessage,
+);
 
 export default router;

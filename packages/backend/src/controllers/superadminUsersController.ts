@@ -8,18 +8,16 @@ import { AuthRequest } from '../middleware/auth.js';
  * 2) Origin / Referer do pedido (útil na VPS quando o .env ainda aponta para localhost)
  * 3) fallback dev localhost:8080
  */
-function resolveImpersonationFrontendBaseUrl(req: AuthRequest): string {
-  const fromList = String(process.env.FRONTEND_URLS || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean)[0];
-  const fromEnv =
-    String(process.env.FRONTEND_URL || '').trim() ||
-    String(process.env.PUBLIC_APP_URL || '').trim() ||
-    fromList ||
-    '';
-  if (fromEnv) return fromEnv.replace(/\/$/, '');
+function isLocalFrontendUrl(value: string): boolean {
+  try {
+    const u = new URL(value);
+    return ['localhost', '127.0.0.1', '0.0.0.0'].includes(u.hostname);
+  } catch {
+    return false;
+  }
+}
 
+function requestPublicOrigin(req: AuthRequest): string {
   const origin = req.get('origin')?.trim();
   if (origin && /^https?:\/\//i.test(origin)) {
     return origin.replace(/\/$/, '');
@@ -36,6 +34,27 @@ function resolveImpersonationFrontendBaseUrl(req: AuthRequest): string {
       /* ignore */
     }
   }
+
+  return '';
+}
+
+function resolveImpersonationFrontendBaseUrl(req: AuthRequest): string {
+  const fromList = String(process.env.FRONTEND_URLS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)[0];
+  const fromEnv =
+    String(process.env.FRONTEND_URL || '').trim() ||
+    String(process.env.PUBLIC_APP_URL || '').trim() ||
+    fromList ||
+    '';
+  const requestOrigin = requestPublicOrigin(req);
+
+  if (fromEnv && !(requestOrigin && isLocalFrontendUrl(fromEnv))) {
+    return fromEnv.replace(/\/$/, '');
+  }
+
+  if (requestOrigin) return requestOrigin;
 
   return 'http://localhost:8080';
 }

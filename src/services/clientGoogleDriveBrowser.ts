@@ -35,16 +35,20 @@ export type ClientGoogleDriveBrowserPayload = {
   breadcrumb: ClientGoogleDriveBrowserBreadcrumb[];
   items: ClientGoogleDriveBrowserItem[];
   drive_folder_view_url: string;
+  project_id?: string;
+  browse_scope?: 'arquivos' | 'projetos';
 };
 
 export async function getClientGoogleDriveBrowser(
   clientId: string,
-  folderId?: string | null,
+  options?: { folderId?: string | null; projectId?: string | null },
 ): Promise<ClientGoogleDriveBrowserPayload> {
-  const q =
-    folderId && folderId.trim() !== ''
-      ? `?folderId=${encodeURIComponent(folderId.trim())}`
-      : '';
+  const params = new URLSearchParams();
+  const folderId = options?.folderId?.trim();
+  const projectId = options?.projectId?.trim();
+  if (folderId) params.set('folderId', folderId);
+  if (projectId) params.set('projectId', projectId);
+  const q = params.toString() ? `?${params.toString()}` : '';
   const res = await apiClient.get<ClientGoogleDriveBrowserPayload>(
     `/api/clients/${encodeURIComponent(clientId)}/google-drive/browser${q}`,
   );

@@ -9,6 +9,7 @@ import { getDriveIntegrationSecrets } from './googleDriveConnectionService.js';
 import {
   createDriveFolder,
   isFolderUnderClientArquivosTree,
+  isFolderUnderClientProjetosTree,
   refreshDriveTokenIfNeeded,
   trashDriveFile,
 } from './googleDriveService.js';
@@ -33,6 +34,7 @@ function forbiddenParentIds(row: ClientGoogleDriveFolderRow): Set<string> {
     row.folder_contratos_id,
     row.folder_propostas_id,
     row.folder_faturas_id,
+    ...(row.folder_projetos_id ? [row.folder_projetos_id] : []),
   ]);
 }
 
@@ -91,6 +93,7 @@ export async function createClientGoogleDriveUserSubfolder(params: {
   }
 
   const arquivosRoot = folders.folder_arquivos_id;
+  const projetosRoot = folders.folder_projetos_id;
   const parentId = (params.parentFolderId || '').trim() || arquivosRoot;
   if (forbiddenParentIds(folders).has(parentId)) {
     const err = new Error('Não é possível criar pastas nesta localização.');
@@ -106,13 +109,27 @@ export async function createClientGoogleDriveUserSubfolder(params: {
   }
   conn = await refreshDriveTokenIfNeeded(conn);
 
-  const allowed = await isFolderUnderClientArquivosTree(
+  const underArquivos = await isFolderUnderClientArquivosTree(
     conn.accessToken,
     parentId,
     arquivosRoot,
     moduleFolderIds(folders),
   );
-  if (!allowed) {
+  const underProjetos =
+    projetosRoot &&
+    (await isFolderUnderClientProjetosTree(
+      conn.accessToken,
+      parentId,
+      projetosRoot,
+      new Set([
+        folders.client_root_folder_id,
+        folders.folder_arquivos_id,
+        folders.folder_contratos_id,
+        folders.folder_propostas_id,
+        folders.folder_faturas_id,
+      ]),
+    ));
+  if (!underArquivos && !underProjetos) {
     const err = new Error('Pasta de destino inválida.');
     (err as Error & { code?: string }).code = 'folder_invalid';
     throw err;

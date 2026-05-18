@@ -34,6 +34,8 @@ export interface Project {
   template_id?: string | null;
   source_template_id?: string | null;
   client_id?: string | null;
+  /** Preenchido quando a API incluir join com cliente (opcional). */
+  client_name?: string | null;
   start_date?: string | null;
   end_date?: string | null;
   responsible_ids?: string[];
@@ -272,6 +274,15 @@ export class ProjectsService {
   async archiveProjectVersion(projectId: string, versionId: string): Promise<ProjectVersion> {
     const response = await apiClient.patch<ProjectVersion>(
       `/api/projects/${projectId}/versions/${versionId}/archive`,
+      {},
+    );
+    if (response.error) throw new Error(response.error);
+    return response.data!;
+  }
+
+  async unarchiveProjectVersion(projectId: string, versionId: string): Promise<ProjectVersion> {
+    const response = await apiClient.patch<ProjectVersion>(
+      `/api/projects/${projectId}/versions/${versionId}/unarchive`,
       {},
     );
     if (response.error) throw new Error(response.error);

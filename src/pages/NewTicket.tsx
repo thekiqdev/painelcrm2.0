@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect, useRef } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,13 +16,16 @@ import {
 import { ClientSearchCombobox } from '@/components/clients/ClientSearchCombobox';
 import { ticketsService } from '@/services/tickets';
 import { clientsService } from '@/services/clients';
+import { apiClient } from '@/integrations/api/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from '@/hooks/use-toast';
 import { TicketCategory, TicketPriority, ticketPriorityLabels } from '@/types/tickets';
 
 export default function NewTicket() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user } = useAuth();
+  const prefillAppliedRef = useRef(false);
   const [loading, setLoading] = useState(false);
   const [categories, setCategories] = useState<TicketCategory[]>([]);
   const [selectedClientLabel, setSelectedClientLabel] = useState<string | undefined>();
@@ -84,6 +87,45 @@ export default function NewTicket() {
       console.error('Error loading client:', error);
     }
   };
+
+  useEffect(() => {
+    if (prefillAppliedRef.current) return;
+    const clientId = searchParams.get('client_id')?.trim();
+    const leadId = searchParams.get('lead_id')?.trim();
+    if (!clientId && !leadId) return;
+    prefillAppliedRef.current = true;
+
+    if (clientId) {
+      void handleClientChange(clientId);
+      return;
+    }
+
+    void (async () => {
+      try {
+        const res = await apiClient.get<{
+          name?: string;
+          email?: string | null;
+          phone?: string | null;
+          company?: string | null;
+        }>(`/api/leads/${leadId}`);
+        const lead = res.data;
+        if (!lead) return;
+        setFormData((f) => ({
+          ...f,
+          contact_name: lead.name || f.contact_name,
+          contact_email: lead.email || f.contact_email,
+          contact_phone: lead.phone || f.contact_phone,
+        }));
+        if (lead.company) {
+          setSelectedClientLabel(`${lead.name} — ${lead.company}`);
+        } else if (lead.name) {
+          setSelectedClientLabel(lead.name);
+        }
+      } catch (error: unknown) {
+        console.error('Error loading lead for ticket prefill:', error);
+      }
+    })();
+  }, [searchParams]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

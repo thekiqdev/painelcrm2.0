@@ -20,9 +20,12 @@ export type TicketPostOk = {
   message?: string;
 };
 
+export type PublicTicketMessageAuthorRole = "customer" | "support";
+
 export type PublicTicketLookupMessage = {
   content: string;
   created_at: string;
+  author_role?: PublicTicketMessageAuthorRole;
 };
 
 export type PublicTicketLookupTicket = {
@@ -33,10 +36,16 @@ export type PublicTicketLookupTicket = {
   category_name: string | null;
   created_at: string;
   updated_at: string;
+  can_reply?: boolean;
   messages: PublicTicketLookupMessage[];
 };
 
 export type PublicTicketLookupOk = {
   ok: true;
   ticket: PublicTicketLookupTicket;
+};
+
+export type PublicTicketReplyOk = {
+  ok: true;
+  message: PublicTicketLookupMessage;
 };

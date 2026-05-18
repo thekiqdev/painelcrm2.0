@@ -25,6 +25,7 @@ import {
 import { TenantDetailProvider, useTenantDetail } from '@/contexts/TenantDetailContext';
 import { apiClient } from '@/integrations/api/client';
 import { toast } from '@/components/ui/sonner';
+import { useSuperadminImpersonation } from '@/hooks/useSuperadminImpersonation';
 
 const statusLabels: Record<string, string> = {
   active: 'Ativo',
@@ -49,6 +50,7 @@ function ClientLayoutInner() {
   const { tenant, setTenant, loading, error, refresh } = useTenantDetail();
   const [plans, setPlans] = useState<{ id: string; name: string; slug: string }[]>([]);
   const [savingStatus, setSavingStatus] = useState(false);
+  const { openAsTenantPrimaryUser, impersonatingTenantId } = useSuperadminImpersonation();
 
   React.useEffect(() => {
     apiClient.get<{ id: string; name: string; slug: string }[]>('/api/superadmin/plans').then((r) => {
@@ -69,10 +71,6 @@ function ClientLayoutInner() {
     toast.success(status === 'active' ? 'Conta ativada.' : status === 'suspended' ? 'Conta desativada.' : 'Status atualizado.');
     refresh();
   };
-
-  const clientUrl = typeof window !== 'undefined'
-    ? `${window.location.origin}${window.location.pathname.replace(/\/superadmin.*/, '')}`
-    : '';
 
   if (loading) {
     return (
@@ -114,14 +112,15 @@ function ClientLayoutInner() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {clientUrl && (
-              <Button variant="outline" size="sm" asChild>
-                <a href={clientUrl} target="_blank" rel="noopener noreferrer">
-                  <ExternalLink className="mr-2 h-4 w-4" />
-                  Acessar sistema do cliente
-                </a>
-              </Button>
-            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => id && openAsTenantPrimaryUser(id)}
+              disabled={!id || impersonatingTenantId === id}
+            >
+              <ExternalLink className="mr-2 h-4 w-4" />
+              {impersonatingTenantId === id ? 'Abrindo...' : 'Acessar sistema do cliente'}
+            </Button>
             <Select
               value={tenant.status}
               onValueChange={setStatus}

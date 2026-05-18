@@ -86,6 +86,8 @@ export interface Project {
   kanbanStage?: string;
   project_type?: ProjectType;
   client_id?: string | null;
+  /** Nome do cliente quando disponível na listagem/detalhe. */
+  clientName?: string | null;
   areas?: ProjectArea[];
   versions?: ProjectVersion[];
   /** Equipe responsável (opcional). */

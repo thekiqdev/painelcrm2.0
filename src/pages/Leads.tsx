@@ -1,7 +1,9 @@
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { getClientUrl, isValidEntityId } from "@/lib/entityNavigation";
+import { pickConvertedClientId } from "@/lib/entity/resolveEntityIdentity";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -91,7 +93,9 @@ const DEFAULT_LEAD_STATUSES = [
 const Leads = () => {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const floatingChat = useFloatingChatOptional();
+  const openLeadDeepLinkHandledRef = useRef<string | null>(null);
 
   const [leadStatuses, setLeadStatuses] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
@@ -186,6 +190,58 @@ const Leads = () => {
   const leads = leadsData ?? [];
   const fetchLeads = () =>
     queryClient.invalidateQueries({ queryKey: ["leads", tenantId, userId] });
+
+  const openLeadIdParam = searchParams.get("openLeadId")?.trim() ?? "";
+
+  useEffect(() => {
+    if (!openLeadIdParam || !isValidEntityId(openLeadIdParam)) {
+      openLeadDeepLinkHandledRef.current = null;
+      return;
+    }
+    if (!tenantId || !userId) return;
+    if (openLeadDeepLinkHandledRef.current === openLeadIdParam) return;
+
+    const openLeadFromDeepLink = async () => {
+      const fromList = leads.find((l: { id?: string }) => String(l.id) === openLeadIdParam);
+      let leadToOpen = fromList;
+      if (!leadToOpen) {
+        if (leadsLoading) return;
+        const response = await apiClient.get(`/api/leads/${openLeadIdParam}`);
+        if (response.error || !response.data) {
+          toast.error("Lead não encontrado");
+          openLeadDeepLinkHandledRef.current = openLeadIdParam;
+          return;
+        }
+        leadToOpen = response.data;
+      }
+
+      openLeadDeepLinkHandledRef.current = openLeadIdParam;
+
+      const convertedClientId = pickConvertedClientId(leadToOpen);
+      if (convertedClientId) {
+        navigate(getClientUrl(convertedClientId), { replace: true });
+        return;
+      }
+
+      try {
+        const response = await apiClient.get(`/api/leads/${leadToOpen.id}`);
+        const fullLead = !response.error && response.data ? response.data : leadToOpen;
+        const convertedAfterFetch = pickConvertedClientId(fullLead);
+        if (convertedAfterFetch) {
+          navigate(getClientUrl(convertedAfterFetch), { replace: true });
+          return;
+        }
+        setSelectedLead(fullLead);
+      } catch {
+        setSelectedLead(leadToOpen);
+      }
+      setIsViewDialogOpen(true);
+      setActiveTab("summary");
+      await fetchLeadTasks(leadToOpen.id);
+    };
+
+    void openLeadFromDeepLink();
+  }, [openLeadIdParam, leads, leadsLoading, tenantId, userId]);
 
   const isConnectedChatInstance = (instance: ChatInstance): boolean => {
     const status = String(instance.status || "").toLowerCase();

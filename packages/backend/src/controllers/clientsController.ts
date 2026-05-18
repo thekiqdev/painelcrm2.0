@@ -582,7 +582,15 @@ export async function getClientGoogleDriveBrowser(req: AuthRequest, res: Respons
     if (!okScope) return;
     const folderIdRaw = req.query.folderId;
     const folderId = typeof folderIdRaw === 'string' && folderIdRaw.trim() ? folderIdRaw.trim() : undefined;
-    const payload = await getClientGoogleDriveBrowserPayload({ tenantId, clientId, folderId });
+    const projectIdRaw = req.query.projectId;
+    const projectId =
+      typeof projectIdRaw === 'string' && projectIdRaw.trim() ? projectIdRaw.trim() : undefined;
+    const payload = await getClientGoogleDriveBrowserPayload({
+      tenantId,
+      clientId,
+      folderId,
+      projectId,
+    });
     res.json(payload);
   } catch (error) {
     if (error instanceof ModulePermissionError) {
@@ -595,8 +603,8 @@ export async function getClientGoogleDriveBrowser(req: AuthRequest, res: Respons
       res.status(400).json({ error: msg, code });
       return;
     }
-    if (code === 'folder_forbidden' || code === 'folder_invalid') {
-      res.status(403).json({ error: msg, code });
+    if (code === 'folder_forbidden' || code === 'folder_invalid' || code === 'project_folders_missing') {
+      res.status(code === 'project_folders_missing' ? 404 : 403).json({ error: msg, code });
       return;
     }
     console.error('[clients] google drive browser', error);

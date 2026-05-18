@@ -1,5 +1,5 @@
 import { apiClient } from '@/integrations/api/client';
-import { Ticket, TicketCategory } from '@/types/tickets';
+import { Ticket, TicketActivity, TicketCategory, TicketStatus } from '@/types/tickets';
 
 export const ticketsService = {
   // Get tickets with filters
@@ -9,6 +9,12 @@ export const ticketsService = {
     category_id?: string;
     search?: string;
     client_id?: string;
+    /** `me` = tickets do usuário autenticado */
+    assignee_id?: string;
+    unassigned?: boolean;
+    no_response?: boolean;
+    my_queue?: boolean;
+    sla_overdue?: boolean;
   }): Promise<Ticket[]> {
     try {
       const params = new URLSearchParams();
@@ -17,6 +23,11 @@ export const ticketsService = {
       if (filters?.category_id) params.append('category_id', filters.category_id);
       if (filters?.search) params.append('search', filters.search);
       if (filters?.client_id) params.append('client_id', filters.client_id);
+      if (filters?.assignee_id) params.append('assignee_id', filters.assignee_id);
+      if (filters?.unassigned) params.append('unassigned', 'true');
+      if (filters?.no_response) params.append('no_response', 'true');
+      if (filters?.my_queue) params.append('my_queue', 'true');
+      if (filters?.sla_overdue) params.append('sla_overdue', 'true');
 
       const url = `/api/tickets${params.toString() ? `?${params.toString()}` : ''}`;
       const response = await apiClient.get<Ticket[]>(url);
@@ -77,11 +88,11 @@ export const ticketsService = {
     description: string;
     category_id?: string;
     priority?: 'low' | 'normal' | 'high' | 'urgent';
-    status?: 'new' | 'open' | 'waiting_customer' | 'resolved' | 'closed';
+    status?: TicketStatus;
     channel?: 'portal' | 'email' | 'whatsapp' | 'internal';
     client_id?: string;
     team_id?: string;
-    assignee_id?: string;
+    assignee_id?: string | null;
     tags?: string[];
     custom_fields?: any;
   }>): Promise<Ticket> {
@@ -102,6 +113,54 @@ export const ticketsService = {
       if (response.error) throw new Error(response.error);
     } catch (error: any) {
       console.error('Error deleting ticket:', error);
+      throw error;
+    }
+  },
+
+  async getKanbanStats(): Promise<{
+    open_count: number;
+    no_response_count: number;
+    urgent_count: number;
+    sla_overdue_count: number;
+  }> {
+    const response = await apiClient.get<{
+      open_count: number;
+      no_response_count: number;
+      urgent_count: number;
+      sla_overdue_count: number;
+    }>('/api/tickets/kanban-stats');
+    if (response.error) throw new Error(response.error);
+    return (
+      response.data ?? {
+        open_count: 0,
+        no_response_count: 0,
+        urgent_count: 0,
+        sla_overdue_count: 0,
+      }
+    );
+  },
+
+  async bulkUpdateTickets(payload: {
+    ids: string[];
+    action: 'resolve' | 'assign' | 'add_tag';
+    assignee_id?: string | null;
+    tag?: string;
+  }): Promise<{ updated_count: number; ids: string[] }> {
+    const response = await apiClient.post<{ updated_count: number; ids: string[] }>(
+      '/api/tickets/bulk',
+      payload
+    );
+    if (response.error) throw new Error(response.error);
+    return response.data ?? { updated_count: 0, ids: payload.ids };
+  },
+
+  async getTicketActivities(ticketId: string): Promise<TicketActivity[]> {
+    try {
+      const response = await apiClient.get<TicketActivity[]>(`/api/tickets/${ticketId}/activities`);
+      if (response.error) throw new Error(response.error);
+      return response.data || [];
+    } catch (error: unknown) {
+      console.error('Error fetching ticket activities:', error);
       throw error;
     }
   },

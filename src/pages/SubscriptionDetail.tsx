@@ -54,6 +54,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
+import { ClientEntityLink } from "@/components/entities";
 import { isInvoiceActionable } from "@/lib/customerInvoiceActions";
 import {
   addCalendarDaysToIsoYmd,
@@ -249,9 +250,37 @@ const SubscriptionDetail = () => {
             <CalendarSync className="h-4 w-4" />
             <span>Assinatura</span>
           </div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            {detail.client_name ?? "Cliente"}{" "}
-            <span className="text-muted-foreground font-normal text-base">· {meta.periodicity_label_pt}</span>
+          <h1 className="text-2xl font-semibold tracking-tight flex flex-wrap items-baseline gap-x-2 gap-y-1">
+            {!s.customer_id ? (
+              <>
+                <span>{detail.plan_label?.trim() || "Assinatura recorrente"}</span>
+                <Badge variant="outline" className="text-sm font-normal">
+                  Por link
+                </Badge>
+                <span className="text-muted-foreground font-normal text-base w-full sm:w-auto">
+                  · {meta.periodicity_label_pt}
+                </span>
+              </>
+            ) : detail.client_name?.trim() ? (
+              <>
+                <ClientEntityLink
+                  clientId={s.customer_id}
+                  name={detail.client_name}
+                  variant="inline"
+                  className="text-2xl font-semibold tracking-tight"
+                  disabledFallbackText="Abrir cliente"
+                />
+                <span className="text-muted-foreground font-normal text-base">· {meta.periodicity_label_pt}</span>
+              </>
+            ) : (
+              <>
+                <span className="text-foreground/90">Assinatura CRM</span>
+                <span className="text-muted-foreground font-normal text-base">· {meta.periodicity_label_pt}</span>
+                <p className="text-xs text-muted-foreground w-full font-normal mt-1">
+                  Há vínculo interno de cliente, mas o nome não foi encontrado no cadastro desta empresa.
+                </p>
+              </>
+            )}
           </h1>
           {detail.plan_label && (
             <p className="text-sm text-muted-foreground mt-1 max-w-2xl">{detail.plan_label}</p>
@@ -276,12 +305,25 @@ const SubscriptionDetail = () => {
         <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5 pt-6">
           <div>
             <p className="text-xs text-muted-foreground mb-1">Cliente</p>
-            {s.customer_id ? (
-              <Link to={`/clients/${s.customer_id}`} className="text-sm font-medium text-primary hover:underline">
-                {detail.client_name ?? s.customer_id}
-              </Link>
+            {!s.customer_id ? (
+              <div className="space-y-1">
+                <Badge variant="outline" className="text-xs font-normal">
+                  Por link
+                </Badge>
+                <p className="text-sm text-muted-foreground">Sem cliente CRM vinculado a esta cobrança.</p>
+              </div>
+            ) : detail.client_name?.trim() ? (
+              <ClientEntityLink
+                clientId={s.customer_id}
+                name={detail.client_name}
+                variant="inline"
+                className="text-sm font-medium"
+                disabledFallbackText="Abrir cliente"
+              />
             ) : (
-              <p className="text-sm font-medium">Sem cliente vinculado</p>
+              <p className="text-sm font-medium text-muted-foreground">
+                Cliente referenciado no faturamento, mas sem dados no cadastro desta empresa.
+              </p>
             )}
           </div>
           <div>

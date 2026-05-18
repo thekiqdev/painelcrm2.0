@@ -5,6 +5,7 @@ import { AuthRequest } from '../middleware/auth.js';
 import { assertModulePermission, ModulePermissionError } from '../permissions/index.js';
 import { isTenantAdmin } from '../utils/tenant.js';
 import { listProjectVersionsForProjectDetail } from './projectVersionsController.js';
+import { ensureProjectGoogleDriveFolderStructure } from '../services/projectGoogleDriveFoldersService.js';
 
 const MODULE_PROJECTS = 'projects';
 
@@ -672,4 +673,62 @@ export const deleteProject = async (req: Request, res: Response) => {
   }
 };
 
+export async function ensureProjectGoogleDriveFolders(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    const { projectId } = req.params;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Empresa não identificada' });
+      return;
+    }
+
+    const projectRow = await pool.query<{ id: string; name: string; client_id: string | null; user_id: string }>(
+      `SELECT p.id, p.name, p.client_id, p.user_id
+       FROM projects p
+       INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = $2
+       WHERE p.id = $1`,
+      [projectId, tenantId],
+    );
+    const project = projectRow.rows[0];
+    if (!project) {
+      res.status(404).json({ error: 'Projeto não encontrado' });
+      return;
+    }
+    if (!project.client_id) {
+      res.status(400).json({ error: 'Vincule o projeto a um cliente para usar o Google Drive.' });
+      return;
+    }
+
+    await assertModulePermission(userId, MODULE_PROJECTS, 'edit', { ownerId: project.user_id }, req);
+
+    const body = (req.body ?? {}) as { version_name?: string | null };
+    const versionName =
+      typeof body.version_name === 'string' && body.version_name.trim() ? body.version_name.trim() : null;
+
+    const result = await ensureProjectGoogleDriveFolderStructure({
+      tenantId,
+      clientId: project.client_id,
+      projectId: project.id,
+      projectName: project.name,
+      versionName,
+      userId,
+    });
+
+    res.json(result);
+  } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
+    const code = (error as Error & { code?: string }).code;
+    const msg = error instanceof Error ? error.message : 'Erro ao preparar pastas do projeto';
+    if (code === 'drive_disabled' || code === 'drive_not_connected' || code === 'folders_unavailable') {
+      res.status(400).json({ error: msg, code });
+      return;
+    }
+    console.error('[projects] ensure google drive folders', error);
+    res.status(500).json({ error: msg });
+  }
+}
 

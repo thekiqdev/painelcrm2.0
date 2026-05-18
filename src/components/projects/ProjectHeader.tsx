@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import type { Project } from '@/components/projects/types';
+import { ClientEntityLink } from '@/components/entities';
 
 type ProjectHeaderProps = {
   project: Project;
@@ -55,6 +56,19 @@ export function ProjectHeader({
                 <Badge variant="outline" className="h-5 px-2 text-[11px]">{statusLabel(project.status)}</Badge>
               </div>
               {project.teamName ? <p className="mt-0.5 text-xs text-muted-foreground">Equipe: {project.teamName}</p> : null}
+              {project.client_id ? (
+                <p className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5 text-xs text-muted-foreground">
+                  <span className="shrink-0 text-muted-foreground/90">Cliente:</span>
+                  <ClientEntityLink
+                    clientId={project.client_id}
+                    name={project.clientName}
+                    disabledFallbackText="Cliente não identificado"
+                    variant="inline"
+                    className="min-w-0 text-xs font-medium text-foreground/90"
+                    stopPropagationOnClick
+                  />
+                </p>
+              ) : null}
             </div>
           </div>
           {project.tags && project.tags.length > 0 ? (

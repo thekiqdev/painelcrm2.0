@@ -6,6 +6,7 @@ import { assertModulePermission, assertPermissionKey, ModulePermissionError } fr
 import { resolveLeadsGranularFromLegacy } from '../permissions/permissionCatalog.js';
 import { normalizeConversationPhone } from '../services/conversationMatchingService.js';
 import { migrateConversationLeadToClient } from '../services/conversationLinkService.js';
+import { migrateLeadLinkedCrmRecordsToClient } from '../services/leadConversionMigrationService.js';
 
 const MODULE_LEADS = 'leads';
 
@@ -487,18 +488,21 @@ export async function updateLead(req: AuthRequest, res: Response): Promise<void>
         }
 
         if (targetClientId) {
+          const migrationClient = await pool.connect();
           try {
-            await pool.query(
-              `UPDATE proposals p
-               SET client_id = $1, lead_id = NULL
-               FROM users u
-               WHERE p.user_id = u.id AND u.tenant_id = $2
-                 AND p.lead_id = $3::uuid
-                 AND p.client_id IS NULL`,
-              [targetClientId, tenantId, id],
-            );
-          } catch (propErr) {
-            console.error('[updateLead] migrate proposals lead→client failed:', propErr);
+            await migrationClient.query('BEGIN');
+            await migrateLeadLinkedCrmRecordsToClient(migrationClient, {
+              tenantId,
+              leadId: id,
+              clientId: targetClientId,
+              actorUserId: userId,
+            });
+            await migrationClient.query('COMMIT');
+          } catch (migrateRecordsErr) {
+            await migrationClient.query('ROLLBACK');
+            console.error('[updateLead] migrate proposals/tickets lead→client failed:', migrateRecordsErr);
+          } finally {
+            migrationClient.release();
           }
 
           const conversationRows = await pool.query<{ id: string; user_id: string }>(

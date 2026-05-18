@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -41,6 +42,7 @@ import {
 } from "@/components/ui/sheet";
 import { contractsService } from "@/services/contracts";
 import { clientsService } from "@/services/clients";
+import { ClientEntityLink } from "@/components/entities";
 import { useAuth } from "@/contexts/AuthContext";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 import { toast } from "@/components/ui/sonner";
@@ -89,6 +91,16 @@ const CONTRACT_STATUS_URL = new Set<ContractStatus | "all">([
   "CANCELLED",
 ]);
 
+function resolveContractClientLabel(c: Contract, nameById: Record<string, string>): string | null {
+  const fromJoin = c.client_name?.trim();
+  if (fromJoin) return fromJoin;
+  const nested = c.client?.name?.trim() || c.client?.company?.trim();
+  if (nested) return nested;
+  const id = c.client_id != null && c.client_id !== "" ? String(c.client_id).trim() : "";
+  if (id && nameById[id]) return nameById[id];
+  return null;
+}
+
 function isoDayStart(iso: string | null | undefined): string | null {
   if (!iso) return null;
   const m = /^(\d{4}-\d{2}-\d{2})/.exec(iso);
@@ -132,6 +144,21 @@ const Contracts = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
+  const { data: clientsList = [] } = useQuery({
+    queryKey: ["clients", "contracts-list", user?.id],
+    queryFn: () => clientsService.getClients(),
+    enabled: Boolean(user?.id),
+    staleTime: 120_000,
+  });
+  const clientNameById = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const c of clientsList) {
+      const label = (c.name || c.company || c.email || "").trim();
+      if (label) m[c.id] = label;
+    }
+    return m;
+  }, [clientsList]);
+
   const { canDeleteRecord, canCreate, loading: contractsPermLoading } = useModulePermissions();
   const canCreateContractShortcut = canCreate("contracts") && !contractsPermLoading;
   const [contracts, setContracts] = useState<Contract[]>([]);
@@ -841,8 +868,29 @@ const Contracts = () => {
                   </TableCell>
                   <TableCell className="font-mono">{contract.contract_number}</TableCell>
                   <TableCell className="font-medium">{contract.title}</TableCell>
-                  <TableCell className="max-w-[220px] truncate" title={contract.client_name || "—"}>
-                    {contract.client_name || "—"}
+                  <TableCell className="max-w-[220px]">
+                    {(() => {
+                      const cid =
+                        contract.client_id != null && contract.client_id !== ""
+                          ? String(contract.client_id).trim()
+                          : "";
+                      if (!cid) {
+                        return (
+                          <span className="block truncate" title={resolveContractClientLabel(contract, clientNameById) || "—"}>
+                            {resolveContractClientLabel(contract, clientNameById) || "—"}
+                          </span>
+                        );
+                      }
+                      return (
+                        <ClientEntityLink
+                          clientId={cid}
+                          name={resolveContractClientLabel(contract, clientNameById)}
+                          disabledFallbackText="Cliente não identificado"
+                          variant="table"
+                          stopPropagationOnClick
+                        />
+                      );
+                    })()}
                   </TableCell>
                   <TableCell className="max-w-[220px] truncate" title={contract.responsible_display_name || contract.creator_display_name || "—"}>
                     {contract.responsible_display_name || contract.creator_display_name || "—"}
@@ -960,9 +1008,28 @@ const Contracts = () => {
               >
                 <p className="font-mono text-xs text-muted-foreground">{contract.contract_number}</p>
                 <p className="mt-1 font-semibold leading-snug">{contract.title}</p>
-                <p className="mt-1 truncate text-sm text-muted-foreground">
-                  {contract.client_name || "—"}
-                </p>
+                <div className="mt-1 min-w-0 text-sm text-muted-foreground">
+                  {(() => {
+                    const cid =
+                      contract.client_id != null && contract.client_id !== ""
+                        ? String(contract.client_id).trim()
+                        : "";
+                    if (!cid) {
+                      return (
+                        <p className="truncate">{resolveContractClientLabel(contract, clientNameById) || "—"}</p>
+                      );
+                    }
+                    return (
+                      <ClientEntityLink
+                        clientId={cid}
+                        name={resolveContractClientLabel(contract, clientNameById)}
+                        disabledFallbackText="Cliente não identificado"
+                        variant="compact"
+                        stopPropagationOnClick
+                      />
+                    );
+                  })()}
+                </div>
                 <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                   {getStatusBadge(contract.status)}
                   {contract.total_value != null && contract.total_value > 0 ? (

@@ -17,6 +17,7 @@
     "billing:scheduler": "tsx src/scripts/runRecurringScheduler.ts",
     "billing:worker": "tsx src/scripts/runRecurringWorker.ts",
     "billing:reconciliation": "tsx src/scripts/runReconciliation.ts",
+    "tickets:auto-resolve": "tsx src/scripts/runTicketAutoResolve.ts",
     "billing:subscription-cycles-reconcile": "tsx src/scripts/runSubscriptionCyclesReconciliation.ts",
     "avatar-cache:backfill": "tsx src/scripts/runWhatsappAvatarCacheBackfill.ts",
     "test": "vitest run",

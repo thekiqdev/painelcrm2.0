@@ -273,22 +273,41 @@ export async function trashDriveFile(accessToken: string, fileId: string): Promi
   }
 }
 
-export async function isFolderUnderClientArquivosTree(
+export async function isFolderUnderDriveRoot(
   accessToken: string,
   folderId: string,
-  arquivosRootId: string,
-  moduleFolderIds: Set<string>,
+  rootFolderId: string,
+  forbiddenFolderIds: Set<string>,
 ): Promise<boolean> {
   let cur = folderId;
   for (let i = 0; i < 64; i++) {
-    if (cur === arquivosRootId) return true;
-    if (moduleFolderIds.has(cur)) return false;
+    if (cur === rootFolderId) return true;
+    if (forbiddenFolderIds.has(cur)) return false;
     const meta = await getDriveFileMetadata(accessToken, cur);
     const parents = meta.parents;
     if (!parents?.length) return false;
     cur = parents[0]!;
   }
   return false;
+}
+
+export async function isFolderUnderClientArquivosTree(
+  accessToken: string,
+  folderId: string,
+  arquivosRootId: string,
+  moduleFolderIds: Set<string>,
+): Promise<boolean> {
+  const forbidden = new Set(moduleFolderIds);
+  return isFolderUnderDriveRoot(accessToken, folderId, arquivosRootId, forbidden);
+}
+
+export async function isFolderUnderClientProjetosTree(
+  accessToken: string,
+  folderId: string,
+  projetosRootId: string,
+  siblingModuleFolderIds: Set<string>,
+): Promise<boolean> {
+  return isFolderUnderDriveRoot(accessToken, folderId, projetosRootId, siblingModuleFolderIds);
 }
 
 export async function createDriveFolder(

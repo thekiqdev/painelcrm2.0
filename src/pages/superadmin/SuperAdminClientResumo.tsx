@@ -6,6 +6,7 @@ import { useTenantDetail } from '@/contexts/TenantDetailContext';
 import { ExternalLink, UserCheck, UserX } from 'lucide-react';
 import { apiClient } from '@/integrations/api/client';
 import { toast } from '@/components/ui/sonner';
+import { useSuperadminImpersonation } from '@/hooks/useSuperadminImpersonation';
 
 const statusLabels: Record<string, string> = {
   active: 'Ativo',
@@ -18,6 +19,7 @@ export default function SuperAdminClientResumo() {
   const navigate = useNavigate();
   const { tenant, refresh } = useTenantDetail();
   const [saving, setSaving] = React.useState(false);
+  const { openAsTenantPrimaryUser, impersonatingTenantId } = useSuperadminImpersonation();
 
   const setStatus = async (status: string) => {
     if (!id) return;
@@ -31,10 +33,6 @@ export default function SuperAdminClientResumo() {
     toast.success(status === 'active' ? 'Conta ativada.' : status === 'suspended' ? 'Conta desativada.' : 'Status atualizado.');
     refresh();
   };
-
-  const clientUrl = typeof window !== 'undefined'
-    ? `${window.location.origin}${window.location.pathname.replace(/\/superadmin.*/, '')}`
-    : '';
 
   if (!tenant) return null;
 
@@ -116,14 +114,14 @@ export default function SuperAdminClientResumo() {
           <CardDescription>Ativar ou suspender a conta; acessar o sistema como cliente.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-3">
-          {clientUrl && (
-            <Button asChild>
-              <a href={clientUrl} target="_blank" rel="noopener noreferrer">
-                <ExternalLink className="mr-2 h-4 w-4" />
-                Acessar sistema do cliente
-              </a>
-            </Button>
-          )}
+          <Button
+            type="button"
+            onClick={() => id && openAsTenantPrimaryUser(id)}
+            disabled={!id || impersonatingTenantId === id}
+          >
+            <ExternalLink className="mr-2 h-4 w-4" />
+            {impersonatingTenantId === id ? 'Abrindo...' : 'Acessar sistema do cliente'}
+          </Button>
           {tenant.status !== 'active' && (
             <Button variant="secondary" onClick={() => setStatus('active')} disabled={saving}>
               <UserCheck className="mr-2 h-4 w-4" />

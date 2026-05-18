@@ -85,10 +85,6 @@ export async function appendProjectTaskVersionFilter(
     versionId = defaultVersionId;
   }
 
-  const defaultVersionId = await getDefaultProjectVersionId(projectId);
   params.push(versionId);
-  if (defaultVersionId && versionId === defaultVersionId) {
-    return `${sql} AND (version_id = $${params.length} OR version_id IS NULL)`;
-  }
   return `${sql} AND version_id = $${params.length}`;
 }

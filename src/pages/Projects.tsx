@@ -47,6 +47,7 @@ import {
   versionSelectionToTaskFilter,
   versionIdForTaskCreate,
   normalizeVersionSelection,
+  versionSelectionKey,
   type ProjectVersionSelection,
 } from "@/lib/projectVersionSelection";
 import { TaskSidePanel } from "@/components/tasks";
@@ -68,7 +69,7 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { clientsService } from "@/services/clients";
+import { clientsService, type Client } from "@/services/clients";
 import { prepareProjectsFromCsv } from "@/utils/importProjectsCsv";
 import {
   prepareTasksFromProjectTasksCsv,
@@ -81,6 +82,51 @@ const MODULE_PROJECTS = "projects";
 const MODULE_TASKS = "tasks";
 
 const PROJECTS_QUERY_KEY = ["projects"] as const;
+
+function mapApiProjectTasksToUiTasks(
+  apiTasks: ApiProjectTask[],
+  members: Member[],
+  versionFilter?: { versionId?: string },
+): Task[] {
+  const filtered =
+    versionFilter?.versionId != null
+      ? apiTasks.filter((task) => task.version_id === versionFilter.versionId)
+      : apiTasks;
+  return filtered.map((apiTask) => ({
+    id: apiTask.id,
+    title: apiTask.title,
+    description: apiTask.description || "",
+    status: apiTask.status as TaskStatus,
+    priority: apiTask.priority as Task["priority"],
+    dueDate: apiTask.due_date || undefined,
+    assignee: apiTask.assignee_id ? members.find((m) => m.id === apiTask.assignee_id) : undefined,
+    tags: apiTask.tags || [],
+    customFields: apiTask.custom_fields ?? {},
+    checklist: (apiTask.checklist || []).map(
+      (
+        item: { id?: string; text?: string; title?: string; completed?: boolean },
+        index: number,
+      ) => ({
+        id: item.id || `checklist-${index}`,
+        text: item.text || item.title || "",
+        completed: item.completed || false,
+      }),
+    ),
+  }));
+}
+
+function resolveProjectClientDisplayName(
+  p: { client_id?: string | null; client_name?: string | null },
+  clients: Client[],
+): string | null {
+  const fromApi = typeof p.client_name === "string" ? p.client_name.trim() : "";
+  if (fromApi) return fromApi;
+  const cid = p.client_id != null && p.client_id !== "" ? String(p.client_id).trim() : "";
+  if (!cid) return null;
+  const c = clients.find((x) => x.id === cid);
+  const label = (c?.name || c?.company || c?.email || "").trim();
+  return label || null;
+}
 
 const Projects = () => {
   const navigate = useNavigate();
@@ -164,6 +210,8 @@ const Projects = () => {
     versionId: string | null;
   } | null>(null);
   const [copyTaskSaving, setCopyTaskSaving] = useState(false);
+  const projectDetailsLoadSeq = useRef(0);
+  const prevVersionSelectionKeyRef = useRef<string | null>(null);
 
   // Lista de projetos e equipes em cache – ao voltar na página os dados aparecem na hora
   const { data: teamsData } = useQuery({
@@ -174,29 +222,42 @@ const Projects = () => {
   const { data: projectsData, isPending: loading } = useQuery({
     queryKey: [...PROJECTS_QUERY_KEY, teamFilter],
     queryFn: async () => {
-      const [teamsList, apiProjects] = await Promise.all([
+      const [teamsList, apiProjects, clients] = await Promise.all([
         teamsService.getTeams(),
         projectsService.getProjects(teamFilter ?? undefined),
+        clientsService.getClients(),
       ]);
       const teamMap = new Map(teamsList.map((t) => [t.id, t.name]));
-      return apiProjects.map((apiProject) => ({
-        id: apiProject.id,
-        name: apiProject.name,
-        description: apiProject.description || "",
-        status: apiProject.status,
-        dueDate: apiProject.due_date || undefined,
-        members: [],
-        tags: apiProject.tags || [],
-        lists: [],
-        files: [],
-        financeItems: [],
-        kanbanStage: apiProject.kanban_stage || "backlog",
-        project_type: (apiProject.project_type as Project["project_type"]) || "simple",
-        client_id: apiProject.client_id ?? null,
-        areas: [],
-        team_id: apiProject.team_id ?? null,
-        teamName: apiProject.team_id ? teamMap.get(apiProject.team_id) ?? null : null,
-      })) as Project[];
+      const clientNameById = new Map<string, string>();
+      for (const c of clients) {
+        const label = (c.name || c.company || c.email || "").trim();
+        if (label) clientNameById.set(c.id, label);
+      }
+      return apiProjects.map((apiProject) => {
+        const cid = apiProject.client_id ?? null;
+        const resolvedName =
+          (typeof apiProject.client_name === "string" && apiProject.client_name.trim()) ||
+          (cid ? clientNameById.get(cid) ?? null : null);
+        return {
+          id: apiProject.id,
+          name: apiProject.name,
+          description: apiProject.description || "",
+          status: apiProject.status,
+          dueDate: apiProject.due_date || undefined,
+          members: [],
+          tags: apiProject.tags || [],
+          lists: [],
+          files: [],
+          financeItems: [],
+          kanbanStage: apiProject.kanban_stage || "backlog",
+          project_type: (apiProject.project_type as Project["project_type"]) || "simple",
+          client_id: cid,
+          clientName: resolvedName,
+          areas: [],
+          team_id: apiProject.team_id ?? null,
+          teamName: apiProject.team_id ? teamMap.get(apiProject.team_id) ?? null : null,
+        };
+      }) as Project[];
     },
     enabled: true,
   });
@@ -294,31 +355,19 @@ const Projects = () => {
   };
 
   const refreshProjectBoardLists = async (projectId: string) => {
+    const projectForRefresh =
+      selectedProject?.id === projectId
+        ? selectedProject
+        : projects.find((p) => p.id === projectId);
+    const versionFilter =
+      projectForRefresh && hasVersions(projectForRefresh.project_type)
+        ? versionSelectionToTaskFilter(versionSelection, projectVersions)
+        : undefined;
     const apiLists = await projectsService.getProjectLists(projectId);
     const listsWithTasks = await Promise.all(
       apiLists.map(async (apiList) => {
-        const apiTasks = await projectsService.getProjectTasks(apiList.id);
-        const tasks: Task[] = apiTasks.map((apiTask: ApiProjectTask) => ({
-          id: apiTask.id,
-          title: apiTask.title,
-          description: apiTask.description || "",
-          status: apiTask.status as TaskStatus,
-          priority: apiTask.priority as Task["priority"],
-          dueDate: apiTask.due_date || undefined,
-          assignee: apiTask.assignee_id ? members.find((m) => m.id === apiTask.assignee_id) : undefined,
-          tags: apiTask.tags || [],
-          customFields: apiTask.custom_fields ?? {},
-          checklist: (apiTask.checklist || []).map(
-            (
-              item: { id?: string; text?: string; title?: string; completed?: boolean },
-              index: number,
-            ) => ({
-              id: item.id || `checklist-${index}`,
-              text: item.text || item.title || "",
-              completed: item.completed || false,
-            }),
-          ),
-        }));
+        const apiTasks = await projectsService.getProjectTasks(apiList.id, versionFilter);
+        const tasks = mapApiProjectTasksToUiTasks(apiTasks, members, versionFilter);
         return {
           id: apiList.id,
           name: apiList.name,
@@ -358,6 +407,9 @@ const Projects = () => {
       const warnings: string[] = [];
       let created = 0;
       const BATCH = 4;
+      const importVersionId = hasVersions(selectedProject.project_type)
+        ? versionIdForTaskCreate(versionSelection, projectVersions)
+        : undefined;
 
       for (let i = 0; i < prepared.length; i += BATCH) {
         const chunk = prepared.slice(i, i + BATCH);
@@ -374,6 +426,7 @@ const Projects = () => {
                 start_date: p.start_date,
                 assignee_id: p.assignee_id,
                 tags: p.tags,
+                version_id: importVersionId ?? null,
               });
               created++;
             } catch (err) {
@@ -474,8 +527,8 @@ const Projects = () => {
       setViewMode("detail");
       return;
     }
-    projectsService.getProjectById(projectId)
-      .then((apiProject) => {
+    Promise.all([projectsService.getProjectById(projectId), clientsService.getClients()])
+      .then(([apiProject, clients]) => {
         setSelectedProject({
           id: apiProject.id,
           name: apiProject.name,
@@ -490,6 +543,7 @@ const Projects = () => {
           kanbanStage: apiProject.kanban_stage || "backlog",
           project_type: (apiProject.project_type as Project["project_type"]) || "simple",
           client_id: apiProject.client_id ?? null,
+          clientName: resolveProjectClientDisplayName(apiProject, clients),
           areas: apiProject.areas || [],
           versions: apiProject.versions,
           team_id: apiProject.team_id ?? null,
@@ -539,7 +593,10 @@ const Projects = () => {
         setViewMode("detail");
       } else {
         try {
-          const project = await projectsService.getProjectById(openProjectId);
+          const [project, clients] = await Promise.all([
+            projectsService.getProjectById(openProjectId),
+            clientsService.getClients(),
+          ]);
           const teamName = project.team_id && teams.length ? teams.find(t => t.id === project.team_id)?.name ?? null : null;
           setSelectedProject({
             id: project.id,
@@ -555,6 +612,7 @@ const Projects = () => {
             kanbanStage: project.kanban_stage || "backlog",
             project_type: (project.project_type as Project["project_type"]) || "simple",
             client_id: project.client_id ?? null,
+            clientName: resolveProjectClientDisplayName(project, clients),
             areas: project.areas || [],
             team_id: project.team_id ?? null,
             teamName: teamName ?? null,
@@ -569,13 +627,37 @@ const Projects = () => {
     openProject();
   }, [location.state, navigate, projects]);
 
+  // Limpa tarefas do quadro ao trocar de versão (evita flash de tarefas da versão anterior)
+  useEffect(() => {
+    if (!selectedProject || hasAreas(selectedProject.project_type)) return;
+    const key = hasVersions(selectedProject.project_type)
+      ? versionSelectionKey(normalizeVersionSelection(versionSelection, projectVersions))
+      : versionSelectionKey(versionSelection);
+    if (prevVersionSelectionKeyRef.current != null && prevVersionSelectionKeyRef.current !== key) {
+      setSelectedProject((prev) =>
+        prev
+          ? {
+              ...prev,
+              lists: prev.lists.map((list) => ({ ...list, tasks: [] })),
+            }
+          : prev,
+      );
+    }
+    prevVersionSelectionKeyRef.current = key;
+  }, [versionSelection, selectedProject?.id, selectedProject?.project_type, projectVersions]);
+
   // Carregar listas, tarefas, project_type e áreas quando um projeto é selecionado
   useEffect(() => {
     const loadProjectDetails = async () => {
       if (!selectedProject) return;
+      const loadSeq = ++projectDetailsLoadSeq.current;
 
       try {
-        const apiProjectFull = await projectsService.getProjectById(selectedProject.id);
+        const [apiProjectFull, clients] = await Promise.all([
+          projectsService.getProjectById(selectedProject.id),
+          clientsService.getClients(),
+        ]);
+        const resolvedClientName = resolveProjectClientDisplayName(apiProjectFull, clients);
         const projectType = (apiProjectFull.project_type as Project["project_type"]) || "simple";
         const versionsList = apiProjectFull.versions ?? [];
         let effectiveVersionSelection = versionSelection;
@@ -607,6 +689,7 @@ const Projects = () => {
             ...selectedProject,
             project_type: projectType,
             client_id: apiProjectFull.client_id ?? null,
+            clientName: resolvedClientName,
             areas: areasList,
             versions: hasVersions(projectType) ? versionsList : undefined,
             lists: [],
@@ -614,6 +697,7 @@ const Projects = () => {
             teamName: teamName ?? null,
           });
           // Carregar progresso de tarefas por área para os cards
+          if (loadSeq !== projectDetailsLoadSeq.current) return;
           if (areasList.length > 0) {
             const progressMap: Record<string, AreaProgress> = {};
             await Promise.all(
@@ -624,13 +708,19 @@ const Projects = () => {
                     a.id,
                     versionFilter,
                   );
-                  const completed = tasks.filter((t: { status: string }) => t.status === "completed").length;
-                  progressMap[a.id] = { total: tasks.length, completed };
+                  const versionId = versionFilter?.versionId;
+                  const scopedTasks =
+                    versionId != null
+                      ? tasks.filter((t) => t.version_id === versionId)
+                      : tasks;
+                  const completed = scopedTasks.filter((t) => t.status === "completed").length;
+                  progressMap[a.id] = { total: scopedTasks.length, completed };
                 } catch {
                   progressMap[a.id] = { total: 0, completed: 0 };
                 }
               })
             );
+            if (loadSeq !== projectDetailsLoadSeq.current) return;
             setAreaProgress(progressMap);
           } else {
             setAreaProgress({});
@@ -644,24 +734,7 @@ const Projects = () => {
         const listsWithTasks = await Promise.all(
           apiLists.map(async (apiList) => {
             const apiTasks = await projectsService.getProjectTasks(apiList.id, versionFilter);
-            
-            // Converter tarefas da API para o formato do frontend
-            const tasks: Task[] = apiTasks.map(apiTask => ({
-              id: apiTask.id,
-              title: apiTask.title,
-              description: apiTask.description || "",
-              status: apiTask.status as TaskStatus,
-              priority: apiTask.priority as any,
-              dueDate: apiTask.due_date || undefined,
-              assignee: apiTask.assignee_id ? members.find(m => m.id === apiTask.assignee_id) : undefined,
-              tags: apiTask.tags || [],
-              customFields: apiTask.custom_fields ?? {},
-              checklist: (apiTask.checklist || []).map((item: any, index: number) => ({
-                id: item.id || `checklist-${index}`,
-                text: item.text || item.title || "",
-                completed: item.completed || false
-              }))
-            }));
+            const tasks = mapApiProjectTasksToUiTasks(apiTasks, members, versionFilter);
 
             return {
               id: apiList.id,
@@ -673,10 +746,12 @@ const Projects = () => {
         );
 
         const teamName = apiProjectFull.team_id && teams.length ? teams.find(t => t.id === apiProjectFull.team_id)?.name ?? null : null;
+        if (loadSeq !== projectDetailsLoadSeq.current) return;
         setSelectedProject({
           ...selectedProject,
           project_type: (apiProjectFull.project_type as Project["project_type"]) || "simple",
           client_id: apiProjectFull.client_id ?? null,
+          clientName: resolvedClientName,
           areas: apiProjectFull.areas || [],
           versions: hasVersions(projectType) ? versionsList : undefined,
           lists: listsWithTasks,
@@ -694,14 +769,56 @@ const Projects = () => {
 
   useEffect(() => {
     setProjectVersions([]);
-    setVersionSelection({ mode: "version" });
+    setVersionSelection({ mode: "none" });
+    prevVersionSelectionKeyRef.current = null;
   }, [selectedProject?.id]);
 
   const reloadProjectVersions = async () => {
     if (!selectedProject || !hasVersions(selectedProject.project_type)) return;
-    const versions = await projectsService.getProjectVersions(selectedProject.id);
+    const versions = await projectsService.getProjectVersions(selectedProject.id, true);
     setProjectVersions(versions);
     setSelectedProject((prev) => (prev ? { ...prev, versions } : prev));
+    return versions;
+  };
+
+  const refreshAreaProgressMetrics = async (versionsOverride?: ProjectVersion[]) => {
+    if (!selectedProject?.id || !hasAreas(selectedProject.project_type)) return;
+    const areasList = selectedProject.areas ?? [];
+    if (areasList.length === 0) return;
+    const versionsList = versionsOverride ?? projectVersions;
+    const versionFilter = hasVersions(selectedProject.project_type)
+      ? versionSelectionToTaskFilter(versionSelection, versionsList)
+      : undefined;
+    const progressMap: Record<string, AreaProgress> = {};
+    await Promise.all(
+      areasList.map(async (a) => {
+        try {
+          const tasks = await projectsService.getProjectTasksByArea(
+            selectedProject.id,
+            a.id,
+            versionFilter,
+          );
+          const versionId = versionFilter?.versionId;
+          const scopedTasks =
+            versionId != null ? tasks.filter((t) => t.version_id === versionId) : tasks;
+          const completed = scopedTasks.filter((t) => t.status === "completed").length;
+          progressMap[a.id] = { total: scopedTasks.length, completed };
+        } catch {
+          progressMap[a.id] = { total: 0, completed: 0 };
+        }
+      }),
+    );
+    setAreaProgress(progressMap);
+  };
+
+  const refreshTaskDerivedMetrics = async () => {
+    if (!selectedProject) return;
+    if (hasVersions(selectedProject.project_type)) {
+      const versions = await reloadProjectVersions();
+      if (versions) await refreshAreaProgressMetrics(versions);
+    } else {
+      await refreshAreaProgressMetrics();
+    }
   };
 
   const handleSaveProjectVersion = async (payload: {
@@ -749,6 +866,23 @@ const Projects = () => {
     } catch (error) {
       console.error(error);
       toast.error("Erro ao arquivar versão");
+    } finally {
+      setVersionSaving(false);
+    }
+  };
+
+  const handleUnarchiveProjectVersion = async (version: ProjectVersion) => {
+    if (!selectedProject) return;
+    setVersionSaving(true);
+    try {
+      await projectsService.unarchiveProjectVersion(selectedProject.id, version.id);
+      toast.success("Versão restaurada");
+      setVersionDialogOpen(false);
+      setEditingVersion(null);
+      await reloadProjectVersions();
+    } catch (error) {
+      console.error(error);
+      toast.error("Erro ao desarquivar versão");
     } finally {
       setVersionSaving(false);
     }
@@ -821,31 +955,10 @@ const Projects = () => {
           const listsWithTasks = await Promise.all(
             apiLists.map(async (apiList) => {
               const apiTasks = await projectsService.getProjectTasks(apiList.id, versionFilter);
-              const tasks: Task[] = apiTasks.map((apiTask: ApiProjectTask) => ({
-                id: apiTask.id,
-                title: apiTask.title,
-                description: apiTask.description || "",
-                status: apiTask.status as TaskStatus,
-                priority: apiTask.priority as Task["priority"],
-                dueDate: apiTask.due_date || undefined,
-                assignee: apiTask.assignee_id ? members.find((m) => m.id === apiTask.assignee_id) : undefined,
-                tags: apiTask.tags || [],
-                customFields: apiTask.custom_fields ?? {},
-                checklist: (apiTask.checklist || []).map(
-                  (
-                    item: { id?: string; text?: string; title?: string; completed?: boolean },
-                    index: number,
-                  ) => ({
-                    id: item.id || `checklist-${index}`,
-                    text: item.text || item.title || "",
-                    completed: item.completed || false,
-                  }),
-                ),
-              }));
               return {
                 id: apiList.id,
                 name: apiList.name,
-                tasks,
+                tasks: mapApiProjectTasksToUiTasks(apiTasks, members, versionFilter),
                 order: apiList.order_position,
               };
             }),
@@ -885,31 +998,10 @@ const Projects = () => {
         const listsWithTasks = await Promise.all(
           apiLists.map(async (apiList) => {
             const apiTasks = await projectsService.getProjectTasks(apiList.id, versionFilter);
-            const tasks: Task[] = apiTasks.map((apiTask: ApiProjectTask) => ({
-              id: apiTask.id,
-              title: apiTask.title,
-              description: apiTask.description || "",
-              status: apiTask.status as TaskStatus,
-              priority: apiTask.priority as Task["priority"],
-              dueDate: apiTask.due_date || undefined,
-              assignee: apiTask.assignee_id ? members.find((m) => m.id === apiTask.assignee_id) : undefined,
-              tags: apiTask.tags || [],
-              customFields: apiTask.custom_fields ?? {},
-              checklist: (apiTask.checklist || []).map(
-                (
-                  item: { id?: string; text?: string; title?: string; completed?: boolean },
-                  index: number,
-                ) => ({
-                  id: item.id || `checklist-${index}`,
-                  text: item.text || item.title || "",
-                  completed: item.completed || false,
-                }),
-              ),
-            }));
             return {
               id: apiList.id,
               name: apiList.name,
-              tasks,
+              tasks: mapApiProjectTasksToUiTasks(apiTasks, members, versionFilter),
               order: apiList.order_position,
             };
           }),
@@ -1119,6 +1211,12 @@ const Projects = () => {
 
   const applyNewProjectTask = (apiTask: ApiProjectTask, listId: string) => {
     if (!selectedProject) return;
+    if (hasVersions(selectedProject.project_type)) {
+      const versionFilter = versionSelectionToTaskFilter(versionSelection, projectVersions);
+      if (versionFilter?.versionId && apiTask.version_id !== versionFilter.versionId) {
+        return;
+      }
+    }
     const assignee = apiTask.assignee_id
       ? members.find((m) => m.id === apiTask.assignee_id)
       : undefined;
@@ -1146,6 +1244,7 @@ const Projects = () => {
     };
     setProjects(projects.map((p) => (p.id === selectedProject.id ? updatedProject : p)));
     setSelectedProject(updatedProject);
+    void refreshTaskDerivedMetrics();
   };
 
   // Move task between lists
@@ -1210,6 +1309,7 @@ const Projects = () => {
       // Update state
       setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
       setSelectedProject(updatedProject);
+      void refreshTaskDerivedMetrics();
       
       toast.success(`Tarefa movida para ${targetList.name}`);
     } catch (error) {
@@ -1272,6 +1372,7 @@ const Projects = () => {
           }
         }
       }
+      void refreshTaskDerivedMetrics();
     } catch (error) {
       console.error('Erro ao atualizar status da tarefa:', error);
       toast.error('Erro ao atualizar status da tarefa');
@@ -1305,6 +1406,7 @@ const Projects = () => {
       }
       
       toast.success("Tarefa excluída com sucesso!");
+      void refreshTaskDerivedMetrics();
     } catch (error) {
       console.error('Erro ao deletar tarefa:', error);
       toast.error('Erro ao deletar tarefa');
@@ -1371,6 +1473,7 @@ const Projects = () => {
       }
       
       toast.success("Tarefa atualizada com sucesso!");
+      void refreshTaskDerivedMetrics();
     } catch (error) {
       console.error('Erro ao atualizar tarefa:', error);
       toast.error('Erro ao atualizar tarefa');
@@ -1437,6 +1540,7 @@ const Projects = () => {
           setSelectedTask({task: updatedTask, listId: selectedTask.listId});
         }
       }
+      void refreshTaskDerivedMetrics();
     } catch (error) {
       console.error('Erro ao atualizar checklist:', error);
       toast.error('Erro ao atualizar checklist');
@@ -1688,6 +1792,7 @@ const Projects = () => {
           : null
       );
       toast.success("Tarefa atualizada");
+      void refreshTaskDerivedMetrics();
     } catch (e) {
       console.error(e);
       toast.error("Erro ao atualizar tarefa");
@@ -1768,7 +1873,12 @@ const Projects = () => {
           <ProjectHeader
             project={selectedProject}
             onBack={handleBackToProjects}
-            onSettings={() => setProjectSettingsOpen(true)}
+            onSettings={async () => {
+              if (selectedProject && hasVersions(selectedProject.project_type)) {
+                await reloadProjectVersions();
+              }
+              setProjectSettingsOpen(true);
+            }}
             onSaveAsTemplate={() => setSaveAsTemplateOpen(true)}
             onNewVersion={
               hasVersions(selectedProject.project_type)
@@ -2022,6 +2132,7 @@ const Projects = () => {
                   selectedProject.client_id ? (
                     activeTab === "files" ? (
                       <ProjectDriveWorkspace
+                        projectId={selectedProject.id}
                         clientId={selectedProject.client_id}
                         projectName={selectedProject.name}
                         selectedVersion={selectedVersion}
@@ -2427,7 +2538,12 @@ const Projects = () => {
             version={editingVersion}
             saving={versionSaving}
             onSave={handleSaveProjectVersion}
-            onArchive={editingVersion ? handleArchiveProjectVersion : undefined}
+            onArchive={
+              editingVersion && !editingVersion.archived_at ? handleArchiveProjectVersion : undefined
+            }
+            onUnarchive={
+              editingVersion?.archived_at ? handleUnarchiveProjectVersion : undefined
+            }
           />
           <ProjectPublishVersionDialog
             open={publishVersionOpen}
@@ -2487,6 +2603,24 @@ const Projects = () => {
               toast.success("Projeto excluído.");
             }}
             teams={teams}
+            versionsConfig={
+              hasVersions(selectedProject.project_type)
+                ? {
+                    versions: projectVersions,
+                    saving: versionSaving,
+                    onCreateVersion: () => {
+                      setEditingVersion(null);
+                      setVersionDialogOpen(true);
+                    },
+                    onEditVersion: (version) => {
+                      setEditingVersion(version);
+                      setVersionDialogOpen(true);
+                    },
+                    onArchiveVersion: handleArchiveProjectVersion,
+                    onUnarchiveVersion: handleUnarchiveProjectVersion,
+                  }
+                : undefined
+            }
             onSave={async (updatedProject) => {
               setProjects(projects.map(p => 
                 p.id === selectedProject.id 

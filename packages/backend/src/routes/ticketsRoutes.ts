@@ -6,8 +6,11 @@ import { tenantAuthCrm } from '../middleware/auth.js';
 const router = Router();
 router.use(...tenantAuthCrm);
 
+router.get('/kanban-stats', ticketsController.getTicketKanbanStats);
+router.post('/bulk', ticketsController.bulkUpdateTickets);
 router.get('/', ticketsController.getTickets);
 router.get('/:id', ticketsController.getTicketById);
+router.get('/:id/activities', ticketsController.getTicketActivities);
 router.post('/', ticketsController.createTicket);
 router.patch('/:id', ticketsController.updateTicket);
 router.delete('/:id', ticketsController.deleteTicket);

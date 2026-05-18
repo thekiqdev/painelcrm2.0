@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   DndContext,
@@ -48,6 +48,9 @@ type Props = {
   title?: string;
   description?: React.ReactNode;
   compact?: boolean;
+  /** Escopo de navegação em Projetos > {projeto} > Releases */
+  projectId?: string;
+  initialFolderId?: string | null;
 };
 
 const MAX_MB = 20;
@@ -66,9 +69,18 @@ function parseDropFolderId(overId: string | number): string | null {
   return null;
 }
 
-export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload, title, description, compact = false }: Props) {
+export function ClientDriveFileManager({
+  clientId,
+  clientDisplayName,
+  canUpload,
+  title,
+  description,
+  compact = false,
+  projectId,
+  initialFolderId = null,
+}: Props) {
   const queryClient = useQueryClient();
-  const [folderId, setFolderId] = useState<string | null>(null);
+  const [folderId, setFolderId] = useState<string | null>(initialFolderId);
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<ClientDriveSort>('name');
   const [createOpen, setCreateOpen] = useState(false);
@@ -87,9 +99,17 @@ export function ClientDriveFileManager({ clientId, clientDisplayName, canUpload,
     }),
   );
 
+  useEffect(() => {
+    setFolderId(initialFolderId);
+  }, [initialFolderId, projectId]);
+
   const browserQuery = useQuery({
-    queryKey: ['client-google-drive-browser', clientId, folderId ?? 'root'],
-    queryFn: () => getClientGoogleDriveBrowser(clientId, folderId),
+    queryKey: ['client-google-drive-browser', clientId, projectId ?? 'client', folderId ?? 'root'],
+    queryFn: () =>
+      getClientGoogleDriveBrowser(clientId, {
+        folderId,
+        projectId: projectId ?? undefined,
+      }),
     refetchInterval: (query) => {
       const items = query.state.data?.items ?? [];
       const busy = items.some(

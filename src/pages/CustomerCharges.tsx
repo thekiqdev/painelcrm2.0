@@ -26,6 +26,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { ClientEntityLink } from "@/components/entities";
 import {
   Dialog,
   DialogContent,
@@ -364,8 +365,13 @@ const CustomerCharges = () => {
                   <TableCell className="max-w-[200px] truncate">
                     {ch.description || "—"}
                   </TableCell>
-                  <TableCell>
-                    {ch.client_id ? (clientMap[ch.client_id] ?? ch.client_id.slice(0, 8)) : "—"}
+                  <TableCell className="max-w-[200px]">
+                    <ClientEntityLink
+                      clientId={ch.client_id}
+                      name={ch.client_id ? clientMap[ch.client_id] ?? ch.client_id.slice(0, 8) : null}
+                      disabledFallbackText="—"
+                      variant="table"
+                    />
                   </TableCell>
                   <TableCell>{ch.invoice_count}</TableCell>
                   <TableCell>{formatAmount(ch.total_cents)}</TableCell>
@@ -407,7 +413,6 @@ const CustomerCharges = () => {
           </div>
         ) : (
           charges.map((ch) => {
-            const clientLabel = ch.client_id ? clientMap[ch.client_id] ?? ch.client_id.slice(0, 8) : "Sem cliente";
             return (
               <button
                 key={ch.id}
@@ -418,7 +423,15 @@ const CustomerCharges = () => {
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
                     <p className="font-semibold leading-snug">{ch.description || "Cobrança sem descrição"}</p>
-                    <p className="mt-1 truncate text-sm text-muted-foreground">{clientLabel}</p>
+                    <div className="mt-1 text-sm text-muted-foreground">
+                      <ClientEntityLink
+                        clientId={ch.client_id}
+                        name={ch.client_id ? clientMap[ch.client_id] ?? ch.client_id.slice(0, 8) : null}
+                        disabledFallbackText="Sem cliente"
+                        variant="compact"
+                        stopPropagationOnClick
+                      />
+                    </div>
                   </div>
                   <StatusBadge status={ch.status} />
                 </div>

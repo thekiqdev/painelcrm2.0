@@ -61,6 +61,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 import { resolveTasksGranularFromLegacy } from "@/permissions/permissionCatalog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { ClientEntityLink } from "@/components/entities";
 import {
   mapKanbanColumnToClientLeadStatus,
   mapKanbanColumnToProjectStatus,
@@ -997,7 +998,19 @@ const closeTaskDetail = () => {
               <div className="flex flex-wrap gap-2 mt-2">
                 <Badge variant="secondary">{originBadgeLabel(selectedTask)}</Badge>
                 {selectedTask.client && (
-                  <Badge variant="outline">Cliente: {selectedTask.client}</Badge>
+                  <Badge variant="outline" className="gap-1 text-xs font-normal">
+                    <span className="text-muted-foreground">Cliente:</span>
+                    {selectedTask.clientId ? (
+                      <ClientEntityLink
+                        clientId={selectedTask.clientId}
+                        name={selectedTask.client}
+                        variant="compact"
+                        className="text-xs font-normal"
+                      />
+                    ) : (
+                      <span>{selectedTask.client}</span>
+                    )}
+                  </Badge>
                 )}
                 {selectedTask.deal && (
                   <Badge variant="outline">Negócio: {selectedTask.deal}</Badge>
@@ -1423,8 +1436,19 @@ const TaskList = ({
                   
                   {task.client && (
                     <div className="flex items-center">
-                      <Badge variant="outline" className="text-xs">
-                        Cliente: {task.client}
+                      <Badge variant="outline" className="gap-1 text-xs">
+                        <span className="text-muted-foreground">Cliente:</span>
+                        {task.clientId ? (
+                          <ClientEntityLink
+                            clientId={task.clientId}
+                            name={task.client}
+                            variant="compact"
+                            className="text-xs"
+                            stopPropagationOnClick
+                          />
+                        ) : (
+                          <span>{task.client}</span>
+                        )}
                       </Badge>
                     </div>
                   )}

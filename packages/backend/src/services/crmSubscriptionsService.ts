@@ -24,6 +24,8 @@ export interface CrmSubscriptionListRow {
   id: string;
   client_id: string | null;
   client_name: string | null;
+  /** true quando a assinatura não tem customer_id (ex.: checkout por link). */
+  link_checkout: boolean;
   plan_label: string | null;
   amount_cents: number;
   billing_interval: string;
@@ -226,7 +228,9 @@ export async function listCrmCustomerSubscriptions(tenantId: string): Promise<Cr
   try {
     const r = await pool.query<CrmSubscriptionListRow>(
       `SELECT s.id::text,
-              s.customer_id::text AS client_id,
+              crm.client_pk::text AS client_id,
+              crm.display_name AS client_name,
+              (s.customer_id IS NULL) AS link_checkout,
               s.amount_cents,
               s.billing_interval::text,
               s.status::text,
@@ -234,16 +238,23 @@ export async function listCrmCustomerSubscriptions(tenantId: string): Promise<Cr
               s.cancel_at_period_end,
               COALESCE(s.cycles_unlimited, true) AS cycles_unlimited,
               s.max_cycles,
-              c.name AS client_name,
               (SELECT ci.description FROM customer_invoices ci
                WHERE ci.tenant_id = s.tenant_id AND ci.subscription_id = s.id AND ci.origin = 'subscription'
                  AND ci.invoice_type IS DISTINCT FROM 'child'
                ORDER BY ci.created_at DESC LIMIT 1) AS plan_label
        FROM subscriptions s
-       LEFT JOIN clients c ON c.id = s.customer_id
-         AND EXISTS (
-           SELECT 1 FROM users u WHERE u.id = c.user_id AND u.tenant_id = s.tenant_id
-         )
+       LEFT JOIN LATERAL (
+         SELECT c.id AS client_pk,
+                TRIM(COALESCE(
+                  NULLIF(TRIM(c.name), ''),
+                  NULLIF(TRIM(c.company), ''),
+                  NULLIF(TRIM(c.email), '')
+                )) AS display_name
+         FROM clients c
+         INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = s.tenant_id
+         WHERE c.id = s.customer_id
+         LIMIT 1
+       ) crm ON true
        WHERE s.tenant_id = $1 AND s.type = 'customer'
        ORDER BY s.created_at DESC`,
       [tenantId]
@@ -254,7 +265,9 @@ export async function listCrmCustomerSubscriptions(tenantId: string): Promise<Cr
     if (!/cycles_unlimited|max_cycles/.test(msg)) throw e;
     const r = await pool.query<CrmSubscriptionListRow>(
       `SELECT s.id::text,
-              s.customer_id::text AS client_id,
+              crm.client_pk::text AS client_id,
+              crm.display_name AS client_name,
+              (s.customer_id IS NULL) AS link_checkout,
               s.amount_cents,
               s.billing_interval::text,
               s.status::text,
@@ -262,16 +275,23 @@ export async function listCrmCustomerSubscriptions(tenantId: string): Promise<Cr
               s.cancel_at_period_end,
               true AS cycles_unlimited,
               NULL::int AS max_cycles,
-              c.name AS client_name,
               (SELECT ci.description FROM customer_invoices ci
                WHERE ci.tenant_id = s.tenant_id AND ci.subscription_id = s.id AND ci.origin = 'subscription'
                  AND ci.invoice_type IS DISTINCT FROM 'child'
                ORDER BY ci.created_at DESC LIMIT 1) AS plan_label
        FROM subscriptions s
-       LEFT JOIN clients c ON c.id = s.customer_id
-         AND EXISTS (
-           SELECT 1 FROM users u WHERE u.id = c.user_id AND u.tenant_id = s.tenant_id
-         )
+       LEFT JOIN LATERAL (
+         SELECT c.id AS client_pk,
+                TRIM(COALESCE(
+                  NULLIF(TRIM(c.name), ''),
+                  NULLIF(TRIM(c.company), ''),
+                  NULLIF(TRIM(c.email), '')
+                )) AS display_name
+         FROM clients c
+         INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = s.tenant_id
+         WHERE c.id = s.customer_id
+         LIMIT 1
+       ) crm ON true
        WHERE s.tenant_id = $1 AND s.type = 'customer'
        ORDER BY s.created_at DESC`,
       [tenantId]
@@ -385,7 +405,11 @@ export async function getCrmSubscriptionDetail(
   const [clientRow, invRows, stats, cyclesRead, tenantRow] = await Promise.all([
     sub.customer_id
       ? pool.query<{ name: string | null }>(
-          `SELECT c.name
+          `SELECT TRIM(COALESCE(
+               NULLIF(TRIM(c.name), ''),
+               NULLIF(TRIM(c.company), ''),
+               NULLIF(TRIM(c.email), '')
+             )) AS name
            FROM clients c
            INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $2
            WHERE c.id = $1

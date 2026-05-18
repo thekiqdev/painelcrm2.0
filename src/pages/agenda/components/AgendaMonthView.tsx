@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils';
 import type { Appointment } from '@/services/appointments';
 import type { AvailabilityBlock } from '@/services/appointmentAvailabilityBlocks';
 import type { AppointmentHolidayApi } from '@/services/appointmentHolidays';
+import { ClientEntityLink } from '@/components/entities';
 import {
   TYPE_ACCENT,
   TYPE_BAR,
@@ -326,10 +327,10 @@ export function AgendaMonthView({
                   </div>
                 </li>
               ) : (
-                <li key={cell.ap.id}>
+                <li key={cell.ap.id} className="overflow-hidden rounded-md border border-border/60">
                   <Button
                     variant="ghost"
-                    className="h-auto w-full justify-start border border-border/60 py-2 text-left"
+                    className="h-auto w-full justify-start rounded-none border-0 py-2 text-left hover:bg-muted/50"
                     onClick={() => {
                       onEventClick(cell.ap.id);
                       setDaySheet(null);
@@ -358,6 +359,19 @@ export function AgendaMonthView({
                       </div>
                     </div>
                   </Button>
+                  {cell.ap.client_id ? (
+                    <div
+                      className="border-t border-border/50 bg-muted/15 px-4 py-2"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <ClientEntityLink
+                        clientId={cell.ap.client_id}
+                        name={cell.ap.client_name}
+                        disabledFallbackText="Cliente"
+                        variant="compact"
+                      />
+                    </div>
+                  ) : null}
                 </li>
               )
               )

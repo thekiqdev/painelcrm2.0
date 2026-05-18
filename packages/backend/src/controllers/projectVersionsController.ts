@@ -7,12 +7,19 @@ import {
   loadProjectInTenant,
   projectAllowsVersions,
 } from '../services/projectVersionsScope.js';
+import {
+  COMPLETED_PROJECT_TASK_STATUS_SQL,
+  OPEN_PROJECT_TASK_STATUS_SQL,
+} from '../services/projectTaskStatus.js';
 
 const MODULE_PROJECTS = 'projects';
 
 const VERSION_STATUSES = ['planning', 'development', 'qa', 'published', 'archived'] as const;
 const RELEASE_NOTE_TYPES = ['feature', 'fix', 'improvement', 'internal'] as const;
-const COMPLETED_TASK_STATUSES = ['done', 'completed', 'closed'] as const;
+const VERSION_TASK_JOIN = `t.project_id = pv.project_id AND (
+        t.version_id = pv.id
+        OR (pv.is_default = true AND t.version_id IS NULL)
+      )`;
 
 function normalizeVersionStatus(status: unknown): unknown {
   if (status === 'planned') return 'planning';
@@ -115,13 +122,13 @@ const VERSION_SELECT_WITH_METRICS = `
   pv.created_at,
   pv.updated_at,
   COUNT(t.id)::int AS total_tasks,
-  COUNT(t.id) FILTER (WHERE COALESCE(t.status, '') IN ('done', 'completed', 'closed'))::int AS completed_tasks,
+  COUNT(t.id) FILTER (WHERE ${COMPLETED_PROJECT_TASK_STATUS_SQL})::int AS completed_tasks,
   COUNT(t.id) FILTER (
     WHERE t.due_date IS NOT NULL
       AND t.due_date < now()
-      AND COALESCE(t.status, '') NOT IN ('done', 'completed', 'closed')
+      AND ${OPEN_PROJECT_TASK_STATUS_SQL}
   )::int AS overdue_tasks
-  , COUNT(t.id) FILTER (WHERE COALESCE(t.status, '') NOT IN ('done', 'completed', 'closed'))::int AS open_tasks
+  , COUNT(t.id) FILTER (WHERE ${OPEN_PROJECT_TASK_STATUS_SQL})::int AS open_tasks
   , COUNT(t.id) FILTER (WHERE COALESCE(t.release_note_type, 'feature') = 'feature')::int AS feature_tasks
   , COUNT(t.id) FILTER (WHERE t.release_note_type = 'fix')::int AS fix_tasks
   , COUNT(t.id) FILTER (WHERE t.release_note_type = 'improvement')::int AS improvement_tasks
@@ -156,11 +163,7 @@ async function loadVersionById(projectId: string, versionId: string) {
     `SELECT ${VERSION_SELECT_WITH_METRICS}
      FROM project_versions pv
      LEFT JOIN project_tasks t
-       ON t.project_id = pv.project_id
-      AND (
-        t.version_id = pv.id
-        OR (pv.is_default = true AND t.version_id IS NULL)
-      )
+       ON ${VERSION_TASK_JOIN}
      WHERE pv.project_id = $1 AND pv.id = $2
      GROUP BY pv.id`,
     [projectId, versionId],
@@ -502,6 +505,66 @@ export async function archiveProjectVersion(req: Request, res: Response): Promis
     }
     console.error('Error archiving project version:', error);
     res.status(500).json({ error: 'Erro ao arquivar versão do projeto' });
+  }
+}
+
+export async function unarchiveProjectVersion(req: Request, res: Response): Promise<void> {
+  try {
+    const userId = (req as AuthRequest).userId;
+    const tenantId = (req as AuthRequest).tenantId ?? null;
+    const { projectId, versionId } = req.params;
+    if (!userId) {
+      res.status(401).json({ error: 'Não autenticado' });
+      return;
+    }
+    if (!tenantId) {
+      res.status(404).json({ error: 'Versão não encontrada' });
+      return;
+    }
+
+    const project = await loadProjectInTenant(projectId, tenantId);
+    if (!project) {
+      res.status(404).json({ error: 'Projeto não encontrado' });
+      return;
+    }
+
+    await assertModulePermission(userId, MODULE_PROJECTS, 'edit', { ownerId: project.user_id }, req as AuthRequest);
+
+    const versionRow = await pool.query<{ archived_at: Date | null; status: string }>(
+      `SELECT archived_at, status FROM project_versions WHERE id = $1 AND project_id = $2`,
+      [versionId, projectId],
+    );
+    if (versionRow.rows.length === 0) {
+      res.status(404).json({ error: 'Versão não encontrada' });
+      return;
+    }
+    if (!versionRow.rows[0].archived_at) {
+      res.status(400).json({ error: 'Esta versão não está arquivada' });
+      return;
+    }
+
+    const restoredStatus = versionRow.rows[0].status === 'archived' ? 'planning' : versionRow.rows[0].status;
+
+    await pool.query(
+      `UPDATE project_versions
+       SET archived_at = NULL,
+           archived_by = NULL,
+           status = $3,
+           updated_at = now()
+       WHERE id = $1 AND project_id = $2`,
+      [versionId, projectId, restoredStatus],
+    );
+
+    const version = await loadVersionById(projectId, versionId);
+    console.info('[project-version-updated]', { projectId, versionId, archived: false });
+    res.json(version);
+  } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
+    console.error('Error unarchiving project version:', error);
+    res.status(500).json({ error: 'Erro ao desarquivar versão do projeto' });
   }
 }
 

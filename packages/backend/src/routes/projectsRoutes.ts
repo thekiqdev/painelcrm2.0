@@ -5,6 +5,7 @@ import {
   createProject,
   updateProject,
   deleteProject,
+  ensureProjectGoogleDriveFolders,
 } from '../controllers/projectsController.js';
 import {
   getProjectFinancialExpenses,
@@ -21,6 +22,7 @@ router.use(...tenantAuthCrm);
 
 // Rotas de projetos
 router.get('/', getProjects);
+router.post('/:projectId/google-drive/ensure-folders', ensureProjectGoogleDriveFolders);
 router.get('/:projectId/financial/summary', getProjectFinancialSummary);
 router.get('/:projectId/financial/invoices', getProjectFinancialInvoices);
 router.get('/:projectId/financial/expenses', getProjectFinancialExpenses);

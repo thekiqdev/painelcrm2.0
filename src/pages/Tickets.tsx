@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { Plus, Search, LayoutGrid, List } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,6 +21,8 @@ import {
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { MobilePageHeader } from '@/components/mobile/MobilePageHeader';
+import { ClientEntityLink, LeadEntityLink } from '@/components/entities';
+import { clientsService } from '@/services/clients';
 
 export default function Tickets() {
   const navigate = useNavigate();
@@ -30,6 +33,21 @@ export default function Tickets() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [viewMode, setViewMode] = useState<'table' | 'kanban'>('table');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+
+  const { data: clientsList = [] } = useQuery({
+    queryKey: ['clients', 'tickets-list', user?.id],
+    queryFn: () => clientsService.getClients(),
+    enabled: Boolean(user?.id),
+    staleTime: 120_000,
+  });
+  const clientNameById = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const c of clientsList) {
+      const label = (c.name || c.company || c.email || '').trim();
+      if (label) m[c.id] = label;
+    }
+    return m;
+  }, [clientsList]);
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedSearch(searchQuery.trim()), 350);
@@ -100,7 +118,7 @@ export default function Tickets() {
             {
               icon: <LayoutGrid className="h-4 w-4" aria-hidden />,
               ariaLabel: 'Vista em kanban',
-              onClick: () => setViewMode('kanban'),
+              onClick: () => navigate('/support/tickets/kanban'),
             },
           ]}
           primaryAction={{
@@ -156,7 +174,8 @@ export default function Tickets() {
             <Button
               variant={viewMode === 'kanban' ? 'default' : 'outline'}
               size="icon"
-              onClick={() => setViewMode('kanban')}
+              onClick={() => navigate('/support/tickets/kanban')}
+              title="Kanban"
             >
               <LayoutGrid className="h-4 w-4" />
             </Button>
@@ -189,7 +208,46 @@ export default function Tickets() {
                   >
                     <td className="p-4 font-medium">{ticket.ticket_number}</td>
                     <td className="p-4">{ticket.subject}</td>
-                    <td className="p-4">{ticket.contact_name}</td>
+                    <td className="p-4 max-w-[220px]">
+                      {(() => {
+                        const tid =
+                          ticket.client_id != null && ticket.client_id !== ""
+                            ? String(ticket.client_id).trim()
+                            : "";
+                        const lid =
+                          ticket.lead_id != null && ticket.lead_id !== ""
+                            ? String(ticket.lead_id).trim()
+                            : "";
+                        if (tid) {
+                          return (
+                            <ClientEntityLink
+                              clientId={tid}
+                              name={clientNameById[tid] ?? ticket.client_name}
+                              disabledFallbackText="Abrir cliente"
+                              variant="table"
+                              stopPropagationOnClick
+                            />
+                          );
+                        }
+                        if (lid) {
+                          return (
+                            <span className="inline-flex min-w-0 max-w-full flex-col gap-0.5">
+                              <LeadEntityLink
+                                leadId={lid}
+                                name={ticket.lead_name || ticket.contact_name}
+                                disabledFallbackText="Lead"
+                                variant="table"
+                                stopPropagationOnClick
+                              />
+                              <Badge variant="outline" className="w-fit text-[10px] font-normal">
+                                Lead
+                              </Badge>
+                            </span>
+                          );
+                        }
+                        return <span className="text-muted-foreground">{ticket.contact_name}</span>;
+                      })()}
+                    </td>
                     <td className="p-4">
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge className={ticketPriorityColors[ticket.priority]}>
@@ -250,7 +308,46 @@ export default function Tickets() {
                           {getSLABadge(ticket)}
                         </div>
                         <div className="text-xs text-muted-foreground">
-                          {ticket.contact_name}
+                          {(() => {
+                            const tid =
+                              ticket.client_id != null && ticket.client_id !== ""
+                                ? String(ticket.client_id).trim()
+                                : "";
+                            const lid =
+                              ticket.lead_id != null && ticket.lead_id !== ""
+                                ? String(ticket.lead_id).trim()
+                                : "";
+                            if (tid) {
+                              return (
+                                <ClientEntityLink
+                                  clientId={tid}
+                                  name={clientNameById[tid] ?? ticket.client_name}
+                                  disabledFallbackText="Abrir cliente"
+                                  variant="compact"
+                                  stopPropagationOnClick
+                                  className="inline min-w-0 max-w-full align-baseline"
+                                />
+                              );
+                            }
+                            if (lid) {
+                              return (
+                                <span className="inline-flex flex-col gap-0.5">
+                                  <LeadEntityLink
+                                    leadId={lid}
+                                    name={ticket.lead_name || ticket.contact_name}
+                                    disabledFallbackText="Lead"
+                                    variant="compact"
+                                    stopPropagationOnClick
+                                    className="inline min-w-0 max-w-full align-baseline"
+                                  />
+                                  <Badge variant="outline" className="w-fit text-[9px] font-normal px-1 py-0">
+                                    Lead
+                                  </Badge>
+                                </span>
+                              );
+                            }
+                            return ticket.contact_name;
+                          })()}
                         </div>
                       </div>
                     </Card>

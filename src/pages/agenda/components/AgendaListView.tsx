@@ -16,6 +16,7 @@ import type { Appointment } from '@/services/appointments';
 import type { AvailabilityBlock } from '@/services/appointmentAvailabilityBlocks';
 import type { AppointmentHolidayApi } from '@/services/appointmentHolidays';
 import { retryAppointmentSync } from '@/services/appointments';
+import { ClientEntityLink } from '@/components/entities';
 import {
   TYPE_ACCENT,
   TYPE_BAR,
@@ -322,10 +323,6 @@ export function AgendaListView({
                 onQuickRequestConfirmation;
 
               if (compactMobile) {
-                const responsibleLine =
-                  ap.responsible_name ||
-                  ap.client_name ||
-                  (ap.lead_name ? `Lead: ${ap.lead_name}` : null);
                 return (
                   <li key={ap.id}>
                     <div
@@ -344,49 +341,75 @@ export function AgendaListView({
                           {format(parseISO(ap.ends_at), 'HH:mm')}
                         </span>
                       </div>
-                      <button
-                        type="button"
-                        className="min-w-0 flex-1 px-2 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                        onClick={() => void onOpenDetail(ap.id)}
-                      >
-                        <p className="line-clamp-2 text-sm font-semibold leading-snug text-foreground">{ap.title}</p>
-                        {responsibleLine ? (
-                          <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{responsibleLine}</p>
-                        ) : null}
-                        <div className="mt-1 flex flex-wrap gap-1">
-                          <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-normal text-muted-foreground">
-                            {appointmentStatusLabel(ap.status)}
-                          </Badge>
-                          <Badge
-                            variant="outline"
-                            className={cn(
-                              'h-5 px-1.5 text-[10px] font-normal',
-                              appointmentAttendanceBadgeClass(ap.attendance_status),
-                            )}
-                          >
-                            {appointmentAttendanceLabel(ap.attendance_status)}
-                          </Badge>
-                          {publicConfirmationLabel ? (
+                      <div className="flex min-w-0 flex-1 flex-col">
+                        <button
+                          type="button"
+                          className="min-w-0 flex-1 px-2 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                          onClick={() => void onOpenDetail(ap.id)}
+                        >
+                          <p className="line-clamp-2 text-sm font-semibold leading-snug text-foreground">{ap.title}</p>
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-normal text-muted-foreground">
+                              {appointmentStatusLabel(ap.status)}
+                            </Badge>
                             <Badge
                               variant="outline"
                               className={cn(
-                                'h-5 max-w-[9rem] truncate px-1.5 text-[10px] font-normal',
-                                appointmentPublicConfirmationBadgeClass(ap.public_confirmation_response ?? null),
+                                'h-5 px-1.5 text-[10px] font-normal',
+                                appointmentAttendanceBadgeClass(ap.attendance_status),
                               )}
                             >
-                              {publicConfirmationLabel}
+                              {appointmentAttendanceLabel(ap.attendance_status)}
                             </Badge>
+                            {publicConfirmationLabel ? (
+                              <Badge
+                                variant="outline"
+                                className={cn(
+                                  'h-5 max-w-[9rem] truncate px-1.5 text-[10px] font-normal',
+                                  appointmentPublicConfirmationBadgeClass(ap.public_confirmation_response ?? null),
+                                )}
+                              >
+                                {publicConfirmationLabel}
+                              </Badge>
+                            ) : null}
+                            {ap.recurrence_series_id ? (
+                              <Badge
+                                variant="outline"
+                                className="h-5 border-primary/35 px-1.5 text-[10px] font-normal text-primary"
+                              >
+                                Recorrente
+                              </Badge>
+                            ) : null}
+                          </div>
+                        </button>
+                        <div className="flex min-w-0 flex-col gap-0.5 border-t border-border/45 px-2 py-1 text-[11px] text-muted-foreground">
+                          {ap.client_id ? (
+                            <div className="flex min-w-0 items-center gap-1">
+                              <User className="h-3 w-3 shrink-0 opacity-70" />
+                              <ClientEntityLink
+                                clientId={ap.client_id}
+                                name={ap.client_name}
+                                disabledFallbackText="Cliente"
+                                variant="compact"
+                                className="min-w-0"
+                              />
+                            </div>
+                          ) : ap.lead_name && !ap.client_name ? (
+                            <div className="flex min-w-0 items-center gap-1">
+                              <User className="h-3 w-3 shrink-0 opacity-70" />
+                              <span className="truncate">Lead: {ap.lead_name}</span>
+                            </div>
+                          ) : ap.client_name ? (
+                            <div className="flex min-w-0 items-center gap-1">
+                              <User className="h-3 w-3 shrink-0 opacity-70" />
+                              <span className="truncate">{ap.client_name}</span>
+                            </div>
                           ) : null}
-                          {ap.recurrence_series_id ? (
-                            <Badge
-                              variant="outline"
-                              className="h-5 border-primary/35 px-1.5 text-[10px] font-normal text-primary"
-                            >
-                              Recorrente
-                            </Badge>
+                          {ap.responsible_name ? (
+                            <span className="truncate text-muted-foreground/90">Resp. {ap.responsible_name}</span>
                           ) : null}
                         </div>
-                      </button>
+                      </div>
                       <div className="flex shrink-0 items-center gap-0 border-l border-border/45 bg-muted/[0.06] pr-0.5">
                         {ap.sync_status === 'error' && ap.create_google_event && ce ? (
                           <Button
@@ -458,72 +481,122 @@ export function AgendaListView({
                     )}
                   >
                     <div className={cn('w-1 shrink-0 rounded-l-[2px]', bar)} aria-hidden />
-                    <button
-                      type="button"
-                      className="flex min-w-0 flex-1 cursor-pointer text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                      onClick={() => void onOpenDetail(ap.id)}
-                    >
-                      <div className="flex w-[3.35rem] shrink-0 flex-col items-center justify-center border-r border-border/50 bg-muted/15 px-1 py-2">
-                        <span className="text-sm font-semibold tabular-nums leading-none text-foreground">
-                          {format(parseISO(ap.starts_at), 'HH:mm')}
-                        </span>
-                        <span className="mt-0.5 text-[9px] font-medium text-muted-foreground">até</span>
-                        <span className="text-xs font-medium tabular-nums text-muted-foreground">
-                          {format(parseISO(ap.ends_at), 'HH:mm')}
-                        </span>
-                      </div>
-                      <div className="min-w-0 flex-1 px-2.5 py-2 sm:px-3 sm:py-2.5">
-                        <p className="line-clamp-2 text-sm font-semibold leading-snug text-foreground sm:line-clamp-1">
-                          {ap.title}
-                        </p>
-                        <div className="mt-1 flex flex-wrap items-center gap-1">
-                          <Badge
-                            variant="secondary"
-                            className="h-5 max-w-[9rem] truncate px-1.5 text-[10px] font-normal sm:max-w-none"
-                          >
-                            {typeLabelByKey?.[ap.type] ??
-                              TYPE_OPTIONS.find((t) => t.value === ap.type)?.label ??
-                              ap.type}
-                          </Badge>
-                          <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-normal text-muted-foreground">
-                            {appointmentStatusLabel(ap.status)}
-                          </Badge>
-                          <Badge
-                            variant="outline"
-                            className={cn('h-5 px-1.5 text-[10px] font-normal', appointmentAttendanceBadgeClass(ap.attendance_status))}
-                          >
-                            {appointmentAttendanceLabel(ap.attendance_status)}
-                          </Badge>
-                          {publicConfirmationLabel ? (
-                            <Badge
-                              variant="outline"
-                              className={cn(
-                                'h-5 px-1.5 text-[10px] font-normal',
-                                appointmentPublicConfirmationBadgeClass(ap.public_confirmation_response ?? null),
-                              )}
-                            >
-                              {publicConfirmationLabel}
-                            </Badge>
-                          ) : null}
-                          {ap.recurrence_series_id ? (
-                            <Badge
-                              variant="outline"
-                              className="h-5 border-primary/35 px-1.5 text-[10px] font-normal text-primary"
-                            >
-                              Recorrente
-                            </Badge>
-                          ) : null}
-                          <span
-                            className={cn(
-                              'inline-flex h-5 max-w-full items-center rounded-md border px-1.5 text-[10px] font-medium',
-                              syncP.className,
-                            )}
-                          >
-                            {syncP.label}
+                    <div className="flex min-w-0 flex-1 flex-col">
+                      <button
+                        type="button"
+                        className="flex min-w-0 w-full flex-1 cursor-pointer text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                        onClick={() => void onOpenDetail(ap.id)}
+                      >
+                        <div className="flex w-[3.35rem] shrink-0 flex-col items-center justify-center border-r border-border/50 bg-muted/15 px-1 py-2">
+                          <span className="text-sm font-semibold tabular-nums leading-none text-foreground">
+                            {format(parseISO(ap.starts_at), 'HH:mm')}
+                          </span>
+                          <span className="mt-0.5 text-[9px] font-medium text-muted-foreground">até</span>
+                          <span className="text-xs font-medium tabular-nums text-muted-foreground">
+                            {format(parseISO(ap.ends_at), 'HH:mm')}
                           </span>
                         </div>
-                        <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
-                          {ap.client_name ? (
+                        <div className="min-w-0 flex-1 px-2.5 py-2 sm:px-3 sm:py-2.5">
+                          <p className="line-clamp-2 text-sm font-semibold leading-snug text-foreground sm:line-clamp-1">
+                            {ap.title}
+                          </p>
+                          <div className="mt-1 flex flex-wrap items-center gap-1">
+                            <Badge
+                              variant="secondary"
+                              className="h-5 max-w-[9rem] truncate px-1.5 text-[10px] font-normal sm:max-w-none"
+                            >
+                              {typeLabelByKey?.[ap.type] ??
+                                TYPE_OPTIONS.find((t) => t.value === ap.type)?.label ??
+                                ap.type}
+                            </Badge>
+                            <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-normal text-muted-foreground">
+                              {appointmentStatusLabel(ap.status)}
+                            </Badge>
+                            <Badge
+                              variant="outline"
+                              className={cn('h-5 px-1.5 text-[10px] font-normal', appointmentAttendanceBadgeClass(ap.attendance_status))}
+                            >
+                              {appointmentAttendanceLabel(ap.attendance_status)}
+                            </Badge>
+                            {publicConfirmationLabel ? (
+                              <Badge
+                                variant="outline"
+                                className={cn(
+                                  'h-5 px-1.5 text-[10px] font-normal',
+                                  appointmentPublicConfirmationBadgeClass(ap.public_confirmation_response ?? null),
+                                )}
+                              >
+                                {publicConfirmationLabel}
+                              </Badge>
+                            ) : null}
+                            {ap.recurrence_series_id ? (
+                              <Badge
+                                variant="outline"
+                                className="h-5 border-primary/35 px-1.5 text-[10px] font-normal text-primary"
+                              >
+                                Recorrente
+                              </Badge>
+                            ) : null}
+                            <span
+                              className={cn(
+                                'inline-flex h-5 max-w-full items-center rounded-md border px-1.5 text-[10px] font-medium',
+                                syncP.className,
+                              )}
+                            >
+                              {syncP.label}
+                            </span>
+                          </div>
+                          {ap.sync_status === 'error' && ap.create_google_event ? (
+                            <p className="mt-1 text-[11px] text-amber-800/90 dark:text-amber-200/90">
+                              Não foi possível sincronizar com o Google Agenda.
+                            </p>
+                          ) : null}
+                          <div className="mt-1 flex flex-wrap items-center gap-2">
+                            {ap.google_meet_link ? (
+                              <a
+                                href={ap.google_meet_link}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-[11px] font-medium text-primary underline-offset-2 hover:underline"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <Video className="h-3.5 w-3.5 shrink-0" />
+                                Meet
+                              </a>
+                            ) : null}
+                            {ap.google_html_link ? (
+                              <a
+                                href={ap.google_html_link}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-[11px] text-muted-foreground underline-offset-2 hover:underline"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                                Google
+                              </a>
+                            ) : null}
+                          </div>
+                        </div>
+                      </button>
+                      <div className="flex min-w-0 border-t border-border/50 bg-muted/[0.04]">
+                        <div
+                          className="flex w-[3.35rem] shrink-0 border-r border-border/50 bg-muted/15"
+                          aria-hidden
+                        />
+                        <div className="flex min-w-0 flex-1 flex-wrap gap-x-2 gap-y-0.5 px-2.5 py-1.5 text-[11px] text-muted-foreground sm:px-3">
+                          {ap.client_id ? (
+                            <span className="inline-flex max-w-full min-w-0 items-center gap-1">
+                              <User className="h-3 w-3 shrink-0 opacity-70" />
+                              <ClientEntityLink
+                                clientId={ap.client_id}
+                                name={ap.client_name}
+                                disabledFallbackText="Cliente"
+                                variant="compact"
+                                className="min-w-0 text-[11px]"
+                              />
+                            </span>
+                          ) : ap.client_name ? (
                             <span className="inline-flex max-w-full items-center gap-1 truncate">
                               <User className="h-3 w-3 shrink-0 opacity-70" />
                               <span className="truncate">{ap.client_name}</span>
@@ -539,39 +612,8 @@ export function AgendaListView({
                             <span className="text-muted-foreground/90">Resp. {ap.responsible_name}</span>
                           ) : null}
                         </div>
-                        {ap.sync_status === 'error' && ap.create_google_event ? (
-                          <p className="mt-1 text-[11px] text-amber-800/90 dark:text-amber-200/90">
-                            Não foi possível sincronizar com o Google Agenda.
-                          </p>
-                        ) : null}
-                        <div className="mt-1 flex flex-wrap items-center gap-2">
-                          {ap.google_meet_link ? (
-                            <a
-                              href={ap.google_meet_link}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 text-[11px] font-medium text-primary underline-offset-2 hover:underline"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <Video className="h-3.5 w-3.5 shrink-0" />
-                              Meet
-                            </a>
-                          ) : null}
-                          {ap.google_html_link ? (
-                            <a
-                              href={ap.google_html_link}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 text-[11px] text-muted-foreground underline-offset-2 hover:underline"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <ExternalLink className="h-3.5 w-3.5 shrink-0" />
-                              Google
-                            </a>
-                          ) : null}
-                        </div>
                       </div>
-                    </button>
+                    </div>
 
                     {canQuick ? (
                       <div

@@ -29,6 +29,7 @@ import {
   taskKanbanColumn,
   type KanbanColumnId,
 } from "@/utils/tasksKanbanStatus";
+import { ClientEntityLink } from "@/components/entities";
 
 function originShort(task: Task): string {
   const o = task.origin;
@@ -135,11 +136,30 @@ function KanbanCard({
           </Button>
         </div>
         <p className="font-medium leading-snug line-clamp-3">{task.title}</p>
-        {linkedLabel(task) && (
-          <p className="text-xs text-muted-foreground truncate" title={linkedLabel(task) ?? undefined}>
-            {linkedLabel(task)}
-          </p>
-        )}
+        {(() => {
+          const cid = task.clientId ?? (task as { client_id?: string | null }).client_id ?? null;
+          const clientDisplay = (task.client_name || task.client || "").trim();
+          if (cid && clientDisplay && !task.project_name) {
+            return (
+              <div className="min-w-0 text-xs text-muted-foreground">
+                <ClientEntityLink
+                  clientId={cid}
+                  name={clientDisplay}
+                  variant="compact"
+                  stopPropagationOnClick
+                  className="block truncate"
+                />
+              </div>
+            );
+          }
+          const label = linkedLabel(task);
+          if (!label) return null;
+          return (
+            <p className="text-xs text-muted-foreground truncate" title={label}>
+              {label}
+            </p>
+          );
+        })()}
         <div className="flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
           {task.date && (
             <span>

@@ -637,6 +637,21 @@ void (async () => {
   }
 
   startWhatsappAvatarCacheWorkerInterval();
+
+  const ticketAutoResolveMs = Math.max(
+    3_600_000,
+    parseInt(process.env.TICKET_AUTO_RESOLVE_POLL_MS || String(24 * 3_600_000), 10),
+  );
+  setInterval(() => {
+    void import('./services/ticketAutoResolveService.js')
+      .then(({ runTicketAutoResolveBatch }) => runTicketAutoResolveBatch())
+      .then((result) => {
+        if (result.resolved_count > 0) {
+          console.log(`[tickets-auto-resolve] resolved=${result.resolved_count}`);
+        }
+      })
+      .catch((err) => console.error('[tickets-auto-resolve] tick error', err));
+  }, ticketAutoResolveMs);
   });
 })();
 

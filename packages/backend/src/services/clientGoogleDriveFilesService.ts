@@ -8,6 +8,7 @@ import {
 import {
   getDriveFileMetadata,
   isFolderUnderClientArquivosTree,
+  isFolderUnderClientProjetosTree,
   moveDriveFile,
   refreshDriveTokenIfNeeded,
   trashDriveFile,
@@ -93,11 +94,51 @@ function forbiddenUploadParents(folders: ClientGoogleDriveFolderRow): Set<string
     folders.folder_contratos_id,
     folders.folder_propostas_id,
     folders.folder_faturas_id,
+    ...(folders.folder_projetos_id ? [folders.folder_projetos_id] : []),
   ]);
 }
 
 function moduleFolderIds(folders: ClientGoogleDriveFolderRow): Set<string> {
-  return new Set([folders.folder_contratos_id, folders.folder_propostas_id, folders.folder_faturas_id]);
+  return new Set([
+    folders.folder_contratos_id,
+    folders.folder_propostas_id,
+    folders.folder_faturas_id,
+    ...(folders.folder_projetos_id ? [folders.folder_projetos_id] : []),
+  ]);
+}
+
+function projetosSiblingModuleIds(folders: ClientGoogleDriveFolderRow): Set<string> {
+  return new Set([
+    folders.client_root_folder_id,
+    folders.folder_arquivos_id,
+    folders.folder_contratos_id,
+    folders.folder_propostas_id,
+    folders.folder_faturas_id,
+  ]);
+}
+
+async function isAllowedUploadFolder(
+  accessToken: string,
+  destFolderId: string,
+  folders: ClientGoogleDriveFolderRow,
+): Promise<boolean> {
+  if (await isFolderUnderClientArquivosTree(
+    accessToken,
+    destFolderId,
+    folders.folder_arquivos_id,
+    moduleFolderIds(folders),
+  )) {
+    return true;
+  }
+  if (folders.folder_projetos_id) {
+    return isFolderUnderClientProjetosTree(
+      accessToken,
+      destFolderId,
+      folders.folder_projetos_id,
+      projetosSiblingModuleIds(folders),
+    );
+  }
+  return false;
 }
 
 async function loadTrackedClientFileRow(params: {
@@ -180,12 +221,7 @@ export async function uploadClientGoogleDriveFile(params: {
   }
   conn = await refreshDriveTokenIfNeeded(conn);
 
-  const allowed = await isFolderUnderClientArquivosTree(
-    conn.accessToken,
-    destFolderId,
-    arquivosRoot,
-    moduleFolderIds(folders),
-  );
+  const allowed = await isAllowedUploadFolder(conn.accessToken, destFolderId, folders);
   if (!allowed) {
     const err = new Error('Pasta de destino inválida.');
     (err as Error & { code?: string }).code = 'folder_invalid';
@@ -308,13 +344,7 @@ export async function retryFailedClientGoogleDriveUpload(params: {
   }
   conn = await refreshDriveTokenIfNeeded(conn);
 
-  const arquivosRoot = folders.folder_arquivos_id;
-  const allowed = await isFolderUnderClientArquivosTree(
-    conn.accessToken,
-    destFolderId,
-    arquivosRoot,
-    moduleFolderIds(folders),
-  );
+  const allowed = await isAllowedUploadFolder(conn.accessToken, destFolderId, folders);
   if (!allowed) {
     const err = new Error('Pasta de destino inválida.');
     (err as Error & { code?: string }).code = 'folder_invalid';
@@ -439,13 +469,7 @@ export async function moveClientGoogleDriveFile(params: {
   }
   conn = await refreshDriveTokenIfNeeded(conn);
 
-  const arquivosRoot = folders.folder_arquivos_id;
-  const allowedDest = await isFolderUnderClientArquivosTree(
-    conn.accessToken,
-    dest,
-    arquivosRoot,
-    moduleFolderIds(folders),
-  );
+  const allowedDest = await isAllowedUploadFolder(conn.accessToken, dest, folders);
   if (!allowedDest) {
     const err = new Error('Pasta de destino inválida.');
     (err as Error & { code?: string }).code = 'folder_invalid';

@@ -30,7 +30,10 @@ export type NotificationType =
   | 'chat_transferred'
   | 'chat_sla_breach'
   | 'tenant_ticket_new'
-  | 'tenant_ticket_reply';
+  | 'tenant_ticket_reply'
+  | 'tenant_ticket_public_reply'
+  | 'tenant_ticket_reopened'
+  | 'tenant_ticket_resolved';
 
 /**
  * Interface para criar notificação

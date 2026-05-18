@@ -21,6 +21,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { ClientEntityLink } from "@/components/entities";
 
 interface BoardViewProps {
   lists: ProjectList[];
@@ -193,6 +194,20 @@ export function BoardView({
               <Calendar className="h-3 w-3 mr-1" />
               {project.dueDate && formatDate(project.dueDate)}
             </div>
+
+            {project.client_id ? (
+              <div className="mb-2 min-w-0 text-xs text-muted-foreground">
+                <span className="mr-1">Cliente:</span>
+                <ClientEntityLink
+                  clientId={project.client_id}
+                  name={project.clientName}
+                  disabledFallbackText="Cliente não identificado"
+                  variant="compact"
+                  stopPropagationOnClick
+                  className="inline min-w-0 max-w-full align-baseline"
+                />
+              </div>
+            ) : null}
             
             <div className="flex flex-wrap gap-1 mb-2">
               {project.tags && project.tags.map(tag => (

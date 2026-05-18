@@ -11,7 +11,12 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { CalendarIcon, Plus, X, DollarSign, Save, FileText, Trash2 } from "lucide-react";
+import { CalendarIcon, Plus, X, DollarSign, Save, FileText, Trash2, GitBranch } from "lucide-react";
+import { cn } from "@/lib/utils";
+import {
+  ProjectSettingsVersionsTab,
+  type ProjectSettingsVersionsTabProps,
+} from "@/components/projects/ProjectSettingsVersionsTab";
 import { format } from "date-fns";
 import { Project } from "./types";
 import { Member } from "@/components/shared/types";
@@ -32,6 +37,7 @@ interface ProjectSettingsDialogProps {
   onSave: (updatedProject: Partial<Project>) => void;
   canDeleteProject?: boolean;
   onDeleteProject?: () => Promise<void>;
+  versionsConfig?: ProjectSettingsVersionsTabProps;
 }
 
 export function ProjectSettingsDialog({
@@ -43,7 +49,9 @@ export function ProjectSettingsDialog({
   onSave,
   canDeleteProject = false,
   onDeleteProject,
+  versionsConfig,
 }: ProjectSettingsDialogProps) {
+  const showVersionsTab = Boolean(versionsConfig);
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState("general");
   const [saveAsTemplateOpen, setSaveAsTemplateOpen] = useState(false);
@@ -135,11 +143,17 @@ export function ProjectSettingsDialog({
           </DialogHeader>
 
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="grid w-full grid-cols-4">
-              <TabsTrigger value="general">Geral</TabsTrigger>
-              <TabsTrigger value="team">Equipe</TabsTrigger>
-              <TabsTrigger value="budget">Orçamento</TabsTrigger>
-              <TabsTrigger value="actions">Ações</TabsTrigger>
+            <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1 rounded-lg bg-muted p-1">
+              <TabsTrigger value="general" className="flex-shrink-0">Geral</TabsTrigger>
+              {showVersionsTab ? (
+                <TabsTrigger value="versions" className="flex-shrink-0 gap-1.5">
+                  <GitBranch className="h-3.5 w-3.5" />
+                  Versões
+                </TabsTrigger>
+              ) : null}
+              <TabsTrigger value="team" className="flex-shrink-0">Equipe</TabsTrigger>
+              <TabsTrigger value="budget" className="flex-shrink-0">Orçamento</TabsTrigger>
+              <TabsTrigger value="actions" className="flex-shrink-0">Ações</TabsTrigger>
             </TabsList>
 
             {/* TAB: GERAL */}
@@ -441,6 +455,12 @@ export function ProjectSettingsDialog({
                 </Button>
               </div>
             </TabsContent>
+
+            {showVersionsTab && versionsConfig ? (
+              <TabsContent value="versions" className="space-y-4">
+                <ProjectSettingsVersionsTab {...versionsConfig} />
+              </TabsContent>
+            ) : null}
 
             {/* TAB: AÇÕES */}
             <TabsContent value="actions" className="space-y-4">

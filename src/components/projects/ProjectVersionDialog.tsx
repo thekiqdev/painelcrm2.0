@@ -38,6 +38,7 @@ type ProjectVersionDialogProps = {
     frozen?: boolean;
   }) => Promise<void>;
   onArchive?: (version: ProjectVersion) => Promise<void>;
+  onUnarchive?: (version: ProjectVersion) => Promise<void>;
 };
 
 export function ProjectVersionDialog({
@@ -47,6 +48,7 @@ export function ProjectVersionDialog({
   saving = false,
   onSave,
   onArchive,
+  onUnarchive,
 }: ProjectVersionDialogProps) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -150,7 +152,16 @@ export function ProjectVersionDialog({
             </div>
           </div>
           <DialogFooter className="gap-2 sm:justify-between">
-            {version && onArchive ? (
+            {version && version.archived_at && onUnarchive ? (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={saving}
+                onClick={() => void onUnarchive(version)}
+              >
+                Desarquivar
+              </Button>
+            ) : version && onArchive && !version.archived_at ? (
               <Button
                 type="button"
                 variant="outline"

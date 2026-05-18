@@ -15,6 +15,7 @@ import { useTenantDetail } from '@/contexts/TenantDetailContext';
 import { apiClient } from '@/integrations/api/client';
 import { toast } from '@/components/ui/sonner';
 import { UserCog, LogIn } from 'lucide-react';
+import { useSuperadminImpersonation } from '@/hooks/useSuperadminImpersonation';
 
 interface TenantUser {
   id: string;
@@ -57,7 +58,7 @@ export default function SuperAdminClientUsuarios() {
   const { tenant } = useTenantDetail();
   const [users, setUsers] = useState<TenantUser[]>([]);
   const [loading, setLoading] = useState(true);
-  const [impersonatingId, setImpersonatingId] = useState<string | null>(null);
+  const { openAsUser, impersonatingUserId } = useSuperadminImpersonation();
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -71,25 +72,6 @@ export default function SuperAdminClientUsuarios() {
   useEffect(() => {
     load();
   }, [load]);
-
-  const handleAcessarComo = async (userId: string) => {
-    setImpersonatingId(userId);
-    const res = await apiClient.post<{ token: string; url: string }>('/api/superadmin/impersonate', {
-      user_id: userId,
-    });
-    setImpersonatingId(null);
-    if (res.error) {
-      toast.error(res.error);
-      return;
-    }
-    if (!res.data?.token || !res.data?.url) {
-      toast.error('Resposta inválida do servidor.');
-      return;
-    }
-    const targetUrl = `${res.data.url}?impersonation_token=${encodeURIComponent(res.data.token)}`;
-    window.open(targetUrl, '_blank', 'noopener,noreferrer');
-    toast.success('Abrindo o sistema como esse usuário em nova aba.');
-  };
 
   if (!tenant) return null;
 
@@ -145,11 +127,11 @@ export default function SuperAdminClientUsuarios() {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => handleAcessarComo(u.id)}
-                            disabled={!!impersonatingId}
+                            onClick={() => openAsUser(u.id)}
+                            disabled={!!impersonatingUserId}
                           >
                             <LogIn className="mr-2 h-4 w-4" />
-                            {impersonatingId === u.id ? 'Abrindo...' : 'Acessar como'}
+                            {impersonatingUserId === u.id ? 'Abrindo...' : 'Acessar como'}
                           </Button>
                         ) : (
                           <span className="text-xs text-muted-foreground">Super Admin</span>

@@ -27,6 +27,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { ClientEntityLink } from "@/components/entities";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -601,7 +602,15 @@ const CustomerInvoices = () => {
                     <TableCell className="font-mono text-sm">
                       {inv.invoice_number ?? inv.id.slice(0, 8)}
                     </TableCell>
-                    <TableCell>{inv.client_id ? (clientMap[inv.client_id] ?? inv.client_id.slice(0, 8)) : "Sem cliente"}</TableCell>
+                    <TableCell className="max-w-[220px]">
+                      <ClientEntityLink
+                        clientId={inv.client_id}
+                        name={inv.client_id ? clientMap[inv.client_id] ?? inv.client_id.slice(0, 8) : null}
+                        disabledFallbackText="Sem cliente"
+                        variant="table"
+                        stopPropagationOnClick
+                      />
+                    </TableCell>
                     <TableCell>{formatAmount(inv.amount_cents)}</TableCell>
                     <TableCell>
                       <CustomerInvoiceStatusBadge status={inv.status} />
@@ -767,9 +776,16 @@ const CustomerInvoices = () => {
                     <p className="font-mono text-xs text-muted-foreground">
                       {inv.invoice_number ?? inv.id.slice(0, 8)}
                     </p>
-                    <p className="mt-1 font-semibold leading-snug">
-                      {inv.client_id ? clientMap[inv.client_id] ?? "Cliente" : "Sem cliente"}
-                    </p>
+                    <div className="mt-1 font-semibold leading-snug">
+                      <ClientEntityLink
+                        clientId={inv.client_id}
+                        name={inv.client_id ? clientMap[inv.client_id] ?? "Cliente" : null}
+                        disabledFallbackText="Sem cliente"
+                        variant="compact"
+                        className="font-semibold"
+                        stopPropagationOnClick
+                      />
+                    </div>
                     <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                       <CustomerInvoiceStatusBadge status={inv.status} />
                       <span className="text-base font-semibold tabular-nums">{formatAmount(inv.amount_cents)}</span>

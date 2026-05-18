@@ -8,6 +8,7 @@ import type { PoolClient } from 'pg';
 import { sendKanbanAutomationOutboundText } from '../controllers/chatController.js';
 import { sendWhatsappModelSequence } from './whatsappModelSequenceService.js';
 import { normalizeConversationPhone } from './conversationMatchingService.js';
+import { migrateTicketsLeadToClientInTransaction } from './leadConversionMigrationService.js';
 
 type AutomationStatus = 'executed' | 'skipped' | 'failed';
 
@@ -1295,6 +1296,13 @@ export async function runKanbanEnsureClientAutomationInTransaction(
       `UPDATE leads SET status = 'Convertido', updated_at = now() WHERE id = $1`,
       [lead.id],
     );
+
+    await migrateTicketsLeadToClientInTransaction(client, {
+      tenantId: input.tenantId,
+      leadId: lead.id,
+      clientId: finalClientId,
+      actorUserId: input.actorUserId,
+    });
 
     const nextMeta = stampEnsureClientAutomationInMetadata(
       row.metadata,

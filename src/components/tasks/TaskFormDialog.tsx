@@ -302,7 +302,7 @@ export function TaskFormDialog({
           tags: tagsInput,
           task_type: taskType,
           area_id: context.areaId ?? null,
-          version_id: context.versionId ?? null,
+          ...(context.versionId ? { version_id: context.versionId } : {}),
           checklist,
           start_date: (adv.start_date as string | null) ?? null,
           start_time: (adv.start_time as string | null) ?? null,
