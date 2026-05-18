@@ -10,9 +10,10 @@ import { getCustomerInvoiceSchema } from './customerInvoiceSchema.js';
 import type { GatewayPaymentData } from '../modules/payments/paymentGatewayTypes.js';
 import { syncOrdersFromCustomerInvoiceStatus } from './orderInvoiceSyncService.js';
 import {
-  publishInvoiceCreatedNotification,
-  publishInvoicePaidNotification,
-} from './notificationsEngine/businessTransactionalNotifications.js';
+  notifyInvoiceCreated,
+  notifyInvoicePaid,
+  notifyInvoicePaymentFailed,
+} from './invoiceNotificationsService.js';
 import { syncCustomerInvoicePaymentToFinancialAccount } from './financialGatewayReceivablesService.js';
 
 export interface CustomerInvoiceRow {
@@ -174,8 +175,7 @@ export async function createCustomerInvoice(data: CreateCustomerInvoiceInput): P
     invoice_type: row.invoice_type,
     payment_token_present: Boolean(row.payment_token),
   });
-  publishInvoiceCreatedNotification({
-    pool,
+  notifyInvoiceCreated({
     tenantId: data.tenant_id,
     invoiceId: row.id,
     preferredSenderUserId: null,
@@ -245,8 +245,7 @@ export async function createChildCustomerInvoice(data: CreateChildCustomerInvoic
     dueDate: due,
     amount: data.amount_cents,
   });
-  publishInvoiceCreatedNotification({
-    pool,
+  notifyInvoiceCreated({
     tenantId: data.tenant_id,
     invoiceId: row.id,
     preferredSenderUserId: null,
@@ -374,8 +373,7 @@ export async function createManualCustomerInvoice(
     amount: amountCents,
     origin: 'manual',
   });
-  publishInvoiceCreatedNotification({
-    pool,
+  notifyInvoiceCreated({
     tenantId: data.tenant_id,
     invoiceId: row.id,
     preferredSenderUserId: null,
@@ -773,12 +771,15 @@ export async function updateCustomerInvoiceStatus(
 
   const becamePaid = markingPaid && oldNorm !== 'paid';
   if (becamePaid && tenantIdRow) {
-    publishInvoicePaidNotification({
-      pool,
+    notifyInvoicePaid({
       tenantId: tenantIdRow,
       invoiceId,
       preferredSenderUserId: null,
     });
+  }
+
+  if (incomingNorm === 'failed' && oldNorm !== 'failed') {
+    notifyInvoicePaymentFailed(invoiceId);
   }
 
   /** Sempre que a fatura está/continua paga: sync idempotente (webhook reenviado, correção manual, etc.) */

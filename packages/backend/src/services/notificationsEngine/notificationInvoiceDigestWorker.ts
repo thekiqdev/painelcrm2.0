@@ -10,7 +10,7 @@ import {
   getNotificationsEngineDueSoonLookaheadDays,
   isBusinessNotificationEventKeyAllowed,
 } from '../../config/notificationsEngineEnv.js';
-import { publishInvoiceDueSoonDigest, publishInvoiceOverdueDigest } from './businessTransactionalNotifications.js';
+import { notifyInvoiceDueSoon, notifyInvoiceOverdue } from '../invoiceNotificationsService.js';
 import { neLogError } from './notificationEngineLog.js';
 
 export async function processInvoiceNotificationDigestBatch(
@@ -44,12 +44,12 @@ export async function processInvoiceNotificationDigestBatch(
         [lookahead, maxPerKind],
       );
       for (const row of rs.rows) {
-        publishInvoiceDueSoonDigest({
-          pool,
+        notifyInvoiceDueSoon({
           tenantId: row.tenant_id,
           invoiceId: row.id,
           idempotencyDay: day,
           preferredSenderUserId: null,
+          publishOutboundDigest: true,
         });
         dueSoon += 1;
       }
@@ -67,12 +67,12 @@ export async function processInvoiceNotificationDigestBatch(
         [maxPerKind],
       );
       for (const row of ro.rows) {
-        publishInvoiceOverdueDigest({
-          pool,
+        notifyInvoiceOverdue({
           tenantId: row.tenant_id,
           invoiceId: row.id,
           idempotencyDay: day,
           preferredSenderUserId: null,
+          publishOutboundDigest: true,
         });
         overdue += 1;
       }

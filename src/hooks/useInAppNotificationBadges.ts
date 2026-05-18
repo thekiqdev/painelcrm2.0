@@ -9,7 +9,7 @@ export function useInAppNotificationBadges() {
 
   const refresh = useCallback(async () => {
     const [n, u] = await Promise.all([
-      systemNotificationsService.unreadCount(),
+      systemNotificationsService.unreadCount('system'),
       announcementsUpdatesService.unreadCount(),
     ]);
     setNotifUnread(n);

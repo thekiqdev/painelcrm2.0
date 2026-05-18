@@ -6,8 +6,10 @@ import { z } from 'zod';
 import {
   loadTicketForNotify,
   notifyTicketCreated,
+  notifyExpiredTicketSlasForTenant,
   notifyTicketReopened,
   notifyTicketResolved,
+  notifyTicketTransferred,
 } from '../services/ticketNotificationsService.js';
 
 const TICKET_ENTITY_AVATAR_SQL = `
@@ -60,6 +62,9 @@ export async function getTickets(req: AuthRequest, res: Response): Promise<void>
       return;
     }
     await assertModulePermission(userId, 'tickets', 'view', undefined, req);
+    void notifyExpiredTicketSlasForTenant(tenantId).catch((err) =>
+      console.warn('[tickets] notifyExpiredTicketSlasForTenant failed', err)
+    );
 
     const {
       status,
@@ -191,6 +196,9 @@ export async function getTicketKanbanStats(req: AuthRequest, res: Response): Pro
       return;
     }
     await assertModulePermission(userId, 'tickets', 'view', undefined, req);
+    void notifyExpiredTicketSlasForTenant(tenantId).catch((err) =>
+      console.warn('[tickets] notifyExpiredTicketSlasForTenant stats failed', err)
+    );
 
     const result = await pool.query<{
       open_count: number;
@@ -229,6 +237,42 @@ export async function getTicketKanbanStats(req: AuthRequest, res: Response): Pro
   }
 }
 
+export async function getTicketMenuCount(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = req.tenantId ?? null;
+    const userId = req.userId;
+    if (!tenantId || !userId) {
+      res.status(401).json({ error: 'Não autenticado' });
+      return;
+    }
+    await assertModulePermission(userId, 'tickets', 'view', undefined, req);
+
+    const result = await pool.query<{ count: number }>(
+      `SELECT COUNT(*)::int AS count
+       FROM tickets t
+       INNER JOIN users owner ON owner.id = t.user_id AND owner.tenant_id = $1
+       LEFT JOIN ticket_teams tt ON tt.id = t.team_id
+       WHERE t.status IN ('new', 'open')
+         AND (
+           t.user_id = $2::uuid
+           OR
+           t.assignee_id = $2::uuid
+           OR (
+             tt.members IS NOT NULL
+             AND tt.members ? $2::text
+           )
+         )`,
+      [tenantId, userId]
+    );
+
+    res.json({ count: Number(result.rows[0]?.count ?? 0) });
+  } catch (error) {
+    if (respondPerm(res, error)) return;
+    console.error('Error fetching ticket menu count:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
 export async function bulkUpdateTickets(req: AuthRequest, res: Response): Promise<void> {
   try {
     const userId = req.userId!;
@@ -252,10 +296,11 @@ export async function bulkUpdateTickets(req: AuthRequest, res: Response): Promis
       id: string;
       user_id: string;
       assignee_id: string | null;
+      team_id: string | null;
       status: string;
       tags: unknown;
     }>(
-      `SELECT t.id::text, t.user_id::text, t.assignee_id::text, t.status::text, t.tags
+      `SELECT t.id::text, t.user_id::text, t.assignee_id::text, t.team_id::text, t.status::text, t.tags
        FROM tickets t
        INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1
        WHERE t.id = ANY($2::uuid[])`,
@@ -280,6 +325,7 @@ export async function bulkUpdateTickets(req: AuthRequest, res: Response): Promis
 
     const client = await pool.connect();
     let updated = 0;
+    const assignedTicketIds: string[] = [];
     try {
       await client.query('BEGIN');
 
@@ -299,16 +345,18 @@ export async function bulkUpdateTickets(req: AuthRequest, res: Response): Promis
         updated = r.rowCount ?? 0;
         resolvedTicketIds.push(...r.rows.map((row) => row.id));
       } else if (body.action === 'assign') {
-        const r = await client.query(
+        const r = await client.query<{ id: string }>(
           `UPDATE tickets t
            SET assignee_id = $3::uuid, updated_at = now()
            FROM users u
            WHERE u.id = t.user_id AND u.tenant_id = $1
              AND t.id = ANY($2::uuid[])
-             AND t.status <> 'closed'::ticket_status`,
+             AND t.status <> 'closed'::ticket_status
+           RETURNING t.id::text AS id`,
           [tenantId, body.ids, body.assignee_id]
         );
         updated = r.rowCount ?? 0;
+        assignedTicketIds.push(...r.rows.map((row) => row.id));
       } else if (body.action === 'add_tag') {
         const tag = body.tag!.trim();
         for (const row of existing.rows) {
@@ -341,6 +389,28 @@ export async function bulkUpdateTickets(req: AuthRequest, res: Response): Promis
       throw e;
     } finally {
       client.release();
+    }
+
+    if (body.action === 'assign' && body.assignee_id) {
+      const previousById = new Map(existing.rows.map((row) => [row.id, row]));
+      for (const ticketId of assignedTicketIds) {
+        const previous = previousById.get(ticketId);
+        if (!previous || previous.assignee_id === body.assignee_id) continue;
+        try {
+          const payload = await loadTicketForNotify(tenantId, ticketId);
+          if (payload) {
+            await notifyTicketTransferred(tenantId, payload, {
+              actorUserId: userId,
+              previousAssigneeId: previous.assignee_id,
+              previousTeamId: previous.team_id,
+              newAssigneeId: body.assignee_id,
+              newTeamId: payload.team_id,
+            });
+          }
+        } catch (e) {
+          console.warn('[tickets] bulk assign notification failed', ticketId, e);
+        }
+      }
     }
 
     res.json({ updated_count: updated, ids: body.ids });
@@ -546,9 +616,10 @@ export async function updateTicket(req: AuthRequest, res: Response): Promise<voi
     const existing = await pool.query<{
       user_id: string;
       assignee_id: string | null;
+      team_id: string | null;
       status: string;
     }>(
-      `SELECT t.user_id, t.assignee_id, t.status::text AS status FROM tickets t
+      `SELECT t.user_id, t.assignee_id, t.team_id, t.status::text AS status FROM tickets t
        INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1
        WHERE t.id = $2`,
       [tenantId, id]
@@ -615,8 +686,14 @@ export async function updateTicket(req: AuthRequest, res: Response): Promise<voi
     const updated = result.rows[0] as { status?: string };
     const newStatus = ticketData.status ?? row.status;
     const statusChanged = ticketData.status !== undefined && newStatus !== row.status;
+    const newAssigneeId =
+      ticketData.assignee_id !== undefined ? ticketData.assignee_id ?? null : row.assignee_id;
+    const newTeamId =
+      ticketData.team_id !== undefined ? ticketData.team_id ?? null : row.team_id;
+    const assignmentChanged =
+      newAssigneeId !== row.assignee_id || newTeamId !== row.team_id;
 
-    if (statusChanged) {
+    if (statusChanged || assignmentChanged) {
       try {
         const payload = await loadTicketForNotify(tenantId, id);
         if (payload) {
@@ -625,9 +702,18 @@ export async function updateTicket(req: AuthRequest, res: Response): Promise<voi
           } else if (newStatus === 'resolved' && row.status !== 'resolved') {
             await notifyTicketResolved(tenantId, payload, userId);
           }
+          if (assignmentChanged) {
+            await notifyTicketTransferred(tenantId, payload, {
+              actorUserId: userId,
+              previousAssigneeId: row.assignee_id,
+              previousTeamId: row.team_id,
+              newAssigneeId,
+              newTeamId,
+            });
+          }
         }
       } catch (e) {
-        console.warn('[tickets] status notification failed', e);
+        console.warn('[tickets] notification failed', e);
       }
     }
 

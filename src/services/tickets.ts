@@ -140,6 +140,12 @@ export const ticketsService = {
     );
   },
 
+  async getMenuCount(): Promise<number> {
+    const response = await apiClient.get<{ count: number }>('/api/tickets/menu-count');
+    if (response.error) return 0;
+    return Number(response.data?.count ?? 0);
+  },
+
   async bulkUpdateTickets(payload: {
     ids: string[];
     action: 'resolve' | 'assign' | 'add_tag';

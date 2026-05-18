@@ -121,6 +121,29 @@ export async function reassignTenantUserDataAndDeleteUser(params: {
 
     await run(client, 'DELETE FROM super_admin_audit_log WHERE user_id = $1', [targetUserId]);
 
+    /**
+     * notifications: anúncios têm UNIQUE parcial (user_id, entity_id).
+     * Se usuário primário e removido receberam o mesmo anúncio, reapontar user_id
+     * criaria duplicidade. Mantém a cópia do primário e remove a do usuário alvo.
+     */
+    await run(
+      client,
+      `DELETE FROM notifications n
+       WHERE n.user_id = $1
+         AND n.type = 'announcement'
+         AND n.entity_type = 'announcement'
+         AND n.entity_id IS NOT NULL
+         AND EXISTS (
+           SELECT 1
+           FROM notifications p
+           WHERE p.user_id = $2
+             AND p.type = 'announcement'
+             AND p.entity_type = 'announcement'
+             AND p.entity_id = n.entity_id
+         )`,
+      [targetUserId, primaryUserId]
+    );
+
     for (const table of USER_ID_TABLES) {
       await run(client, `UPDATE ${table} SET user_id = $1 WHERE user_id = $2`, [
         primaryUserId,

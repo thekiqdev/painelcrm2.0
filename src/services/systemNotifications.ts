@@ -7,6 +7,7 @@ export type InboxNotificationRow = {
   title: string;
   message: string | null;
   href: string;
+  category: 'system' | 'message';
   read: boolean;
   read_at: string | null;
   created_at: string;
@@ -26,14 +27,17 @@ export function resolveNotificationHref(n: InboxNotificationRow): string {
 }
 
 export const systemNotificationsService = {
-  async list(limit = 25): Promise<InboxNotificationRow[]> {
-    const r = await apiClient.get<{ notifications: InboxNotificationRow[] }>(`/api/notifications?limit=${limit}`);
+  async list(limit = 25, category?: 'system' | 'message'): Promise<InboxNotificationRow[]> {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (category) params.set('category', category);
+    const r = await apiClient.get<{ notifications: InboxNotificationRow[] }>(`/api/notifications?${params.toString()}`);
     if (r.error) throw new Error(r.error);
     return r.data?.notifications ?? [];
   },
 
-  async unreadCount(): Promise<number> {
-    const r = await apiClient.get<{ count: number }>('/api/notifications/unread-count');
+  async unreadCount(category?: 'system' | 'message'): Promise<number> {
+    const suffix = category ? `?category=${category}` : '';
+    const r = await apiClient.get<{ count: number }>(`/api/notifications/unread-count${suffix}`);
     if (r.error) return 0;
     return r.data?.count ?? 0;
   },
@@ -43,8 +47,9 @@ export const systemNotificationsService = {
     if (r.error) throw new Error(r.error);
   },
 
-  async markAllRead(): Promise<void> {
-    const r = await apiClient.patch('/api/notifications/read-all', {});
+  async markAllRead(category?: 'system' | 'message'): Promise<void> {
+    const suffix = category ? `?category=${category}` : '';
+    const r = await apiClient.patch(`/api/notifications/read-all${suffix}`, {});
     if (r.error) throw new Error(r.error);
   },
 

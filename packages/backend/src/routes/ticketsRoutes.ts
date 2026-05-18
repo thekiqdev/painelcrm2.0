@@ -7,6 +7,7 @@ const router = Router();
 router.use(...tenantAuthCrm);
 
 router.get('/kanban-stats', ticketsController.getTicketKanbanStats);
+router.get('/menu-count', ticketsController.getTicketMenuCount);
 router.post('/bulk', ticketsController.bulkUpdateTickets);
 router.get('/', ticketsController.getTickets);
 router.get('/:id', ticketsController.getTicketById);

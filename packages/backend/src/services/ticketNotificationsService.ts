@@ -113,7 +113,8 @@ export async function collectNewTicketNotifyUserIds(
     if (uid !== ticket.user_id) out.push(uid);
   }
   if (out.length === 0) {
-    return await fallbackTenantNotifyUserIds(tenantId, ticket.user_id);
+    const fallback = await fallbackTenantNotifyUserIds(tenantId, ticket.user_id);
+    return uniqueIds([ticket.user_id, ...fallback]);
   }
   return uniqueIds(out);
 }
@@ -166,6 +167,12 @@ async function sendToMany(params: {
   logLabel: string;
 }): Promise<void> {
   const message = params.message.slice(0, 250);
+  console.log('[NOTIFY][TICKET]', {
+    type: params.type,
+    recipients: params.userIds.length,
+    logLabel: params.logLabel,
+    ticket_id: params.data.ticket_id,
+  });
   for (const userId of params.userIds) {
     try {
       await createNotification({
@@ -276,9 +283,9 @@ export async function notifyTicketReply(
   const data = buildTicketNotificationData(ticket);
 
   if (author.role === 'customer') {
-    const exclude = author.userId?.trim() || ticket.user_id;
+    const exclude = author.userId?.trim() || null;
     const recipients = uniqueIds(
-      (await collectNewTicketNotifyUserIds(tenantId, ticket)).filter((id) => id !== exclude)
+      (await collectNewTicketNotifyUserIds(tenantId, ticket)).filter((id) => !exclude || id !== exclude)
     );
     let message = preview;
     if (author.contactName?.trim()) {
@@ -343,6 +350,99 @@ export async function notifyTicketResolved(
     data: buildTicketNotificationData(ticket),
     logLabel: 'notifyTicketResolved',
   });
+}
+
+export async function notifyTicketTransferred(
+  tenantId: string,
+  ticket: TicketNotifyPayload,
+  options: {
+    actorUserId?: string | null;
+    previousAssigneeId?: string | null;
+    previousTeamId?: string | null;
+    newAssigneeId?: string | null;
+    newTeamId?: string | null;
+  }
+): Promise<void> {
+  const actor = options.actorUserId?.trim() || null;
+  const previousAssignee = options.previousAssigneeId ?? null;
+  const previousTeam = options.previousTeamId ?? null;
+  const newAssignee = options.newAssigneeId ?? ticket.assignee_id ?? null;
+  const newTeam = options.newTeamId ?? ticket.team_id ?? null;
+  const assigneeChanged = newAssignee !== previousAssignee;
+  const teamChanged = newTeam !== previousTeam;
+
+  if (!assigneeChanged && !teamChanged) return;
+
+  const recipients: string[] = [];
+  if (assigneeChanged && newAssignee) recipients.push(newAssignee);
+  if (teamChanged && newTeam) {
+    recipients.push(...(await teamMemberUserIds(tenantId, newTeam)));
+  }
+
+  const userIds = uniqueIds(recipients).filter((id) => id !== actor);
+  if (userIds.length === 0) return;
+
+  await sendToMany({
+    userIds,
+    type: 'tenant_ticket_transferred',
+    title: 'Ticket transferido',
+    message: `${ticket.ticket_number}: ${ticket.subject}`.slice(0, 250),
+    data: buildTicketNotificationData(ticket, {
+      previous_assignee_id: previousAssignee,
+      previous_team_id: previousTeam,
+      new_assignee_id: newAssignee,
+      new_team_id: newTeam,
+    }),
+    logLabel: 'notifyTicketTransferred',
+  });
+}
+
+export async function notifyTicketSlaExpired(
+  tenantId: string,
+  ticket: TicketNotifyPayload
+): Promise<void> {
+  const recent = await pool.query<{ id: string }>(
+    `SELECT id::text
+     FROM notifications
+     WHERE type = 'tenant_ticket_sla_expired'
+       AND data->>'ticket_id' = $1
+       AND created_at > now() - interval '24 hours'
+     LIMIT 1`,
+    [ticket.id]
+  );
+  if (recent.rows.length > 0) return;
+
+  const recipients = await collectNewTicketNotifyUserIds(tenantId, ticket);
+  await sendToMany({
+    userIds: recipients,
+    type: 'tenant_ticket_sla_expired',
+    title: 'SLA de ticket expirado',
+    message: `${ticket.ticket_number}: ${ticket.subject}`.slice(0, 250),
+    data: buildTicketNotificationData(ticket, { sla_expired: true }),
+    logLabel: 'notifyTicketSlaExpired',
+  });
+}
+
+export async function notifyExpiredTicketSlasForTenant(tenantId: string): Promise<number> {
+  const r = await pool.query<{ id: string }>(
+    `SELECT t.id::text AS id
+     FROM tickets t
+     INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = $1
+     WHERE t.status IN ('new', 'open', 'pending', 'waiting_customer', 'in_progress')
+       AND t.resolution_due_at IS NOT NULL
+       AND t.resolution_due_at < now()
+     ORDER BY t.resolution_due_at ASC
+     LIMIT 50`,
+    [tenantId]
+  );
+  let sent = 0;
+  for (const row of r.rows) {
+    const payload = await loadTicketForNotify(tenantId, row.id);
+    if (!payload) continue;
+    await notifyTicketSlaExpired(tenantId, payload);
+    sent++;
+  }
+  return sent;
 }
 
 /** @deprecated Use notifyTicketCreated */

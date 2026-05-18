@@ -94,6 +94,18 @@ function IconAvatar({ Icon, muted }: { Icon: LucideIcon; muted?: boolean }) {
   );
 }
 
+function systemBadgeForType(type: string): { label: string; variant?: ItemShellProps['badgeVariant'] } | null {
+  if (type.includes('invoice') || type === 'payment_failed') {
+    return { label: 'Financeiro', variant: type === 'payment_failed' || type === 'invoice_overdue' ? 'destructive' : 'secondary' };
+  }
+  if (type.includes('ticket')) return { label: 'Ticket', variant: type.includes('sla') ? 'destructive' : 'secondary' };
+  if (type.includes('automation') || type === 'kanban_automation') return { label: 'Automação' };
+  if (type.includes('task')) return { label: 'Tarefa' };
+  if (type.startsWith('agenda_')) return { label: 'Agenda' };
+  if (type === 'announcement') return { label: 'Alerta' };
+  return null;
+}
+
 type ItemShellProps = {
   unread: boolean;
   onClick: () => void;
@@ -280,11 +292,14 @@ export function DefaultNotificationItem({
   onClick: () => void;
 }) {
   const when = formatRelative(n.created_at);
+  const badge = systemBadgeForType(n.type);
   return (
     <NotificationItemShell
       unread={!n.read}
       onClick={onClick}
       left={<IconAvatar Icon={Icon} muted={n.read} />}
+      badge={badge?.label}
+      badgeVariant={badge?.variant}
       title={n.title}
       description={n.message}
       when={when}

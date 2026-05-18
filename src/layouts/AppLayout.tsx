@@ -94,6 +94,7 @@ import {
 } from '@/contexts/MobileShellChromeContext';
 import { useInAppNotificationBadges } from '@/hooks/useInAppNotificationBadges';
 import { useChatNavUnreadCount } from '@/hooks/useChatNavUnreadCount';
+import { useTicketMenuCount } from '@/hooks/useTicketMenuCount';
 import { useRealtimeEvents } from '@/hooks/useRealtimeEvents';
 import { HeaderNotificationBell } from '@/components/layout/HeaderNotificationBell';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -260,6 +261,43 @@ const Nav = () => {
     );
   }
 
+  function TicketSidebarNavItem() {
+    const ticketsAllowed = show(hasTickets, 'tickets');
+    const count = useTicketMenuCount(ticketsAllowed);
+    const badgeLabel = count <= 0 ? null : count > 99 ? '99+' : String(count);
+
+    return (
+      <SidebarMenuItem>
+        <SidebarMenuButton asChild tooltip="Tickets">
+          <NavLink
+            to="/support/tickets"
+            onMouseEnter={() => routePreload.tickets()}
+            className={({ isActive }) => cn(navLinkClassFn(isActive), 'relative', badgeLabel && 'gap-2')}
+          >
+            <Ticket className="size-4 shrink-0 opacity-90" aria-hidden />
+            {!collapsed ? (
+              <span className="flex min-w-0 flex-1 items-center justify-between gap-2">
+                <span className="truncate">Tickets</span>
+                {badgeLabel ? (
+                  <span className="flex h-5 min-w-[1.125rem] shrink-0 items-center justify-center rounded-full bg-amber-500 px-1.5 text-[10px] font-semibold tabular-nums leading-none text-white">
+                    {badgeLabel}
+                  </span>
+                ) : null}
+              </span>
+            ) : badgeLabel ? (
+              <span
+                className="pointer-events-none absolute right-0.5 top-0.5 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-amber-500 px-1 text-[9px] font-semibold leading-none text-white"
+                aria-hidden
+              >
+                {badgeLabel}
+              </span>
+            ) : null}
+          </NavLink>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    );
+  }
+
   return (
     <Sidebar
       collapsible="icon"
@@ -363,7 +401,7 @@ const Nav = () => {
                 <NavLinkItem to="/chat/kanbam" icon={LayoutGrid} label="Kanban" preload={() => routePreload.chatKanban()} />
               )}
               {show(hasTickets, 'tickets') && (
-                <NavLinkItem to="/support/tickets" icon={Ticket} label="Tickets" preload={() => routePreload.tickets()} />
+                <TicketSidebarNavItem />
               )}
             </SidebarMenu>
           </SidebarGroupContent>

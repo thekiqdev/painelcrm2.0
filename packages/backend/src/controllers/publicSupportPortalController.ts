@@ -578,7 +578,8 @@ export async function postPublicSupportTicket(req: Request, res: Response): Prom
           client_id, profile_id, lead_id, custom_fields
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::ticket_priority, 'new', 'portal'::ticket_channel,
           $9::uuid, $10::uuid, $11::uuid, $12::jsonb)
-        RETURNING id, ticket_number, client_id, lead_id, custom_fields`,
+        RETURNING id, ticket_number, subject, user_id, assignee_id, team_id, priority, contact_name,
+                  client_id, lead_id, custom_fields`,
             [
               actorId,
               contactName,
@@ -606,7 +607,8 @@ export async function postPublicSupportTicket(req: Request, res: Response): Prom
           client_id, profile_id, custom_fields
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::ticket_priority, 'new', 'portal'::ticket_channel,
           $9::uuid, $10::uuid, $11::jsonb)
-        RETURNING id, ticket_number, client_id, custom_fields`,
+        RETURNING id, ticket_number, subject, user_id, assignee_id, team_id, priority, contact_name,
+                  client_id, custom_fields`,
               [
                 actorId,
                 contactName,

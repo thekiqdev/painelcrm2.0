@@ -23,6 +23,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -99,6 +100,12 @@ type Props = {
   unreadCount: number;
 };
 
+type NotificationTab = 'system' | 'message';
+
+type NotificationDisplayEntry =
+  | { kind: 'single'; notification: InboxNotificationRow }
+  | { kind: 'group'; notifications: InboxNotificationRow[]; notification: InboxNotificationRow };
+
 function iconForNotificationType(type: string): LucideIcon {
   const t = type || '';
   if (t === 'announcement') return Megaphone;
@@ -131,25 +138,31 @@ export function HeaderNotificationBell({ unreadCount }: Props) {
   const { openConversationInContext, openChatForClient, openChatForLead } = useFloatingChat();
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<InboxNotificationRow[]>([]);
+  const [activeTab, setActiveTab] = useState<NotificationTab>('system');
+  const [messageUnreadCount, setMessageUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
   const [clearing, setClearing] = useState(false);
 
-  const loadList = useCallback(async () => {
+  const loadList = useCallback(async (category: NotificationTab = activeTab) => {
     setLoading(true);
     try {
-      const list = await systemNotificationsService.list(40);
+      const [list, messageUnread] = await Promise.all([
+        systemNotificationsService.list(40, category),
+        systemNotificationsService.unreadCount('message'),
+      ]);
       setItems(list);
+      setMessageUnreadCount(messageUnread);
     } catch {
       setItems([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeTab]);
 
   const onOpenChange = (next: boolean) => {
     setOpen(next);
-    if (next) void loadList();
+    if (next) void loadList(activeTab);
   };
 
   const { unreadItems, readItems } = useMemo(() => {
@@ -157,6 +170,44 @@ export function HeaderNotificationBell({ unreadCount }: Props) {
     const read = items.filter((x) => x.read);
     return { unreadItems: unread, readItems: read };
   }, [items]);
+
+  const groupMessageItems = useCallback((list: InboxNotificationRow[]): NotificationDisplayEntry[] => {
+    if (activeTab !== 'message') return list.map((notification) => ({ kind: 'single', notification }));
+    const groups = new Map<string, InboxNotificationRow[]>();
+    const order: string[] = [];
+    for (const item of list) {
+      const d = item.data && typeof item.data === 'object' ? (item.data as Record<string, unknown>) : {};
+      const conversationId = typeof d.conversationId === 'string' ? d.conversationId : '';
+      const contactName = typeof d.contactName === 'string' ? d.contactName : '';
+      const phone = typeof d.phone === 'string' ? d.phone : '';
+      const key = conversationId || phone || contactName || item.id;
+      if (!groups.has(key)) {
+        groups.set(key, []);
+        order.push(key);
+      }
+      groups.get(key)!.push(item);
+    }
+    return order.map((key) => {
+      const group = groups.get(key)!;
+      if (group.length <= 1) return { kind: 'single', notification: group[0] };
+      const unread = group.filter((x) => !x.read).length;
+      const base = group[0];
+      const d = base.data && typeof base.data === 'object' ? (base.data as Record<string, unknown>) : {};
+      const contact = (typeof d.contactName === 'string' && d.contactName.trim()) || base.title || 'Contato';
+      return {
+        kind: 'group',
+        notifications: group,
+        notification: {
+          ...base,
+          title: unread > 0 ? `${contact} (${unread} novas mensagens)` : contact,
+          message: unread > 0 ? 'Mensagens agrupadas do mesmo contato.' : 'Conversas recentes agrupadas por contato.',
+        },
+      };
+    });
+  }, [activeTab]);
+
+  const unreadEntries = useMemo(() => groupMessageItems(unreadItems), [groupMessageItems, unreadItems]);
+  const readEntries = useMemo(() => groupMessageItems(readItems), [groupMessageItems, readItems]);
 
   const handleClick = async (n: InboxNotificationRow) => {
     const href = resolveNotificationHref(n);
@@ -176,9 +227,29 @@ export function HeaderNotificationBell({ unreadCount }: Props) {
     });
   };
 
+  const handleEntryClick = async (entry: NotificationDisplayEntry) => {
+    if (entry.kind === 'single') {
+      await handleClick(entry.notification);
+      return;
+    }
+    const unread = entry.notifications.filter((x) => !x.read);
+    try {
+      await Promise.all(unread.map((x) => systemNotificationsService.markRead(x.id)));
+    } catch {
+      /* navega mesmo assim */
+    }
+    emitInAppNotificationsRefresh();
+    setOpen(false);
+    navigateNotificationHref(resolveNotificationHref(entry.notification), isMobile, navigate, {
+      openConversationInContext,
+      openChatForClient,
+      openChatForLead,
+    });
+  };
+
   const handleMarkAll = async () => {
     try {
-      await systemNotificationsService.markAllRead();
+      await systemNotificationsService.markAllRead(activeTab);
       toast.success('Todas marcadas como lidas');
     } catch {
       toast.error('Não foi possível marcar como lidas');
@@ -205,9 +276,9 @@ export function HeaderNotificationBell({ unreadCount }: Props) {
   const showBadge = unreadCount > 0;
   const badgeLabel = unreadCount > 99 ? '99+' : String(unreadCount);
 
-  const renderItem = (n: InboxNotificationRow) => {
+  const renderItem = (n: InboxNotificationRow, onClick?: () => void) => {
     const Icon = iconForNotificationType(n.type);
-    return renderInboxNotificationItem(n, Icon, () => void handleClick(n));
+    return renderInboxNotificationItem(n, Icon, onClick ?? (() => void handleClick(n)));
   };
 
   return (
@@ -236,9 +307,11 @@ export function HeaderNotificationBell({ unreadCount }: Props) {
           <div className="shrink-0 border-b border-border px-4 py-3">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 space-y-0.5">
-                <p className="text-sm font-semibold leading-none">Notificações</p>
+                <p className="text-sm font-semibold leading-none">Centro de notificações</p>
                 <p className="text-xs text-muted-foreground">
-                  {unreadCount > 0 ? `${unreadCount} não lida(s)` : 'Nenhuma não lida'}
+                  {activeTab === 'system'
+                    ? unreadCount > 0 ? `${unreadCount} alerta(s) de sistema` : 'Sistema em dia'
+                    : messageUnreadCount > 0 ? `${messageUnreadCount} mensagem(ns) não lida(s)` : 'Sem mensagens pendentes'}
                 </p>
               </div>
               <div className="flex shrink-0 flex-wrap justify-end gap-1">
@@ -263,6 +336,34 @@ export function HeaderNotificationBell({ unreadCount }: Props) {
                 ) : null}
               </div>
             </div>
+            <Tabs
+              value={activeTab}
+              onValueChange={(value) => {
+                const next = value === 'message' ? 'message' : 'system';
+                setActiveTab(next);
+                void loadList(next);
+              }}
+              className="mt-3"
+            >
+              <TabsList className="grid h-9 w-full grid-cols-2">
+                <TabsTrigger value="system" className="text-xs">
+                  Sistema
+                  {unreadCount > 0 ? (
+                    <span className="ml-1.5 rounded-full bg-primary px-1.5 py-0.5 text-[10px] leading-none text-primary-foreground">
+                      {unreadCount > 99 ? '99+' : unreadCount}
+                    </span>
+                  ) : null}
+                </TabsTrigger>
+                <TabsTrigger value="message" className="text-xs">
+                  Mensagens
+                  {messageUnreadCount > 0 ? (
+                    <span className="ml-1.5 rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] leading-none text-white">
+                      {messageUnreadCount > 99 ? '99+' : messageUnreadCount}
+                    </span>
+                  ) : null}
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
@@ -273,9 +374,13 @@ export function HeaderNotificationBell({ unreadCount }: Props) {
                 <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
                   <Inbox className="h-6 w-6 text-muted-foreground" />
                 </div>
-                <p className="text-sm font-medium text-foreground">Sem notificações</p>
+                <p className="text-sm font-medium text-foreground">
+                  {activeTab === 'system' ? 'Sem alertas de sistema' : 'Sem mensagens'}
+                </p>
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  Quando houver novidades, anúncios ou alertas, aparecem aqui.
+                  {activeTab === 'system'
+                    ? 'Financeiro, tickets, automações, tarefas e alertas aparecem aqui.'
+                    : 'WhatsApp, chat e conversas aparecem agrupados nesta aba.'}
                 </p>
               </div>
             ) : (
@@ -285,7 +390,9 @@ export function HeaderNotificationBell({ unreadCount }: Props) {
                     <p className="px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                       Não lidas
                     </p>
-                    {unreadItems.map(renderItem)}
+                    {unreadEntries.map((entry) =>
+                      renderItem(entry.notification, () => void handleEntryClick(entry))
+                    )}
                   </div>
                 ) : null}
                 {readItems.length > 0 ? (
@@ -295,7 +402,9 @@ export function HeaderNotificationBell({ unreadCount }: Props) {
                         Recentes
                       </p>
                     ) : null}
-                    {readItems.map(renderItem)}
+                    {readEntries.map((entry) =>
+                      renderItem(entry.notification, () => void handleEntryClick(entry))
+                    )}
                   </div>
                 ) : null}
               </div>

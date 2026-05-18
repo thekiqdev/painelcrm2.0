@@ -9,6 +9,7 @@ const getNotificationsSchema = z.object({
   offset: z.coerce.number().min(0).default(0).optional(),
   read: z.coerce.boolean().optional(),
   type: z.string().optional(),
+  category: z.enum(['system', 'message']).optional(),
 });
 
 /**
@@ -25,6 +26,7 @@ export async function getNotifications(req: AuthRequest, res: Response) {
       offset: queryParams.offset,
       read: queryParams.read,
       type: queryParams.type as any,
+      category: queryParams.category,
     });
 
     const list = notifications.map((n) => notificationService.notificationToListDto(n));
@@ -59,7 +61,10 @@ export async function getNotifications(req: AuthRequest, res: Response) {
 export async function getUnreadCount(req: AuthRequest, res: Response) {
   try {
     const userId = req.userId!;
-    const count = await notificationService.getUnreadCount(userId);
+    const category = req.query.category === 'message' || req.query.category === 'system'
+      ? req.query.category
+      : undefined;
+    const count = await notificationService.getUnreadCount(userId, category);
 
     res.json({
       count,
@@ -126,7 +131,10 @@ export async function deleteAllNotifications(req: AuthRequest, res: Response) {
 export async function markAllNotificationsAsRead(req: AuthRequest, res: Response) {
   try {
     const userId = req.userId!;
-    const count = await notificationService.markAllNotificationsAsRead(userId);
+    const category = req.query.category === 'message' || req.query.category === 'system'
+      ? req.query.category
+      : undefined;
+    const count = await notificationService.markAllNotificationsAsRead(userId, category);
 
     res.json({
       count,

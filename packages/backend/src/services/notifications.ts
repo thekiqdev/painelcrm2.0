@@ -33,7 +33,16 @@ export type NotificationType =
   | 'tenant_ticket_reply'
   | 'tenant_ticket_public_reply'
   | 'tenant_ticket_reopened'
-  | 'tenant_ticket_resolved';
+  | 'tenant_ticket_resolved'
+  | 'tenant_ticket_sla_expired'
+  | 'tenant_ticket_transferred'
+  | 'invoice_created'
+  | 'invoice_due_soon'
+  | 'invoice_paid'
+  | 'invoice_overdue'
+  | 'payment_failed';
+
+export type NotificationCategory = 'system' | 'message';
 
 /**
  * Interface para criar notificação
@@ -44,6 +53,7 @@ export interface CreateNotificationParams {
   title: string;
   message?: string;
   data?: Record<string, any>;
+  category?: NotificationCategory;
 }
 
 /**
@@ -59,6 +69,7 @@ export interface Notification {
   href?: string | null;
   entity_type?: string | null;
   entity_id?: string | null;
+  notification_category?: NotificationCategory | string | null;
   data: Record<string, any>;
   read: boolean;
   read_at: Date | null;
@@ -73,12 +84,51 @@ export type NotificationListItemDto = {
   title: string;
   message: string | null;
   href: string;
+  category: NotificationCategory;
   read: boolean;
   read_at: string | null;
   created_at: string;
   /** Metadados sanitizados para UI rica (chat, SLA, etc.). */
   data?: Record<string, unknown>;
 };
+
+const MESSAGE_NOTIFICATION_TYPES = new Set<string>([
+  'new_message',
+  'message_delivered',
+  'message_read',
+  'new_conversation',
+  'chat_assigned',
+  'chat_transferred',
+  'chat_sla_breach',
+]);
+
+export function inferNotificationCategory(type: string, rowCategory?: string | null): NotificationCategory {
+  if (rowCategory === 'message' || rowCategory === 'system') return rowCategory;
+  return MESSAGE_NOTIFICATION_TYPES.has(type) ? 'message' : 'system';
+}
+
+let notificationCategoryColumnCache: boolean | null = null;
+
+async function hasNotificationCategoryColumn(): Promise<boolean> {
+  if (notificationCategoryColumnCache != null) return notificationCategoryColumnCache;
+  const r = await pool.query<{ exists: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+       FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'notifications'
+         AND column_name = 'notification_category'
+     ) AS exists`
+  );
+  notificationCategoryColumnCache = r.rows[0]?.exists === true;
+  return notificationCategoryColumnCache;
+}
+
+function categorySqlExpression(hasColumn: boolean): string {
+  const fallback =
+    `CASE WHEN type IN ('new_message','message_delivered','message_read','new_conversation','chat_assigned','chat_transferred','chat_sla_breach') THEN 'message' ELSE 'system' END`;
+  return hasColumn ? `COALESCE(notification_category, ${fallback})` : fallback;
+}
 
 function asData(n: Notification): Record<string, any> {
   const d = n.data;
@@ -303,12 +353,14 @@ function toIsoString(d: Date | string | null | undefined): string | null {
 export function notificationToListDto(row: Notification): NotificationListItemDto {
   const d = asData(row);
   const sanitized = sanitizeClientNotificationData(String(row.type), d);
+  const category = inferNotificationCategory(String(row.type), row.notification_category);
   return {
     id: row.id,
     type: String(row.type),
     title: row.title,
     message: row.message,
     href: resolveNotificationHrefForRow(row),
+    category,
     read: row.read === true,
     read_at: toIsoString(row.read_at),
     created_at: toIsoString(row.created_at) ?? new Date().toISOString(),
@@ -323,17 +375,32 @@ export async function createNotification(
   params: CreateNotificationParams
 ): Promise<Notification> {
   const { userId, type, title, message, data } = params;
+  const category = params.category ?? inferNotificationCategory(type);
+  const hasCategoryColumn = await hasNotificationCategoryColumn();
 
-  const result = await pool.query<Notification>(
-    `
-    INSERT INTO notifications (
-      user_id, type, title, message, data
-    )
-    VALUES ($1, $2, $3, $4, $5::jsonb)
-    RETURNING *
-    `,
-    [userId, type, title, message || null, JSON.stringify(data || {})]
-  );
+  console.log('[NOTIFY][CREATE]', { userId, type, category, hasCategoryColumn });
+
+  const result = hasCategoryColumn
+    ? await pool.query<Notification>(
+        `
+        INSERT INTO notifications (
+          user_id, type, title, message, data, notification_category
+        )
+        VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+        RETURNING *
+        `,
+        [userId, type, title, message || null, JSON.stringify(data || {}), category]
+      )
+    : await pool.query<Notification>(
+        `
+        INSERT INTO notifications (
+          user_id, type, title, message, data
+        )
+        VALUES ($1, $2, $3, $4, $5::jsonb)
+        RETURNING *
+        `,
+        [userId, type, title, message || null, JSON.stringify(data || {})]
+      );
 
   const notification = result.rows[0];
 
@@ -354,12 +421,13 @@ export async function createNotification(
         title: notification.title,
         message: notification.message,
         type: notification.type,
+        category: inferNotificationCategory(String(notification.type), notification.notification_category),
         href: resolveNotificationHrefForRow(notification),
         created_at: notification.created_at,
       });
     }
     // Atualizar contador de não lidas
-    const unreadCount = await getUnreadCount(userId);
+    const unreadCount = await getUnreadCount(userId, 'system');
     emitUnreadCount(userId, unreadCount);
   } catch (error: any) {
     // Não falhar se WebSocket não estiver disponível
@@ -675,9 +743,12 @@ export async function getUserNotifications(
     offset?: number;
     read?: boolean;
     type?: NotificationType;
+    category?: NotificationCategory;
   } = {}
 ): Promise<{ notifications: Notification[]; total: number }> {
-  const { limit = 50, offset = 0, read, type } = options;
+  const { limit = 50, offset = 0, read, type, category } = options;
+  const hasCategoryColumn = await hasNotificationCategoryColumn();
+  const categoryExpr = categorySqlExpression(hasCategoryColumn);
 
   let whereClause = 'WHERE user_id = $1';
   const params: any[] = [userId];
@@ -692,6 +763,12 @@ export async function getUserNotifications(
   if (type) {
     whereClause += ` AND type = $${paramIndex}::varchar`;
     params.push(type);
+    paramIndex++;
+  }
+
+  if (category) {
+    whereClause += ` AND ${categoryExpr} = $${paramIndex}`;
+    params.push(category);
     paramIndex++;
   }
 
@@ -726,14 +803,21 @@ export async function getUserNotifications(
 /**
  * Conta notificações não lidas de um usuário
  */
-export async function getUnreadCount(userId: string): Promise<number> {
+export async function getUnreadCount(userId: string, category?: NotificationCategory): Promise<number> {
+  const hasCategoryColumn = await hasNotificationCategoryColumn();
+  const categoryExpr = categorySqlExpression(hasCategoryColumn);
+  const categoryClause = category
+    ? ` AND ${categoryExpr} = $2`
+    : '';
+  const params = category ? [userId, category] : [userId];
   const result = await pool.query<{ count: string }>(
     `
     SELECT COUNT(*) as count
     FROM notifications
     WHERE user_id = $1 AND read = false
+    ${categoryClause}
     `,
-    [userId]
+    params
   );
 
   return parseInt(result.rows[0].count, 10);
@@ -758,7 +842,7 @@ export async function markAnnouncementNotificationsAsReadForUser(
     [userId, announcementIds]
   );
   try {
-    const unreadCount = await getUnreadCount(userId);
+    const unreadCount = await getUnreadCount(userId, 'system');
     emitUnreadCount(userId, unreadCount);
   } catch (error: any) {
     console.warn('Failed to emit unread count via WebSocket:', error.message);
@@ -825,7 +909,7 @@ export async function markNotificationAsRead(
 
   if (notification) {
     try {
-      const unreadCount = await getUnreadCount(userId);
+      const unreadCount = await getUnreadCount(userId, 'system');
       emitUnreadCount(userId, unreadCount);
     } catch (error: any) {
       console.warn('Failed to emit unread count via WebSocket:', error.message);
@@ -838,15 +922,24 @@ export async function markNotificationAsRead(
 /**
  * Marca todas as notificações de um usuário como lidas
  */
-export async function markAllNotificationsAsRead(userId: string): Promise<number> {
+export async function markAllNotificationsAsRead(
+  userId: string,
+  category?: NotificationCategory
+): Promise<number> {
+  const hasCategoryColumn = await hasNotificationCategoryColumn();
+  const categoryExpr = categorySqlExpression(hasCategoryColumn);
+  const categoryClause = category
+    ? ` AND ${categoryExpr} = $2`
+    : '';
   const result = await pool.query<{ count: string }>(
     `
     UPDATE notifications
     SET read = true, read_at = now(), updated_at = now()
     WHERE user_id = $1 AND read = false
+    ${categoryClause}
     RETURNING id
     `,
-    [userId]
+    category ? [userId, category] : [userId]
   );
 
   const count = result.rowCount || 0;
@@ -854,7 +947,7 @@ export async function markAllNotificationsAsRead(userId: string): Promise<number
   // Atualizar contador de não lidas via WebSocket
   if (count > 0) {
     try {
-      const unreadCount = await getUnreadCount(userId);
+      const unreadCount = await getUnreadCount(userId, 'system');
       emitUnreadCount(userId, unreadCount);
     } catch (error: any) {
       console.warn('Failed to emit unread count via WebSocket:', error.message);
