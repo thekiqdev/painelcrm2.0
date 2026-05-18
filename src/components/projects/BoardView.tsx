@@ -1,7 +1,7 @@
 
-import React, { useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Button } from "@/components/ui/button";
-import { MoreHorizontal, Edit, Trash2, Plus, Check, ClipboardList, Calendar, User, ChevronDown, ChevronUp, Upload } from "lucide-react";
+import { MoreHorizontal, Edit, Trash2, Plus, Check, ClipboardList, Calendar, User, ChevronDown, ChevronUp, Upload, GripHorizontal } from "lucide-react";
 import { ProjectList, Task, Project } from "./types";
 import { TaskCard } from "./TaskCard";
 import { UnifiedTaskCard, TaskSummaryPopover } from "@/components/tasks";
@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { format } from "date-fns";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -71,6 +71,13 @@ export function BoardView({
   onOpenFull,
 }: BoardViewProps) {
   const [expandedDescriptions, setExpandedDescriptions] = useState<Record<string, boolean>>({});
+  const boardScrollRef = useRef<HTMLDivElement>(null);
+  const boardInnerRef = useRef<HTMLDivElement>(null);
+  const panStripState = useRef({ active: false, pointerId: 0, startX: 0, startScroll: 0 });
+  const [boardHScroll, setBoardHScroll] = useState({ scrollWidth: 0, clientWidth: 0 });
+  const [dragOverListId, setDragOverListId] = useState<string | null>(null);
+  const [draggingProjectId, setDraggingProjectId] = useState<string | null>(null);
+  const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
   
   // Calculate project progress
   const calculateProgress = (project: Project): number => {
@@ -96,23 +103,32 @@ export function BoardView({
   // Handle project drag start
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>, projectId: string) => {
     e.dataTransfer.setData("projectId", projectId);
+    e.dataTransfer.effectAllowed = "move";
+    setDraggingProjectId(projectId);
   };
 
   // Handle task drag start
   const handleTaskDragStart = (e: React.DragEvent<HTMLDivElement>, taskId: string, listId: string) => {
     e.dataTransfer.setData("taskId", taskId);
     e.dataTransfer.setData("sourceListId", listId);
+    e.dataTransfer.effectAllowed = "move";
+    setDraggingTaskId(taskId);
     e.stopPropagation(); // Prevent parent elements from also handling this event
   };
 
   // Handle drop zone
-  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>, listId: string) => {
     e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDragOverListId(listId);
   };
 
   // Handle project drop
   const handleDrop = (e: React.DragEvent<HTMLDivElement>, listId: string) => {
     e.preventDefault();
+    setDragOverListId(null);
+    setDraggingProjectId(null);
+    setDraggingTaskId(null);
     
     // Check if we're dropping a project
     const projectId = e.dataTransfer.getData("projectId");
@@ -128,6 +144,64 @@ export function BoardView({
       onMoveTask(taskId, sourceListId, listId);
     }
   };
+  const handleDragEnd = () => {
+    setDragOverListId(null);
+    setDraggingProjectId(null);
+    setDraggingTaskId(null);
+  };
+
+  useLayoutEffect(() => {
+    const main = boardScrollRef.current;
+    const inner = boardInnerRef.current;
+    if (!main || !inner) return;
+    const update = () => setBoardHScroll({ scrollWidth: main.scrollWidth, clientWidth: main.clientWidth });
+    const ro = new ResizeObserver(update);
+    ro.observe(main);
+    ro.observe(inner);
+    update();
+    return () => ro.disconnect();
+  }, [lists.length, projects?.length, isProjectView]);
+
+  useEffect(() => {
+    const el = boardScrollRef.current;
+    if (!el) return;
+    const onWheelNative = (e: WheelEvent) => {
+      if (el.scrollWidth <= el.clientWidth) return;
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+        el.scrollLeft += e.deltaX;
+        e.preventDefault();
+      } else if (e.shiftKey) {
+        el.scrollLeft += e.deltaY;
+        e.preventDefault();
+      }
+    };
+    el.addEventListener("wheel", onWheelNative, { passive: false });
+    return () => el.removeEventListener("wheel", onWheelNative);
+  }, []);
+
+  const hasHorizontalOverflow = boardHScroll.scrollWidth > boardHScroll.clientWidth + 2;
+  const onPanStripPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    const main = boardScrollRef.current;
+    if (!main || main.scrollWidth <= main.clientWidth) return;
+    panStripState.current = { active: true, pointerId: e.pointerId, startX: e.clientX, startScroll: main.scrollLeft };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const onPanStripPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!panStripState.current.active) return;
+    const main = boardScrollRef.current;
+    if (!main) return;
+    main.scrollLeft = panStripState.current.startScroll - (e.clientX - panStripState.current.startX);
+  };
+  const onPanStripPointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!panStripState.current.active) return;
+    panStripState.current.active = false;
+    try {
+      e.currentTarget.releasePointerCapture(panStripState.current.pointerId);
+    } catch {
+      /* ignore */
+    }
+  };
 
   // Get projects for a specific stage in Kanban view
   const getProjectsForStage = (stageId: string): Project[] => {
@@ -139,18 +213,22 @@ export function BoardView({
   const renderProjectCard = (project: Project) => (
     <Card 
       key={project.id} 
-      className="shadow-sm cursor-pointer hover:shadow transition-shadow mb-3"
+      className={cn(
+        "mb-2 cursor-grab select-none rounded-xl border border-border/70 bg-card shadow-sm transition-[box-shadow,border-color,background-color,opacity,transform] hover:-translate-y-0.5 hover:border-primary/35 hover:bg-muted/20 hover:shadow-md active:cursor-grabbing",
+        draggingProjectId === project.id && "opacity-35 ring-2 ring-primary/20"
+      )}
       onClick={() => onProjectClick && onProjectClick(project)}
       draggable
       onDragStart={(e) => handleDragStart(e, project.id)}
+      onDragEnd={handleDragEnd}
     >
-      <CardContent className="p-3">
+      <CardContent className="space-y-2.5 p-3">
         <div className="flex items-start gap-3">
           <div className="flex-1">
             <div className="flex items-center justify-between mb-1">
-              <h4 className="font-medium">{project.name}</h4>
+              <h4 className="line-clamp-2 font-semibold leading-snug">{project.name}</h4>
               {project.status === "active" && (
-                <span className="bg-primary/10 text-primary px-2 py-0.5 rounded-full text-xs font-medium">
+                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
                   Ativo
                 </span>
               )}
@@ -190,7 +268,7 @@ export function BoardView({
               </div>
             )}
             
-            <div className="flex items-center text-xs text-muted-foreground mb-2">
+            <div className="mb-2 flex items-center text-xs text-muted-foreground">
               <Calendar className="h-3 w-3 mr-1" />
               {project.dueDate && formatDate(project.dueDate)}
             </div>
@@ -209,7 +287,7 @@ export function BoardView({
               </div>
             ) : null}
             
-            <div className="flex flex-wrap gap-1 mb-2">
+            <div className="mb-2 flex flex-wrap gap-1">
               {project.tags && project.tags.map(tag => (
                 <Badge key={tag} variant="outline" className="text-[10px] px-1 py-0">
                   {tag}
@@ -225,9 +303,9 @@ export function BoardView({
             <Progress value={calculateProgress(project)} className="h-1.5 mb-2" />
             
             {project.members && project.members.length > 0 && (
-              <div className="flex items-center justify-end mt-2">
-                <Avatar className="h-6 w-6">
-                  <AvatarFallback className="text-xs">
+              <div className="mt-2 flex items-center justify-end">
+                <Avatar className="h-6 w-6 border border-border/60">
+                  <AvatarFallback className="bg-primary/10 text-xs font-semibold text-primary">
                     {project.members[0].avatar}
                   </AvatarFallback>
                 </Avatar>
@@ -287,10 +365,12 @@ export function BoardView({
         onDragStart={
           canDrag ? (e) => handleTaskDragStart(e, task.id, listId) : undefined
         }
+        onDragEnd={handleDragEnd}
         className={cn(
           "mb-3 last:mb-0",
           useUnified && "cursor-pointer",
-          canDrag && "cursor-grab active:cursor-grabbing"
+          canDrag && "cursor-grab active:cursor-grabbing",
+          draggingTaskId === task.id && "opacity-35 ring-2 ring-primary/20"
         )}
       >
         {cardContent}
@@ -299,22 +379,49 @@ export function BoardView({
   };
 
   return (
-    <div className="flex-1 h-full">
-      <div className="flex gap-4 h-full overflow-x-auto pb-6">
-        {lists.sort((a, b) => a.order - b.order).map(list => (
-          <div 
-            key={list.id} 
-            className="flex-shrink-0 w-80 bg-muted/30 rounded-md overflow-hidden shadow-sm"
-            onDragOver={handleDragOver}
+    <div className="flex min-h-[min(72dvh,650px)] min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/50 bg-muted/20 px-1 pb-2 pt-1 shadow-inner">
+      {hasHorizontalOverflow ? (
+        <div
+          className="mb-1.5 flex h-6 shrink-0 cursor-grab select-none items-center justify-center gap-1 rounded-md border border-border/40 bg-background/70 px-2 text-[11px] leading-tight text-muted-foreground hover:bg-background active:cursor-grabbing"
+          onPointerDown={onPanStripPointerDown}
+          onPointerMove={onPanStripPointerMove}
+          onPointerUp={onPanStripPointerUp}
+          onPointerCancel={onPanStripPointerUp}
+          title="Clique e arraste para deslocar o quadro"
+        >
+          <GripHorizontal className="h-3 w-3 shrink-0 opacity-60" aria-hidden />
+          Arraste para mover o quadro horizontalmente
+        </div>
+      ) : null}
+      <div ref={boardScrollRef} className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden overscroll-x-contain scroll-smooth scrollbar-thin">
+        <div ref={boardInnerRef} className="flex h-full min-h-[min(68dvh,600px)] w-max items-stretch gap-3 px-2 py-2 sm:gap-4">
+        {lists.sort((a, b) => a.order - b.order).map(list => {
+          const count = isProjectView ? getProjectsForStage(list.id).length : list.tasks.length;
+          return (
+          <div
+            key={list.id}
+            className={cn(
+              "kanban-column flex h-full min-h-[min(520px,78dvh)] w-[280px] shrink-0 flex-col overflow-hidden rounded-xl border border-border/80 bg-card text-card-foreground shadow-sm transition-[background-color,border-color,box-shadow,ring] sm:w-[300px]",
+              dragOverListId === list.id && "border-primary/35 bg-primary/5 shadow-lg ring-2 ring-primary/25"
+            )}
+            onDragOver={(e) => handleDragOver(e, list.id)}
+            onDragLeave={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                setDragOverListId(null);
+              }
+            }}
             onDrop={(e) => handleDrop(e, list.id)}
           >
-            <div className="p-2 bg-muted/50">
-              <div className="flex items-center justify-between">
-                <h3 className="font-medium truncate">{list.name}</h3>
-                <div className="flex items-center space-x-1">
-                  <span className="text-xs text-muted-foreground bg-background px-2 py-0.5 rounded-full">
-                    {isProjectView ? getProjectsForStage(list.id).length : list.tasks.length}
-                  </span>
+            <CardHeader className="rounded-t-xl border-b bg-muted/60 px-3 py-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0 flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-primary ring-2 ring-background" />
+                  <h3 className="truncate text-sm font-semibold">{list.name}</h3>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  <Badge variant="secondary" className="shrink-0">
+                    {count}
+                  </Badge>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button variant="ghost" size="icon" className="h-6 w-6">
@@ -347,37 +454,57 @@ export function BoardView({
                   </DropdownMenu>
                 </div>
               </div>
-            </div>
-            <div className="p-2 space-y-2 max-h-[calc(100vh-300px)] overflow-y-auto">
+            </CardHeader>
+            <CardContent className="flex min-h-0 flex-1 flex-col bg-muted/10 p-0">
+              <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                <div className="flex min-h-full flex-col gap-2">
               {isProjectView ? (
                 // Project view (Kanban)
                 <>
-                  {getProjectsForStage(list.id).map(project => renderProjectCard(project))}
+                  {count === 0 ? (
+                    <div className="flex min-h-[220px] flex-1 flex-col justify-center rounded-lg border border-dashed border-border/60 bg-background/45 px-3 py-6 text-center">
+                      <p className="text-xs font-medium text-muted-foreground">Nenhum projeto nesta etapa.</p>
+                      <p className="mt-1 text-[10px] text-muted-foreground/90">Arraste um card para atualizar a etapa.</p>
+                    </div>
+                  ) : (
+                    getProjectsForStage(list.id).map(project => renderProjectCard(project))
+                  )}
                 </>
               ) : (
                 // Task view (normal board)
                 <>
-                  {list.tasks.map(task => renderDraggableTaskCard(task, list.id))}
+                  {count === 0 ? (
+                    <div className="flex min-h-[220px] flex-1 flex-col justify-center rounded-lg border border-dashed border-border/60 bg-background/45 px-3 py-6 text-center">
+                      <p className="text-xs font-medium text-muted-foreground">Nenhuma tarefa nesta etapa.</p>
+                      <p className="mt-1 text-[10px] text-muted-foreground/90">Arraste um card para atualizar a etapa.</p>
+                    </div>
+                  ) : (
+                    list.tasks.map(task => renderDraggableTaskCard(task, list.id))
+                  )}
                 </>
               )}
               <Button 
                 variant="ghost" 
-                className="w-full justify-start text-muted-foreground"
+                className="mt-1 w-full justify-start rounded-lg text-muted-foreground hover:bg-background/70"
                 onClick={() => isProjectView ? onAddProject && onAddProject() : onAddTask(list.id)}
               >
                 <Plus className="h-4 w-4 mr-1" />
                 {isProjectView ? "Adicionar Projeto" : "Adicionar Tarefa"}
               </Button>
-            </div>
+                </div>
+              </div>
+            </CardContent>
           </div>
-        ))}
-        <div className="flex-shrink-0 w-60">
-          <Button variant="outline" className="w-full h-10" onClick={onAddList}>
+        );
+        })}
+        <div className="w-[240px] shrink-0">
+          <Button variant="outline" className="h-10 w-full rounded-xl" onClick={onAddList}>
             <Plus className="h-4 w-4 mr-1" />
             Adicionar Etapa
           </Button>
         </div>
+        </div>
       </div>
-    </div>
+            </div>
   );
 }

@@ -103,7 +103,7 @@ const Tasks = () => {
   const [listScope, setListScope] = useState<string | undefined>(undefined);
   const [originFilter, setOriginFilter] = useState<string | undefined>(undefined);
 
-  const scopeForApi = listScope ?? (tasksG.view_all ? "todas" : "minhas");
+  const scopeForApi = listScope ?? "minhas";
 
   const { user } = useAuth();
   const tenantId = user?.tenant_id ?? "";
@@ -829,17 +829,17 @@ const closeTaskDetail = () => {
         <div className="space-y-1.5 min-w-[200px]">
           <Label className="text-xs text-muted-foreground">Escopo</Label>
           <Select
-            value={listScope ?? (tasksG.view_all ? "todas" : "minhas")}
+            value={listScope ?? "minhas"}
             onValueChange={(v) => setListScope(v)}
           >
             <SelectTrigger>
               <SelectValue placeholder="Escopo" />
             </SelectTrigger>
             <SelectContent>
-              {tasksG.view_all ? <SelectItem value="todas">Todas (equipe)</SelectItem> : null}
-              <SelectItem value="minhas">Minhas (criadas ou atribuídas)</SelectItem>
+              <SelectItem value="minhas">Todas (criadas ou atribuídas)</SelectItem>
               <SelectItem value="atribuidas">Atribuídas a mim</SelectItem>
               <SelectItem value="criadas">Criadas por mim</SelectItem>
+              {tasksG.view_all ? <SelectItem value="todas">Todas da equipe</SelectItem> : null}
               <SelectItem value="sem_responsavel">Sem responsável</SelectItem>
             </SelectContent>
           </Select>
