@@ -39,9 +39,11 @@ import {
 import { getPublicPlatformTrackingSettings } from '../controllers/publicPlatformTrackingController.js';
 import {
   getPublicSupportPortalBySlug,
+  getPublicTicketByToken,
   postPublicSupportTicket,
   postPublicSupportTicketLookup,
   postPublicSupportTicketMessage,
+  postPublicTicketMessageByToken,
 } from '../controllers/publicSupportPortalController.js';
 
 const router = Router();
@@ -278,6 +280,8 @@ const supportPublicTicketLookupLimiter = rateLimit({
 });
 
 router.get('/support/:slug', supportPublicReadLimiter, getPublicSupportPortalBySlug);
+router.get('/tickets/:token', supportPublicReadLimiter, getPublicTicketByToken);
+router.post('/tickets/:token/messages', supportPublicTicketPostLimiter, postPublicTicketMessageByToken);
 router.post(
   '/support/:slug/tickets/lookup',
   supportPublicTicketLookupLimiter,

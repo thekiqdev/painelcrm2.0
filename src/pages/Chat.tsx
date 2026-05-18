@@ -193,6 +193,10 @@ import {
   ChatComposerQuickActionsPanel,
   type ChatComposerQuickActionSection,
 } from '@/components/chat/ChatComposerQuickActionsPanel';
+import {
+  ChatCreateTicketDialog,
+  type ChatTicketDraft,
+} from '@/components/chat/ChatCreateTicketDialog';
 import { ChatComposerDropZone } from '@/components/chat/ChatComposerDropZone';
 import {
   ChatScheduledMessagesStrip,
@@ -208,6 +212,7 @@ import { useChatOutboundQueue } from '@/hooks/useChatOutboundQueue';
 import { getMyTenantUsers, type TenantUser } from '@/services/tenantLimits';
 import { teamsService, type Team } from '@/services/teams';
 import { formatPhoneBrDigits } from '@/lib/brazilInputMasks';
+import type { TicketCategory } from '@/types/tickets';
 
 const formatHour = (value?: string | null) => {
   if (!value) return '--:--';
@@ -826,6 +831,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   // Estados para dialogs
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
   const [ticketDialogOpen, setTicketDialogOpen] = useState(false);
+  const [ticketSubmitting, setTicketSubmitting] = useState(false);
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [linkTab, setLinkTab] = useState<'clients' | 'leads'>('clients');
   const [linkSearch, setLinkSearch] = useState('');
@@ -4040,51 +4046,163 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   };
 
   const handleOpenTicket = () => {
+    if (!selectedConversation) {
+      toast.error('Selecione uma conversa para abrir um ticket.');
+      return;
+    }
     setTicketDialogOpen(true);
   };
 
-  const handleSaveTicket = async (formData: FormData) => {
-    try {
-      const subject = formData.get('subject') as string;
-      const description = formData.get('description') as string;
-      const categoryId = formData.get('categoryId') as string;
-      const priority = formData.get('priority') as string;
+  const buildChatTicketDescription = useCallback(() => {
+    const contactName =
+      currentClient?.name ||
+      currentLead?.name ||
+      selectedIdentity?.displayName ||
+      selectedConversation?.contactName ||
+      'Contato WhatsApp';
+    const phone =
+      currentClient?.phone ||
+      currentLead?.phone ||
+      selectedIdentity?.phoneLine ||
+      selectedConversation?.phoneNumber ||
+      selectedConversation?.canonicalPhone ||
+      selectedConversation?.canonical_phone ||
+      '';
+    const recent = messages
+      .slice(-6)
+      .map((message) => {
+        const text =
+          coerceChatPlainText(message.message_contract?.body) ||
+          coerceChatPlainText(message.body) ||
+          '[Mensagem sem texto]';
+        const author = message.direction === 'incoming' ? contactName : 'Atendente';
+        return `- ${author}: ${text}`.slice(0, 420);
+      })
+      .join('\n');
 
-      const contactName = currentClient?.name || currentLead?.name || selectedConversation?.contactName || 'Contato WhatsApp';
-      const contactEmail = currentClient?.email || currentLead?.email || '';
-      const contactPhone = currentClient?.phone || currentLead?.phone || selectedConversation?.phoneNumber || '';
+    return [
+      'Ticket aberto a partir do atendimento no chat.',
+      '',
+      `Contato: ${contactName}`,
+      phone ? `Telefone: ${phone}` : null,
+      selectedConversation?.id ? `Conversa: ${selectedConversation.id}` : null,
+      '',
+      recent ? `Últimas mensagens:\n${recent}` : 'Resumo: atendimento iniciado via WhatsApp/chat.',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }, [currentClient, currentLead, messages, selectedConversation, selectedIdentity]);
+
+  const chatTicketContact = useMemo(() => {
+    const contactName =
+      currentClient?.name ||
+      currentLead?.name ||
+      selectedIdentity?.displayName ||
+      selectedConversation?.contactName ||
+      'Contato WhatsApp';
+    const contactEmail = currentClient?.email || currentLead?.email || '';
+    const contactPhone =
+      currentClient?.phone ||
+      currentLead?.phone ||
+      selectedIdentity?.phoneLine ||
+      selectedConversation?.phoneNumber ||
+      selectedConversation?.canonicalPhone ||
+      selectedConversation?.canonical_phone ||
+      '';
+    return { contactName, contactEmail, contactPhone };
+  }, [currentClient, currentLead, selectedConversation, selectedIdentity]);
+
+  const handleSaveTicket = async (draft: ChatTicketDraft) => {
+    setTicketSubmitting(true);
+    try {
+      if (!selectedConversation) {
+        toast.error('Selecione uma conversa para abrir um ticket.');
+        return;
+      }
+      const contactName = chatTicketContact.contactName;
+      const contactEmail =
+        chatTicketContact.contactEmail ||
+        `chat-${selectedConversation.id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 24)}@no-email.painelcrm.local`;
+      const contactPhone = chatTicketContact.contactPhone;
 
       const ticket = await ticketsService.createTicket({
         contact_name: contactName,
         contact_email: contactEmail,
         contact_phone: contactPhone || undefined,
-        subject,
-        description,
-        category_id: categoryId || undefined,
-        priority: priority as any,
+        subject: draft.subject.trim(),
+        description: draft.description.trim(),
+        category_id: draft.categoryId,
+        priority: draft.priority,
         client_id: currentClient?.id || undefined,
+        lead_id: !currentClient?.id ? currentLead?.id || selectedConversation.leadId || undefined : undefined,
+        assignee_id: user?.id,
         channel: 'whatsapp',
         status: 'new',
+        tags: ['chat'],
+        custom_fields: {
+          source: 'chat',
+          source_channel: selectedConversation.provider || 'whatsapp',
+          conversation_id: selectedConversation.id,
+          chat_id: selectedConversation.external_chat_id,
+          instance_id: selectedConversation.instance_id ?? null,
+          phone: contactPhone || null,
+          email_missing: !chatTicketContact.contactEmail,
+        },
       });
 
-      toast.success('Ticket criado com sucesso!');
+      toast.success(`Ticket ${ticket.ticket_number ?? ticket.id.slice(0, 8)} criado com sucesso!`, {
+        description: 'O chamado foi vinculado ao atendimento atual.',
+        action: {
+          label: 'Abrir ticket',
+          onClick: () => navigate(`/support/tickets/${ticket.id}`),
+        },
+      });
       setTicketDialogOpen(false);
 
-      // Enviar notificação
-      if (contactPhone || contactEmail) {
-        await sendNotification('tickets', 'created', {
-          contact_name: contactName,
-          ticket_number: ticket.id.substring(0, 8).toUpperCase(),
-          ticket_subject: subject,
-          ticket_link: `${window.location.origin}/tickets/${ticket.id}`,
-        }, ticket.id);
+      let publicAccessToken = ticket.public_access_token?.trim() ?? '';
+      if (!publicAccessToken) {
+        const refreshedTicket = await ticketsService.getTicketById(ticket.id);
+        publicAccessToken = refreshedTicket.public_access_token?.trim() ?? '';
+      }
+
+      if (!publicAccessToken) {
+        throw new Error('Ticket criado, mas o link público não foi gerado.');
+      }
+
+      if (selectedConversation.id) {
+        const publicTicketUrl = `${window.location.origin}/ticket/${encodeURIComponent(publicAccessToken)}`;
+        await chatService.sendMessage(
+          selectedConversation.id,
+          `✅ Seu ticket foi criado com sucesso.\n\nProtocolo: ${ticket.ticket_number ?? ticket.id.substring(0, 8).toUpperCase()}\n\nAcompanhe seu atendimento:\n${publicTicketUrl}`,
+        );
+        await loadMessages(selectedConversation.id, { silent: true });
       }
     } catch (error) {
       console.error('Erro ao criar ticket:', error);
       toast.error('Não foi possível criar o ticket', {
         description: error instanceof Error ? error.message : undefined,
       });
+    } finally {
+      setTicketSubmitting(false);
     }
+  };
+
+  const handleCreateTicketCategoryFromChat = async (name: string): Promise<TicketCategory> => {
+    const trimmed = name.trim();
+    if (!trimmed) throw new Error('Nome da categoria é obrigatório.');
+    const existing = ticketCategories.find((category) => String(category.name ?? '').trim().toLowerCase() === trimmed.toLowerCase());
+    if (existing) {
+      toast.error('Essa categoria já existe.');
+      return existing as TicketCategory;
+    }
+    const created = await ticketsService.createTicketCategory({
+      name: trimmed,
+      description: `Categoria criada pelo chat.`,
+      color: '#2563eb',
+    });
+    setTicketCategories((prev) => [...prev, created]);
+    toast.success('Categoria criada');
+    return created;
   };
 
   const openInvoiceFlow = useCallback(
@@ -7261,70 +7379,21 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
         </DialogContent>
       </Dialog>
 
-      {/* Dialog de Ticket */}
-      <Dialog open={ticketDialogOpen} onOpenChange={setTicketDialogOpen}>
-        <DialogContent className="sm:max-w-[550px]">
-          <DialogHeader>
-            <DialogTitle>Abrir Ticket</DialogTitle>
-            <DialogDescription>
-              Crie um novo ticket de suporte para {currentClient?.name || currentLead?.name || selectedConversation?.contactName || 'o contato'}
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={(e) => {
-            e.preventDefault();
-            const formData = new FormData(e.currentTarget);
-            handleSaveTicket(formData);
-          }}>
-            <div className="grid gap-4 py-4">
-              <div className="space-y-2">
-                <Label htmlFor="ticketSubject">Assunto</Label>
-                <Input id="ticketSubject" name="subject" placeholder="Ex: Problema com produto" required />
-                        </div>
-              <div className="space-y-2">
-                <Label htmlFor="ticketDescription">Descrição</Label>
-                <Textarea id="ticketDescription" name="description" placeholder="Descreva o problema ou solicitação..." required />
-                        </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="ticketCategory">Categoria</Label>
-                  <Select name="categoryId">
-                    <SelectTrigger id="ticketCategory">
-                      <SelectValue placeholder="Selecione" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {ticketCategories.map((cat) => (
-                        <SelectItem key={cat.id} value={cat.id}>
-                          {cat.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                      </div>
-                <div className="space-y-2">
-                  <Label htmlFor="ticketPriority">Prioridade</Label>
-                  <Select name="priority" defaultValue="normal">
-                    <SelectTrigger id="ticketPriority">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="low">Baixa</SelectItem>
-                      <SelectItem value="normal">Normal</SelectItem>
-                      <SelectItem value="high">Alta</SelectItem>
-                      <SelectItem value="urgent">Urgente</SelectItem>
-                    </SelectContent>
-                  </Select>
-                    </div>
-              </div>
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setTicketDialogOpen(false)}>
-                Cancelar
-              </Button>
-              <Button type="submit">Criar Ticket</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      <ChatCreateTicketDialog
+        open={ticketDialogOpen}
+        onOpenChange={setTicketDialogOpen}
+        categories={ticketCategories}
+        submitting={ticketSubmitting}
+        contactName={chatTicketContact.contactName}
+        phone={chatTicketContact.contactPhone}
+        email={chatTicketContact.contactEmail}
+        clientName={currentClient?.name ?? null}
+        leadName={!currentClient ? currentLead?.name ?? null : null}
+        conversationId={selectedConversation?.id ?? null}
+        initialDescription={buildChatTicketDescription()}
+        onCreateCategory={handleCreateTicketCategoryFromChat}
+        onSubmit={handleSaveTicket}
+      />
     </div>
   );
 };

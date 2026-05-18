@@ -2012,8 +2012,18 @@ async function saveMessage(
               `UPDATE chat_conversations SET
                  last_customer_message_at = now(),
                  attendance_status = CASE
-                   WHEN attendance_status IN ('closed', 'archived') THEN 'pending'
+                   WHEN attendance_status = 'archived' THEN attendance_status
+                   WHEN assigned_to_user_id IS NOT NULL THEN 'in_progress'
+                   WHEN attendance_status = 'closed' THEN 'pending'
                    ELSE attendance_status
+                 END,
+                 closed_at = CASE
+                   WHEN attendance_status = 'closed' THEN NULL
+                   ELSE closed_at
+                 END,
+                 closed_by = CASE
+                   WHEN attendance_status = 'closed' THEN NULL
+                   ELSE closed_by
                  END,
                  updated_at = now()
                WHERE id = $1`,

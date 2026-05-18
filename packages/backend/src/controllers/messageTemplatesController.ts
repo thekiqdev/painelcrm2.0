@@ -553,7 +553,7 @@ export async function initializePredefinedTemplates(req: AuthRequest, res: Respo
         resource_type: 'tickets' as const,
         action: 'created' as const,
         subject: 'Novo Ticket Criado',
-        body: 'Olá {{contact_name}},\n\nUm novo ticket foi criado para você.\n\nNúmero: {{ticket_number}}\nAssunto: {{ticket_subject}}\n\nAcompanhe pelo link: {{ticket_link}}',
+        body: '✅ Seu ticket foi criado com sucesso.\n\nProtocolo: {{ticket_number}}\n\nAcompanhe seu atendimento:\n{{ticket_link}}',
         variables: ['contact_name', 'ticket_number', 'ticket_subject', 'ticket_link'],
       },
       {

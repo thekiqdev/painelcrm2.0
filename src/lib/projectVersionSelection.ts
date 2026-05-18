@@ -43,9 +43,25 @@ export type ProjectVersionSelection = {
   versionId?: string;
 };
 
-export function getDefaultVersion(versions: ProjectVersion[]): ProjectVersion | null {
+export function getLatestActiveVersion(versions: ProjectVersion[]): ProjectVersion | null {
   const active = versions.filter((version) => !version.archived_at);
-  return active.find((version) => version.is_default) ?? active[0] ?? null;
+  return (
+    [...active].sort((a, b) => {
+      const aCreated = a.created_at ? Date.parse(a.created_at) : Number.NaN;
+      const bCreated = b.created_at ? Date.parse(b.created_at) : Number.NaN;
+      if (Number.isFinite(aCreated) && Number.isFinite(bCreated) && aCreated !== bCreated) {
+        return bCreated - aCreated;
+      }
+      if (Number.isFinite(aCreated) !== Number.isFinite(bCreated)) {
+        return Number.isFinite(bCreated) ? 1 : -1;
+      }
+      return (b.sort_order ?? 0) - (a.sort_order ?? 0);
+    })[0] ?? null
+  );
+}
+
+export function getDefaultVersion(versions: ProjectVersion[]): ProjectVersion | null {
+  return getLatestActiveVersion(versions);
 }
 
 export function deriveInitialVersionSelection(versions: ProjectVersion[]): ProjectVersionSelection {

@@ -387,6 +387,8 @@ const order = [
   '242_ticket_messages_metadata.sql',
   '243_tickets_last_customer_reply_at.sql',
   '244_notifications_category.sql',
+  '245_tickets_public_access_token.sql',
+  '246_ticket_created_message_template_public_link.sql',
   'create-admin-user.sql',
 ];
 

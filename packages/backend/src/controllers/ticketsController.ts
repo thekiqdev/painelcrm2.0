@@ -1,4 +1,5 @@
 import { Response } from 'express';
+import { randomBytes } from 'crypto';
 import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { assertModulePermission, ModulePermissionError } from '../permissions/index.js';
@@ -29,11 +30,16 @@ const ticketSchema = z.object({
     .optional(),
   channel: z.enum(['portal', 'email', 'whatsapp', 'internal']).optional(),
   client_id: z.string().uuid().optional().nullable(),
+  lead_id: z.string().uuid().optional().nullable(),
   team_id: z.string().uuid().optional().nullable(),
   assignee_id: z.string().uuid().optional().nullable(),
   tags: z.array(z.string()).optional(),
   custom_fields: z.any().optional(),
 });
+
+function generateTicketPublicAccessToken(): string {
+  return randomBytes(24).toString('base64url');
+}
 
 function respondPerm(res: Response, error: unknown): boolean {
   if (error instanceof ModulePermissionError) {
@@ -482,6 +488,7 @@ export async function createTicket(req: AuthRequest, res: Response): Promise<voi
 
     const channel = ticketData.channel ?? 'internal';
     const status = ticketData.status ?? 'new';
+    const publicAccessToken = generateTicketPublicAccessToken();
 
     const client = await pool.connect();
     let created: Record<string, unknown>;
@@ -492,8 +499,8 @@ export async function createTicket(req: AuthRequest, res: Response): Promise<voi
         `INSERT INTO tickets (
           user_id, contact_name, contact_email, contact_phone,
           subject, description, category_id, priority, status, channel,
-          client_id, team_id, assignee_id, tags, custom_fields
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15::jsonb)
+          client_id, lead_id, team_id, assignee_id, tags, custom_fields, public_access_token
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16::jsonb, $17)
         RETURNING *`,
         [
           userId,
@@ -507,10 +514,12 @@ export async function createTicket(req: AuthRequest, res: Response): Promise<voi
           status,
           channel,
           ticketData.client_id || null,
+          ticketData.lead_id || null,
           ticketData.team_id || null,
           ticketData.assignee_id || null,
           ticketData.tags ? JSON.stringify(ticketData.tags) : '[]',
           ticketData.custom_fields ? JSON.stringify(ticketData.custom_fields) : '{}',
+          publicAccessToken,
         ]
       );
 

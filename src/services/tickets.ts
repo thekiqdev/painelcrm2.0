@@ -64,6 +64,7 @@ export const ticketsService = {
     status?: 'new' | 'open' | 'waiting_customer' | 'resolved' | 'closed';
     channel?: 'portal' | 'email' | 'whatsapp' | 'internal';
     client_id?: string;
+    lead_id?: string;
     team_id?: string;
     assignee_id?: string;
     tags?: string[];
@@ -91,6 +92,7 @@ export const ticketsService = {
     status?: TicketStatus;
     channel?: 'portal' | 'email' | 'whatsapp' | 'internal';
     client_id?: string;
+    lead_id?: string | null;
     team_id?: string;
     assignee_id?: string | null;
     tags?: string[];

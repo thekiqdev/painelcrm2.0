@@ -36,6 +36,31 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Textarea } from "@/components/ui/textarea";
 import { getProjectUrl } from "@/lib/projectRoutes";
 
+function readStoredProjectVersionSelection(storageKey: string | null): ProjectVersionSelection | null {
+  if (!storageKey) return null;
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as ProjectVersionSelection;
+    if (parsed?.mode === "all") return { mode: "all" };
+    if (parsed?.mode === "version" && parsed.versionId) {
+      return { mode: "version", versionId: parsed.versionId };
+    }
+  } catch {
+    window.localStorage.removeItem(storageKey);
+  }
+  return null;
+}
+
+function writeStoredProjectVersionSelection(storageKey: string | null, selection: ProjectVersionSelection) {
+  if (!storageKey) return;
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify(selection));
+  } catch {
+    /* localStorage may be unavailable in restricted browsers. */
+  }
+}
+
 export default function ProjectAreaPage() {
   const { projectId, areaId } = useParams<{ projectId: string; areaId: string }>();
   const navigate = useNavigate();
@@ -94,6 +119,10 @@ export default function ProjectAreaPage() {
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [commentSending, setCommentSending] = useState(false);
   const { user: currentUser } = useAuth();
+  const versionSelectionStorageKey = useMemo(
+    () => (projectId ? `project-release-selection:${currentUser?.tenant_id ?? "tenant"}:${projectId}` : null),
+    [projectId, currentUser?.tenant_id],
+  );
   const selectedVersion =
     hasVersions(projectType) && versionSelection.versionId
       ? projectVersions.find((version) => version.id === versionSelection.versionId) ?? null
@@ -103,6 +132,7 @@ export default function ProjectAreaPage() {
   const applyVersionSelection = useCallback(
     (selection: ProjectVersionSelection) => {
       const normalized = normalizeVersionSelection(selection, projectVersions);
+      writeStoredProjectVersionSelection(versionSelectionStorageKey, normalized);
       setSearchParams(
         (prev) => {
           const current = parseVersionSelectionFromSearch(prev.toString(), projectVersions);
@@ -121,7 +151,7 @@ export default function ProjectAreaPage() {
         { replace: true },
       );
     },
-    [setSearchParams, projectVersions],
+    [setSearchParams, projectVersions, versionSelectionStorageKey],
   );
 
   const mapAreaTasksToLists = useCallback(
@@ -229,8 +259,9 @@ export default function ProjectAreaPage() {
     if (!hasVersions(projectType ?? undefined)) return;
     if (versionModeParam) return;
     if (projectVersions.length === 0) return;
-    applyVersionSelection(deriveInitialVersionSelection(projectVersions));
-  }, [projectType, projectVersions, versionModeParam, applyVersionSelection]);
+    const stored = readStoredProjectVersionSelection(versionSelectionStorageKey);
+    applyVersionSelection(stored ?? deriveInitialVersionSelection(projectVersions));
+  }, [projectType, projectVersions, versionModeParam, applyVersionSelection, versionSelectionStorageKey]);
 
   useEffect(() => {
     if (!projectId || !areaId || loading) return;

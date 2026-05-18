@@ -43,6 +43,7 @@ export type SettingSection =
   | "googleDrive"
   | "agendaAvailability"
   | "chatAttendance"
+  | "support"
   | "publicSupportPortal"
   | "chatAutomation";
 
@@ -227,14 +228,13 @@ const BASE_ITEMS: SettingsNavItem[] = [
     pathSegment: "chat",
   },
   {
-    id: "publicSupportPortal",
-    title: "Suporte público",
-    description: "Link amigável para clientes abrirem chamados sem login",
+    id: "support",
+    title: "Suporte",
+    description: "Categorias de tickets e portal público",
     icon: LifeBuoy,
-    sidebarCategory: "Integrações",
-    subcategory: "Mensagens",
+    sidebarCategory: "CRM",
     mobileCategory: "Atendimento",
-    pathSegment: "support-public",
+    pathSegment: "support",
   },
   {
     id: "domain",
@@ -362,6 +362,7 @@ export const SECTION_QUERY_VALUES: SettingSection[] = [
   "googleDrive",
   "agendaAvailability",
   "chatAttendance",
+  "support",
   "publicSupportPortal",
   "chatAutomation",
 ];

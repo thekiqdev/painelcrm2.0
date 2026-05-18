@@ -74,6 +74,7 @@ const PublicContractView = lazyWithReload(() => import("./pages/PublicContractVi
 const PublicContractSign = lazyWithReload(() => import("./pages/PublicContractSign"));
 const PublicProposalView = lazyWithReload(() => import("./pages/PublicProposalView"));
 const PublicAppointmentConfirmation = lazyWithReload(() => import("./pages/PublicAppointmentConfirmation"));
+const PublicTicketView = lazyWithReload(() => import("./pages/PublicTicketView"));
 const SuportePublicOrPlatformTicket = lazyWithReload(() => import("./pages/SuportePublicOrPlatformTicket"));
 const CustomerCharges = lazyWithReload(() => import("./pages/CustomerCharges"));
 const CustomerChargeDetail = lazyWithReload(() => import("./pages/CustomerChargeDetail"));
@@ -277,6 +278,7 @@ const App = () => (
             <Route path="/saas-pay/:token" element={<Suspense fallback={<LoadingFallback />}><PublicSaasBillingPay /></Suspense>} />
             <Route path="/contract-view/:token" element={<Suspense fallback={<LoadingFallback />}><PublicContractView /></Suspense>} />
             <Route path="/proposal-view/:token" element={<Suspense fallback={<LoadingFallback />}><PublicProposalView /></Suspense>} />
+            <Route path="/ticket/:token" element={<Suspense fallback={<LoadingFallback />}><PublicTicketView /></Suspense>} />
             <Route
               path="/confirmar-compromisso/:token"
               element={

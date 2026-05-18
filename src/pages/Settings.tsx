@@ -18,6 +18,7 @@ import { GoogleCalendarSection } from "@/components/settings/GoogleCalendarSecti
 import { GoogleDriveSection } from "@/components/settings/GoogleDriveSection";
 import { AgendaAvailabilitySection } from "@/components/settings/AgendaAvailabilitySection";
 import { ChatAttendanceSettingsSection } from "@/components/settings/ChatAttendanceSettingsSection";
+import { SupportSettingsSection } from "@/components/settings/SupportSettingsSection";
 import { PublicSupportPortalSettingsSection } from "@/components/settings/PublicSupportPortalSettingsSection";
 import { ChatAutomationSettingsSection } from "@/components/settings/ChatAutomationSettings";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -73,6 +74,8 @@ const Settings = () => {
       return <AgendaAvailabilitySection />;
     case "chatAttendance":
       return <ChatAttendanceSettingsSection />;
+    case "support":
+      return <SupportSettingsSection />;
     case "publicSupportPortal":
       return <PublicSupportPortalSettingsSection />;
     case "chatAutomation":

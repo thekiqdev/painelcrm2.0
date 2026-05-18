@@ -33,8 +33,18 @@ export async function applyChatPhase6MessageStatus(
     await pool.query(
       `UPDATE chat_conversations SET
          attendance_status = CASE
-           WHEN attendance_status IN ('closed', 'archived') THEN attendance_status
-           ELSE 'in_progress'
+           WHEN attendance_status = 'archived' THEN attendance_status
+           WHEN assigned_to_user_id IS NOT NULL THEN 'in_progress'
+           WHEN attendance_status = 'closed' THEN 'pending'
+           ELSE attendance_status
+         END,
+         closed_at = CASE
+           WHEN attendance_status = 'closed' THEN NULL
+           ELSE closed_at
+         END,
+         closed_by = CASE
+           WHEN attendance_status = 'closed' THEN NULL
+           ELSE closed_by
          END,
          updated_at = now()
        WHERE id = $1`,
@@ -94,6 +104,8 @@ export async function runInboundChatRoutingAsync(options: {
 
     const settings = await getOrCreateAutomationSettings(tenantId);
     if (!settings.automation_enabled) return;
+
+    if (conv.assigned_to_user_id) return;
 
     conv = await applyAutomationRules(tenantId, conv, options.messageBody);
 

@@ -73,6 +73,11 @@ const ticketReplySchema = z.object({
   company_website: z.string().max(200).optional().nullable(),
 });
 
+const publicTicketTokenReplySchema = z.object({
+  message: z.string().min(1).max(5000),
+  company_website: z.string().max(200).optional().nullable(),
+});
+
 const PORTAL_TICKET_TERMINAL_STATUSES = new Set(['closed', 'cancelled']);
 
 type PortalTicketContactRow = {
@@ -214,6 +219,46 @@ function portalNotFound(res: Response): void {
     code: 'portal_not_found',
     message: 'Este portal de suporte não está disponível.',
   });
+}
+
+function publicTicketNotFound(res: Response): void {
+  res.status(404).json({
+    ok: false,
+    code: 'ticket_not_found',
+    message: 'Ticket não encontrado ou link inválido.',
+  });
+}
+
+type PublicTicketByTokenRow = PortalTicketContactRow & {
+  tenant_id: string;
+  company_name: string | null;
+  logo_light_url: string | null;
+  tenant_logo_url: string | null;
+  logo_dark_url: string | null;
+  portal_settings_logo_url: string | null;
+  primary_color: string | null;
+};
+
+async function findPublicTicketByToken(token: string): Promise<PublicTicketByTokenRow | null> {
+  const r = await pool.query<PublicTicketByTokenRow>(
+    `SELECT t.id::text, t.ticket_number, t.subject, t.status::text, t.priority::text,
+            t.contact_phone, t.contact_name, t.created_at, t.updated_at,
+            t.user_id::text, t.assignee_id::text, t.team_id::text,
+            u.tenant_id::text AS tenant_id,
+            tenant.name AS company_name,
+            tenant.logo_light_url, tenant.logo_url AS tenant_logo_url, tenant.logo_dark_url,
+            s.logo_url AS portal_settings_logo_url, s.primary_color,
+            cat.name AS category_name
+     FROM tickets t
+     INNER JOIN users u ON u.id = t.user_id
+     INNER JOIN tenants tenant ON tenant.id = u.tenant_id
+     LEFT JOIN tenant_support_portal_settings s ON s.tenant_id = tenant.id
+     LEFT JOIN ticket_categories cat ON cat.id = t.category_id
+     WHERE t.public_access_token = $1
+     LIMIT 1`,
+    [token],
+  );
+  return r.rows[0] ?? null;
 }
 
 function firstNonEmptyString(...values: unknown[]): string | null {
@@ -926,6 +971,169 @@ export async function postPublicSupportTicketMessage(req: Request, res: Response
     });
   } catch (e) {
     console.error('[public-support-portal] reply', e);
+    res.status(500).json({ ok: false, message: 'Erro interno' });
+  }
+}
+
+export async function getPublicTicketByToken(req: Request, res: Response): Promise<void> {
+  try {
+    const token = String(req.params.token || '').trim();
+    if (!token) {
+      publicTicketNotFound(res);
+      return;
+    }
+
+    const row = await findPublicTicketByToken(token);
+    if (!row) {
+      publicTicketNotFound(res);
+      return;
+    }
+
+    const messages = await loadPublicTicketMessages(row.id);
+    const can_reply = !PORTAL_TICKET_TERMINAL_STATUSES.has(row.status);
+    const logoUrl = resolvePublicSupportLogoUrl(req, row as Record<string, unknown>);
+
+    res.json({
+      ok: true,
+      company: {
+        name: row.company_name,
+        logo_url: logoUrl,
+        primary_color: row.primary_color,
+      },
+      ticket: {
+        ticket_number: row.ticket_number,
+        subject: row.subject,
+        status: row.status,
+        priority: row.priority,
+        category_name: row.category_name,
+        created_at: row.created_at.toISOString(),
+        updated_at: row.updated_at.toISOString(),
+        can_reply,
+        messages,
+      },
+    });
+  } catch (e) {
+    console.error('[public-ticket-token] get', e);
+    res.status(500).json({ ok: false, message: 'Erro interno' });
+  }
+}
+
+export async function postPublicTicketMessageByToken(req: Request, res: Response): Promise<void> {
+  try {
+    const token = String(req.params.token || '').trim();
+    if (!token) {
+      publicTicketNotFound(res);
+      return;
+    }
+
+    const parsed = publicTicketTokenReplySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        ok: false,
+        code: 'invalid_request',
+        message: parsed.error.errors[0]?.message ?? 'Dados inválidos.',
+      });
+      return;
+    }
+    const body = parsed.data;
+    if (body.company_website?.trim()) {
+      res.status(201).json({ ok: true });
+      return;
+    }
+
+    const row = await findPublicTicketByToken(token);
+    if (!row) {
+      publicTicketNotFound(res);
+      return;
+    }
+
+    if (PORTAL_TICKET_TERMINAL_STATUSES.has(row.status)) {
+      res.status(409).json({
+        ok: false,
+        code: 'ticket_closed',
+        message: 'Este chamado está encerrado e não aceita novas respostas.',
+      });
+      return;
+    }
+
+    const actorId = await pickPortalActorUserId(row.tenant_id);
+    if (!actorId) {
+      res.status(503).json({ ok: false, message: 'Ticket temporariamente indisponível.' });
+      return;
+    }
+
+    const content = sanitizeMultiline(body.message);
+    if (!content) {
+      res.status(400).json({
+        ok: false,
+        code: 'invalid_request',
+        message: 'Informe uma mensagem válida.',
+      });
+      return;
+    }
+
+    const contactName = String(row.contact_name ?? '').trim() || 'Cliente';
+    const contactPhone = String(row.contact_phone ?? '').trim();
+    const metadataJson = buildPublicPortalMessageMetadata(contactName, contactPhone);
+
+    const client = await pool.connect();
+    let createdAt: Date;
+    try {
+      await client.query('BEGIN');
+      await insertPublicPortalTicketMessage(client, {
+        ticketId: row.id,
+        actorUserId: actorId,
+        content,
+        metadataJson,
+      });
+      await applyCustomerMessageSideEffects(client, row.id, row.status);
+      const ts = await client.query<{ created_at: Date }>(
+        `SELECT created_at FROM ticket_messages
+         WHERE ticket_id = $1::uuid AND visibility = 'public'
+         ORDER BY created_at DESC LIMIT 1`,
+        [row.id],
+      );
+      createdAt = ts.rows[0]?.created_at ?? new Date();
+      await client.query('COMMIT');
+    } catch (e) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        /* ignore */
+      }
+      throw e;
+    } finally {
+      client.release();
+    }
+
+    try {
+      await notifyTenantTicketPublicReply({
+        tenantId: row.tenant_id,
+        ticket: {
+          id: row.id,
+          ticket_number: row.ticket_number,
+          subject: row.subject,
+          user_id: row.user_id,
+          assignee_id: row.assignee_id,
+          team_id: row.team_id,
+        },
+        preview: content,
+        contactName,
+      });
+    } catch (e) {
+      console.warn('[public-ticket-token] notifyTenantTicketPublicReply', e);
+    }
+
+    res.status(201).json({
+      ok: true,
+      message: {
+        content,
+        created_at: createdAt.toISOString(),
+        author_role: 'customer' as const,
+      },
+    });
+  } catch (e) {
+    console.error('[public-ticket-token] reply', e);
     res.status(500).json({ ok: false, message: 'Erro interno' });
   }
 }

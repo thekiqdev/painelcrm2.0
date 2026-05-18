@@ -25,6 +25,7 @@ export type AutomationTrigger =
 export interface Ticket {
   id: string;
   ticket_number: string;
+  public_access_token?: string | null;
   user_id: string;
   profile_id?: string;
   client_id?: string;
