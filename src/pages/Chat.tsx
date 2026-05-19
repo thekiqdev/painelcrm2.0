@@ -106,6 +106,8 @@ import {
 } from '@/services/chat';
 import { whatsappOfficialAdminService } from '@/services/whatsappOfficialAdmin';
 import { chatKanbanService } from '@/services/chatKanban';
+import { ChatSidebarTagFilters } from '@/components/chat/ChatSidebarTagFilters';
+import { useChatTagFilters } from '@/hooks/useChatTagFilters';
 import { useAuth } from '@/contexts/AuthContext';
 import { useModulePermissions } from '@/contexts/ModulePermissionsContext';
 import { chatCommercialGates } from '@/utils/chatCommercialGates';
@@ -634,15 +636,13 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     isPlatformScope ? 'owner' : 'tenant',
   );
   const [chatAttendanceFilter, setChatAttendanceFilter] = useState<
-    '' | 'queue' | 'team' | 'mine' | 'closed' | 'unassigned'
+    '' | 'queue' | 'team' | 'mine' | 'closed'
   >('');
   useEffect(() => {
     if (modulePermLoading) return;
     if (
       !canViewAttendanceQueue &&
-      (chatAttendanceFilter === 'queue' ||
-        chatAttendanceFilter === 'team' ||
-        chatAttendanceFilter === 'unassigned')
+      (chatAttendanceFilter === 'queue' || chatAttendanceFilter === 'team')
     ) {
       setChatAttendanceFilter('');
     }
@@ -2108,12 +2108,27 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     });
   }, [conversations, searchTerm]);
 
+  const {
+    selectedTagId: chatSidebarTagId,
+    setSelectedTagId: setChatSidebarTagId,
+    tagCounts: chatTagCounts,
+    filterConversationsByTag,
+  } = useChatTagFilters({
+    conversations,
+    catalogTags: tenantKanbanTagsCatalog,
+  });
+
+  const tagFilteredConversations = useMemo(
+    () => filterConversationsByTag(searchFilteredConversations),
+    [searchFilteredConversations, filterConversationsByTag],
+  );
+
   const filteredConversations = useMemo(() => {
-    if (!operationalPanelFilter) return searchFilteredConversations;
-    return searchFilteredConversations.filter((c) =>
+    if (!operationalPanelFilter) return tagFilteredConversations;
+    return tagFilteredConversations.filter((c) =>
       matchesOperationalFilter(c, operationalPanelFilter, slaUiContext),
     );
-  }, [searchFilteredConversations, operationalPanelFilter, slaUiContext]);
+  }, [tagFilteredConversations, operationalPanelFilter, slaUiContext]);
 
   // Filtros de conversas
   const unreadConversations = useMemo(
@@ -2214,10 +2229,6 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     }
   }, [attendanceCounts.team, chatAttendanceFilter]);
 
-  useEffect(() => {
-    setChatAttendanceFilter((prev) => ((prev as string) === 'unassigned' ? '' : prev));
-  }, []);
-
   const selectedConversation = conversations.find(
     (conversation) => conversation.id === selectedConversationId,
   );
@@ -2252,9 +2263,12 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     };
   }, [isPlatformScope, selectedConversationId, selectedIsGroupChat]);
 
-  /** Catálogo de tags do tenant para cabeçalho (+) e perfil — carrega com a conversa aberta. */
+  /** Catálogo de tags do tenant — sidebar, cabeçalho (+) e perfil. */
   useEffect(() => {
-    if (isPlatformScope || !user || !selectedConversationId || selectedIsGroupChat) return;
+    if (isPlatformScope || !user?.tenant_id) {
+      setTenantKanbanTagsCatalog([]);
+      return;
+    }
     let cancelled = false;
     setTenantKanbanTagsLoading(true);
     void chatKanbanService
@@ -2281,7 +2295,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     return () => {
       cancelled = true;
     };
-  }, [isPlatformScope, user, selectedConversationId, selectedIsGroupChat]);
+  }, [isPlatformScope, user?.tenant_id]);
 
   useEffect(() => {
     chatProfileCrmLinkRef.current = {
@@ -5132,7 +5146,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
             >
                 <Card
                   className={cn(
-                    'flex min-h-0 flex-col border-border/80 shadow-sm max-md:flex-1 md:h-full md:min-h-0 md:w-[minmax(360px,400px)] md:max-w-[400px] md:shrink-0 md:overflow-hidden md:self-stretch',
+                    'flex min-h-0 flex-col border-border/80 shadow-sm max-md:flex-1 md:h-full md:min-h-0 md:w-[400px] md:min-w-[400px] md:max-w-[400px] md:shrink-0 md:overflow-hidden md:self-stretch',
                     isMobile && routeConversationId && 'hidden md:flex',
                   )}
                 >
@@ -5436,82 +5450,31 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                       </div>
                     ) : null}
                   </div>
-                  </div>
-                </PopoverContent>
-              </Popover>
-            </div>
-                      <div
-                        className={cn(
-                          '-mx-0.5 overflow-x-auto px-0.5 pb-0.5 max-md:[scrollbar-width:none] max-md:[-ms-overflow-style:none]',
-                          'max-md:[&::-webkit-scrollbar]:hidden',
-                        )}
-                      >
-                        <ToggleGroup
-                          type="single"
-                          value={chatAttendanceFilter === '' ? 'all' : chatAttendanceFilter}
-                          onValueChange={(v) => {
-                            if (!v) return;
-                            setChatAttendanceFilter(v === 'all' ? '' : (v as typeof chatAttendanceFilter));
-                          }}
-                          variant="outline"
-                          size="sm"
-                          className="inline-flex min-h-0 w-max min-w-full flex-nowrap justify-start gap-0.5 md:gap-1"
-                        >
-                          <ToggleGroupItem value="all" className="h-7 shrink-0 px-2 text-[11px] md:h-7 md:px-2 md:text-[10px]">
-                            Todas
-                          </ToggleGroupItem>
-                          <ToggleGroupItem value="mine" className="h-7 shrink-0 gap-1 px-2 text-[11px] md:h-7 md:px-2 md:text-[10px]">
-                            Minhas
-                            {attendanceCounts.mine > 0 && (
-                                <span className="tabular-nums rounded-full bg-muted px-1.5 py-0 text-[10px] font-medium text-muted-foreground">
-                                {attendanceCounts.mine > 99 ? '99+' : attendanceCounts.mine}
-                                </span>
-                              )}
-                            </ToggleGroupItem>
-                          {canViewAttendanceQueue &&
-                            user?.tenant_id &&
-                            chatInboxScope === 'tenant' &&
-                            (attendanceCounts.team > 0 || chatAttendanceFilter === 'team') && (
-                              <ToggleGroupItem value="team" className="h-7 shrink-0 gap-1 px-2 text-[11px] md:h-7 md:px-2 md:text-[10px]">
-                                Equipe
-                                {attendanceCounts.team > 0 && (
-                                  <span className="tabular-nums rounded-full bg-muted px-1.5 py-0 text-[10px] font-medium text-muted-foreground">
-                                    {attendanceCounts.team > 99 ? '99+' : attendanceCounts.team}
-                                  </span>
-                                )}
-                              </ToggleGroupItem>
-                            )}
-                          {canViewAttendanceQueue &&
-                            (attendanceCounts.queue > 0 || chatAttendanceFilter === 'queue') && (
-                            <ToggleGroupItem value="queue" className="h-7 shrink-0 gap-1 px-2 text-[11px] md:h-7 md:px-2 md:text-[10px]">
-                              Fila
-                              {attendanceCounts.queue > 0 && (
-                              <span className="tabular-nums rounded-full bg-muted px-1.5 py-0 text-[10px] font-medium text-muted-foreground">
-                                  {attendanceCounts.queue > 99 ? '99+' : attendanceCounts.queue}
-                              </span>
-                            )}
-                          </ToggleGroupItem>
-                          )}
-                          {canViewAttendanceQueue && (
-                          <ToggleGroupItem value="unassigned" className="h-7 shrink-0 gap-1 px-2 text-[11px] md:h-7 md:px-2 md:text-[10px]">
-                            Não atribuídas
-                            {attendanceCounts.unassigned > 0 && (
-                              <span className="tabular-nums rounded-full bg-muted px-1.5 py-0 text-[10px] font-medium text-muted-foreground">
-                                {attendanceCounts.unassigned > 99 ? '99+' : attendanceCounts.unassigned}
-                              </span>
-                            )}
-                          </ToggleGroupItem>
-                          )}
-                          <ToggleGroupItem value="closed" className="h-7 shrink-0 gap-1 px-2 text-[11px] md:h-7 md:px-2 md:text-[10px]">
-                            Encerradas
-                            {attendanceCounts.closed > 0 && (
-                              <span className="tabular-nums rounded-full bg-muted px-1.5 py-0 text-[10px] font-medium text-muted-foreground">
-                                {attendanceCounts.closed > 99 ? '99+' : attendanceCounts.closed}
-                              </span>
-                            )}
-                          </ToggleGroupItem>
-                        </ToggleGroup>
-                    </div>
+                </div>
+              </PopoverContent>
+            </Popover>
+          </div>
+                      <div className="-mx-0.5 min-w-0 overflow-hidden px-0.5 pb-0.5">
+                        <ChatSidebarTagFilters
+                          tags={tenantKanbanTagsCatalog}
+                          tagCounts={chatTagCounts}
+                          selectedTagId={chatSidebarTagId}
+                          onSelectTag={setChatSidebarTagId}
+                          loading={tenantKanbanTagsLoading}
+                          attendanceFilter={chatAttendanceFilter}
+                          onAttendanceFilterChange={setChatAttendanceFilter}
+                          attendanceCounts={attendanceCounts}
+                          canViewQueue={canViewAttendanceQueue}
+                          showTeamFilter={
+                            Boolean(
+                              canViewAttendanceQueue &&
+                                user?.tenant_id &&
+                                chatInboxScope === 'tenant' &&
+                                (attendanceCounts.team > 0 || chatAttendanceFilter === 'team'),
+                            )
+                          }
+                        />
+                      </div>
                   </CardHeader>
                   <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0 max-md:min-h-0">
                     <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain touch-pan-y [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border/50">
