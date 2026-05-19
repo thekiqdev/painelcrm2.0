@@ -97,4 +97,6 @@ export interface Project {
   responsible_ids?: string[];
   /** IDs das equipes selecionadas no projeto (disponíveis para áreas). */
   team_ids?: string[];
+  created_at?: string;
+  updated_at?: string;
 }

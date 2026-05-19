@@ -446,31 +446,17 @@ const Nav = () => {
           </SidebarGroup>
         ) : null}
 
-        {show(hasFunnels, 'funnels') && (
-          <SidebarGroup className="py-1.5">
-            <SidebarGroupLabel className={cn('px-2.5 text-[11px] font-semibold uppercase tracking-wide text-sidebar-foreground/50', collapsed && 'sr-only')}>
-              Vendas
-            </SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu className="gap-0.5">
-                <NavLinkItem to="/funnel" icon={List} label="Funil de Vendas" preload={() => routePreload.funnel()} />
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        )}
-
         <SidebarGroup className="py-1.5">
           <SidebarGroupLabel className={cn('px-2.5 text-[11px] font-semibold uppercase tracking-wide text-sidebar-foreground/50', collapsed && 'sr-only')}>
-            Loja online
+            Documentação
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu className="gap-0.5">
-              {show(hasProducts, 'products') && (
-                <>
-                  <NavLinkItem to="/admin/products" icon={Package} label="Catálogo" preload={() => routePreload.products()} />
-                  <NavLinkItem to="/orders" icon={ShoppingCart} label="Pedidos" preload={() => routePreload.orders()} />
-                  <NavLinkItem to="/admin/loja" icon={Store} label="Configuração da loja" preload={() => routePreload.storeSettings()} />
-                </>
+              {show(hasProposals, 'proposals') && (
+                <NavLinkItem to="/proposals" icon={FileText} label="Propostas" preload={() => routePreload.proposals()} />
+              )}
+              {show(hasContracts, 'contracts') && (
+                <NavLinkItem to="/contracts" icon={FileSearch} label="Contratos" preload={() => routePreload.contracts()} />
               )}
             </SidebarMenu>
           </SidebarGroupContent>
@@ -508,17 +494,31 @@ const Nav = () => {
           </SidebarGroupContent>
         </SidebarGroup>
 
+        {show(hasFunnels, 'funnels') && (
+          <SidebarGroup className="py-1.5">
+            <SidebarGroupLabel className={cn('px-2.5 text-[11px] font-semibold uppercase tracking-wide text-sidebar-foreground/50', collapsed && 'sr-only')}>
+              Vendas
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu className="gap-0.5">
+                <NavLinkItem to="/funnel" icon={List} label="Funil de Vendas" preload={() => routePreload.funnel()} />
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
+
         <SidebarGroup className="py-1.5">
           <SidebarGroupLabel className={cn('px-2.5 text-[11px] font-semibold uppercase tracking-wide text-sidebar-foreground/50', collapsed && 'sr-only')}>
-            Documentação
+            Loja online
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu className="gap-0.5">
-              {show(hasProposals, 'proposals') && (
-                <NavLinkItem to="/proposals" icon={FileText} label="Propostas" preload={() => routePreload.proposals()} />
-              )}
-              {show(hasContracts, 'contracts') && (
-                <NavLinkItem to="/contracts" icon={FileSearch} label="Contratos" preload={() => routePreload.contracts()} />
+              {show(hasProducts, 'products') && (
+                <>
+                  <NavLinkItem to="/admin/products" icon={Package} label="Catálogo" preload={() => routePreload.products()} />
+                  <NavLinkItem to="/orders" icon={ShoppingCart} label="Pedidos" preload={() => routePreload.orders()} />
+                  <NavLinkItem to="/admin/loja" icon={Store} label="Configuração da loja" preload={() => routePreload.storeSettings()} />
+                </>
               )}
             </SidebarMenu>
           </SidebarGroupContent>

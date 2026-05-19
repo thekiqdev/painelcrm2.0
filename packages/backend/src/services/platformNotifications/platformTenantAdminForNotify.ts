@@ -3,11 +3,13 @@ import { normalizeWhatsappDigits } from '../../utils/userIdentity.js';
 
 export type TenantAdminNotifyRow = {
   user_id: string;
-  email: string;
+  email: string | null;
   whatsapp_digits: string | null;
   first_name: string | null;
   last_name: string | null;
   tenant_name: string;
+  responsible_name: string | null;
+  billing_email: string | null;
   billing_phone: string | null;
 };
 
@@ -16,7 +18,8 @@ export async function loadPrimaryTenantAdminForNotify(
   tenantId: string,
 ): Promise<TenantAdminNotifyRow | null> {
   const r = await client.query<TenantAdminNotifyRow>(
-    `SELECT u.id::text AS user_id, u.email,
+    `SELECT u.id::text AS user_id,
+            COALESCE(NULLIF(trim(u.email), ''), NULLIF(trim(t.billing_email), '')) AS email,
             regexp_replace(
               COALESCE(
                 NULLIF(trim(COALESCE(u.whatsapp_number, '')), ''),
@@ -27,12 +30,19 @@ export async function loadPrimaryTenantAdminForNotify(
             ) AS whatsapp_digits,
             p.first_name, p.last_name,
             t.name AS tenant_name,
+            t.responsible_name,
+            t.billing_email,
             regexp_replace(COALESCE(t.billing_phone, ''), '\\D', '', 'g') AS billing_phone
      FROM users u
      INNER JOIN tenants t ON t.id = u.tenant_id
      LEFT JOIN profiles p ON p.id = u.id
+     LEFT JOIN profile_members pm ON pm.user_id = u.id
+     LEFT JOIN user_profiles up ON up.id = pm.profile_id
      WHERE u.tenant_id = $1::uuid
-     ORDER BY u.created_at ASC
+       AND COALESCE(u.is_super_admin, false) = false
+     GROUP BY u.id, u.email, u.whatsapp_number, p.whatsapp_number, p.first_name, p.last_name,
+              t.name, t.responsible_name, t.billing_email, t.billing_phone, u.created_at
+     ORDER BY COALESCE(bool_or(up.is_admin), false) DESC, u.created_at ASC
      LIMIT 1`,
     [tenantId],
   );
@@ -50,6 +60,8 @@ export function adminDisplayName(row: TenantAdminNotifyRow): string {
   const ln = (row.last_name ?? '').trim();
   const joined = [fn, ln].filter(Boolean).join(' ').trim();
   if (joined) return joined;
+  const responsible = (row.responsible_name ?? '').trim();
+  if (responsible) return responsible;
   return row.email?.trim() || 'Administrador';
 }
 

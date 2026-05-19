@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useLocation, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, X, Users, Kanban, ClipboardList, File, DollarSign, Calendar as CalendarIcon2, LayoutGrid, Filter, Settings, MoreVertical, ChevronDown, ChevronUp, Upload } from "lucide-react";
+import { Plus, X, Users, Kanban, ClipboardList, File, DollarSign, Calendar as CalendarIcon2, LayoutGrid, List as ListIcon, Filter, Settings, MoreVertical, ChevronDown, ChevronUp, Upload } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 import { format } from "date-fns";
 import { sanitizeHtml } from "@/lib/sanitize";
@@ -11,6 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 
 // Importações de componentes
+import { ProjectsGridView } from "@/components/projects/ProjectsGridView";
 import { ProjectsListView } from "@/components/projects/ProjectsListView";
 import { BoardView } from "@/components/projects/BoardView";
 import { TaskListView } from "@/components/projects/TaskListView";
@@ -82,6 +83,8 @@ const MODULE_PROJECTS = "projects";
 const MODULE_TASKS = "tasks";
 
 const PROJECTS_QUERY_KEY = ["projects"] as const;
+const PROJECTS_VIEW_TYPE_KEY = "projects_view_type";
+type ProjectsCatalogViewType = "grid" | "kanban" | "list";
 
 function mapApiProjectTasksToUiTasks(
   apiTasks: ApiProjectTask[],
@@ -142,7 +145,7 @@ const Projects = () => {
   const [viewMode, setViewMode] = useState<"list" | "detail">("list");
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [activeTab, setActiveTab] = useState("board");
-  const [projectsViewType, setProjectsViewType] = useState<"grid" | "kanban">("grid");
+  const [projectsViewType, setProjectsViewType] = useState<ProjectsCatalogViewType>("list");
   const [kanbanStages, setKanbanStages] = useState<ProjectList[]>([
     { id: "backlog", name: "Backlog", tasks: [], order: 0 },
     { id: "in-progress", name: "Em Andamento", tasks: [], order: 1 },
@@ -256,6 +259,9 @@ const Projects = () => {
           areas: [],
           team_id: apiProject.team_id ?? null,
           teamName: apiProject.team_id ? teamMap.get(apiProject.team_id) ?? null : null,
+          responsible_ids: apiProject.responsible_ids ?? [],
+          created_at: apiProject.created_at,
+          updated_at: apiProject.updated_at,
         };
       }) as Project[];
     },
@@ -573,6 +579,76 @@ const Projects = () => {
   useEffect(() => {
     setMembers(membersData ?? []);
   }, [membersData]);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(PROJECTS_VIEW_TYPE_KEY);
+      if (stored === "grid" || stored === "kanban" || stored === "list") {
+        setProjectsViewType(stored);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(PROJECTS_VIEW_TYPE_KEY, projectsViewType);
+    } catch {
+      /* ignore */
+    }
+  }, [projectsViewType]);
+
+  const canDeleteProject =
+    user?.can_manage_plan === true || user?.is_super_admin === true;
+
+  const openProjectFromCatalog = (project: Project) => {
+    setSelectedProject(project);
+    setViewMode("detail");
+    navigate(getProjectUrl(project.id));
+  };
+
+  const openProjectSettingsFromCatalog = (project: Project) => {
+    setSelectedProject(project);
+    setViewMode("detail");
+    navigate(getProjectUrl(project.id));
+    setProjectSettingsOpen(true);
+  };
+
+  const handleArchiveProjectFromCatalog = async (project: Project) => {
+    try {
+      await projectsService.updateProject(project.id, { status: "archived" });
+      setProjects((prev) =>
+        prev.map((p) => (p.id === project.id ? { ...p, status: "archived" } : p)),
+      );
+      await queryClient.invalidateQueries({ queryKey: PROJECTS_QUERY_KEY });
+      toast.success("Projeto arquivado");
+    } catch {
+      toast.error("Erro ao arquivar projeto");
+    }
+  };
+
+  const handleDeleteProjectFromCatalog = async (project: Project) => {
+    if (
+      !window.confirm(
+        `Excluir o projeto "${project.name}"? Esta ação não pode ser desfeita.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      await projectsService.deleteProject(project.id);
+      setProjects((prev) => prev.filter((p) => p.id !== project.id));
+      if (selectedProject?.id === project.id) {
+        setSelectedProject(null);
+        setViewMode("list");
+      }
+      await queryClient.invalidateQueries({ queryKey: PROJECTS_QUERY_KEY });
+      toast.success("Projeto excluído");
+    } catch {
+      toast.error("Erro ao excluir projeto");
+    }
+  };
 
   // Em projetos com áreas, as abas Etapas/Tarefas não existem; manter aba válida (Documentos, Calendário ou Financeiro)
   useEffect(() => {
@@ -2269,14 +2345,19 @@ const Projects = () => {
                     ]
                   : []),
                 {
-                  icon: <LayoutGrid className="h-4 w-4" aria-hidden />,
-                  ariaLabel: "Vista em grade",
-                  onClick: () => setProjectsViewType("grid"),
+                  icon: <ListIcon className="h-4 w-4" aria-hidden />,
+                  ariaLabel: "Vista em lista",
+                  onClick: () => setProjectsViewType("list"),
                 },
                 {
                   icon: <Kanban className="h-4 w-4" aria-hidden />,
                   ariaLabel: "Vista em kanban",
                   onClick: () => setProjectsViewType("kanban"),
+                },
+                {
+                  icon: <LayoutGrid className="h-4 w-4" aria-hidden />,
+                  ariaLabel: "Vista em grade",
+                  onClick: () => setProjectsViewType("grid"),
                 },
                 {
                   icon: <Users className="h-4 w-4" aria-hidden />,
@@ -2317,35 +2398,46 @@ const Projects = () => {
                 ))}
               </SelectContent>
             </Select>
-            <div className="border rounded-md p-0.5 flex">
+            <div className="inline-flex rounded-md border bg-muted/40 p-0.5">
               <Button
-                variant={projectsViewType === "grid" ? "default" : "ghost"}
+                variant={projectsViewType === "list" ? "default" : "ghost"}
                 size="sm"
-                onClick={() => setProjectsViewType("grid")}
-                className="rounded-r-none"
+                onClick={() => setProjectsViewType("list")}
+                className="gap-1 rounded-r-none"
               >
-                <LayoutGrid className="h-4 w-4 mr-1" />
-                Grade
+                <ListIcon className="h-4 w-4" />
+                Lista
               </Button>
               <Button
                 variant={projectsViewType === "kanban" ? "default" : "ghost"}
                 size="sm"
                 onClick={() => setProjectsViewType("kanban")}
-                className="rounded-l-none"
+                className="gap-1 rounded-none border-x border-border/60"
               >
-                <Kanban className="h-4 w-4 mr-1" />
+                <Kanban className="h-4 w-4" />
                 Kanban
+              </Button>
+              <Button
+                variant={projectsViewType === "grid" ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setProjectsViewType("grid")}
+                className="gap-1 rounded-l-none"
+              >
+                <LayoutGrid className="h-4 w-4" />
+                Grade
               </Button>
             </div>
             {canImportProjectsCsv && (
               <Button
                 type="button"
                 variant="outline"
+                size="icon"
                 disabled={projectsCsvImportRunning}
+                aria-label="Importar projetos (CSV)"
+                title="Importar projetos (CSV)"
                 onClick={() => projectsCsvInputRef.current?.click()}
               >
-                <Upload className="mr-2 h-4 w-4" />
-                Importar (CSV)
+                <Upload className="h-4 w-4" />
               </Button>
             )}
             {canCreateProject(MODULE_PROJECTS) && (
@@ -2367,14 +2459,20 @@ const Projects = () => {
         </div>
       ) : viewMode === "list" ? (
         projectsViewType === "grid" ? (
-          <ProjectsListView 
+          <ProjectsGridView
             projects={projects}
-            onViewDetails={(project) => {
-              setSelectedProject(project);
-              setViewMode("detail");
-              navigate(getProjectUrl(project.id));
-            }}
+            onViewDetails={openProjectFromCatalog}
             onNewProject={() => navigate("/projects/new")}
+          />
+        ) : projectsViewType === "list" ? (
+          <ProjectsListView
+            projects={projects}
+            members={members}
+            onOpen={openProjectFromCatalog}
+            onEdit={openProjectSettingsFromCatalog}
+            onArchive={handleArchiveProjectFromCatalog}
+            onDelete={canDeleteProject ? handleDeleteProjectFromCatalog : undefined}
+            canDelete={canDeleteProject}
           />
         ) : (
           <BoardView 
@@ -2390,11 +2488,7 @@ const Projects = () => {
             onAddList={() => setNewListDialogOpen(true)}
             isProjectView={true}
             projects={projects}
-            onProjectClick={(project) => {
-              setSelectedProject(project);
-              setViewMode("detail");
-              navigate(getProjectUrl(project.id));
-            }}
+            onProjectClick={openProjectFromCatalog}
             onAddProject={() => navigate("/projects/new")}
             onMoveProject={moveProject}
           />

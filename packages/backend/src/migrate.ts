@@ -389,6 +389,7 @@ const order = [
   '244_notifications_category.sql',
   '245_tickets_public_access_token.sql',
   '246_ticket_created_message_template_public_link.sql',
+  '247_platform_support_ticket_notifications.sql',
   'create-admin-user.sql',
 ];
 

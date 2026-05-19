@@ -11,7 +11,10 @@ import {
   updatePlatformSupportTicketStatus,
   upsertPlatformSupportSettings,
 } from '../services/platformSupport/platformSupportRepository.js';
-import { notifyCustomerPlatformSupportReply } from '../services/platformSupport/platformSupportNotifications.js';
+import {
+  notifyTenantPlatformSupportPublicReply,
+  notifyTenantPlatformSupportStatusChanged,
+} from '../services/platformSupport/platformSupportNotifications.js';
 import { normalizeBrazilWhatsappNumber } from '../services/platformSupport/platformSupportWhatsapp.js';
 
 const settingsSchema = z
@@ -147,10 +150,12 @@ export async function postSuperadminPlatformSupportTicketMessage(req: AuthReques
       res.status(400).json({ error: 'Não foi possível responder' });
       return;
     }
-    void notifyCustomerPlatformSupportReply({
-      userId: ticket.created_by_user_id,
+    void notifyTenantPlatformSupportPublicReply({
       ticketId: ticket.id,
+      tenantId: ticket.tenant_id,
       subject: ticket.subject,
+      status: 'waiting_customer',
+      messagePreview: parsed.data.message,
     });
     res.status(201).json(message);
   } catch (e) {
@@ -166,10 +171,25 @@ export async function patchSuperadminPlatformSupportTicketStatus(req: AuthReques
       res.status(400).json({ error: 'Status inválido' });
       return;
     }
+    const before = await getPlatformSupportTicketById(req.params.id);
+    if (!before) {
+      res.status(404).json({ error: 'Chamado não encontrado' });
+      return;
+    }
     const ticket = await updatePlatformSupportTicketStatus(req.params.id, parsed.data.status);
     if (!ticket) {
       res.status(404).json({ error: 'Chamado não encontrado' });
       return;
+    }
+    if (before.status !== ticket.status) {
+      void notifyTenantPlatformSupportStatusChanged({
+        ticketId: ticket.id,
+        tenantId: ticket.tenant_id,
+        subject: ticket.subject,
+        previousStatus: before.status,
+        nextStatus: ticket.status,
+        status: ticket.status,
+      });
     }
     res.json(ticket);
   } catch (e) {

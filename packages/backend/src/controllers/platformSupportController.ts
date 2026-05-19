@@ -12,7 +12,7 @@ import {
   listTenantPlatformSupportTickets,
 } from '../services/platformSupport/platformSupportRepository.js';
 import {
-  notifyCustomerPlatformSupportReply,
+  notifyTenantPlatformSupportTicketCreated,
   notifySuperAdminsPlatformSupportTicket,
 } from '../services/platformSupport/platformSupportNotifications.js';
 
@@ -99,6 +99,13 @@ export async function postPlatformSupportTicket(req: AuthRequest, res: Response)
       tenantId,
       tenantName,
       subject: ticket.subject,
+    });
+    void notifyTenantPlatformSupportTicketCreated({
+      ticketId: ticket.id,
+      tenantId,
+      subject: ticket.subject,
+      status: ticket.status,
+      messagePreview: parsed.data.message,
     });
     res.status(201).json(ticket);
   } catch (e) {
