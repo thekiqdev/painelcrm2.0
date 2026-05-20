@@ -97,8 +97,8 @@ A API **não** processa faturas recorrentes sozinha. O compose de produção inc
 
 | Serviço | Dockerfile | Container |
 |---------|------------|-----------|
-| `billing-scheduler` | `Dockerfile.billing-scheduler` | `painelcrm_billing_scheduler_prod` |
-| `billing-worker` | `Dockerfile.billing-worker` | `painelcrm_billing_worker_prod` |
+| `billing-scheduler` | `Dockerfile.billing.scheduler` | `painelcrm_billing_scheduler_prod` |
+| `billing-worker` | `Dockerfile.billing.worker` | `painelcrm_billing_worker_prod` |
 
 Usam o **mesmo** `.env.production` que o backend. Logs: `[BILLING_SCHEDULER]`, `[BILLING_WORKER]`, `[BILLING]`.
 

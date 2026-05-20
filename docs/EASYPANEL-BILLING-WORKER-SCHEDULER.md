@@ -10,8 +10,10 @@ Não expõem porta HTTP pública.
 
 | Nome sugerido | Dockerfile | Porta HTTP | Função |
 |---------------|------------|------------|--------|
-| `painelcrm-billing-scheduler` | `Dockerfile.billing-scheduler` | Nenhuma (desativar expose) | Enfileira jobs (`enqueueRenewalJobs`) a cada **10 min** |
-| `painelcrm-billing-worker` | `Dockerfile.billing-worker` | Nenhuma | Processa fila a cada **15 s** |
+| `painelcrm-billing-scheduler` | `Dockerfile.billing.scheduler` | Nenhuma (desativar expose) | Enfileira jobs (`enqueueRenewalJobs`) a cada **10 min** |
+| `painelcrm-billing-worker` | `Dockerfile.billing.worker` | Nenhuma | Processa fila a cada **15 s** |
+
+> O EasyPanel deriva o nome do Dockerfile do nome do serviço (`painelcrm-billing-scheduler` → `Dockerfile.billing.scheduler`). Não usar hífens no nome do ficheiro.
 
 ---
 
@@ -22,7 +24,7 @@ Não expõem porta HTTP pública.
 1. **New Service** → **App**
 2. **Source**: mesmo repo/branch do backend
 3. **Build**
-   - Dockerfile: `Dockerfile.billing-scheduler`
+   - Dockerfile: `Dockerfile.billing.scheduler`
    - Context: `.` (raiz)
 4. **Deploy**
    - **Não** publicar porta HTTP (sem domínio)
@@ -42,7 +44,7 @@ Não expõem porta HTTP pública.
 
 Igual ao scheduler, com:
 
-- Dockerfile: `Dockerfile.billing-worker`
+- Dockerfile: `Dockerfile.billing.worker`
 - Opcional:
   - `BILLING_WORKER_LOOP_SECONDS=15`
   - `RECURRING_WORKER_ID=docker-worker-1`
@@ -111,4 +113,4 @@ Os scripts `scripts/start-billing-*.sh` usam `trap` + sleep em segundos para enc
 
 - `docs/INVESTIGACAO_WORKER_FINANCEIRO_PRODUCAO.md`
 - `env.example` (bloco Billing)
-- `Dockerfile.billing-worker`, `Dockerfile.billing-scheduler`
+- `Dockerfile.billing.worker`, `Dockerfile.billing.scheduler`

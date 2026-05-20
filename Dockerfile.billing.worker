@@ -1,4 +1,5 @@
 # Billing worker — mesmo artefacto de build que Dockerfile.backend (API não exposta).
+# EasyPanel: nome do serviço painelcrm-billing-worker → Dockerfile.billing.worker
 # Loop: scripts/start-billing-worker.sh → node dist/scripts/runRecurringWorker.js a cada ~15s.
 FROM node:20-alpine AS builder
 

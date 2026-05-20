@@ -79,7 +79,7 @@ VITE_API_URL=
 ### 4. 📅 Billing Scheduler (`painelcrm-billing-scheduler`) ❌ CRIAR
 
 - **Tipo**: App
-- **Dockerfile**: `Dockerfile.billing-scheduler`
+- **Dockerfile**: `Dockerfile.billing.scheduler` (EasyPanel gera este nome a partir do serviço)
 - **Contexto**: raiz (`.`)
 - **Porta HTTP**: não expor
 - **ENV**: **copiar todas** do backend (`painelcrm`)
@@ -88,7 +88,7 @@ VITE_API_URL=
 ### 5. ⚙️ Billing Worker (`painelcrm-billing-worker`) ❌ CRIAR
 
 - **Tipo**: App
-- **Dockerfile**: `Dockerfile.billing-worker`
+- **Dockerfile**: `Dockerfile.billing.worker`
 - **Contexto**: raiz (`.`)
 - **Porta HTTP**: não expor
 - **ENV**: **igual ao backend** + opcional `RECURRING_WORKER_ID=docker-worker-1`

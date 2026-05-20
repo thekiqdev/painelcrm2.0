@@ -331,8 +331,8 @@ Variável `TZ` no container worker deve ser coerente com Postgres (ideal `UTC` e
 
 | Artefacto | Descrição |
 |-----------|-----------|
-| `Dockerfile.billing-worker` | Build backend + loop `scripts/start-billing-worker.sh` |
-| `Dockerfile.billing-scheduler` | Build backend + loop `scripts/start-billing-scheduler.sh` |
+| `Dockerfile.billing.worker` | Build backend + loop `scripts/start-billing-worker.sh` |
+| `Dockerfile.billing.scheduler` | Build backend + loop `scripts/start-billing-scheduler.sh` |
 | `docker-compose.prod.yml` | Serviços `billing-worker` e `billing-scheduler` |
 | `docs/EASYPANEL-BILLING-WORKER-SCHEDULER.md` | Passo a passo EasyPanel |
 
