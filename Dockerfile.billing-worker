@@ -1,0 +1,37 @@
+# Billing worker — mesmo artefacto de build que Dockerfile.backend (API não exposta).
+# Loop: scripts/start-billing-worker.sh → node dist/scripts/runRecurringWorker.js a cada ~15s.
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+COPY packages/backend/package*.json ./
+RUN npm ci
+
+COPY packages/backend/ ./
+RUN npm run build
+
+FROM node:20-alpine
+
+WORKDIR /app
+
+RUN apk add --no-cache tini
+
+COPY packages/backend/package*.json ./
+RUN npm ci --omit=dev
+
+COPY --from=builder /app/dist ./dist
+COPY database ./database
+COPY packages/backend/scripts ./scripts
+
+COPY scripts/start-billing-worker.sh /usr/local/bin/start-billing-worker.sh
+COPY scripts/billing-healthcheck-worker.sh /usr/local/bin/billing-healthcheck-worker.sh
+RUN chmod +x /usr/local/bin/start-billing-worker.sh /usr/local/bin/billing-healthcheck-worker.sh
+
+ENV NODE_ENV=production
+ENV BILLING_APP_DIR=/app
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=45s --retries=3 \
+  CMD /usr/local/bin/billing-healthcheck-worker.sh
+
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["/usr/local/bin/start-billing-worker.sh"]

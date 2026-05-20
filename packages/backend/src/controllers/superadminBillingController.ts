@@ -13,6 +13,7 @@ import {
   getBillingRecurringJobsStatusSummary,
   listBillingRecurringJobsForOps,
 } from '../services/billingRecurringJobsOpsService.js';
+import { getBillingOpsHeartbeats } from '../services/billingOpsHeartbeatService.js';
 import { z } from 'zod';
 
 /** GET /api/superadmin/billing/subscriptions – assinaturas ativas (saas). */
@@ -107,11 +108,17 @@ export async function getBillingRecurringJobsOps(req: AuthRequest, res: Response
         ? null
         : Math.min(365, Math.max(1, parseInt(String(sinceDaysRaw), 10) || 30));
     const status = typeof req.query.status === 'string' ? req.query.status : null;
-    const [summary, jobs] = await Promise.all([
+    const [summary, jobs, process_heartbeats] = await Promise.all([
       getBillingRecurringJobsStatusSummary(windowDays),
       listBillingRecurringJobsForOps({ limit, status, since_days: sinceDays }),
+      getBillingOpsHeartbeats(),
     ]);
-    res.json({ summary, jobs, query: { limit, window_days: windowDays, since_days: sinceDays, status } });
+    res.json({
+      summary,
+      jobs,
+      process_heartbeats,
+      query: { limit, window_days: windowDays, since_days: sinceDays, status },
+    });
   } catch (e: any) {
     console.error('[getBillingRecurringJobsOps]', e);
     res.status(500).json({ error: e.message || 'Erro ao listar jobs de recorrência' });

@@ -390,6 +390,7 @@ const order = [
   '245_tickets_public_access_token.sql',
   '246_ticket_created_message_template_public_link.sql',
   '247_platform_support_ticket_notifications.sql',
+  '248_billing_ops_heartbeat.sql',
   'create-admin-user.sql',
 ];
 

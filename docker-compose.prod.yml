@@ -1,5 +1,18 @@
 version: '3.8'
 
+# Variáveis partilhadas: billing worker/scheduler usam o MESMO .env que o backend.
+x-painelcrm-backend-env: &painelcrm-backend-env
+  NODE_ENV: production
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: 5432
+  POSTGRES_DB: ${POSTGRES_DB:-painelcrm}
+  POSTGRES_USER: ${POSTGRES_USER:-postgres}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  JWT_SECRET: ${JWT_SECRET}
+  JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+  API_PORT: 3001
+  FRONTEND_URL: ${FRONTEND_URL:-http://localhost}
+
 services:
   postgres:
     image: postgres:15-alpine
@@ -26,17 +39,43 @@ services:
       context: .
       dockerfile: Dockerfile.backend
     container_name: painelcrm_backend_prod
+    env_file:
+      - .env.production
     environment:
-      NODE_ENV: production
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: ${POSTGRES_DB:-painelcrm}
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      JWT_SECRET: ${JWT_SECRET}
-      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
-      API_PORT: 3001
-      FRONTEND_URL: ${FRONTEND_URL:-http://localhost}
+      <<: *painelcrm-backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - painelcrm-network
+
+  billing-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile.billing-scheduler
+    container_name: painelcrm_billing_scheduler_prod
+    env_file:
+      - .env.production
+    environment:
+      <<: *painelcrm-backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - painelcrm-network
+
+  billing-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.billing-worker
+    container_name: painelcrm_billing_worker_prod
+    env_file:
+      - .env.production
+    environment:
+      <<: *painelcrm-backend-env
+      RECURRING_WORKER_ID: ${RECURRING_WORKER_ID:-docker-worker-1}
     depends_on:
       postgres:
         condition: service_healthy
@@ -64,4 +103,3 @@ volumes:
 networks:
   painelcrm-network:
     driver: bridge
-

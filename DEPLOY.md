@@ -91,6 +91,23 @@ docker-compose -f docker-compose.prod.yml logs -f
 docker-compose -f docker-compose.prod.yml ps
 ```
 
+### Billing (recorrência) — serviços obrigatórios
+
+A API **não** processa faturas recorrentes sozinha. O compose de produção inclui:
+
+| Serviço | Dockerfile | Container |
+|---------|------------|-----------|
+| `billing-scheduler` | `Dockerfile.billing-scheduler` | `painelcrm_billing_scheduler_prod` |
+| `billing-worker` | `Dockerfile.billing-worker` | `painelcrm_billing_worker_prod` |
+
+Usam o **mesmo** `.env.production` que o backend. Logs: `[BILLING_SCHEDULER]`, `[BILLING_WORKER]`, `[BILLING]`.
+
+```bash
+docker-compose -f docker-compose.prod.yml logs -f billing-worker billing-scheduler
+```
+
+**EasyPanel:** ver `docs/EASYPANEL-BILLING-WORKER-SCHEDULER.md`.
+
 ### Opção B: Deploy Manual (PM2)
 
 ```bash

@@ -7,6 +7,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { enqueueRenewalJobs } from '../services/recurringBillingJobService.js';
+import { recordBillingOpsHeartbeat } from '../services/billingOpsHeartbeatService.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '../../../../..');
@@ -15,7 +16,9 @@ dotenv.config();
 
 async function main() {
   const result = await enqueueRenewalJobs();
-  console.log('[BILLING]', JSON.stringify({ type: 'scheduler_exit', ...result, ts: new Date().toISOString() }));
+  const exitPayload = { type: 'scheduler_exit', ...result, ts: new Date().toISOString() };
+  console.log('[BILLING]', JSON.stringify(exitPayload));
+  await recordBillingOpsHeartbeat('scheduler', exitPayload);
 }
 
 main().catch((e) => {

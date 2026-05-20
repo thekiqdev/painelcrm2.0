@@ -2,7 +2,11 @@
 
 ## 📋 Estrutura de Serviços
 
-Você precisa de **3 serviços** no Easypanel:
+Você precisa de **5 serviços** no Easypanel (3 base + 2 billing):
+
+> **Billing recorrente:** `painelcrm-billing-scheduler` e `painelcrm-billing-worker` — guia completo em `docs/EASYPANEL-BILLING-WORKER-SCHEDULER.md`.
+
+### Serviços base (3)
 
 ### 1. 🗄️ PostgreSQL (painelcrmbd) ✅ JÁ CRIADO
 
@@ -69,6 +73,26 @@ VITE_API_URL=
 **Health Check**: `/health` ou `/`
 
 **Dependências**: `painelcrm` (deve iniciar após o backend)
+
+---
+
+### 4. 📅 Billing Scheduler (`painelcrm-billing-scheduler`) ❌ CRIAR
+
+- **Tipo**: App
+- **Dockerfile**: `Dockerfile.billing-scheduler`
+- **Contexto**: raiz (`.`)
+- **Porta HTTP**: não expor
+- **ENV**: **copiar todas** do backend (`painelcrm`)
+- **Logs**: `[BILLING_SCHEDULER]`, `[BILLING]`
+
+### 5. ⚙️ Billing Worker (`painelcrm-billing-worker`) ❌ CRIAR
+
+- **Tipo**: App
+- **Dockerfile**: `Dockerfile.billing-worker`
+- **Contexto**: raiz (`.`)
+- **Porta HTTP**: não expor
+- **ENV**: **igual ao backend** + opcional `RECURRING_WORKER_ID=docker-worker-1`
+- **Logs**: `[BILLING_WORKER]`, `[BILLING]`
 
 ---
 
@@ -171,6 +195,8 @@ Após criar o serviço frontend:
 | PostgreSQL | `painelcrmbd` ou `sistemas_painelcrmbd` | 5432 | ✅ Criado |
 | Backend API | `painelcrm` | 3001 | ✅ Criado |
 | Frontend | `painelcrm-frontend` | 80 | ❌ **Criar** |
+| Billing Scheduler | `painelcrm-billing-scheduler` | — | ❌ **Criar** |
+| Billing Worker | `painelcrm-billing-worker` | — | ❌ **Criar** |
 
 ---
 
