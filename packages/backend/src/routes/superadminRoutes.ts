@@ -94,6 +94,8 @@ router.get('/billing/subscriptions', superadminBillingController.getBillingSubsc
 router.get('/billing/upcoming', superadminBillingController.getBillingUpcoming);
 router.get('/billing/jobs-failed', superadminBillingController.getBillingJobsFailed);
 router.get('/billing/recurring-jobs', superadminBillingController.getBillingRecurringJobsOps);
+router.get('/billing/health', superadminBillingController.getBillingHealthHandler);
+router.post('/billing/recovery/run', superadminBillingController.postBillingRecoveryRunHandler);
 router.get('/billing/settings', superadminBillingController.getBillingSettingsHandler);
 router.put('/billing/settings', superadminBillingController.putBillingSettingsHandler);
 router.get(

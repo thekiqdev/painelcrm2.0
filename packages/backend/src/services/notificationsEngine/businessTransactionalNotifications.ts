@@ -14,6 +14,7 @@ import {
   runTransactionalNotification,
   isSkippedByTenantPreference,
 } from './notificationEngineOrchestrator.js';
+import { scheduleBillingNotificationSideEffect } from './billingNotificationFlush.js';
 import { resolveWhatsAppSenderUserIdForTenant } from './whatsappSenderResolve.js';
 import {
   buildAbsoluteProposalPublicLinkUrl,
@@ -67,7 +68,7 @@ function formatDueDatePt(iso: string): string {
 }
 
 function enqueue(label: string, fn: () => Promise<void>): void {
-  void fn().catch((err) => console.error(`[notifications-engine/business] ${label}`, err));
+  scheduleBillingNotificationSideEffect(label, fn);
 }
 
 async function gateAndPublish(
@@ -144,6 +145,21 @@ async function gateAndPublish(
   }
   if (isSkippedByTenantPreference(result)) {
     return;
+  }
+  if (result.deliveryId && !result.duplicate) {
+    console.log(
+      '[BILLING_NOTIFY_DELIVERY_CREATED]',
+      JSON.stringify({
+        event_key: input.eventKey,
+        tenant_id: input.tenantId,
+        entity_type: input.entityType,
+        entity_id: input.entityId,
+        delivery_id: result.deliveryId,
+        idempotency_key: input.idempotencyKey,
+        status: result.status,
+        ts: new Date().toISOString(),
+      }),
+    );
   }
 }
 

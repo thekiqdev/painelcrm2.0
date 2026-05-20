@@ -6,6 +6,7 @@ import {
   publishInvoiceOverdueDigest,
   publishInvoicePaidNotification,
 } from './notificationsEngine/businessTransactionalNotifications.js';
+import { scheduleBillingNotificationSideEffect } from './notificationsEngine/billingNotificationFlush.js';
 
 export type InvoiceNotificationEvent =
   | 'invoice_created'
@@ -175,8 +176,8 @@ export function notifyInvoiceCreated(params: {
     invoiceId: params.invoiceId,
     preferredSenderUserId: params.preferredSenderUserId ?? null,
   });
-  void notifyInvoiceInApp(params.invoiceId, 'invoice_created').catch((err) =>
-    console.error('[invoiceNotifications] notifyInvoiceCreated:', err)
+  scheduleBillingNotificationSideEffect('invoice_in_app.created', () =>
+    notifyInvoiceInApp(params.invoiceId, 'invoice_created'),
   );
 }
 

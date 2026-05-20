@@ -16,21 +16,58 @@ export interface CrmSubscriptionListItem {
   max_cycles?: number | null;
 }
 
+export type SubscriptionTimelineOperationalState =
+  | 'scheduled'
+  | 'awaiting_generation'
+  | 'in_queue'
+  | 'processing'
+  | 'generated'
+  | 'paid'
+  | 'failed'
+  | 'skipped'
+  | 'cancelled'
+  | 'gateway_failed'
+  | 'manual_invoice';
+
 export interface CrmSubscriptionTimelineRow {
   month_ref: string;
+  cycle_label: string;
+  cycle_subtitle: string;
+  cycle_date: string | null;
   period_label: string;
   period_start: string | null;
   period_end: string | null;
   due_date: string | null;
   status_pt: string;
+  operational_state: SubscriptionTimelineOperationalState;
+  operational_state_pt: string;
   amount_cents: number | null;
   invoice_id: string | null;
+  invoice_created_at?: string | null;
+  generation_note?: string | null;
   cycle_status: string | null;
   cycle_id: string | null;
   job_id: string | null;
+  job_status?: string | null;
+  job_attempts?: number | null;
+  job_max_attempts?: number | null;
+  job_retry_at?: string | null;
+  job_error_snippet?: string | null;
+  has_auto_retry?: boolean;
+  processed_at?: string | null;
   invoice_status?: string | null;
   gateway_status?: string | null;
   gateway_reference_id?: string | null;
+  merge_source?: 'cycle' | 'invoice_only';
+}
+
+export interface CrmSubscriptionAutomationSummary {
+  last_generation_at: string | null;
+  last_generation_label: string | null;
+  next_generation_ymd: string | null;
+  next_charge_ymd: string | null;
+  worker_status_pt: string;
+  last_worker_check_at: string | null;
 }
 
 export interface CrmSubscriptionStats {
@@ -98,6 +135,7 @@ export interface CrmSubscriptionDetailPayload {
   latest_paid_invoice_id: string | null;
   stats: CrmSubscriptionStats;
   timeline: CrmSubscriptionTimelineRow[];
+  automation_summary: CrmSubscriptionAutomationSummary;
   cycles_raw: Array<{
     id: string;
     cycle_date: string;

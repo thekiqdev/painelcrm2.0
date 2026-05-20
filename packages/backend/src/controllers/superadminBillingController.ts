@@ -14,6 +14,11 @@ import {
   listBillingRecurringJobsForOps,
 } from '../services/billingRecurringJobsOpsService.js';
 import { getBillingOpsHeartbeats } from '../services/billingOpsHeartbeatService.js';
+import {
+  getBillingHealthSnapshot,
+  runBillingRecovery,
+  isBillingRecoveryDryRun,
+} from '../services/billingRecoveryService.js';
 import { z } from 'zod';
 
 /** GET /api/superadmin/billing/subscriptions – assinaturas ativas (saas). */
@@ -154,6 +159,33 @@ export async function getSubscriptionCyclesFlagsHandler(req: AuthRequest, res: R
   } catch (e: any) {
     console.error('[getSubscriptionCyclesFlags]', e);
     res.status(500).json({ error: e.message || 'Erro ao carregar flags de ciclos' });
+  }
+}
+
+/** GET /api/superadmin/billing/health — recovery engine snapshot + health score. */
+export async function getBillingHealthHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const health = await getBillingHealthSnapshot();
+    res.json(health);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error('[getBillingHealth]', e);
+    res.status(500).json({ error: msg || 'Erro ao carregar saúde do billing' });
+  }
+}
+
+/** POST /api/superadmin/billing/recovery/run — scan + reparação leve (dry_run via body ou env). */
+export async function postBillingRecoveryRunHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const body = req.body as { dry_run?: boolean } | undefined;
+    const dryRun =
+      typeof body?.dry_run === 'boolean' ? body.dry_run : isBillingRecoveryDryRun();
+    const report = await runBillingRecovery({ dry_run: dryRun });
+    res.json(report);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error('[postBillingRecoveryRun]', e);
+    res.status(500).json({ error: msg || 'Erro ao executar recovery' });
   }
 }
 

@@ -391,6 +391,7 @@ const order = [
   '246_ticket_created_message_template_public_link.sql',
   '247_platform_support_ticket_notifications.sql',
   '248_billing_ops_heartbeat.sql',
+  '249_billing_recovery_audit.sql',
   'create-admin-user.sql',
 ];
 

@@ -20,6 +20,7 @@ import {
   Link2,
   RadioTower,
   FileCode2,
+  Activity,
 } from "lucide-react";
 
 export type SuperAdminHubCardDef = {
@@ -81,6 +82,12 @@ export const superAdminHubAreas: SuperAdminHubAreaDef[] = [
         title: "Ciclos de assinatura",
         description: "Controlar leitura e escrita de dados de ciclos nas ferramentas internas.",
         icon: Repeat2,
+      },
+      {
+        to: "/superadmin/billing/operations",
+        title: "Operações billing",
+        description: "Health score, recovery, heartbeats, filas e auto-healing do motor recorrente.",
+        icon: Activity,
       },
       {
         to: "/superadmin/reports",

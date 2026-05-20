@@ -143,6 +143,7 @@ const SuperAdminPlatformNotifications = lazyWithReload(() => import("./pages/sup
 const SuperAdminPlatformBillings = lazyWithReload(() => import("./pages/superadmin/SuperAdminPlatformBillings"));
 const PublicSaasBillingPay = lazyWithReload(() => import("./pages/PublicSaasBillingPay"));
 const SuperAdminSubscriptionCyclesSettings = lazyWithReload(() => import("./pages/superadmin/SuperAdminSubscriptionCyclesSettings"));
+const SuperAdminBillingOperations = lazyWithReload(() => import("./pages/superadmin/SuperAdminBillingOperations"));
 const SuperAdminAnnouncements = lazyWithReload(() => import("./pages/superadmin/SuperAdminAnnouncements"));
 const SuperAdminAnnouncementEditor = lazyWithReload(() => import("./pages/superadmin/SuperAdminAnnouncementEditor"));
 const SuperAdminAnnouncementSend = lazyWithReload(() => import("./pages/superadmin/SuperAdminAnnouncementSend"));
@@ -957,6 +958,7 @@ const App = () => (
                   }
                 />
                 <Route path="subscription-cycles" element={<Suspense fallback={<LoadingFallback />}><SuperAdminSubscriptionCyclesSettings /></Suspense>} />
+                <Route path="billing/operations" element={<Suspense fallback={<LoadingFallback />}><SuperAdminBillingOperations /></Suspense>} />
                 <Route path="platform-notifications" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlatformNotifications /></Suspense>} />
                 <Route path="smtp" element={<Suspense fallback={<LoadingFallback />}><SuperAdminSmtpSettings /></Suspense>} />
                 <Route

@@ -63,6 +63,7 @@ import {
 } from "@/lib/recurringGenerationPreview";
 import { SubscriptionOperationalHealthCard } from "@/components/subscriptions/SubscriptionOperationalHealthCard";
 import { SubscriptionRecurringStatusBadge } from "@/components/subscriptions/SubscriptionRecurringStatusBadge";
+import { SubscriptionTimelineStateDot } from "@/components/subscriptions/SubscriptionTimelineStateDot";
 import {
   resolveJobRecurringDisplay,
   resolveTimelineInvoiceColumn,
@@ -381,10 +382,10 @@ const SubscriptionDetail = () => {
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent bg-muted/20">
-                <TableHead>Mês de referência</TableHead>
+                <TableHead className="min-w-[200px]">Ciclo</TableHead>
                 <TableHead>Período</TableHead>
                 <TableHead>Vencimento</TableHead>
-                <TableHead>Status</TableHead>
+                <TableHead className="min-w-[160px]">Situação</TableHead>
                 <TableHead className="text-right">Valor</TableHead>
                 <TableHead className="text-right w-[120px]">Fatura</TableHead>
               </TableRow>
@@ -402,15 +403,46 @@ const SubscriptionDetail = () => {
                   const invoiceCol = resolveTimelineInvoiceColumn(row, recent_jobs, tenant_billing);
                   return (
                   <TableRow key={`${row.invoice_id ?? row.cycle_id ?? idx}`}>
-                    <TableCell className="text-sm">{row.month_ref}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{row.period_label}</TableCell>
-                    <TableCell className="text-sm tabular-nums">
+                    <TableCell className="text-sm align-top py-3">
+                      <div className="flex items-start gap-2">
+                        {row.operational_state ? (
+                          <SubscriptionTimelineStateDot
+                            state={row.operational_state}
+                            className="mt-1.5"
+                            title={row.operational_state_pt}
+                          />
+                        ) : null}
+                        <div className="min-w-0 space-y-0.5">
+                          <p className="font-medium leading-snug">{row.cycle_label ?? row.month_ref}</p>
+                          {row.cycle_subtitle && row.cycle_subtitle !== row.cycle_label ? (
+                            <p className="text-[11px] text-muted-foreground">{row.cycle_subtitle}</p>
+                          ) : null}
+                          {row.generation_note ? (
+                            <p className="text-[11px] text-muted-foreground/90">{row.generation_note}</p>
+                          ) : null}
+                          {row.job_attempts != null && row.job_max_attempts != null ? (
+                            <p className="text-[10px] text-muted-foreground font-mono">
+                              Tentativas {row.job_attempts}/{row.job_max_attempts}
+                            </p>
+                          ) : null}
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground align-top py-3">{row.period_label}</TableCell>
+                    <TableCell className="text-sm tabular-nums align-top py-3">
                       {row.due_date
                         ? format(new Date(`${row.due_date}T12:00:00`), "dd/MM/yyyy", { locale: ptBR })
                         : "—"}
                     </TableCell>
-                    <TableCell className="text-sm max-w-[220px]">
-                      <SubscriptionRecurringStatusBadge display={display} showDetail />
+                    <TableCell className="text-sm max-w-[240px] align-top py-3">
+                      <div className="flex flex-col gap-1">
+                        <SubscriptionRecurringStatusBadge display={display} showDetail />
+                        {row.has_auto_retry ? (
+                          <Badge variant="outline" className="text-[10px] font-normal w-fit">
+                            Reprocessamento automático
+                          </Badge>
+                        ) : null}
+                      </div>
                     </TableCell>
                     <TableCell className="text-right text-sm tabular-nums">
                       {row.amount_cents != null ? formatAmount(row.amount_cents) : "—"}

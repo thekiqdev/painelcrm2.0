@@ -19,6 +19,12 @@ import {
   type PatchNextBillingFromInvoiceResult,
 } from './customerInvoiceRecurrenceNextBillingService.js';
 import { billingRecurringJobsHasCompletionColumns } from './billingRecurringJobsOpsService.js';
+import {
+  buildSubscriptionAutomationSummary,
+  buildSubscriptionTimeline,
+  type CrmSubscriptionAutomationSummary,
+  type CrmSubscriptionTimelineRowUx,
+} from './subscriptionTimelineUx.js';
 
 export interface CrmSubscriptionListRow {
   id: string;
@@ -58,22 +64,10 @@ export interface CrmSubscriptionStats {
   charge_count: number;
 }
 
-export interface CrmSubscriptionTimelineRow {
-  month_ref: string;
-  period_label: string;
-  period_start: string | null;
-  period_end: string | null;
-  due_date: string | null;
-  status_pt: string;
-  amount_cents: number | null;
-  invoice_id: string | null;
-  cycle_status: string | null;
-  cycle_id: string | null;
-  job_id: string | null;
-  invoice_status: string | null;
-  gateway_status: string | null;
-  gateway_reference_id: string | null;
-}
+/** Timeline operacional (UX); ver `subscriptionTimelineUx.ts`. */
+export type CrmSubscriptionTimelineRow = CrmSubscriptionTimelineRowUx;
+
+export type { CrmSubscriptionAutomationSummary };
 
 export interface CrmSubscriptionJobRow {
   id: string;
@@ -108,6 +102,7 @@ export interface CrmSubscriptionDetail {
   latest_paid_invoice_id: string | null;
   stats: CrmSubscriptionStats;
   timeline: CrmSubscriptionTimelineRow[];
+  automation_summary: CrmSubscriptionAutomationSummary;
   cycles_raw: SubscriptionCycleDbRow[];
   cycles_read_enabled: boolean;
   tenant_billing: CrmSubscriptionTenantBillingPrefs;
@@ -122,118 +117,6 @@ function billingIntervalLabelPt(interval: string): string {
     yearly: 'Anual',
   };
   return m[interval] ?? interval;
-}
-
-function invoiceStatusLabelPt(status: string): string {
-  const m: Record<string, string> = {
-    pending: 'Pendente',
-    waiting_payment: 'Aguardando pagamento',
-    processing: 'Processando',
-    paid: 'Pago',
-    overdue: 'Vencido',
-    cancelled: 'Cancelado',
-    failed: 'Falhou',
-    refunded: 'Reembolsado',
-  };
-  return m[status] ?? status;
-}
-
-function cycleStatusLabelPt(status: string): string {
-  const m: Record<string, string> = {
-    pending: 'Aguardando geração automática',
-    queued: 'Processamento agendado',
-    processing: 'Processando cobrança',
-    invoiced: 'Fatura gerada',
-    skipped: 'Sem nova fatura',
-    failed: 'Falha na geração',
-    cancelled: 'Cancelado',
-  };
-  return m[status] ?? status;
-}
-
-function formatPeriodPt(start: string | null, end: string | null): string {
-  if (start && end) return `${start.slice(8, 10)}/${start.slice(5, 7)}/${start.slice(0, 4)} – ${end.slice(8, 10)}/${end.slice(5, 7)}/${end.slice(0, 4)}`;
-  if (start) return start.slice(0, 10);
-  return '—';
-}
-
-function monthRefFromYmd(ymd: string | null | undefined): string {
-  if (!ymd || ymd.length < 7) return '—';
-  return `${ymd.slice(5, 7)}/${ymd.slice(0, 4)}`;
-}
-
-function buildTimeline(
-  cycles: SubscriptionCycleDbRow[],
-  invoices: CrmSubscriptionInvoiceRow[],
-  subscriptionAmountCents: number,
-  cyclesReadEnabled: boolean
-): CrmSubscriptionTimelineRow[] {
-  const invById = new Map(invoices.map((i) => [i.id, i]));
-  const rows: CrmSubscriptionTimelineRow[] = [];
-  const usedInvoiceIds = new Set<string>();
-
-  if (cyclesReadEnabled && cycles.length > 0) {
-    for (const c of cycles) {
-      const inv = c.invoice_id ? invById.get(c.invoice_id) : undefined;
-      if (inv) usedInvoiceIds.add(inv.id);
-      const ps = c.period_start?.slice(0, 10) ?? inv?.period_start?.slice(0, 10) ?? null;
-      const pe = c.period_end?.slice(0, 10) ?? inv?.period_end?.slice(0, 10) ?? null;
-      const due = inv?.due_date?.slice(0, 10) ?? ps;
-      const amount = inv?.amount_cents ?? subscriptionAmountCents;
-      let status_pt: string;
-      if (inv) {
-        status_pt = invoiceStatusLabelPt(inv.status);
-      } else {
-        status_pt = cycleStatusLabelPt(c.status);
-      }
-      rows.push({
-        month_ref: monthRefFromYmd(c.cycle_date?.slice(0, 10) ?? ps),
-        period_label: formatPeriodPt(ps, pe),
-        period_start: ps,
-        period_end: pe,
-        due_date: due,
-        status_pt,
-        amount_cents: amount,
-        invoice_id: c.invoice_id,
-        cycle_status: c.status,
-        cycle_id: c.id,
-        job_id: c.job_id,
-        invoice_status: inv?.status ?? null,
-        gateway_status: inv?.gateway_status ?? null,
-        gateway_reference_id: inv?.gateway_reference_id ?? null,
-      });
-    }
-  }
-
-  for (const inv of invoices) {
-    if (usedInvoiceIds.has(inv.id)) continue;
-    const ps = inv.period_start?.slice(0, 10) ?? null;
-    const pe = inv.period_end?.slice(0, 10) ?? null;
-    rows.push({
-      month_ref: monthRefFromYmd(ps ?? inv.due_date?.slice(0, 10)),
-      period_label: formatPeriodPt(ps, pe),
-      period_start: ps,
-      period_end: pe,
-      due_date: inv.due_date?.slice(0, 10) ?? null,
-      status_pt: invoiceStatusLabelPt(inv.status),
-      amount_cents: inv.amount_cents,
-      invoice_id: inv.id,
-      cycle_status: null,
-      cycle_id: null,
-      job_id: null,
-      invoice_status: inv.status,
-      gateway_status: inv.gateway_status ?? null,
-      gateway_reference_id: inv.gateway_reference_id ?? null,
-    });
-  }
-
-  rows.sort((a, b) => {
-    const da = a.period_start ?? a.due_date ?? '';
-    const db = b.period_start ?? b.due_date ?? '';
-    return db.localeCompare(da);
-  });
-
-  return rows;
 }
 
 export async function listCrmCustomerSubscriptions(tenantId: string): Promise<CrmSubscriptionListRow[]> {
@@ -455,8 +338,29 @@ export async function getCrmSubscriptionDetail(
   });
   const latestPaid = paidInv.find((i) => i.status === 'paid') ?? null;
 
-  const timeline = buildTimeline(cycles, invRows, sub.amount_cents, cyclesRead);
   const recent_jobs = await listRecentJobsForSubscription(tenantId, subscriptionId);
+  const timeline = buildSubscriptionTimeline(
+    cycles,
+    invRows,
+    sub.amount_cents,
+    cyclesRead,
+    recent_jobs
+  );
+  const tenant_billing = tenantRow.rows[0] ?? {
+    timezone: null,
+    recurring_generate_time_local: null,
+    invoice_notify_same_as_generation: null,
+    invoice_notify_time_local: null,
+    recurring_invoice_generate_days_before_due: 0,
+  };
+  const automation_summary = buildSubscriptionAutomationSummary({
+    subscriptionStatus: sub.status,
+    nextBillingDate: sub.next_billing_date,
+    lastJobAt: sub.last_job_at,
+    recurringInvoiceGenerateDaysBeforeDue: tenant_billing.recurring_invoice_generate_days_before_due,
+    recentJobs: recent_jobs,
+    timeline,
+  });
 
   return {
     subscription: sub,
@@ -467,15 +371,10 @@ export async function getCrmSubscriptionDetail(
     latest_paid_invoice_id: latestPaid?.id ?? null,
     stats,
     timeline,
+    automation_summary,
     cycles_raw: cycles,
     cycles_read_enabled: cyclesRead,
-    tenant_billing: tenantRow.rows[0] ?? {
-      timezone: null,
-      recurring_generate_time_local: null,
-      invoice_notify_same_as_generation: null,
-      invoice_notify_time_local: null,
-      recurring_invoice_generate_days_before_due: 0,
-    },
+    tenant_billing,
     recent_jobs,
   };
 }

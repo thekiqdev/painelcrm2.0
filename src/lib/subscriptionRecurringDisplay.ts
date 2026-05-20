@@ -4,6 +4,7 @@ import type {
   CrmSubscriptionJobRow,
   CrmSubscriptionTenantBillingPrefs,
   CrmSubscriptionTimelineRow,
+  SubscriptionTimelineOperationalState,
 } from '@/services/crmSubscriptions';
 import {
   clampRecurringGenerateDaysBeforeDue,
@@ -90,14 +91,20 @@ function isGatewayChargeFailed(
 }
 
 function findJobForRow(
-  row: Pick<CrmSubscriptionTimelineRow, 'job_id' | 'period_start' | 'due_date' | 'cycle_status'>,
+  row: Pick<
+    CrmSubscriptionTimelineRow,
+    'job_id' | 'period_start' | 'due_date' | 'cycle_status' | 'cycle_date'
+  >,
   jobs: CrmSubscriptionJobRow[]
 ): CrmSubscriptionJobRow | null {
   if (row.job_id) {
     const byId = jobs.find((j) => j.id === row.job_id);
     if (byId) return byId;
   }
-  const key = normalizeCycleKey(row.period_start) || normalizeCycleKey(row.due_date);
+  const key =
+    normalizeCycleKey(row.cycle_date) ||
+    normalizeCycleKey(row.period_start) ||
+    normalizeCycleKey(row.due_date);
   if (!key) return null;
   return (
     jobs.find((j) => normalizeCycleKey(j.cycle_key) === key) ??
@@ -124,6 +131,89 @@ const INVOICE_STATUS_PT: Record<string, string> = {
   failed: 'Falhou',
 };
 
+function badgeFromOperationalState(
+  state: SubscriptionTimelineOperationalState,
+  label: string,
+  detail: string | null
+): RecurringDisplayBadge | null {
+  const base = { label, detail };
+  switch (state) {
+    case 'paid':
+      return {
+        ...base,
+        kind: 'invoice_status',
+        variant: 'success',
+        tooltip: 'Ciclo com fatura paga.',
+      };
+    case 'gateway_failed':
+      return {
+        ...base,
+        kind: 'gateway_failed',
+        variant: 'warning',
+        tooltip: 'Fatura gerada, mas a cobrança no gateway não foi concluída.',
+      };
+    case 'generated':
+      return {
+        ...base,
+        kind: 'invoice_status',
+        variant: 'neutral',
+        tooltip: 'Fatura gerada pelo processamento automático ou manualmente.',
+      };
+    case 'processing':
+      return {
+        ...base,
+        kind: 'processing',
+        variant: 'processing',
+        tooltip: AWAITING_TOOLTIP,
+      };
+    case 'scheduled':
+      return {
+        ...base,
+        kind: 'awaiting_auto_generation',
+        variant: 'awaiting',
+        tooltip: AWAITING_TOOLTIP,
+      };
+    case 'awaiting_generation':
+    case 'in_queue':
+      return {
+        ...base,
+        kind: 'awaiting_auto_generation',
+        variant: 'awaiting',
+        tooltip: AWAITING_TOOLTIP,
+      };
+    case 'failed':
+      return {
+        ...base,
+        kind: 'generation_failed',
+        variant: 'error',
+        tooltip: 'Falha no processamento automático deste ciclo.',
+      };
+    case 'skipped':
+      return {
+        ...base,
+        kind: 'skipped',
+        variant: 'neutral',
+        tooltip: 'Ciclo processado sem nova fatura elegível.',
+      };
+    case 'cancelled':
+      return {
+        ...base,
+        kind: 'cancelled',
+        variant: 'outline',
+        tooltip: 'Ciclo cancelado.',
+      };
+    case 'manual_invoice':
+      return {
+        ...base,
+        kind: 'neutral',
+        variant: 'neutral',
+        tooltip: 'Fatura ligada à assinatura sem registro de ciclo automático.',
+      };
+    default:
+      return null;
+  }
+}
+
 /**
  * Resolve badge + tooltip para uma linha do histórico de cobranças.
  */
@@ -135,6 +225,30 @@ export function resolveTimelineRecurringDisplay(
   const job = findJobForRow(row, jobs);
   const dueYmd = row.due_date ?? row.period_start;
   const scheduledDetail = buildScheduledGenerationDetail(dueYmd, tenantBilling);
+  const retryDetail = row.has_auto_retry && row.job_retry_at
+    ? `Reprocessamento automático · ${formatDateTimeBr(row.job_retry_at)}`
+    : null;
+  const genNote = row.generation_note ?? null;
+  const detailParts = [genNote, retryDetail, scheduledDetail].filter(Boolean);
+  const mergedDetail = detailParts.length > 0 ? detailParts.join(' · ') : null;
+
+  if (row.operational_state) {
+    const fromState = badgeFromOperationalState(
+      row.operational_state,
+      row.operational_state_pt || row.status_pt,
+      mergedDetail
+    );
+    if (fromState) {
+      if (row.job_error_snippet && fromState.kind === 'generation_failed') {
+        return {
+          ...fromState,
+          tooltip: row.job_error_snippet.slice(0, 500),
+          detail: mergedDetail,
+        };
+      }
+      return { ...fromState, detail: mergedDetail ?? fromState.detail };
+    }
+  }
 
   if (row.invoice_id) {
     if (
@@ -210,28 +324,28 @@ export function resolveTimelineRecurringDisplay(
   if (cycle === 'processing' || job?.status === 'processing') {
     return {
       kind: 'processing',
-      label: 'Processando cobrança',
+      label: 'Processando',
       variant: 'processing',
       tooltip: AWAITING_TOOLTIP,
-      detail: 'Em processamento neste momento.',
+      detail: mergedDetail ?? 'Em processamento neste momento.',
     };
   }
 
   if (cycle === 'queued' || cycle === 'pending' || !cycle) {
-    const retryHint =
-      job?.retry_at && new Date(job.retry_at).getTime() > Date.now()
-        ? `Próxima tentativa: ${formatDateTimeBr(job.retry_at)}`
-        : null;
     const label =
-      cycle === 'queued' || job?.status === 'pending'
-        ? 'Processamento agendado'
-        : 'Aguardando geração automática';
+      cycle === 'queued'
+        ? 'Agendado'
+        : cycle === 'pending'
+          ? 'Aguardando geração'
+          : job?.status === 'pending'
+            ? 'Em fila'
+            : 'Aguardando geração';
     return {
       kind: 'awaiting_auto_generation',
       label,
       variant: 'awaiting',
       tooltip: AWAITING_TOOLTIP,
-      detail: scheduledDetail ?? retryHint ?? 'Em fila para geração automática.',
+      detail: mergedDetail ?? 'Em fila para geração automática.',
     };
   }
 
