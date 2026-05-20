@@ -7,7 +7,7 @@
 import crypto from 'node:crypto';
 import { pool, dbRequestStorage, withBillingWorkerRlsBypass } from '../utils/db.js';
 
-import { billingLog, notifyBillingJobFailed } from './billingLogger.js';
+import { billingLog, notifyBillingJobFailed, subscriptionBillingLog } from './billingLogger.js';
 import {
   changeSubscriptionPlan,
   getSubscriptionById,
@@ -597,6 +597,12 @@ export async function insertOrReactivateRenewalJob(
         cycleKeyCanonical,
         jobId: newJobId,
         schedulingMeta: schedulerCycleSchedulingMeta(row, cycleKeyCanonical),
+      });
+      subscriptionBillingLog('SUBSCRIPTION_PENDING_CREATED', 'scheduler_job_inserted', {
+        tenant_id: tenantId,
+        subscription_id: subscriptionId,
+        job_id: newJobId,
+        cycle_key: cycleKeyCanonical,
       });
     }
     return 'inserted';
@@ -1358,6 +1364,14 @@ export async function processNextBatch(workerId: string): Promise<{ processed: n
         cycle_key_raw: job.cycle_key,
         cycle_key_normalized: jobCycleCanonical,
       });
+      subscriptionBillingLog('SUBSCRIPTION_PROCESSING', 'job_pickup', {
+        tenant_id: job.tenant_id,
+        subscription_id: job.subscription_id,
+        job_id: job.id,
+        cycle_key: jobCycleCanonical,
+        attempts: job.attempts,
+        worker_id: workerId,
+      });
 
       try {
         const subscription = await getSubscriptionById(job.subscription_id);
@@ -1494,6 +1508,18 @@ export async function processNextBatch(workerId: string): Promise<{ processed: n
 
         if (!diag.would_be_eligible_by_window) {
           const retryAt = buildWindowRequeueAt(new Date());
+          subscriptionBillingLog('SUBSCRIPTION_ELIGIBLE', 'worker_requeue_outside_local_window', {
+            tenant_id: job.tenant_id,
+            subscription_id: subscription.id,
+            job_id: job.id,
+            window_reason: diag.reason,
+            timezone_effective: diag.timezone_effective,
+            local_now_ymd: diag.local_now_ymd,
+            local_now_hhmm: diag.local_now_hhmm,
+            generate_time_local: diag.generate_time_local_effective,
+            next_billing_date: cycleDueYmd,
+            retry_at: retryAt.toISOString(),
+          });
           await requeueBillingRecurringJobForWindow(client, {
             jobId: job.id,
             retryAt,
@@ -1633,6 +1659,7 @@ export async function processNextBatch(workerId: string): Promise<{ processed: n
         result.processed++;
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
+        const attempts = job.attempts + 1;
         billingLog('job', 'job_error', {
           jobId: job.id,
           subscriptionId: job.subscription_id,
@@ -1641,7 +1668,15 @@ export async function processNextBatch(workerId: string): Promise<{ processed: n
           cycle_key_normalized: normalizeBillingCycleKeyYmd(job.cycle_key),
           error: errMsg,
         });
-        const attempts = job.attempts + 1;
+        subscriptionBillingLog('SUBSCRIPTION_INVOICE_FAILED', 'job_processing_error', {
+          tenant_id: job.tenant_id,
+          subscription_id: job.subscription_id,
+          job_id: job.id,
+          cycle_key: normalizeBillingCycleKeyYmd(job.cycle_key),
+          error: errMsg.slice(0, 2000),
+          attempts,
+          final_failure: attempts >= job.max_attempts,
+        });
         const retryAt = new Date();
         if (attempts === 1) retryAt.setHours(retryAt.getHours() + 1);
         else if (attempts === 2) retryAt.setDate(retryAt.getDate() + 1);
@@ -1971,6 +2006,14 @@ async function processOneCustomerRenewalJob(
       recurring_line_count: recurringLines,
       financial_success: false,
     });
+    subscriptionBillingLog('SUBSCRIPTION_INVOICE_FAILED', 'completed_without_invoice_no_eligible_items', {
+      tenant_id: subscription.tenant_id,
+      subscription_id: subscription.id,
+      job_id: job.id,
+      cycle_key: periodStart,
+      prev_invoice_id: prevInvoice.id,
+      recurring_line_count: recurringLines,
+    });
     if (shouldAlertNoInvoiceCycle()) {
       billingLog('job', 'operational_alert_completed_without_invoice', {
         notify: true,
@@ -1985,6 +2028,16 @@ async function processOneCustomerRenewalJob(
 
   const amountCents = includedItems.reduce((sum, it) => sum + Math.max(0, it.total_cents), 0);
 
+  subscriptionBillingLog('SUBSCRIPTION_BILLING', 'customer_invoice_create_start', {
+    tenant_id: subscription.tenant_id,
+    subscription_id: subscription.id,
+    customer_id: clientId,
+    period_start: periodStart,
+    period_end: periodEnd,
+    amount_cents: amountCents,
+    eligible_item_count: includedItems.length,
+  });
+
   const inv = await createCustomerInvoice({
     tenant_id: subscription.tenant_id,
     client_id: clientId,
@@ -1994,6 +2047,14 @@ async function processOneCustomerRenewalJob(
     amount_cents: amountCents,
     due_date: periodStart,
     gateway: gatewayKey,
+  });
+
+  subscriptionBillingLog('SUBSCRIPTION_INVOICE_CREATED', 'customer_invoice_created', {
+    tenant_id: subscription.tenant_id,
+    subscription_id: subscription.id,
+    customer_id: clientId,
+    invoice_id: inv.id,
+    period_start: periodStart,
   });
 
   // Insere itens no novo invoice com o próximo scheduled_due_date (migração 80).
@@ -2108,7 +2169,16 @@ async function processOneCustomerRenewalJob(
         });
       }
     } catch (gatewayErr) {
+      const gwMsg = gatewayErr instanceof Error ? gatewayErr.message : String(gatewayErr);
       console.error('[recurringBillingJobService] gateway createCharge (customer) error', { invoiceId: inv.id, err: gatewayErr });
+      subscriptionBillingLog('SUBSCRIPTION_GATEWAY_FAILED', 'customer_renewal_gateway_error', {
+        tenant_id: subscription.tenant_id,
+        subscription_id: subscription.id,
+        customer_id: clientId,
+        invoice_id: inv.id,
+        gateway: gatewayKey,
+        error: gwMsg.slice(0, 2000),
+      });
     }
   }
 

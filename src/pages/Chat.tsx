@@ -468,7 +468,11 @@ function ChatHeaderKanbanThreadExtras({
   if (!hasTags && !showAssignee && !showTagPicker) return null;
 
   return (
-    <>
+    <span
+      className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-1"
+      onClick={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
+    >
       {(hasTags || showTagPicker || showAssignee) ? (
         <span className="shrink-0 text-[10px] text-muted-foreground" aria-hidden>
           |
@@ -525,7 +529,7 @@ function ChatHeaderKanbanThreadExtras({
           </span>
         </>
       ) : null}
-    </>
+    </span>
   );
 }
 

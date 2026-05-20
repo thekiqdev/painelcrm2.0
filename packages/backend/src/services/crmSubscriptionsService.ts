@@ -47,6 +47,8 @@ export interface CrmSubscriptionInvoiceRow {
   invoice_type: string;
   description: string | null;
   created_at: string;
+  gateway_status: string | null;
+  gateway_reference_id: string | null;
 }
 
 export interface CrmSubscriptionStats {
@@ -68,6 +70,9 @@ export interface CrmSubscriptionTimelineRow {
   cycle_status: string | null;
   cycle_id: string | null;
   job_id: string | null;
+  invoice_status: string | null;
+  gateway_status: string | null;
+  gateway_reference_id: string | null;
 }
 
 export interface CrmSubscriptionJobRow {
@@ -135,11 +140,12 @@ function invoiceStatusLabelPt(status: string): string {
 
 function cycleStatusLabelPt(status: string): string {
   const m: Record<string, string> = {
-    queued: 'Na fila',
-    processing: 'Em processamento',
+    pending: 'Aguardando geração automática',
+    queued: 'Processamento agendado',
+    processing: 'Processando cobrança',
     invoiced: 'Fatura gerada',
-    skipped: 'Ignorado',
-    failed: 'Falhou',
+    skipped: 'Sem nova fatura',
+    failed: 'Falha na geração',
     cancelled: 'Cancelado',
   };
   return m[status] ?? status;
@@ -192,6 +198,9 @@ function buildTimeline(
         cycle_status: c.status,
         cycle_id: c.id,
         job_id: c.job_id,
+        invoice_status: inv?.status ?? null,
+        gateway_status: inv?.gateway_status ?? null,
+        gateway_reference_id: inv?.gateway_reference_id ?? null,
       });
     }
   }
@@ -212,6 +221,9 @@ function buildTimeline(
       cycle_status: null,
       cycle_id: null,
       job_id: null,
+      invoice_status: inv.status,
+      gateway_status: inv.gateway_status ?? null,
+      gateway_reference_id: inv.gateway_reference_id ?? null,
     });
   }
 
@@ -324,7 +336,8 @@ async function listInvoicesForSubscription(
 ): Promise<CrmSubscriptionInvoiceRow[]> {
   const r = await pool.query<CrmSubscriptionInvoiceRow>(
     `SELECT id::text, invoice_number, amount_cents, due_date::text, period_start::text, period_end::text,
-            status::text, invoice_type::text, description, created_at::text
+            status::text, invoice_type::text, description, created_at::text,
+            gateway_status::text, gateway_reference_id::text
      FROM customer_invoices
      WHERE tenant_id = $1 AND subscription_id = $2
        AND invoice_type IS DISTINCT FROM 'child'

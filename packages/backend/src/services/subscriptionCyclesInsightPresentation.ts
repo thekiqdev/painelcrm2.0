@@ -19,9 +19,9 @@ export interface SubscriptionCycleInsightRow {
 
 export function subscriptionCycleStatusLabelPt(status: string): string {
   const m: Record<string, string> = {
-    pending: 'Pendente',
-    queued: 'Na fila',
-    processing: 'A processar',
+    pending: 'Aguardando geração automática',
+    queued: 'Processamento agendado',
+    processing: 'Processando cobrança',
     invoiced: 'Faturado',
     skipped: 'Ignorado / sem fatura CRM',
     failed: 'Falhou',
@@ -84,9 +84,9 @@ export function derivePresentationFromMatchedCycle(row: SubscriptionCycleDbRow):
     case 'pending':
       return {
         visual_tag: 'scheduled',
-        status_badge_pt: 'Ciclo pendente',
+        status_badge_pt: 'Aguardando geração automática',
         last_result_summary_pt:
-          'O ciclo desta cobrança está pendente: ainda não foi enfileirado ou processado automaticamente.',
+          'A cobrança recorrente ainda não foi processada pelo sistema automático. Isso é normal dentro da janela de geração configurada na conta.',
         problem_hint_pt: null,
       };
     case 'queued':

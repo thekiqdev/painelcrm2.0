@@ -60,6 +60,7 @@ import { ChatKanbanTagQuickPicker } from '@/components/chat/ChatKanbanTagQuickPi
 import { ChatScheduledMessagesStrip } from '@/components/chat/ChatScheduledMessagesStrip';
 import { DEFAULT_CHAT_TAG_COLOR, normalizeHexColor } from '@/lib/chatKanbanTagStyle';
 import { patchConversationKanbanTagsEverywhere } from './conversationKanbanTagsCache';
+import { FLOATING_COMPACT_ACTION_EVENT } from './dispatchFloatingCompactAction';
 import { format, formatDistanceToNow, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { apiClient } from '@/integrations/api/client';
@@ -353,7 +354,6 @@ export function FloatingCompactProfile({
           }
           return openOnlyWhenClient('Contrato', () => setContractOpen(true));
         case 'schedule':
-        case 'meet_now':
         case 'meet_later':
           return setScheduleOpen(true);
         case 'task':
@@ -378,8 +378,8 @@ export function FloatingCompactProfile({
           return;
       }
     };
-    window.addEventListener('floating-chat:compact-action', onAction);
-    return () => window.removeEventListener('floating-chat:compact-action', onAction);
+    window.addEventListener(FLOATING_COMPACT_ACTION_EVENT, onAction);
+    return () => window.removeEventListener(FLOATING_COMPACT_ACTION_EVENT, onAction);
   }, [
     conversationId,
     navigate,

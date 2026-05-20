@@ -52,6 +52,17 @@ import { ChatKanbanTagBadge } from '@/components/chat/ChatKanbanTagBadge';
 import { ChatKanbanTagQuickPicker } from '@/components/chat/ChatKanbanTagQuickPicker';
 import { patchConversationKanbanTagsEverywhere } from './conversationKanbanTagsCache';
 import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
+import { dispatchFloatingCompactAction } from './dispatchFloatingCompactAction';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 type LeadProfileForConversion = {
   id?: string;
@@ -100,6 +111,8 @@ export function FloatingConversationWindow({
   const floatingDraftRef = useRef('');
   const isMobile = useIsMobile();
   const [scheduleChatDlgOpen, setScheduleChatDlgOpen] = useState(false);
+  const [meetNowConfirmOpen, setMeetNowConfirmOpen] = useState(false);
+  const [meetNowSubmitting, setMeetNowSubmitting] = useState(false);
   const pendingWsFifoRef = useRef<string[]>([]);
   const {
     minimizePanel,
@@ -119,15 +132,45 @@ export function FloatingConversationWindow({
 
   const dispatchCompactAction = useCallback(
     (action: string) => {
-      if (!compactProfileOpen) toggleCompactProfile(conversationId);
-      window.dispatchEvent(
-        new CustomEvent('floating-chat:compact-action', {
-          detail: { conversationId, action },
-        }),
-      );
+      const handleMeetNow = dispatchFloatingCompactAction({
+        conversationId,
+        action,
+        compactProfileOpen,
+        ensureCompactProfileOpen: toggleCompactProfile,
+      });
+      if (handleMeetNow) {
+        if (!conversation?.client_id && !conversation?.leadId) {
+          toast.error('Vincule um cliente a esta conversa para agendar um compromisso.');
+          return;
+        }
+        setMeetNowConfirmOpen(true);
+      }
     },
-    [compactProfileOpen, toggleCompactProfile, conversationId],
+    [compactProfileOpen, toggleCompactProfile, conversationId, conversation?.client_id, conversation?.leadId],
   );
+
+  const handleFloatingMeetNowConfirmed = useCallback(async () => {
+    setMeetNowConfirmOpen(false);
+    setMeetNowSubmitting(true);
+    try {
+      const r = await chatService.createMeetNowFromChat(conversationId);
+      void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'messages', conversationId] });
+      if (r.warnings?.length) {
+        for (const w of r.warnings) toast.message(w);
+      }
+      if (r.meet_link && r.message_sent) {
+        toast.success('Reunião criada e link enviado no chat.');
+      } else if (r.meet_link && !r.message_sent) {
+        toast.warning('Reunião criada, mas o link não pôde ser enviado no WhatsApp.');
+      } else {
+        toast.warning('Reunião criada sem link do Meet. Verifique o Google Agenda ou a sincronização.');
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Não foi possível criar a reunião');
+    } finally {
+      setMeetNowSubmitting(false);
+    }
+  }, [conversationId, queryClient]);
 
   const readFileAsDataUrl = useCallback((file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -940,6 +983,32 @@ export function FloatingConversationWindow({
           });
         }}
       />
+      <AlertDialog open={meetNowConfirmOpen} onOpenChange={setMeetNowConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Criar reunião com Meet agora?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Será criado um compromisso imediato com Google Meet e o link será enviado nesta conversa. É
+              necessário ter o Google Agenda conectado.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel type="button" disabled={meetNowSubmitting}>
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              type="button"
+              disabled={meetNowSubmitting}
+              onClick={(e) => {
+                e.preventDefault();
+                void handleFloatingMeetNowConfirmed();
+              }}
+            >
+              {meetNowSubmitting ? 'A criar…' : 'Criar e enviar link'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

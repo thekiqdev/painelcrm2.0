@@ -75,7 +75,7 @@ const Hero = () => {
               className="mt-8 text-sm text-muted-foreground animate-fade-up lg:mt-10"
               style={{ animationDelay: "0.35s" }}
             >
-              Usado por <span className="font-semibold text-foreground">+500 empresas</span> · Agências, consultorias e
+              Usado por <span className="font-semibold text-foreground">+10 mil empresas</span> · Agências, consultorias e
               equipes comerciais
             </p>
           </div>

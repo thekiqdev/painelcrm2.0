@@ -82,6 +82,8 @@ export function ChatKanbanTagQuickPicker({
         align={align}
         className="w-[min(20rem,calc(100vw-2rem))] p-0"
         onOpenAutoFocus={(e) => e.preventDefault()}
+        onClick={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
       >
         {!createMode ? (
           <div className="flex max-h-[min(320px,55vh)] flex-col">

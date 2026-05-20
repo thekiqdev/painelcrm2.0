@@ -61,6 +61,13 @@ import {
   clampRecurringGenerateDaysBeforeDue,
   computeRecurringGenerationDateYmd,
 } from "@/lib/recurringGenerationPreview";
+import { SubscriptionOperationalHealthCard } from "@/components/subscriptions/SubscriptionOperationalHealthCard";
+import { SubscriptionRecurringStatusBadge } from "@/components/subscriptions/SubscriptionRecurringStatusBadge";
+import {
+  resolveJobRecurringDisplay,
+  resolveTimelineInvoiceColumn,
+  resolveTimelineRecurringDisplay,
+} from "@/lib/subscriptionRecurringDisplay";
 
 function formatAmount(cents: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
@@ -360,6 +367,8 @@ const SubscriptionDetail = () => {
         </CardContent>
       </Card>
 
+      <SubscriptionOperationalHealthCard detail={detail} />
+
       {/* BLOCO 2 — Histórico */}
       <Card className="border shadow-sm overflow-hidden">
         <CardHeader className="bg-muted/30 border-b py-4 flex flex-row items-center justify-between">
@@ -388,7 +397,10 @@ const SubscriptionDetail = () => {
                   </TableCell>
                 </TableRow>
               ) : (
-                timeline.map((row, idx) => (
+                timeline.map((row, idx) => {
+                  const display = resolveTimelineRecurringDisplay(row, recent_jobs, tenant_billing);
+                  const invoiceCol = resolveTimelineInvoiceColumn(row, recent_jobs, tenant_billing);
+                  return (
                   <TableRow key={`${row.invoice_id ?? row.cycle_id ?? idx}`}>
                     <TableCell className="text-sm">{row.month_ref}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">{row.period_label}</TableCell>
@@ -397,7 +409,9 @@ const SubscriptionDetail = () => {
                         ? format(new Date(`${row.due_date}T12:00:00`), "dd/MM/yyyy", { locale: ptBR })
                         : "—"}
                     </TableCell>
-                    <TableCell className="text-sm">{row.status_pt}</TableCell>
+                    <TableCell className="text-sm max-w-[220px]">
+                      <SubscriptionRecurringStatusBadge display={display} showDetail />
+                    </TableCell>
                     <TableCell className="text-right text-sm tabular-nums">
                       {row.amount_cents != null ? formatAmount(row.amount_cents) : "—"}
                     </TableCell>
@@ -416,11 +430,19 @@ const SubscriptionDetail = () => {
                           </span>
                         )
                       ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
+                        <span
+                          className={cn(
+                            "text-xs",
+                            invoiceCol.muted ? "text-muted-foreground" : "text-foreground"
+                          )}
+                        >
+                          {invoiceCol.label}
+                        </span>
                       )}
                     </TableCell>
                   </TableRow>
-                ))
+                  );
+                })
               )}
             </TableBody>
           </Table>
@@ -614,9 +636,13 @@ const SubscriptionDetail = () => {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {recent_jobs.map((j) => (
+                        {recent_jobs.map((j) => {
+                          const jobDisplay = resolveJobRecurringDisplay(j);
+                          return (
                           <TableRow key={j.id}>
-                            <TableCell>{j.status}</TableCell>
+                            <TableCell>
+                              <SubscriptionRecurringStatusBadge display={jobDisplay} />
+                            </TableCell>
                             <TableCell className="font-mono text-xs">{j.cycle_key}</TableCell>
                             <TableCell>
                               {j.attempts}/{j.max_attempts}
@@ -637,7 +663,8 @@ const SubscriptionDetail = () => {
                               )}
                             </TableCell>
                           </TableRow>
-                        ))}
+                          );
+                        })}
                       </TableBody>
                     </Table>
                   </div>

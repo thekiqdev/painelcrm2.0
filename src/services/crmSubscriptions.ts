@@ -28,6 +28,9 @@ export interface CrmSubscriptionTimelineRow {
   cycle_status: string | null;
   cycle_id: string | null;
   job_id: string | null;
+  invoice_status?: string | null;
+  gateway_status?: string | null;
+  gateway_reference_id?: string | null;
 }
 
 export interface CrmSubscriptionStats {
