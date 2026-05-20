@@ -48,3 +48,11 @@ export function getBillingStaleProcessingReclaimMinutes(): number {
   if (!Number.isFinite(n) || n < 1) return 20;
   return Math.min(n, 24 * 60);
 }
+
+/**
+ * Logs `[BILLING_WORKER_DIAGNOSTIC]` antes do SELECT do batch (investigação operacional).
+ * Desligar após estabilizar: `BILLING_WORKER_BATCH_DIAGNOSTIC=false`.
+ */
+export function isBillingWorkerBatchDiagnostic(): boolean {
+  return process.env.BILLING_WORKER_BATCH_DIAGNOSTIC !== 'false';
+}

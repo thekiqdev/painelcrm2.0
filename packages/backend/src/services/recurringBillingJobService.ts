@@ -78,6 +78,7 @@ import {
   subscriptionCyclesOnJobFailedAttempt,
   subscriptionCyclesUpsertAfterScheduler,
 } from './subscriptionCyclesDualWriteService.js';
+import { emitBillingWorkerBatchDiagnostic } from './billingWorkerBatchDiagnostic.js';
 
 const SCHEDULER_LIMIT = 500;
 const WORKER_BATCH_SIZE = 100;
@@ -331,6 +332,39 @@ function schedulerCycleSchedulingMeta(
   };
 }
 
+/** Data civil em que o scheduler pode enfileirar (vencimento − antecipação). */
+function renewalJobGenerationDateYmd(row: RenewalEnqueueTenantJoinRow, cycleDueYmd: string): string {
+  return computeRecurringInvoiceGenerationDateYmd(
+    cycleDueYmd,
+    row.recurring_invoice_generate_days_before_due
+  );
+}
+
+/**
+ * `scheduled_at` do worker: elegível na geração, não no vencimento (`cycle_key`).
+ * Usa `now()` para pickup imediato após enqueue; `generation_date_ymd` só para logs/meta.
+ */
+function logBillingScheduledAtFixed(params: {
+  subscription_id: string;
+  tenant_id: string;
+  cycle_key: string;
+  generation_date_ymd: string;
+  cycle_due_ymd: string;
+  old_scheduled_at: string | null;
+  new_scheduled_at: string;
+  job_id: string;
+  mode: 'insert' | 'reactivate';
+}): void {
+  console.log(
+    '[BILLING_SCHEDULED_AT_FIXED]',
+    JSON.stringify({
+      ...params,
+      scheduled_at_source: 'now_at_enqueue',
+      ts: new Date().toISOString(),
+    })
+  );
+}
+
 export function normalizeSubscriptionNextBillingYmd(value: unknown): string {
   if (value == null) return '';
   if (typeof value === 'string') return value.trim().slice(0, 10);
@@ -503,8 +537,11 @@ export async function insertOrReactivateRenewalJob(
     return 'skipped_active_exists';
   }
 
-  const existingR = await db.query<{ id: string; status: string; cycle_key: string }>(
-    `SELECT id, status, cycle_key FROM billing_recurring_jobs
+  const generationDateYmd = renewalJobGenerationDateYmd(row, cycleKeyCanonical);
+
+  const existingR = await db.query<{ id: string; status: string; cycle_key: string; scheduled_at: string }>(
+    `SELECT id::text, status, cycle_key, scheduled_at::text
+     FROM billing_recurring_jobs
      WHERE ${BILLING_JOBS_WHERE_SUB_TENANT_SAME_LOGICAL_CYCLE}
      ORDER BY updated_at DESC
      LIMIT 1`,
@@ -515,43 +552,56 @@ export async function insertOrReactivateRenewalJob(
 
   if (ex) {
     if (ex.status === 'cancelled' || ex.status === 'failed') {
-      if (has) {
-        await db.query(
-          `UPDATE billing_recurring_jobs SET
-            status = 'pending',
-            cycle_key = $1,
-            scheduled_at = ($2::date)::timestamptz,
-            retry_at = NULL,
-            locked_at = NULL,
-            locked_by = NULL,
-            error_message = NULL,
-            completion_outcome = NULL,
-            completion_detail = NULL,
-            result_invoice_id = NULL,
-            result_invoice_type = NULL,
-            attempts = 0,
-            updated_at = now()
-           WHERE id = $3`,
-          [cycleKeyCanonical, cycleKeyCanonical, ex.id]
-        );
-      } else {
-        await db.query(
-          `UPDATE billing_recurring_jobs SET
-            status = 'pending',
-            cycle_key = $1,
-            scheduled_at = ($2::date)::timestamptz,
-            retry_at = NULL,
-            locked_at = NULL,
-            locked_by = NULL,
-            error_message = NULL,
-            result_invoice_id = NULL,
-            result_invoice_type = NULL,
-            attempts = 0,
-            updated_at = now()
-           WHERE id = $3`,
-          [cycleKeyCanonical, cycleKeyCanonical, ex.id]
-        );
-      }
+      const oldScheduledAt = ex.scheduled_at ?? null;
+      const reactivateR = has
+        ? await db.query<{ scheduled_at: string }>(
+            `UPDATE billing_recurring_jobs SET
+              status = 'pending',
+              cycle_key = $1,
+              scheduled_at = now(),
+              retry_at = NULL,
+              locked_at = NULL,
+              locked_by = NULL,
+              error_message = NULL,
+              completion_outcome = NULL,
+              completion_detail = NULL,
+              result_invoice_id = NULL,
+              result_invoice_type = NULL,
+              attempts = 0,
+              updated_at = now()
+             WHERE id = $2
+             RETURNING scheduled_at::text`,
+            [cycleKeyCanonical, ex.id]
+          )
+        : await db.query<{ scheduled_at: string }>(
+            `UPDATE billing_recurring_jobs SET
+              status = 'pending',
+              cycle_key = $1,
+              scheduled_at = now(),
+              retry_at = NULL,
+              locked_at = NULL,
+              locked_by = NULL,
+              error_message = NULL,
+              result_invoice_id = NULL,
+              result_invoice_type = NULL,
+              attempts = 0,
+              updated_at = now()
+             WHERE id = $2
+             RETURNING scheduled_at::text`,
+            [cycleKeyCanonical, ex.id]
+          );
+      const newScheduledAt = reactivateR.rows[0]?.scheduled_at ?? new Date().toISOString();
+      logBillingScheduledAtFixed({
+        subscription_id: subscriptionId,
+        tenant_id: tenantId,
+        cycle_key: cycleKeyCanonical,
+        generation_date_ymd: generationDateYmd,
+        cycle_due_ymd: cycleKeyCanonical,
+        old_scheduled_at: oldScheduledAt,
+        new_scheduled_at: newScheduledAt,
+        job_id: ex.id,
+        mode: 'reactivate',
+      });
       billingLog('scheduler', 'enqueue_job_reactivated_stale_cycle', {
         subscription_id: subscriptionId,
         tenant_id: tenantId,
@@ -583,14 +633,25 @@ export async function insertOrReactivateRenewalJob(
   }
 
   try {
-    const insR = await db.query<{ id: string }>(
+    const insR = await db.query<{ id: string; scheduled_at: string }>(
       `INSERT INTO billing_recurring_jobs (subscription_id, tenant_id, job_type, cycle_key, scheduled_at, status)
-       VALUES ($1, $2, 'renewal', $3, ($4::date)::timestamptz, 'pending')
-       RETURNING id::text`,
-      [subscriptionId, tenantId, cycleKeyCanonical, cycleKeyCanonical]
+       VALUES ($1, $2, 'renewal', $3, now(), 'pending')
+       RETURNING id::text, scheduled_at::text`,
+      [subscriptionId, tenantId, cycleKeyCanonical]
     );
     const newJobId = insR.rows[0]?.id ?? null;
     if (newJobId) {
+      logBillingScheduledAtFixed({
+        subscription_id: subscriptionId,
+        tenant_id: tenantId,
+        cycle_key: cycleKeyCanonical,
+        generation_date_ymd: generationDateYmd,
+        cycle_due_ymd: cycleKeyCanonical,
+        old_scheduled_at: null,
+        new_scheduled_at: insR.rows[0]?.scheduled_at ?? new Date().toISOString(),
+        job_id: newJobId,
+        mode: 'insert',
+      });
       await subscriptionCyclesUpsertAfterScheduler(db, {
         tenantId,
         subscriptionId,
@@ -1300,8 +1361,9 @@ export async function processNextBatch(workerId: string): Promise<{ processed: n
     }
     const result = { processed: 0, failed: 0, cancelled: 0 };
 
-    await reclaimStaleBillingProcessingJobs(client, workerId);
-    await sanitizePendingBillingJobLocks(client, workerId);
+    const reclaimed = await reclaimStaleBillingProcessingJobs(client, workerId);
+    const locksCleared = await sanitizePendingBillingJobLocks(client, workerId);
+    await emitBillingWorkerBatchDiagnostic(client, workerId, reclaimed, locksCleared);
 
     const jobsResult = await client.query<JobRow>(
       `SELECT id, subscription_id, tenant_id, job_type, cycle_key, scheduled_at, retry_at, status, attempts, max_attempts
