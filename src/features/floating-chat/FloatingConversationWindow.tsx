@@ -130,6 +130,31 @@ export function FloatingConversationWindow({
   const commercial = useMemo(() => chatCommercialGates(hasPermissionKey), [hasPermissionKey]);
   const permDenied = 'Seu perfil não tem permissão para esta ação.';
 
+  const { data: conversation } = useQuery({
+    queryKey: ['floating-chat', 'conversation-meta', conversationId],
+    queryFn: async (): Promise<ChatConversation | null> => {
+      const cached = getCachedFloatingConversationById(queryClient, conversationId);
+      if (cached) return cached;
+      for (const instanceId of instanceIds) {
+        try {
+          const rows = await chatService.getConversations({ instanceId, inboxScope });
+          const hit = rows.find((r) => r.id === conversationId);
+          if (hit) return hit;
+        } catch {
+          /* ignora instância */
+        }
+      }
+      try {
+        const rows = await chatService.getConversations({ inboxScope });
+        return rows.find((r) => r.id === conversationId) ?? null;
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 20_000,
+    placeholderData: () => getCachedFloatingConversationById(queryClient, conversationId),
+  });
+
   const dispatchCompactAction = useCallback(
     (action: string) => {
       const handleMeetNow = dispatchFloatingCompactAction({
@@ -266,31 +291,6 @@ export function FloatingConversationWindow({
     applyMessages,
     pendingWsFifoRef,
     afterItemDone: afterFloatingSend,
-  });
-
-  const { data: conversation } = useQuery({
-    queryKey: ['floating-chat', 'conversation-meta', conversationId],
-    queryFn: async (): Promise<ChatConversation | null> => {
-      const cached = getCachedFloatingConversationById(queryClient, conversationId);
-      if (cached) return cached;
-      for (const instanceId of instanceIds) {
-        try {
-          const rows = await chatService.getConversations({ instanceId, inboxScope });
-          const hit = rows.find((r) => r.id === conversationId);
-          if (hit) return hit;
-        } catch {
-          /* ignora instância */
-        }
-      }
-      try {
-        const rows = await chatService.getConversations({ inboxScope });
-        return rows.find((r) => r.id === conversationId) ?? null;
-      } catch {
-        return null;
-      }
-    },
-    staleTime: 20_000,
-    placeholderData: () => getCachedFloatingConversationById(queryClient, conversationId),
   });
 
   const { data: messages = [], isLoading } = useQuery({
