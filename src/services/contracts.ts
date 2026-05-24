@@ -4,6 +4,8 @@ import {
   ContractTemplate,
   ContractSigner,
   ContractEvent,
+  type ContractSignatureField,
+  type ContractDocumentKind,
   type ContractTenancyRules,
 } from '@/types/contracts';
 
@@ -202,6 +204,7 @@ export const contractsService = {
     linked_proposal_id?: string;
     linked_invoice_id?: string;
     signature_settings?: Record<string, any>;
+    document_kind?: ContractDocumentKind;
   }): Promise<ContractCreateResult> {
     try {
       const response = await apiClient.post<ContractCreateResult>('/api/contracts', contractData);
@@ -321,6 +324,174 @@ export const contractsService = {
     if (response.error) throw new Error(response.error);
   },
 
+  async fetchContractSourcePdfBlob(contractId: string): Promise<Blob> {
+    const base = getApiUrl();
+    const token = apiClient.getToken();
+    const url = `${base}/api/contracts/${contractId}/source-pdf`;
+    const res = await fetch(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      let msg = 'Falha ao carregar PDF';
+      try {
+        const j = await res.json();
+        if (j?.error) msg = j.error;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(msg);
+    }
+    return res.blob();
+  },
+
+  async uploadContractPdf(
+    contractId: string,
+    file: File,
+  ): Promise<{ pdf_page_count: number | null; sha256: string }> {
+    const fd = new FormData();
+    fd.append('pdf', file);
+    const response = await apiClient.post<{
+      pdf_page_count: number | null;
+      sha256: string;
+    }>(`/api/contracts/${contractId}/pdf-upload`, fd);
+    if (response.error) throw new Error(response.error);
+    return response.data!;
+  },
+
+  async getContractSignatureFields(contractId: string): Promise<{
+    fields: ContractSignatureField[];
+    pdf_page_count: number | null;
+    document_kind: ContractDocumentKind;
+  }> {
+    const response = await apiClient.get<{
+      fields: ContractSignatureField[];
+      pdf_page_count: number | null;
+      document_kind: ContractDocumentKind;
+    }>(`/api/contracts/${contractId}/signature-fields`);
+    if (response.error) throw new Error(response.error);
+    return response.data!;
+  },
+
+  async getContractPdfEditorState(contractId: string) {
+    const response = await apiClient.get<import('@/types/contractPdfEditor').ContractPdfEditorState>(
+      `/api/contracts/${contractId}/pdf-editor-state`,
+    );
+    if (response.error) throw new Error(response.error);
+    return response.data!;
+  },
+
+  async appendContractPdfPage(contractId: string): Promise<{
+    pdf_page_count: number;
+    source_pdf_page_count: number;
+    page: import('@/types/contractPdfEditor').ContractPdfExtraPage;
+  }> {
+    const response = await apiClient.post<{
+      ok?: boolean;
+      pdf_page_count: number;
+      source_pdf_page_count: number;
+      page: import('@/types/contractPdfEditor').ContractPdfExtraPage & {
+        page_order: number;
+        html_snapshot: string;
+      };
+    }>(`/api/contracts/${contractId}/pdf-extra-pages`, {});
+    if (response.error) throw new Error(response.error);
+    const d = response.data!;
+    const virtual =
+      d.page.virtual_page ??
+      (d.source_pdf_page_count ?? 1) + (d.page.page_order ?? 1);
+    return {
+      pdf_page_count: d.pdf_page_count ?? 1,
+      source_pdf_page_count: d.source_pdf_page_count ?? 1,
+      page: {
+        id: d.page.id,
+        page_order: d.page.page_order,
+        virtual_page: virtual,
+        html_snapshot: d.page.html_snapshot ?? '',
+        editor_json: d.page.editor_json,
+      },
+    };
+  },
+
+  async patchContractPdfExtraPage(
+    contractId: string,
+    pageId: string,
+    body: { html_snapshot?: string; editor_json?: Record<string, unknown> },
+  ): Promise<{ page: import('@/types/contractPdfEditor').ContractPdfExtraPage }> {
+    const response = await apiClient.patch<{
+      page: import('@/types/contractPdfEditor').ContractPdfExtraPage & { page_order: number };
+    }>(`/api/contracts/${contractId}/pdf-extra-pages/${pageId}`, body);
+    if (response.error) throw new Error(response.error);
+    const p = response.data!.page;
+    return {
+      page: {
+        id: p.id,
+        page_order: p.page_order,
+        virtual_page: p.virtual_page,
+        html_snapshot: p.html_snapshot,
+        editor_json: p.editor_json,
+      },
+    };
+  },
+
+  async saveContractSignatureFields(
+    contractId: string,
+    body: { fields: Omit<ContractSignatureField, 'id'>[]; pdf_page_count?: number },
+  ): Promise<{ fields: ContractSignatureField[] }> {
+    const response = await apiClient.put<{ fields: ContractSignatureField[] }>(
+      `/api/contracts/${contractId}/signature-fields`,
+      body,
+    );
+    if (response.error) throw new Error(response.error);
+    return response.data!;
+  },
+
+  getPublicSignPdfUrl(signToken: string): string {
+    return `${getApiUrl()}/api/public/contracts/sign/${encodeURIComponent(signToken)}/pdf`;
+  },
+
+  async fetchContractSignedPdfBlob(contractId: string, inline = true): Promise<Blob> {
+    const base = getApiUrl();
+    const token = apiClient.getToken();
+    const q = inline ? '?inline=1' : '';
+    const url = `${base}/api/contracts/${contractId}/signed-pdf${q}`;
+    const res = await fetch(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      let msg = 'PDF assinado indisponível';
+      try {
+        const j = await res.json();
+        if (j?.error) msg = j.error;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(msg);
+    }
+    return res.blob();
+  },
+
+  async rebuildSignedContractPdf(contractId: string): Promise<{ signed_pdf_storage_key: string | null }> {
+    const response = await apiClient.post<{
+      ok?: boolean;
+      signed_pdf_storage_key?: string | null;
+    }>(`/api/contracts/${contractId}/rebuild-signed-pdf`, {});
+    if (response.error) throw new Error(response.error);
+    return { signed_pdf_storage_key: response.data?.signed_pdf_storage_key ?? null };
+  },
+
+  async downloadSignedContractPdf(contractId: string): Promise<void> {
+    const blob = await this.fetchContractSignedPdfBlob(contractId);
+    const u = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = u;
+    a.download = 'contrato-assinado.pdf';
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(u);
+  },
+
   async downloadContractPdf(contractId: string): Promise<void> {
     const base = getApiUrl();
     const token = apiClient.getToken();
@@ -381,6 +552,7 @@ export const contractsService = {
     tax_id: string;
     role: 'CLIENT' | 'INTERNAL';
     signing_order?: number;
+    whatsapp_phone?: string | null;
   }): Promise<ContractSigner> {
     try {
       const response = await apiClient.post<ContractSigner>(`/api/contracts/${contractId}/signers`, signerData);
@@ -399,6 +571,7 @@ export const contractsService = {
     tax_id: string;
     role: 'CLIENT' | 'INTERNAL';
     signing_order?: number;
+    whatsapp_phone?: string | null;
   }>): Promise<ContractSigner> {
     try {
       const response = await apiClient.patch<ContractSigner>(`/api/contracts/signers/${signerId}`, signerData);

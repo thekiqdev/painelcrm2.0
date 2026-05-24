@@ -20,6 +20,7 @@ import { floatingAttendanceRowModel } from './attendanceUi';
 import { Badge } from '@/components/ui/badge';
 import { FloatingCompactProfile } from './FloatingCompactProfile';
 import { getCachedFloatingConversationById } from './queryCache';
+import { FLOATING_CHAT_MESSAGES_STALE_MS, FLOATING_CHAT_META_STALE_MS } from './floatingChatQueries';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -145,17 +146,19 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
         return null;
       }
     },
-    staleTime: 20_000,
+    staleTime: FLOATING_CHAT_META_STALE_MS,
     placeholderData: () => getCachedFloatingConversationById(queryClient, conversationId),
   });
 
   const { data: messages = [], isLoading } = useQuery({
     queryKey: ['floating-chat', 'messages', conversationId],
     queryFn: async () => {
+      const rows = await chatService.getConversationMessages(conversationId);
       void chatService.syncConversationMessages(conversationId, {}).catch(() => {});
-      return chatService.getConversationMessages(conversationId);
+      return rows;
     },
-    staleTime: 5_000,
+    staleTime: FLOATING_CHAT_MESSAGES_STALE_MS,
+    placeholderData: (prev) => prev,
   });
 
   const { data: connectedInstances = [] } = useQuery({

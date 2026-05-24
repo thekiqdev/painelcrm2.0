@@ -1577,6 +1577,8 @@ export const chatService = {
       create_google_event?: boolean;
       create_meet?: boolean;
       send_chat_confirmation?: boolean;
+      reminders?: { method: 'email' | 'popup'; minutes: number }[] | null;
+      send_reminder_to_client?: boolean;
     },
   ): Promise<{
     appointment: Record<string, unknown>;

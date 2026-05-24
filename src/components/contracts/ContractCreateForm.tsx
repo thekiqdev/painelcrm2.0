@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useNavigate, useLocation, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,7 +34,37 @@ import {
   summarizeSignatureInviteBootstrap,
 } from "@/utils/contractSignatureBootstrap";
 import { formatBrazilTaxIdDisplay, isBrazilTaxIdDigits, normalizeBrazilTaxIdInput } from "@/utils/brazilTaxId";
-import { getContractDocumentHtml, hasMeaningfulDocumentHtml, isContractDraft } from "@/utils/contractDocument";
+import {
+  getContractDocumentHtml,
+  hasMeaningfulContractDocument,
+  hasMeaningfulDocumentHtml,
+  isContractDraft,
+  isPdfSignatureContract,
+} from "@/utils/contractDocument";
+import {
+  clearContractCreateWizardPersist,
+  readContractCreateWizardPersist,
+  writeContractCreateWizardPersist,
+  type ContractWizardOption,
+  type ContractWizardStep,
+} from "@/lib/contractCreateWizardPersist";
+import {
+  ContractPdfSignatureStep,
+  type ContractPdfSignatureStepHandle,
+} from "@/components/contracts/ContractPdfSignatureStep";
+import type { PdfFieldDraft } from "@/components/contracts/ContractPdfSignatureEditor";
+import { remapPdfFieldSignerIds } from "@/utils/pdfSignatureFieldSignerIds";
+import {
+  ContractPdfSignersPanel,
+  mapContractSignerToPdfDraft,
+  type PdfSignerDraft,
+} from "@/components/contracts/ContractPdfSignersPanel";
+import { ContractPdfPagesNav } from "@/components/contracts/ContractPdfPagesNav";
+import type { ContractPdfExtraPage } from "@/types/contractPdfEditor";
+import {
+  formatBrazilWhatsappDisplay,
+  normalizeBrazilWhatsappDigits,
+} from "@/utils/brazilWhatsappPhone";
 import { toast } from "@/components/ui/sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -46,6 +76,8 @@ import {
   Save,
   Send,
   FileText,
+  FileSignature,
+  FileUp,
   Users,
   DollarSign,
   GripVertical,
@@ -61,8 +93,11 @@ import type {
 
 export type ContractCreateSignerDraft = Omit<
   ContractSigner,
-  "id" | "contract_id" | "created_at" | "signed_at" | "signature_data"
->;
+  "id" | "contract_id" | "created_at" | "signed_at" | "signature_data" | "signature_invite"
+> & {
+  localId?: string;
+  serverId?: string;
+};
 
 export interface ContractCreateFormProps {
   /** Edição: UUID do contrato (rota `/contracts/:id/edit`). */
@@ -126,12 +161,68 @@ export function ContractCreateForm({
   const permissionOk = isEditMode ? canEdit("contracts") : canCreate("contracts");
   const canUseContracts = permissionOk && !permLoading;
   const canRequestContractSignature = hasPermissionKey("contracts.request_signature");
-  const [step, setStep] = useState<"select" | "edit">(() =>
-    embedded && !id ? "edit" : id ? "edit" : "select"
+  const [step, setStep] = useState<ContractWizardStep>(() => {
+    if (embedded && !id) return 'edit';
+    if (id) return 'edit';
+    const saved = readContractCreateWizardPersist(undefined);
+    if (saved?.step === 'edit' || saved?.step === 'pdf_signature' || saved?.step === 'select') {
+      return saved.step;
+    }
+    return 'select';
+  });
+  const [selectedOption, setSelectedOption] = useState<ContractWizardOption>(() => {
+    const saved = readContractCreateWizardPersist(undefined);
+    if (
+      saved?.selectedOption === 'blank' ||
+      saved?.selectedOption === 'template' ||
+      saved?.selectedOption === 'pdf_signature'
+    ) {
+      return saved.selectedOption;
+    }
+    return 'blank';
+  });
+  const [pdfContractId, setPdfContractId] = useState<string | undefined>(() => {
+    return readContractCreateWizardPersist(undefined)?.pdfContractId;
+  });
+  const [pdfSigners, setPdfSigners] = useState<PdfSignerDraft[]>([]);
+  const [pdfFields, setPdfFields] = useState<PdfFieldDraft[]>([]);
+  const [pdfDocumentLoaded, setPdfDocumentLoaded] = useState(false);
+  const [placementSignerId, setPlacementSignerId] = useState<string | null>(null);
+  const [pdfSourcePageCount, setPdfSourcePageCount] = useState(1);
+  const [pdfExtraPages, setPdfExtraPages] = useState<ContractPdfExtraPage[]>([]);
+  const [pdfCurrentPage, setPdfCurrentPage] = useState(1);
+  const [pdfAppendLoading, setPdfAppendLoading] = useState(false);
+
+  const signaturePlacedBySignerId = useMemo(() => {
+    const map: Record<string, boolean> = {};
+    for (const s of pdfSigners) {
+      const k = s.serverId ?? s.localId;
+      map[k] = pdfFields.some(
+        (f) => f.field_type === 'signature' && f.contract_signer_id === k,
+      );
+    }
+    return map;
+  }, [pdfSigners, pdfFields]);
+
+  const removeSignerSignatureFromPdf = useCallback(
+    (signerKey: string) => {
+      setPdfFields((prev) =>
+        prev.filter((f) => !(f.field_type === 'signature' && f.contract_signer_id === signerKey)),
+      );
+      if (placementSignerId === signerKey) setPlacementSignerId(null);
+    },
+    [placementSignerId],
   );
-  const [selectedOption, setSelectedOption] = useState<'blank' | 'template'>('blank');
+
+  const pdfStepRef = useRef<ContractPdfSignatureStepHandle>(null);
+
+  const pdfPlacementProgress = useMemo(() => {
+    const total = pdfSigners.length;
+    const placed = pdfSigners.filter((s) => signaturePlacedBySignerId[s.serverId ?? s.localId]).length;
+    return { total, placed };
+  }, [pdfSigners, signaturePlacedBySignerId]);
   const [templates, setTemplates] = useState<ContractTemplate[]>([]);
-  const [signers, setSigners] = useState<Omit<ContractSigner, 'id' | 'contract_id' | 'created_at' | 'signed_at' | 'signature_data'>[]>([]);
+  const [signers, setSigners] = useState<ContractCreateSignerDraft[]>([]);
   const [loading, setLoading] = useState(false);
   /** Status carregado do servidor na edição; null em contrato novo. */
   const [contractStatus, setContractStatus] = useState<ContractStatus | null>(null);
@@ -161,6 +252,15 @@ export function ContractCreateForm({
       invitation_message: 'Você foi convidado para assinar um contrato. Por favor, revise e assine digitalmente.',
     },
   });
+
+  useEffect(() => {
+    if (id) return;
+    writeContractCreateWizardPersist(undefined, {
+      step,
+      selectedOption,
+      pdfContractId,
+    });
+  }, [id, step, selectedOption, pdfContractId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -235,11 +335,22 @@ export function ContractCreateForm({
 
   useEffect(() => {
     if (!embedded || !initialSigners?.length) return;
-    setSigners(
-      initialSigners.map((s, i) => ({
-        ...s,
+    const mapped = initialSigners.map((s, i) => ({
+      ...s,
+      signing_order: s.signing_order ?? i + 1,
+      whatsapp_phone: s.whatsapp_phone ?? '',
+    }));
+    setSigners(mapped);
+    setPdfSigners(
+      mapped.map((s, i) => ({
+        localId: s.localId ?? `init_${i}`,
+        name: s.name,
+        email: s.email,
+        whatsapp_phone: s.whatsapp_phone ?? '',
+        tax_id: s.tax_id ?? '',
+        role: s.role,
         signing_order: s.signing_order ?? i + 1,
-      }))
+      })),
     );
   }, [embedded, initialSigners]);
 
@@ -259,13 +370,24 @@ export function ContractCreateForm({
 
       // Carregar assinantes
       const contractSigners = await contractsService.getContractSigners(id);
-      setSigners(contractSigners.map(s => ({
-        name: s.name,
-        email: s.email,
-        tax_id: s.tax_id ? formatBrazilTaxIdDisplay(s.tax_id) : '',
-        role: s.role,
-        signing_order: s.signing_order || undefined,
-      })));
+      setSigners(
+        contractSigners.map((s) => ({
+          name: s.name,
+          email: s.email,
+          tax_id: s.tax_id ? formatBrazilTaxIdDisplay(s.tax_id) : '',
+          whatsapp_phone: s.whatsapp_phone ?? '',
+          role: s.role,
+          signing_order: s.signing_order || undefined,
+          serverId: s.id,
+          localId: s.id,
+        })),
+      );
+      if (isPdfSignatureContract(contract)) {
+        setPdfSigners(contractSigners.map(mapContractSignerToPdfDraft));
+        setPdfContractId(id);
+        setSelectedOption('pdf_signature');
+        setStep('pdf_signature');
+      }
 
       // Preencher formulário com dados do contrato
       setFormData({
@@ -292,13 +414,17 @@ export function ContractCreateForm({
 
       // Não reaplicar HTML do modelo aqui: o contrato já carregou content_html (snapshot).
       // Reaplicar sobrescreveria personalizações feitas após escolher o modelo.
-      if (contract.template_id) {
+      if (isPdfSignatureContract(contract)) {
+        setSelectedOption('pdf_signature');
+        setPdfContractId(contract.id);
+        setStep('pdf_signature');
+      } else if (contract.template_id) {
         setSelectedOption('template');
+        setStep('edit');
       } else {
         setSelectedOption('blank');
+        setStep('edit');
       }
-
-      setStep('edit');
     } catch (error) {
       console.error('Error loading contract:', error);
       toast.error('Erro ao carregar contrato');
@@ -345,6 +471,7 @@ export function ContractCreateForm({
       {
         name: '',
         email: '',
+        whatsapp_phone: '',
         tax_id: '',
         role: 'CLIENT',
         signing_order: signers.length + 1,
@@ -356,12 +483,17 @@ export function ContractCreateForm({
     setSigners(signers.filter((_, i) => i !== index));
   };
 
-  const handleSignerChange = (index: number, field: keyof typeof signers[0], value: any) => {
+  const handleSignerChange = (index: number, field: keyof ContractCreateSignerDraft, value: unknown) => {
     const updated = [...signers];
-    if (field === "tax_id") {
-      updated[index] = { ...updated[index], [field]: formatBrazilTaxIdDisplay(String(value ?? "")) };
+    if (field === 'tax_id') {
+      updated[index] = { ...updated[index], tax_id: formatBrazilTaxIdDisplay(String(value ?? '')) };
+    } else if (field === 'whatsapp_phone') {
+      updated[index] = {
+        ...updated[index],
+        whatsapp_phone: formatBrazilWhatsappDisplay(String(value ?? '')),
+      };
     } else {
-      updated[index] = { ...updated[index], [field]: value };
+      updated[index] = { ...updated[index], [field]: value } as ContractCreateSignerDraft;
     }
     setSigners(updated);
   };
@@ -374,8 +506,74 @@ export function ContractCreateForm({
     });
   };
 
-  const validateSignersTaxAndIdentity = (): boolean => {
+  const buildContractUpdatePayload = () => {
+    const clientIdForApi = formData.client_id.trim() || undefined;
+    return {
+      title: formData.title,
+      client_id: clientIdForApi,
+      responsible_id: formData.responsible_id || undefined,
+      start_date: formData.start_date?.toISOString().split('T')[0] || undefined,
+      end_date: formData.end_date?.toISOString().split('T')[0] || undefined,
+      auto_renew: formData.auto_renew,
+      renewal_period: formData.renewal_period ? parseInt(formData.renewal_period) : undefined,
+      total_value: formData.total_value ? parseFloat(formData.total_value) : undefined,
+      currency: formData.currency,
+      linked_proposal_id: formData.linked_proposal_id || undefined,
+      linked_invoice_id: formData.linked_invoice_id || undefined,
+      variables: formData.variables,
+      signature_settings: formData.signature_settings,
+    };
+  };
+
+  const syncSignersForContract = async (targetId: string) => {
+    const existingSigners = await contractsService.getContractSigners(targetId);
+    for (const signer of existingSigners) {
+      await contractsService.deleteContractSigner(signer.id);
+    }
     for (const signer of signers) {
+      await contractsService.createContractSigner(targetId, {
+        name: signer.name,
+        email: signer.email,
+        tax_id: normalizeBrazilTaxIdInput(signer.tax_id || ''),
+        role: signer.role,
+        signing_order: signer.signing_order || undefined,
+        whatsapp_phone: signer.whatsapp_phone?.trim()
+          ? normalizeBrazilWhatsappDigits(signer.whatsapp_phone)
+          : null,
+      });
+    }
+  };
+
+  const syncPdfSignersForContract = async (targetId: string): Promise<PdfSignerDraft[]> => {
+    const existingSigners = await contractsService.getContractSigners(targetId);
+    for (const signer of existingSigners) {
+      await contractsService.deleteContractSigner(signer.id);
+    }
+    const next: PdfSignerDraft[] = [];
+    for (const signer of pdfSigners) {
+      const created = await contractsService.createContractSigner(targetId, {
+        name: signer.name,
+        email: signer.email,
+        tax_id: normalizeBrazilTaxIdInput(signer.tax_id || ''),
+        role: signer.role,
+        signing_order: signer.signing_order || undefined,
+        whatsapp_phone: signer.whatsapp_phone?.trim()
+          ? normalizeBrazilWhatsappDigits(signer.whatsapp_phone)
+          : null,
+      });
+      next.push({
+        ...signer,
+        serverId: created.id,
+        localId: signer.localId,
+      });
+    }
+    setPdfSigners(next);
+    setPdfFields((prev) => remapPdfFieldSignerIds(prev, next));
+    return next;
+  };
+
+  const validateSignersTaxAndIdentity = (list = signers): boolean => {
+    for (const signer of list) {
       if (!signer.name?.trim() || !signer.email?.trim()) {
         toast.error('Cada assinante precisa de nome e e-mail');
         return false;
@@ -495,6 +693,7 @@ export function ContractCreateForm({
         onCreated(full, "draft");
       } else {
         toast.success("Rascunho salvo com sucesso");
+        clearContractCreateWizardPersist(undefined);
         navigate(`/contracts/${contract.id}`, {
           state: contract.public_view?.token ? { publicView: { token: contract.public_view.token } } : undefined,
         });
@@ -519,6 +718,10 @@ export function ContractCreateForm({
     }
     if (!hasMeaningfulDocumentHtml(formData.content_html)) {
       toast.error('Preencha o conteúdo do contrato antes de enviar');
+      return;
+    }
+    if (selectedOption === 'pdf_signature') {
+      toast.error('Use o fluxo PDF com Assinatura para enviar este contrato.');
       return;
     }
     if (signers.length === 0) {
@@ -703,7 +906,7 @@ export function ContractCreateForm({
           <h1 className="text-2xl font-bold">Novo Contrato</h1>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-3 max-w-5xl">
           <Card
             className={cn(
               "cursor-pointer transition-all hover:border-primary",
@@ -749,6 +952,29 @@ export function ContractCreateForm({
               </p>
             </CardContent>
           </Card>
+
+          <Card
+            className={cn(
+              "cursor-pointer transition-all hover:border-primary",
+              selectedOption === 'pdf_signature' && "border-primary ring-2 ring-primary/20"
+            )}
+            onClick={() => setSelectedOption('pdf_signature')}
+          >
+            <CardHeader>
+              <div className="flex items-center gap-3">
+                <FileSignature className="h-6 w-6" />
+                <div>
+                  <CardTitle>PDF com Assinatura</CardTitle>
+                  <CardDescription>Upload + campos online</CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">
+                Faça upload de um PDF e configure locais de assinatura online.
+              </p>
+            </CardContent>
+          </Card>
         </div>
 
         {selectedOption === 'template' && (
@@ -780,11 +1006,277 @@ export function ContractCreateForm({
             Cancelar
           </Button>
           <Button
-            onClick={() => setStep('edit')}
+            onClick={() =>
+              setStep(selectedOption === 'pdf_signature' ? 'pdf_signature' : 'edit')
+            }
             disabled={selectedOption === 'template' && !formData.template_id}
           >
             Continuar
           </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 'pdf_signature') {
+    const pdfStatusLabel =
+      pdfPlacementProgress.total === 0
+        ? 'Adicione assinantes'
+        : pdfPlacementProgress.placed === pdfPlacementProgress.total
+          ? 'Pronto para enviar'
+          : `${pdfPlacementProgress.placed}/${pdfPlacementProgress.total} no PDF`;
+
+    const handlePdfSaveDraft = async () => {
+      if (pdfSigners.length > 0 && !validateSignersTaxAndIdentity(pdfSigners)) return;
+      setLoading(true);
+      try {
+        await pdfStepRef.current?.saveDraft();
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    const handlePdfSend = async () => {
+      if (!formData.title?.trim()) {
+        toast.error('O título é obrigatório');
+        return;
+      }
+      if (pdfSigners.length === 0) {
+        toast.error('Adicione pelo menos um assinante');
+        return;
+      }
+      for (const signer of pdfSigners) {
+        if (!signer.name || !signer.email) {
+          toast.error('Todos os assinantes devem ter nome e e-mail');
+          return;
+        }
+      }
+      if (!validateSignersTaxAndIdentity(pdfSigners)) return;
+      setLoading(true);
+      try {
+        await pdfStepRef.current?.sendForSignature();
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    return (
+      <div className={cn('pb-24 lg:pb-8', embedded && 'max-w-full')}>
+        <header className="sticky top-0 z-40 -mx-4 border-b border-border/60 bg-background/95 px-4 py-3 backdrop-blur-md supports-[backdrop-filter]:bg-background/80 sm:-mx-6 sm:px-6">
+          <div className="mx-auto flex max-w-[1920px] flex-col gap-3">
+            <div className="flex items-start gap-2 sm:gap-3">
+              <Button variant="ghost" size="icon" className="shrink-0 mt-0.5" onClick={() => setStep('select')}>
+                <ArrowLeft className="h-4 w-4" />
+              </Button>
+              <div className="min-w-0 flex-1 space-y-2">
+                <Label htmlFor="pdf-contract-title-header" className="sr-only">
+                  Título do contrato
+                </Label>
+                <Input
+                  id="pdf-contract-title-header"
+                  value={formData.title}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, title: e.target.value }))}
+                  disabled={documentLocked}
+                  placeholder="Título do contrato"
+                  className="h-10 border-0 bg-transparent px-0 text-lg font-semibold shadow-none focus-visible:ring-0 sm:text-xl"
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+                    {pdfStatusLabel}
+                  </span>
+                  {documentLocked ? (
+                    <span className="text-xs text-amber-600">Documento bloqueado</span>
+                  ) : null}
+                </div>
+              </div>
+              <div className="hidden shrink-0 items-center gap-2 sm:flex">
+                {!documentLocked ? (
+                  <Button type="button" variant="outline" size="sm" className="gap-2" disabled={loading} asChild>
+                    <label
+                      className={cn('cursor-pointer', loading && 'pointer-events-none opacity-60')}
+                      title={
+                        pdfDocumentLoaded
+                          ? 'Trocar o arquivo PDF do contrato'
+                          : 'Selecionar o arquivo PDF do contrato para assinatura'
+                      }
+                    >
+                      <FileUp className="h-4 w-4 shrink-0" />
+                      <span>{pdfDocumentLoaded ? 'Substituir PDF' : 'Importar PDF'}</span>
+                      <input
+                        type="file"
+                        accept="application/pdf,.pdf"
+                        className="sr-only"
+                        aria-label={
+                          pdfDocumentLoaded
+                            ? 'Substituir documento PDF do contrato'
+                            : 'Importar documento PDF do contrato'
+                        }
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) void pdfStepRef.current?.uploadPdf(f);
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+                  </Button>
+                ) : null}
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="gap-1.5"
+                  disabled={loading || documentLocked}
+                  onClick={() => void handlePdfSaveDraft()}
+                >
+                  <Save className="h-4 w-4" />
+                  Salvar
+                </Button>
+                {canRequestContractSignature ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="gap-1.5"
+                    disabled={loading || documentLocked}
+                    onClick={() => void handlePdfSend()}
+                  >
+                    <Send className="h-4 w-4" />
+                    Enviar
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <div className="mx-auto w-full max-w-[1920px] px-4 pt-6 sm:px-6">
+          <div className="flex flex-col gap-8 lg:flex-row lg:items-start lg:gap-10">
+            <aside className="w-full shrink-0 lg:w-[300px] xl:w-[320px]">
+              <div className="space-y-5 lg:sticky lg:top-[5.5rem]">
+                <ClientSearchCombobox
+                  id="pdf-contract-client"
+                  label="Cliente (opcional)"
+                  value={formData.client_id || null}
+                  clients={linkedClientForCombo}
+                  remoteSearch
+                  disabled={documentLocked}
+                  onChange={handleContractClientChange}
+                />
+                <ContractPdfSignersPanel
+                  signers={pdfSigners}
+                  onChange={setPdfSigners}
+                  documentLocked={documentLocked}
+                  placementSignerId={placementSignerId}
+                  onPlacementSignerIdChange={setPlacementSignerId}
+                  signaturePlacedBySignerId={signaturePlacedBySignerId}
+                  onRemoveSignerSignature={removeSignerSignatureFromPdf}
+                />
+                {pdfDocumentLoaded ? (
+                  <ContractPdfPagesNav
+                    sourcePageCount={pdfSourcePageCount}
+                    totalPages={pdfSourcePageCount + pdfExtraPages.length}
+                    currentPage={pdfCurrentPage}
+                    onPageSelect={setPdfCurrentPage}
+                    extraPages={pdfExtraPages}
+                    readOnly={documentLocked}
+                    appendLoading={pdfAppendLoading}
+                    onAppendPage={
+                      documentLocked
+                        ? undefined
+                        : async () => {
+                            await pdfStepRef.current?.appendExtraPage?.();
+                          }
+                    }
+                  />
+                ) : null}
+              </div>
+            </aside>
+
+            <section className="min-w-0 flex-1 rounded-xl bg-muted/25 lg:bg-transparent">
+              <ContractPdfSignatureStep
+                ref={pdfStepRef}
+                editorOnly
+                contractId={pdfContractId || id}
+                title={formData.title}
+                onTitleChange={(t) => setFormData((prev) => ({ ...prev, title: t }))}
+                documentLocked={documentLocked}
+                onContractCreated={setPdfContractId}
+                onPdfLoadedChange={setPdfDocumentLoaded}
+                saving={loading}
+                canSend={canRequestContractSignature}
+                signers={pdfSigners}
+                placementSignerId={placementSignerId}
+                onPlacementSignerIdChange={setPlacementSignerId}
+                onSyncSigners={syncPdfSignersForContract}
+                fields={pdfFields}
+                onFieldsChange={setPdfFields}
+                sourcePageCount={pdfSourcePageCount}
+                onSourcePageCountChange={setPdfSourcePageCount}
+                extraPages={pdfExtraPages}
+                onExtraPagesChange={setPdfExtraPages}
+                currentPage={pdfCurrentPage}
+                onCurrentPageChange={setPdfCurrentPage}
+                onAppendPageLoadingChange={setPdfAppendLoading}
+                onSaveDraft={async (cid) => {
+                  await contractsService.updateContract(cid, buildContractUpdatePayload());
+                  if (!isEditMode) {
+                    await contractsService.createContractEvent(cid, {
+                      event_type: 'CREATED',
+                      description: 'Contrato PDF criado como rascunho',
+                    });
+                  }
+                  if (onCreated) {
+                    const full = await contractsService.getContractById(cid);
+                    onCreated(full, 'draft');
+                  } else {
+                    toast.success('Rascunho salvo');
+                    clearContractCreateWizardPersist(undefined);
+                    navigate(`/contracts/${cid}`);
+                  }
+                }}
+                onSendForSignature={async (cid) => {
+                  await contractsService.updateContract(cid, buildContractUpdatePayload());
+                  const sent = await contractsService.updateContract(cid, { status: 'PENDING_SIGNATURE' });
+                  persistSignatureInviteBootstrap(cid, sent.signature_invite_bootstrap);
+                  await contractsService.createContractEvent(cid, {
+                    event_type: 'SENT_FOR_SIGNATURE',
+                    description: 'Contrato PDF enviado para assinatura',
+                  });
+                  toast.success('Contrato enviado para assinatura');
+                  if (onCreated) {
+                    const full = await contractsService.getContractById(cid);
+                    onCreated(full, 'signature');
+                  } else {
+                    clearContractCreateWizardPersist(undefined);
+                    navigate(`/contracts/${cid}`);
+                  }
+                }}
+              />
+            </section>
+          </div>
+        </div>
+
+        <div className="fixed inset-x-0 bottom-0 z-40 flex gap-2 border-t bg-background/95 p-3 backdrop-blur-md sm:hidden">
+          <Button
+            type="button"
+            variant="secondary"
+            className="flex-1 gap-2"
+            disabled={loading || documentLocked}
+            onClick={() => void handlePdfSaveDraft()}
+          >
+            <Save className="h-4 w-4" />
+            Salvar
+          </Button>
+          {canRequestContractSignature ? (
+            <Button
+              type="button"
+              className="flex-1 gap-2"
+              disabled={loading || documentLocked}
+              onClick={() => void handlePdfSend()}
+            >
+              <Send className="h-4 w-4" />
+              Enviar
+            </Button>
+          ) : null}
         </div>
       </div>
     );
@@ -977,7 +1469,7 @@ export function ContractCreateForm({
               {signers.map((signer, index) => (
                 <div key={index} className="flex items-start gap-4 p-4 border rounded-lg">
                   <GripVertical className="h-5 w-5 text-muted-foreground mt-2 cursor-move" />
-                  <div className="flex-1 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                  <div className="flex-1 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                     <div>
                       <Label>Nome *</Label>
                       <Input
@@ -995,6 +1487,16 @@ export function ContractCreateForm({
                         onChange={(e) => handleSignerChange(index, 'email', e.target.value)}
                         placeholder="email@exemplo.com"
                         disabled={documentLocked}
+                      />
+                    </div>
+                    <div>
+                      <Label>WhatsApp</Label>
+                      <Input
+                        value={signer.whatsapp_phone ?? ''}
+                        onChange={(e) => handleSignerChange(index, 'whatsapp_phone', e.target.value)}
+                        placeholder="(11) 99999-9999"
+                        disabled={documentLocked}
+                        inputMode="tel"
                       />
                     </div>
                     <div>

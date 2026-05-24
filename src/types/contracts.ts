@@ -9,6 +9,26 @@ export type ContractStatus =
 
 export type SignerRole = 'CLIENT' | 'INTERNAL';
 
+export type ContractDocumentKind = 'html_editor' | 'pdf_signature';
+
+export type ContractSignatureFieldType = 'signature' | 'name' | 'date';
+
+export interface ContractSignatureField {
+  id?: string;
+  page: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  field_type: ContractSignatureFieldType;
+  signer_type: SignerRole;
+  /** Signatário vinculado (modo PDF). */
+  contract_signer_id?: string | null;
+  required: boolean;
+  label?: string | null;
+  sort_order?: number;
+}
+
 /** Regras de vigência copiadas do modelo na criação do contrato (snapshot). */
 export type ContractTenancyRules = {
   date_base_type?: 'creation_date' | 'signature_date' | null;
@@ -53,6 +73,11 @@ export interface Contract {
   linked_proposal_id: string | null;
   linked_invoice_id: string | null;
   signature_settings: Record<string, any>;
+  document_kind?: ContractDocumentKind;
+  original_pdf_storage_key?: string | null;
+  frozen_pdf_storage_key?: string | null;
+  signed_pdf_storage_key?: string | null;
+  pdf_page_count?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -100,6 +125,7 @@ export interface ContractSigner {
   email: string;
   /** CPF (11) ou CNPJ (14) apenas dígitos. */
   tax_id?: string | null;
+  whatsapp_phone?: string | null;
   role: SignerRole;
   signing_order: number | null;
   signed_at: string | null;

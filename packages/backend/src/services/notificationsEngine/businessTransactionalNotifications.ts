@@ -26,6 +26,9 @@ import { issueNewPublicTokenForProposal } from '../proposalPublicViewService.js'
 import { decryptPublicViewTokenFromStorage } from '../contractPublicViewService.js';
 import type { SignatureInviteBootstrapItem } from '../contractInviteBootstrapService.js';
 import { formatBrazilPhoneDigitsForDisplay } from '../../utils/brPhoneDisplay.js';
+import { sendTransactionalEmail } from '../email/emailDeliveryService.js';
+import { getEventByKey, getSystemTemplate } from './notificationEngineRepository.js';
+import { renderStrictTemplates } from './strictMergeRenderer.js';
 
 function resolveFrontendBaseUrl(): string {
   const raw = (process.env.FRONTEND_URL || process.env.PUBLIC_APP_URL || '').split(',')[0]?.trim() ?? '';
@@ -529,6 +532,12 @@ export function publishContractSentNotifications(params: {
       };
     };
 
+    const contractEvent = await getEventByKey(params.pool, 'contract.sent');
+    const emailTpl =
+      contractEvent?.is_active
+        ? await getSystemTemplate(params.pool, 'contract.sent', 'email', 'pt-BR')
+        : null;
+
     let anySignerWhatsApp = false;
 
     for (const item of params.bootstrap) {
@@ -536,10 +545,37 @@ export function publishContractSentNotifications(params: {
       const sid = item.signer_id;
       const signer = signerById.get(sid);
       if (!signer) continue;
-      const phone = normalizeWhatsappPhone(signer.whatsapp_phone);
-      if (!phone) continue;
 
       const signUrlAbsolute = base ? `${base}${item.frontend_path}` : item.frontend_path;
+      const mergeCtx = buildMergeContext(signUrlAbsolute, signer);
+
+      const email = signer.email?.trim();
+      if (email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && emailTpl) {
+        const rendered = renderStrictTemplates({
+          subjectTemplate: emailTpl.subject_template ?? 'Convite para assinar contrato',
+          bodyTemplate: emailTpl.body_template,
+          context: mergeCtx,
+          allowedMergeFields: contractEvent?.merge_field_list ?? [],
+        });
+        if (rendered.ok && rendered.body.trim()) {
+          const mail = await sendTransactionalEmail({
+            to: email,
+            subject: rendered.subject?.trim() || `Assinar: ${row.title}`,
+            html: rendered.body,
+            eventKey: 'contract.sent',
+            tenantId: params.tenantId,
+          });
+          if (!mail.ok) {
+            console.warn('[notifications-engine/business] contract.sent email falhou', mail.error, {
+              contract_id: params.contractId,
+              signer_id: sid,
+            });
+          }
+        }
+      }
+
+      const phone = normalizeWhatsappPhone(signer.whatsapp_phone);
+      if (!phone) continue;
 
       await gateAndPublish(params.pool, {
         eventKey: 'contract.sent',
@@ -550,7 +586,7 @@ export function publishContractSentNotifications(params: {
         idempotencyKey: `contract.sent:${params.contractId}:${sid}`,
         recipientPhone: phone,
         recipientType: 'customer',
-        mergeContext: buildMergeContext(signUrlAbsolute, signer),
+        mergeContext: mergeCtx,
         eventOccurredAt: new Date(),
         actor: { type: 'user', user_id: params.actorUserId },
         metadata: {

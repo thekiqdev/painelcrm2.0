@@ -8,7 +8,22 @@ import {
   generatePublicViewRawToken,
   hashPublicViewToken,
 } from './contractPublicViewService.js';
-import { hasMeaningfulDocumentHtml, isDraftStatus, canTransitionStatus } from './contractLifecycle.js';
+import {
+  hasMeaningfulContractDocument,
+  hasMeaningfulDocumentHtml,
+  isPdfSignatureDocumentKind,
+  isDraftStatus,
+  canTransitionStatus,
+} from './contractLifecycle.js';
+import {
+  contractFrozenPdfKey,
+  contractSignedPdfKey,
+  readContractPdfByKey,
+  sha256Buffer,
+} from './contractPdfStorageService.js';
+import { embedFieldsInPdf } from './contractPdfEmbedService.js';
+import { insertSignatureAudit } from './contractSignatureFieldsService.js';
+import { rebuildSignedPdfForContract } from './contractSignedPdfBuilder.js';
 import { findSignerInTenant } from '../utils/contractAccess.js';
 import { publishContractSignedNotification } from './notificationsEngine/businessTransactionalNotifications.js';
 
@@ -92,6 +107,10 @@ export type SignatureInviteFullRow = {
   contract_number: string;
   contract_status: string;
   document_html: string | null;
+  document_kind: string | null;
+  frozen_pdf_storage_key: string | null;
+  original_pdf_storage_key: string | null;
+  pdf_page_count: number | null;
   signer_name: string;
   signer_signed_at: string | null;
   invite_revoked: boolean;
@@ -106,7 +125,8 @@ export type SignatureInviteFullRow = {
 export async function loadSignatureInviteByTokenHash(hash: string): Promise<SignatureInviteFullRow | null> {
   const r = await pool.query<SignatureInviteFullRow>(
     `SELECT tenant_id, contract_id, signer_id, invite_id, contract_title, contract_number, contract_status,
-            document_html, signer_name, signer_signed_at, invite_revoked, invite_expired, invite_consumed,
+            document_html, document_kind, frozen_pdf_storage_key, original_pdf_storage_key, pdf_page_count,
+            signer_name, signer_signed_at, invite_revoked, invite_expired, invite_consumed,
             tenant_name, tenant_logo_url, tenant_logo_light_url, tenant_logo_dark_url
      FROM get_signature_invite_full_by_token_hash($1)`,
     [hash]
@@ -130,8 +150,13 @@ export function computePublicSignatureGetState(row: SignatureInviteFullRow): {
   if (!['PENDING_SIGNATURE', 'PARTIALLY_SIGNED', 'ACTIVE'].includes(row.contract_status)) {
     return { kind: 'unavailable', reason: 'contract_status' };
   }
-  const snap = row.document_html ?? '';
-  if (!hasMeaningfulDocumentHtml(snap)) {
+  if (
+    !hasMeaningfulContractDocument({
+      documentKind: row.document_kind,
+      contentHtml: row.document_html,
+      originalPdfStorageKey: row.frozen_pdf_storage_key || row.original_pdf_storage_key,
+    })
+  ) {
     return { kind: 'unavailable', reason: 'no_snapshot' };
   }
   return { kind: 'pending' };
@@ -139,6 +164,9 @@ export function computePublicSignatureGetState(row: SignatureInviteFullRow): {
 
 function humanizeUnavailableReason(row: SignatureInviteFullRow, reason?: string): string {
   if (reason === 'no_snapshot') {
+    if (isPdfSignatureDocumentKind(row.document_kind)) {
+      return 'O PDF do contrato não está disponível para assinatura. Peça à empresa para reenviar o contrato.';
+    }
     return 'O texto do contrato não está disponível para assinatura (conteúdo em falta). Peça à empresa para reenviar o contrato para assinatura ou corrigir o documento.';
   }
   if (reason === 'contract_status') {
@@ -175,6 +203,17 @@ export async function getPublicSignatureInvitePayload(rawToken: string): Promise
     };
   }
   if (st.kind === 'already_signed') {
+    const isPdf = isPdfSignatureDocumentKind(row.document_kind);
+    const sd = await pool.query<{
+      email: string;
+      tax_id: string | null;
+      signed_at: string | null;
+      signature_data: unknown;
+    }>(
+      `SELECT email, tax_id, signed_at, signature_data FROM contract_signers WHERE id = $1`,
+      [row.signer_id],
+    );
+    const signerRow = sd.rows[0];
     return {
       httpStatus: 200,
       body: {
@@ -182,8 +221,12 @@ export async function getPublicSignatureInvitePayload(rawToken: string): Promise
         state: 'already_signed',
         title: row.contract_title,
         contract_number: row.contract_number,
+        document_kind: isPdf ? 'pdf_signature' : 'html_editor',
         signer_name: row.signer_name,
-        signed_at: row.signer_signed_at,
+        signer_email: signerRow?.email ?? null,
+        signer_tax_id: signerRow?.tax_id ?? null,
+        signed_at: signerRow?.signed_at ?? row.signer_signed_at,
+        signature_data: signerRow?.signature_data ?? null,
         tenant: {
           name: row.tenant_name,
           logo_url: row.tenant_logo_url,
@@ -194,6 +237,7 @@ export async function getPublicSignatureInvitePayload(rawToken: string): Promise
       },
     };
   }
+  const isPdf = isPdfSignatureDocumentKind(row.document_kind);
   return {
     httpStatus: 200,
     body: {
@@ -201,7 +245,9 @@ export async function getPublicSignatureInvitePayload(rawToken: string): Promise
       state: 'pending',
       title: row.contract_title,
       contract_number: row.contract_number,
-      document_html: row.document_html,
+      document_kind: isPdf ? 'pdf_signature' : 'html_editor',
+      document_html: isPdf ? null : row.document_html,
+      pdf_page_count: row.pdf_page_count,
       signer_name: row.signer_name,
       tenant: {
         name: row.tenant_name,
@@ -404,6 +450,34 @@ export async function submitPublicSignature(params: {
     return { httpStatus: 500, body: { error: 'Internal server error' } };
   }
 
+  const pdfMeta = await pool.query<{ document_kind: string | null; frozen_pdf_storage_key: string | null }>(
+    `SELECT document_kind, frozen_pdf_storage_key FROM contracts WHERE id = $1`,
+    [base.contract_id],
+  );
+  const pdfRow = pdfMeta.rows[0];
+  const shouldRebuildPdf =
+    isPdfSignatureDocumentKind(pdfRow?.document_kind ?? base.document_kind) ||
+    Boolean(pdfRow?.frozen_pdf_storage_key?.trim() || base.frozen_pdf_storage_key?.trim());
+
+  if (shouldRebuildPdf) {
+    try {
+      const hash = await rebuildSignedPdfForContract(base.contract_id, base.tenant_id, {
+        preferSignerId: base.signer_id,
+      });
+      await insertSignatureAudit({
+        contractId: base.contract_id,
+        signerId: base.signer_id,
+        eventType: 'SIGNED',
+        clientIp,
+        userAgent,
+        documentHashSha256: hash,
+        metadata: { method: 'public_invite_esign_v1' },
+      });
+    } catch (e) {
+      console.error('rebuildSignedPdfForContract:', e);
+    }
+  }
+
   if (activation.becameActive) {
     publishContractSignedNotification({
       pool,
@@ -428,19 +502,51 @@ function contractAllowsSignatureInvite(status: string): boolean {
   return status === 'PENDING_SIGNATURE' || status === 'PARTIALLY_SIGNED';
 }
 
-async function loadContractSnapshotForInvite(contractId: string): Promise<{ status: string; snapshot: string | null } | null> {
+async function loadContractSnapshotForInvite(contractId: string): Promise<{
+  status: string;
+  snapshot: string | null;
+  document_kind: string | null;
+  original_pdf_storage_key: string | null;
+} | null> {
   const r = await pool.query<{
     status: string;
     content_snapshot_html: string | null;
     content_html: string | null;
-  }>(`SELECT status::text AS status, content_snapshot_html, content_html FROM contracts WHERE id = $1`, [contractId]);
+    document_kind: string | null;
+    original_pdf_storage_key: string | null;
+    frozen_pdf_storage_key: string | null;
+  }>(
+    `SELECT status::text AS status, content_snapshot_html, content_html, document_kind,
+            original_pdf_storage_key, frozen_pdf_storage_key
+     FROM contracts WHERE id = $1`,
+    [contractId],
+  );
   const row = r.rows[0];
   if (!row) return null;
   const snap =
     row.content_snapshot_html && String(row.content_snapshot_html).trim()
       ? row.content_snapshot_html
       : row.content_html ?? null;
-  return { status: row.status, snapshot: snap };
+  return {
+    status: row.status,
+    snapshot: snap,
+    document_kind: row.document_kind,
+    original_pdf_storage_key: row.frozen_pdf_storage_key || row.original_pdf_storage_key,
+  };
+}
+
+function contractHasSignableDocument(c: {
+  snapshot: string | null;
+  document_kind: string | null;
+  original_pdf_storage_key: string | null;
+}): boolean {
+  if (isPdfSignatureDocumentKind(c.document_kind)) {
+    return hasMeaningfulContractDocument({
+      documentKind: c.document_kind,
+      originalPdfStorageKey: c.original_pdf_storage_key,
+    });
+  }
+  return hasMeaningfulDocumentHtml(c.snapshot);
 }
 
 export async function getSignatureInviteMetaForSigner(params: {
@@ -482,7 +588,7 @@ export async function issueSignatureInvite(params: {
   if (!c || !contractAllowsSignatureInvite(c.status)) {
     return { ok: false, code: 'NOT_ELIGIBLE' };
   }
-  if (!hasMeaningfulDocumentHtml(c.snapshot)) {
+  if (!contractHasSignableDocument(c)) {
     return { ok: false, code: 'NOT_ELIGIBLE' };
   }
   const sg = await pool.query<{ signed_at: string | null }>(

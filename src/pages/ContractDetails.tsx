@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -26,8 +26,18 @@ import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 import { toast } from "@/components/ui/sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { getContractDocumentHtml, hasMeaningfulDocumentHtml, isContractDraft } from "@/utils/contractDocument";
+import {
+  getContractDocumentHtml,
+  hasMeaningfulDocumentHtml,
+  isContractDraft,
+  resolvePdfSignatureContract,
+} from "@/utils/contractDocument";
 import { ContractA4Document } from "@/components/contracts/ContractA4Document";
+import { ContractPdfViewer } from "@/components/contracts/ContractPdfViewer";
+import { ContractPdfDownloadButton } from "@/components/contracts/ContractPdfDownloadButton";
+import { ContractSignatureBlock } from "@/components/contracts/ContractSignatureBlock";
+import { parseContractSignerSignatureDisplay } from "@/utils/contractSignatureDisplay";
+import { formatBrazilWhatsappDisplay } from "@/utils/brazilWhatsappPhone";
 import {
   ArrowLeft,
   MoreVertical,
@@ -83,13 +93,6 @@ import {
 } from "@/utils/brazilTaxId";
 import { canDeleteContractStatus, contractStatusHint, contractStatusShortLabel } from "@/utils/contractStatusUi";
 
-function signatureImageDataUrl(signatureData: Record<string, unknown> | null | undefined): string | null {
-  if (!signatureData) return null;
-  const b64 = signatureData.signature_image_png_base64;
-  if (typeof b64 !== "string" || !b64.trim()) return null;
-  return `data:image/png;base64,${b64.trim()}`;
-}
-
 function persistSignToken(contractId: string, signerId: string, token: string) {
   try {
     sessionStorage.setItem(`${CONTRACT_SIGN_TOKEN_STORAGE_PREFIX}${contractId}:${signerId}`, token);
@@ -142,11 +145,12 @@ const ContractDetails = () => {
   const [pdfLoading, setPdfLoading] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [signatureZoom, setSignatureZoom] = useState<{ src: string; name: string } | null>(null);
+  const [signaturePreviewSigner, setSignaturePreviewSigner] = useState<ContractSigner | null>(null);
   const messageAuditRef = useRef<{
     copyKind: ContractOperationalAuditKind | null;
     signerId: string | null;
   }>({ copyKind: null, signerId: null });
+  const rebuildSignedPdfAttempted = useRef(false);
 
   useEffect(() => {
     if (id && user) {
@@ -211,6 +215,15 @@ const ContractDetails = () => {
     });
   }, [id, location.state, navigate]);
 
+  const loadContractPdfBlob = useCallback(async () => {
+    if (!id) throw new Error("Contrato inválido");
+    try {
+      return await contractsService.fetchContractSignedPdfBlob(id);
+    } catch {
+      return contractsService.fetchContractSourcePdfBlob(id);
+    }
+  }, [id]);
+
   const loadContractData = async () => {
     if (!id) return;
     
@@ -258,6 +271,21 @@ const ContractDetails = () => {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!id || !contract || rebuildSignedPdfAttempted.current) return;
+    if (!resolvePdfSignatureContract(contract)) return;
+    if (!signers.some((s) => Boolean(s.signed_at))) return;
+    if (contract.signed_pdf_storage_key?.trim()) return;
+    rebuildSignedPdfAttempted.current = true;
+    void contractsService
+      .rebuildSignedContractPdf(id)
+      .then(() => loadContractData())
+      .catch((e) => {
+        console.error("rebuildSignedContractPdf:", e);
+        rebuildSignedPdfAttempted.current = false;
+      });
+  }, [id, contract, signers]);
 
   const handleStatusChange = async (status: ContractStatus) => {
     if (!id) return;
@@ -703,7 +731,13 @@ const ContractDetails = () => {
   }
 
   const contractAllSigned = signers.length > 0 && signers.every((s) => Boolean(s.signed_at));
-  const canDownloadPdf = Boolean(String(contract.content_snapshot_html || "").trim());
+  const isPdfContract = resolvePdfSignatureContract(contract);
+  const hasSignedPdf = Boolean(String(contract.signed_pdf_storage_key || "").trim());
+  const canDownloadPdf =
+    isPdfContract ||
+    Boolean(String(contract.content_snapshot_html || "").trim()) ||
+    hasMeaningfulDocumentHtml(getContractDocumentHtml(contract));
+
   const canDeleteCurrentContract =
     canDeleteContractStatus(contract.status) &&
     canDeleteRecord("contracts", contract.responsible_id || contract.user_id, user?.id);
@@ -800,13 +834,22 @@ const ContractDetails = () => {
                 Editar e enviar para assinatura
               </DropdownMenuItem>
             )}
+            {hasSignedPdf && (
+              <DropdownMenuItem
+                disabled={pdfLoading}
+                onClick={() => void contractsService.downloadSignedContractPdf(id!)}
+              >
+                <Download className="mr-2 h-4 w-4" />
+                Baixar PDF assinado
+              </DropdownMenuItem>
+            )}
             {canDownloadPdf && (
               <DropdownMenuItem
                 disabled={pdfLoading}
                 onClick={() => void handleDownloadPdf()}
               >
                 <Download className="mr-2 h-4 w-4" />
-                Baixar PDF (snapshot)
+                {isPdfContract ? "Baixar PDF do documento" : "Baixar PDF (snapshot)"}
               </DropdownMenuItem>
             )}
             {contract.status !== "DRAFT" && (
@@ -991,29 +1034,69 @@ const ContractDetails = () => {
           </div>
 
           <Card>
-            <CardHeader>
+            <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <CardTitle>Conteúdo do Contrato</CardTitle>
+              <div className="flex flex-wrap gap-2">
+                {hasSignedPdf && id ? (
+                  <ContractPdfDownloadButton
+                    label="Baixar PDF assinado"
+                    prominent
+                    size="sm"
+                    onDownload={async () => {
+                      await contractsService.downloadSignedContractPdf(id);
+                      toast.success("Download do PDF assinado iniciado.");
+                    }}
+                  />
+                ) : null}
+                {isPdfContract && id ? (
+                  <ContractPdfDownloadButton
+                    label="Baixar PDF original"
+                    variant="outline"
+                    size="sm"
+                    onDownload={async () => {
+                      const blob = await contractsService.fetchContractSourcePdfBlob(id);
+                      const u = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = u;
+                      a.download = `${contract.contract_number}.pdf`;
+                      a.click();
+                      URL.revokeObjectURL(u);
+                      toast.success("Download iniciado.");
+                    }}
+                  />
+                ) : null}
+              </div>
             </CardHeader>
             <CardContent className="rounded-lg bg-muted/40 p-3 sm:p-4 border border-border/50">
-              <ContractA4Document
-                html={getContractDocumentHtml(contract) || "<p>Sem conteúdo.</p>"}
-                signersAppendix={signers.map((s) => {
-                  const b64 =
-                    typeof s.signature_data?.signature_image_png_base64 === "string"
-                      ? s.signature_data.signature_image_png_base64
-                      : null;
-                  return {
+              {isPdfContract ? (
+                <ContractPdfViewer
+                  loadPdf={loadContractPdfBlob}
+                  reloadKey={`${id}-${contract.signed_pdf_storage_key ?? "nosigned"}`}
+                />
+              ) : (
+                <ContractA4Document
+                  html={getContractDocumentHtml(contract) || "<p>Sem conteúdo.</p>"}
+                  signersAppendix={signers.map((s) => ({
+                    id: s.id,
                     name: s.name,
                     email: s.email,
                     tax_id: s.tax_id ?? null,
                     signed: Boolean(s.signed_at),
                     signed_at: s.signed_at,
-                    signature_image_png_base64: b64?.trim() ? b64.trim() : null,
-                  };
-                })}
-              />
+                    signature_data: (s.signature_data as Record<string, unknown> | null) ?? null,
+                  }))}
+                />
+              )}
             </CardContent>
           </Card>
+          {isPdfContract && contractAllSigned && !hasSignedPdf ? (
+            <Alert>
+              <AlertDescription className="text-sm">
+                O PDF final assinado está a ser gerado. Atualize a página em instantes ou use o menu Ações para
+                transferir quando estiver disponível.
+              </AlertDescription>
+            </Alert>
+          ) : null}
         </TabsContent>
 
         <TabsContent value="signers">
@@ -1032,6 +1115,7 @@ const ContractDetails = () => {
                     <TableHead className="w-10">Ordem</TableHead>
                     <TableHead>Nome</TableHead>
                     <TableHead>E-mail</TableHead>
+                    <TableHead className="whitespace-nowrap">WhatsApp</TableHead>
                     <TableHead className="whitespace-nowrap">CPF/CNPJ</TableHead>
                     <TableHead>Tipo</TableHead>
                     <TableHead>Estado</TableHead>
@@ -1043,15 +1127,17 @@ const ContractDetails = () => {
                 </TableHeader>
                 <TableBody>
                   {signers.map((signer) => {
-                    const sigImg = signatureImageDataUrl(
-                      signer.signature_data as Record<string, unknown> | null | undefined
-                    );
                     return (
                     <TableRow key={signer.id}>
                         <TableCell>{signer.signing_order || "-"}</TableCell>
                       <TableCell className="font-medium">{signer.name}</TableCell>
                         <TableCell className="max-w-[180px] truncate" title={signer.email}>
                           {signer.email}
+                        </TableCell>
+                        <TableCell className="text-xs whitespace-nowrap">
+                          {signer.whatsapp_phone
+                            ? formatBrazilWhatsappDisplay(signer.whatsapp_phone)
+                            : "—"}
                         </TableCell>
                         <TableCell className="font-mono text-xs whitespace-nowrap">
                           {signer.tax_id ? formatBrazilTaxIdDisplay(signer.tax_id) : "—"}
@@ -1132,26 +1218,17 @@ const ContractDetails = () => {
                             </div>
                           )}
                         </TableCell>
-                        <TableCell className="align-middle py-4 px-3">
-                          {signer.signed_at && sigImg ? (
-                            <button
+                        <TableCell className="align-middle py-2 px-2 text-center">
+                          {signer.signed_at ? (
+                            <Button
                               type="button"
-                              className="rounded-md border bg-white p-1.5 shadow-sm hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-ring block mx-auto"
-                              onClick={() => setSignatureZoom({ src: sigImg, name: signer.name })}
-                              title="Ampliar assinatura"
+                              variant="outline"
+                              size="sm"
+                              className="h-8 text-xs"
+                              onClick={() => setSignaturePreviewSigner(signer)}
                             >
-                              <img
-                                src={sigImg}
-                                alt=""
-                                width={96}
-                                height={40}
-                                className="h-10 w-24 object-contain"
-                                loading="lazy"
-                                decoding="async"
-                              />
-                            </button>
-                          ) : signer.signed_at ? (
-                            <span className="text-[10px] text-muted-foreground">Sem imagem</span>
+                              Ver bloco
+                            </Button>
                           ) : (
                             "—"
                           )}
@@ -1312,9 +1389,6 @@ const ContractDetails = () => {
                 </TableHeader>
                 <TableBody>
                   {signers.map((signer) => {
-                    const sigImg = signatureImageDataUrl(
-                      signer.signature_data as Record<string, unknown> | null | undefined
-                    );
                     return (
                       <TableRow key={`link-${signer.id}`}>
                         <TableCell className="font-medium">
@@ -1393,11 +1467,10 @@ const ContractDetails = () => {
                               {signer.signed_at ? (
                                 <>
                                   <DropdownMenuItem
-                                    disabled={!sigImg}
-                                    onClick={() => sigImg && setSignatureZoom({ src: sigImg, name: signer.name })}
+                                    onClick={() => setSignaturePreviewSigner(signer)}
                                   >
                                     <Eye className="mr-2 h-4 w-4" />
-                                    Ampliar assinatura
+                                    Ver bloco de assinatura
                                   </DropdownMenuItem>
                                   <DropdownMenuSeparator />
                                   <DropdownMenuItem
@@ -1593,8 +1666,8 @@ const ContractDetails = () => {
           <DialogHeader>
             <DialogTitle>{messageDialog.title}</DialogTitle>
             <DialogDescription>
-              Copie o texto e envie pelo canal habitual (e-mail, WhatsApp, etc.). O PainelCRM não envia
-              automaticamente nesta versão.
+              Copie o texto e envie manualmente se precisar. Ao enviar o contrato para assinatura, o sistema
+              pode disparar WhatsApp e e-mail automaticamente (motor de notificações), quando configurado.
             </DialogDescription>
           </DialogHeader>
           <pre className="text-sm whitespace-pre-wrap rounded-md border bg-muted/40 p-3">{messageDialog.body}</pre>
@@ -1622,6 +1695,17 @@ const ContractDetails = () => {
             <div className="text-sm text-muted-foreground py-6">A carregar…</div>
           ) : evidencePayload ? (
             <div className="space-y-4">
+              <div className="space-y-4">
+                {signers
+                  .filter((s) => s.signed_at)
+                  .map((s) => (
+                    <ContractSignatureBlock
+                      key={s.id}
+                      model={parseContractSignerSignatureDisplay(s)}
+                      compact
+                    />
+                  ))}
+              </div>
               <div className="rounded-md border bg-muted/30 p-3 text-sm">
                 <div className="font-medium mb-2">Resumo por signatário</div>
                 <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
@@ -1677,26 +1761,22 @@ const ContractDetails = () => {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={Boolean(signatureZoom)} onOpenChange={(o) => !o && setSignatureZoom(null)}>
-        <DialogContent className="max-w-lg">
+      <Dialog
+        open={Boolean(signaturePreviewSigner)}
+        onOpenChange={(o) => !o && setSignaturePreviewSigner(null)}
+      >
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Assinatura — {signatureZoom?.name}</DialogTitle>
+            <DialogTitle>Certificado de assinatura</DialogTitle>
             <DialogDescription>
-              Imagem PNG capturada na página pública de assinatura e ligada a este signatário.
+              Formato padronizado com evidências mínimas (mesmo layout do documento e do PDF).
             </DialogDescription>
           </DialogHeader>
-          {signatureZoom ? (
-            <div className="flex justify-center rounded-md border bg-white p-4">
-              <img
-                src={signatureZoom.src}
-                alt=""
-                className="max-h-[240px] w-full object-contain"
-                decoding="async"
-              />
-            </div>
+          {signaturePreviewSigner ? (
+            <ContractSignatureBlock model={parseContractSignerSignatureDisplay(signaturePreviewSigner)} />
           ) : null}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setSignatureZoom(null)}>
+            <Button type="button" variant="outline" onClick={() => setSignaturePreviewSigner(null)}>
               Fechar
             </Button>
           </DialogFooter>

@@ -9,7 +9,12 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
-import { chatService, resolveChatKanbanTagsForUi, type ChatConversation } from '@/services/chat';
+import { resolveChatKanbanTagsForUi, type ChatConversation } from '@/services/chat';
+import { fetchMergedChatConversations } from '@/lib/chatConversationsFetch';
+import {
+  FLOATING_CHAT_LIST_STALE_MS,
+  floatingChatConversationsQueryKey,
+} from './floatingChatQueries';
 import { resolveConversationIdentity } from '@/utils/chatIdentityDisplay';
 import { cn } from '@/lib/utils';
 import { beginConversationDragSession, endConversationDragSession } from '@/lib/chatKanbanConversationDrag';
@@ -38,52 +43,18 @@ export function FloatingConversationList({ className }: { className?: string }) 
   const [search, setSearch] = useState('');
   const [quick, setQuick] = useState<QuickFilter>('all');
 
-  const { data: conversations = [], isLoading } = useQuery({
-    queryKey: ['floating-chat', 'conversations', instanceIds.join(','), inboxScope, quick],
-    /** Lista só quando o painel está aberto (performance); realtime invalida para próxima abertura. */
+  const { data: conversations = [], isLoading, isFetching } = useQuery({
+    queryKey: floatingChatConversationsQueryKey(instanceIds, inboxScope, quick),
+    /** Lista só quando o painel está aberto; cache pré-aquecido no provider. */
     enabled: listOpen && instanceIds.length > 0,
-    queryFn: async () => {
-      const merged: ChatConversation[] = [];
-      for (const instanceId of instanceIds) {
-        const rows = await chatService.getConversations({
-          instanceId,
-          inboxScope,
-          attendanceFilter: quick === 'mine' ? 'mine' : undefined,
-        });
-        merged.push(...rows);
-      }
-      try {
-        const officialRows = await chatService.getConversations({
-          includeWhatsAppOfficial: true,
-          inboxScope,
-          attendanceFilter: quick === 'mine' ? 'mine' : undefined,
-          channelOrigin: 'official',
-        });
-        merged.push(...officialRows);
-      } catch {
-        /* ignore */
-      }
-      const byId = new Map<string, ChatConversation>();
-      for (const c of merged) {
-        const prev = byId.get(c.id);
-        if (!prev) byId.set(c.id, c);
-      }
-      let list = Array.from(byId.values()).sort((a, b) => {
-        const ta = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
-        const tb = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
-        if (ta && tb) return tb - ta;
-        if (ta && !tb) return -1;
-        if (!ta && tb) return 1;
-        const ca = a.created_at ? new Date(a.created_at).getTime() : 0;
-        const cb = b.created_at ? new Date(b.created_at).getTime() : 0;
-        return cb - ca;
-      });
-      if (quick === 'unread') {
-        list = list.filter((c) => (c.unreadCount ?? 0) > 0);
-      }
-      return list;
-    },
-    staleTime: 15_000,
+    queryFn: () =>
+      fetchMergedChatConversations({
+        instanceIds,
+        inboxScope,
+        quickFilter: quick,
+      }),
+    staleTime: FLOATING_CHAT_LIST_STALE_MS,
+    placeholderData: (prev) => prev,
   });
 
   const filtered = useMemo(() => {
@@ -108,7 +79,12 @@ export function FloatingConversationList({ className }: { className?: string }) 
       style={{ width: FLOATING_LIST_WIDTH_PX }}
     >
       <div className="floating-conversation-list-header flex shrink-0 items-center justify-between gap-2 border-b border-neutral-200 bg-neutral-50 px-3 py-2.5 dark:border-slate-800 dark:bg-slate-900">
-        <p className="text-sm font-semibold text-foreground">Conversas</p>
+        <p className="text-sm font-semibold text-foreground">
+          Conversas
+          {isFetching && conversations.length > 0 ? (
+            <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">· atualizando</span>
+          ) : null}
+        </p>
         <Button
           type="button"
           variant="ghost"
@@ -156,7 +132,7 @@ export function FloatingConversationList({ className }: { className?: string }) 
         )}
       >
         <div className="px-2 pb-2 pt-0">
-          {isLoading ? (
+          {isLoading && conversations.length === 0 ? (
             <p className="px-2 py-5 text-center text-xs text-muted-foreground">Carregando…</p>
           ) : filtered.length === 0 ? (
             <p className="px-2 py-5 text-center text-xs text-muted-foreground">Nenhuma conversa.</p>

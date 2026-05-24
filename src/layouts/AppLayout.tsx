@@ -83,6 +83,7 @@ import { routePreload } from '@/routePreload';
 import {
   prefetchClientsListNav,
   prefetchDashboardOverview,
+  prefetchChatWarm,
   prefetchLeadsListNav,
   prefetchTasksSummaryNav,
 } from '@/lib/prefetchAppData';
@@ -144,6 +145,7 @@ const Nav = () => {
       if (tenantId && userId) {
         prefetchDashboardOverview(tenantId, userId);
         prefetchTasksSummaryNav(tenantId, userId);
+        prefetchChatWarm(tenantId, userId, Boolean(user?.tenant_id));
       }
     }, 1500);
     return () => clearTimeout(t);
@@ -224,7 +226,10 @@ const Nav = () => {
           <NavLink
             to="/chat"
             end
-            onMouseEnter={() => routePreload.chat()}
+            onMouseEnter={() => {
+              routePreload.chat();
+              prefetchChatWarm(tenantId, userId, Boolean(user?.tenant_id));
+            }}
             className={({ isActive }) =>
               cn(navLinkClassFn(isActive), 'relative', badgeLabel && 'gap-2')
             }

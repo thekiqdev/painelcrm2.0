@@ -1,5 +1,5 @@
 import { ArrowLeft } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import ContractCreateForm from "@/components/contracts/ContractCreateForm";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,13 @@ import { parseClientsListReturnPath } from "@/lib/clientsListRestore";
 export default function NewContract() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const isMobile = useIsMobile();
+  const isMobileLive = useIsMobile();
+  /** Evita remount do formulário quando a largura muda (ex.: abrir DevTools). */
+  const mobileShellLocked = useRef<boolean | null>(null);
+  if (mobileShellLocked.current === null) {
+    mobileShellLocked.current = isMobileLive;
+  }
+  const mobileShell = mobileShellLocked.current;
   const { id } = useParams<{ id: string }>();
   const clientId =
     searchParams.get("clientId")?.trim() || searchParams.get("client_id")?.trim() || null;
@@ -25,7 +31,6 @@ export default function NewContract() {
     () => parseClientsListReturnPath(searchParams.get("return_path")),
     [searchParams],
   );
-  const mobileShell = isMobile;
   const mobileBackPath = returnToConversation || listReturnPath || "/contracts";
 
   return (

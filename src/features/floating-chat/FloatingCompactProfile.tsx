@@ -64,6 +64,11 @@ import { FLOATING_COMPACT_ACTION_EVENT } from './dispatchFloatingCompactAction';
 import { format, formatDistanceToNow, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { apiClient } from '@/integrations/api/client';
+import { AppointmentRemindersFields } from '@/components/appointments/AppointmentRemindersFields';
+import {
+  buildAppointmentRemindersPayload,
+  DEFAULT_CHAT_APPOINTMENT_REMINDERS,
+} from '@/lib/appointmentReminders';
 type LeadProfileForConversion = {
   id?: string;
   name?: string;
@@ -135,10 +140,18 @@ export function FloatingCompactProfile({
   const [tenantKanbanTagsCatalog, setTenantKanbanTagsCatalog] = useState<ChatKanbanTagUi[]>([]);
   const [tenantKanbanTagsLoading, setTenantKanbanTagsLoading] = useState(false);
   const [schedTitle, setSchedTitle] = useState('Compromisso');
+  const [schedReminders, setSchedReminders] = useState(() => ({ ...DEFAULT_CHAT_APPOINTMENT_REMINDERS }));
   const [schedDate, setSchedDate] = useState(() => format(new Date(), 'yyyy-MM-dd'));
   const [schedStart, setSchedStart] = useState('10:00');
   const [schedEnd, setSchedEnd] = useState('11:00');
   const [schedNote, setSchedNote] = useState('');
+
+  useEffect(() => {
+    if (scheduleOpen) {
+      setSchedReminders({ ...DEFAULT_CHAT_APPOINTMENT_REMINDERS });
+    }
+  }, [scheduleOpen]);
+
   const [taskTitle, setTaskTitle] = useState(() => {
     const base = identity.displayName?.trim() || 'Follow-up';
     return `Follow-up: ${base}`;
@@ -685,6 +698,8 @@ export function FloatingCompactProfile({
         create_google_event: false,
         create_meet: false,
         send_chat_confirmation: true,
+        reminders: buildAppointmentRemindersPayload(schedReminders),
+        send_reminder_to_client: schedReminders.sendReminderToClient,
       });
       void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'messages', conversationId] });
       debugChatActionNotification({
@@ -1218,6 +1233,11 @@ export function FloatingCompactProfile({
               <Label>Observação</Label>
               <Textarea rows={2} value={schedNote} onChange={(e) => setSchedNote(e.target.value)} />
             </div>
+            <AppointmentRemindersFields
+              value={schedReminders}
+              onChange={(patch) => setSchedReminders((prev) => ({ ...prev, ...patch }))}
+              disabled={savingSchedule}
+            />
             <Button type="button" className="w-full" disabled={savingSchedule} onClick={() => void handleCreateSchedule()}>
               {savingSchedule ? 'A guardar…' : 'Salvar compromisso'}
             </Button>

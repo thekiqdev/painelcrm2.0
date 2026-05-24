@@ -12,6 +12,10 @@ import {
   snapshotHtmlToFallbackPlain,
   type PdfBodyBlock,
 } from './contractPdfBodyLayout.js';
+import { loadStoredContractPdfBuffer } from './contractStoredPdfService.js';
+import { parseSignerSignatureDisplay } from './contractSignatureDisplay.js';
+import { renderSignatureBlockPdfKit } from './contractSignatureBlockPdfKit.js';
+import { stripTrailingSignatureSectionFromHtml } from './contractDocumentHtml.js';
 
 type PdfDoc = InstanceType<typeof PDFDocument>;
 
@@ -122,7 +126,9 @@ export async function buildPdfBufferFromContractSnapshot(
   c: ContractPdfMetaRow,
   signers: ContractSignerPdfRow[],
 ): Promise<{ buffer: Buffer; filename: string }> {
-  const snap = String(c.content_snapshot_html || '').trim();
+  const snapRaw = String(c.content_snapshot_html || '').trim();
+  const snap =
+    signers.length > 0 ? stripTrailingSignatureSectionFromHtml(snapRaw) : snapRaw;
   const filename = `contrato-${safeFilenamePart(c.contract_number)}.pdf`;
 
   const marginSide = 52;
@@ -161,15 +167,17 @@ export async function buildPdfBufferFromContractSnapshot(
     }
     renderContractBodyForPdf(doc, bodyBlocks, textWidth);
 
-    /** Secção de assinaturas na sequência do texto (sem página em branco forçada). */
+    const bottomReserve = 220;
+    if (doc.y > doc.page.height - marginSide - bottomReserve) {
+      doc.addPage();
+    }
     doc.moveDown(2.45);
-    doc.font('Helvetica-Bold').fontSize(12.5).fillColor('#111111').text('Signatários e evidências mínimas', {
+    doc.font('Helvetica-Bold').fontSize(12).fillColor('#111111').text('Assinatura', {
       width: textWidth,
-      underline: true,
-      lineGap: 2.2,
+      lineGap: 2,
     });
     doc.font('Helvetica').fillColor('#000000');
-    doc.moveDown(1.25);
+    doc.moveDown(0.85);
     if (!signers.length) {
       doc.fontSize(9.5).fillColor('#555555').text('Nenhum signatário configurado para este contrato.', {
         width: textWidth,
@@ -178,72 +186,16 @@ export async function buildPdfBufferFromContractSnapshot(
       doc.fillColor('#000000');
     }
     for (const s of signers) {
-      doc.moveDown(0.55);
-      doc.font('Helvetica-Bold').fontSize(10.5).fillColor('#000000').text(`${s.name}`, { lineGap: 2.2 });
-      doc.font('Helvetica').fontSize(9.5).fillColor('#333333').text(`   E-mail: ${s.email}`, { lineGap: 2 });
-      const taxIdMasked = formatBrazilTaxIdDisplay(s.tax_id);
-      if (taxIdMasked) {
-        doc.text(`   CPF/CNPJ: ${taxIdMasked}`, { lineGap: 1.75 });
-      }
-      if (s.signed_at) {
-        doc.moveDown(0.22);
-        doc.text(`   Assinatura (UTC): ${new Date(s.signed_at).toISOString()}`, { lineGap: 1.75 });
-        const sig = s.signature_data as Record<string, unknown> | null;
-        if (sig && typeof sig === 'object') {
-          const ip = typeof sig.client_ip === 'string' ? sig.client_ip : '';
-          const ua = typeof sig.user_agent === 'string' ? String(sig.user_agent).slice(0, 140) : '';
-          const ver = typeof sig.accepted_terms_version === 'string' ? sig.accepted_terms_version : '';
-          const meth = typeof sig.method === 'string' ? sig.method : '';
-          const pngB64 = typeof sig.signature_image_png_base64 === 'string' ? sig.signature_image_png_base64 : '';
-          if (meth) {
-            doc.moveDown(0.15);
-            doc.fontSize(8.5).fillColor('#555555').text(`   Método: ${meth}`, { lineGap: 1.55 });
-          }
-          if (ip) {
-            doc.moveDown(0.12);
-            doc.fontSize(8.5).text(`   IP: ${ip}`, { lineGap: 1.55 });
-          }
-          if (ua) {
-            doc.moveDown(0.12);
-            doc.fontSize(8.5).text(`   User-Agent: ${ua}`, { lineGap: 1.55 });
-          }
-          if (ver) {
-            doc.moveDown(0.12);
-            doc.fontSize(8.5).text(`   Versão aceite: ${ver}`, { lineGap: 1.55 });
-          }
-          if (pngB64.trim().length > 80) {
-            try {
-              const buf = Buffer.from(pngB64.trim(), 'base64');
-              doc.moveDown(0.6);
-              doc.fontSize(8.5).fillColor('#555555').text('   Assinatura manuscrita (e-sign):', { lineGap: 1.55 });
-              doc.moveDown(0.32);
-              if (buf.length <= PDF_SIGNATURE_IMAGE_MAX_BYTES) {
-                doc.image(buf, doc.x, doc.y + 4, { fit: [200, 62] });
-                doc.moveDown(2.85);
-              } else {
-                doc.moveDown(0.18);
-                doc.fontSize(8.5).fillColor('#888888').text(
-                  '   (Imagem omitida no PDF por tamanho; consulte o registo no sistema.)',
-                  { lineGap: 1.55 },
-                );
-                doc.moveDown(0.6);
-              }
-            } catch {
-              doc.moveDown(0.22);
-              doc.fontSize(8.5).fillColor('#888888').text('   (Miniatura da assinatura indisponível neste PDF.)', {
-                lineGap: 1.55,
-              });
-              doc.moveDown(0.4);
-            }
-          }
-          doc.fillColor('#000000').font('Helvetica').fontSize(10);
-        }
-      } else {
-        doc.moveDown(0.22);
-        doc.fontSize(9.5).fillColor('#666666').text('   Pendente de assinatura', { lineGap: 1.75 });
-        doc.fillColor('#000000').fontSize(10);
-      }
-      doc.moveDown(1.5);
+      const model = parseSignerSignatureDisplay({
+        id: s.email,
+        name: s.name,
+        email: s.email,
+        tax_id: s.tax_id,
+        signed_at: s.signed_at,
+        signature_data: s.signature_data,
+      });
+      renderSignatureBlockPdfKit(doc, model, textWidth);
+      doc.moveDown(1.2);
     }
 
     doc.end();
@@ -278,6 +230,11 @@ export async function buildContractPdfBuffer(params: {
     params.req,
   );
 
+  const storedSigned = await loadStoredContractPdfBuffer(params.contractId, 'signed');
+  if (storedSigned) return storedSigned;
+  const storedView = await loadStoredContractPdfBuffer(params.contractId, 'view');
+  if (storedView) return storedView;
+
   const row = await pool.query<ContractPdfMetaRow>(
     `SELECT c.title, c.contract_number, c.content_snapshot_html, c.status::text AS status,
             c.document_frozen_at, t.name AS tenant_name
@@ -307,6 +264,12 @@ export async function buildContractPdfBufferForPublicView(contractId: string): P
   buffer: Buffer;
   filename: string;
 } | null> {
+  const storedSigned = await loadStoredContractPdfBuffer(contractId, 'signed');
+  if (storedSigned) return storedSigned;
+
+  const storedView = await loadStoredContractPdfBuffer(contractId, 'view');
+  if (storedView) return storedView;
+
   const row = await pool.query<ContractPdfMetaRow>(
     `SELECT c.title, c.contract_number, c.content_snapshot_html, c.status::text AS status,
             c.document_frozen_at, t.name AS tenant_name

@@ -151,6 +151,11 @@ const meetNowBodySchema = z.object({
   title: z.string().min(1).max(500).optional(),
 });
 
+const chatReminderSchema = z.object({
+  method: z.enum(['email', 'popup']),
+  minutes: z.number().int().min(0).max(40320),
+});
+
 const scheduleFromChatBodySchema = z.object({
   title: z.string().min(1).max(500),
   starts_at: z.string().min(1),
@@ -160,6 +165,8 @@ const scheduleFromChatBodySchema = z.object({
   create_google_event: z.boolean().optional().default(true),
   create_meet: z.boolean().optional().default(true),
   send_chat_confirmation: z.boolean().optional().default(true),
+  reminders: z.array(chatReminderSchema).optional().nullable(),
+  send_reminder_to_client: z.boolean().optional().default(true),
 });
 
 export async function postChatConversationCreateMeetNow(req: AuthRequest, res: Response): Promise<void> {
@@ -371,6 +378,7 @@ export async function postChatConversationScheduleAppointment(req: AuthRequest, 
       }
     }
 
+    const sendReminderToClient = d.send_reminder_to_client === true;
     const created = await createAppointment(tenantId, req.userId, {
       title: d.title,
       description: d.description ?? 'Agendado a partir do chat',
@@ -382,9 +390,11 @@ export async function postChatConversationScheduleAppointment(req: AuthRequest, 
       ends_at: d.ends_at,
       create_google_event: d.create_google_event,
       create_meet: d.create_meet,
-      send_reminder_to_client: false,
+      reminders: d.reminders ?? null,
+      send_reminder_to_client: sendReminderToClient,
       attendees,
       skip_initial_client_timeline: true,
+      skip_client_invite_notification: d.send_chat_confirmation === true && sendReminderToClient,
     });
 
     const ap = created.primary;

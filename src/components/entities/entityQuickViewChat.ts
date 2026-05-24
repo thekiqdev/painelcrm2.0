@@ -3,6 +3,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import type { FloatingChatContextValue } from "@/features/floating-chat/floatingChatContext";
 import { resolveConversationIdForCrmRecord } from "@/lib/resolveChatConversationForCrm";
 import { chatService, type ChatInstance } from "@/services/chat";
+import { invalidateFloatingChatAggregates } from "@/features/floating-chat/floatingChatQueries";
 
 export function isConnectedChatInstance(instance: ChatInstance): boolean {
   const status = String(instance.status || "").toLowerCase();
@@ -96,7 +97,7 @@ export async function openEntityWhatsAppFloatingChat(params: {
       dispatchFloatingChatOpen(conversationId);
     }
 
-    void queryClient.invalidateQueries({ queryKey: ["floating-chat"] });
+    invalidateFloatingChatAggregates(queryClient);
   } catch (error) {
     toast.error(error instanceof Error ? error.message : "Não foi possível abrir a conversa.");
   }

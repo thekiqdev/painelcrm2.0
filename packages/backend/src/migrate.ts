@@ -392,6 +392,15 @@ const order = [
   '247_platform_support_ticket_notifications.sql',
   '248_billing_ops_heartbeat.sql',
   '249_billing_recovery_audit.sql',
+  /** Signatários: WhatsApp opcional por convite */
+  '134_contract_signers_whatsapp_phone.sql',
+  /** Notificações: merge fields contract.sent por signatário */
+  '135_notifications_contract_sent_signer_merge_fields.sql',
+  /** Contratos: PDF com assinatura online (campos, auditoria, storage keys) */
+  '250_contract_pdf_signature.sql',
+  /** Campos PDF vinculados a contract_signers + template e-mail contract.sent */
+  '251_contract_signature_fields_signer_id.sql',
+  '252_contract_pdf_extra_pages_overlay.sql',
   'create-admin-user.sql',
 ];
 

@@ -19,6 +19,11 @@ import {
 } from './persist';
 import type { FloatingChatPanel } from './floatingChatTypes';
 import { FloatingChatContext, type FloatingChatContextValue } from './floatingChatContext';
+import {
+  invalidateFloatingChatAggregates,
+  invalidateFloatingChatConversationMeta,
+  prefetchFloatingChatLists,
+} from './floatingChatQueries';
 
 function countExpanded(panels: FloatingChatPanel[]): number {
   return panels.filter((p) => !p.minimized).length;
@@ -100,6 +105,12 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
     void refreshInstances();
   }, [refreshInstances]);
 
+  /** Pré-aquece listas em background (abertura instantânea da lista/bubble). */
+  useEffect(() => {
+    if (!user?.id || instanceIds.length === 0) return;
+    void prefetchFloatingChatLists(queryClient, instanceIds, inboxScope);
+  }, [user?.id, instanceIds, inboxScope, queryClient]);
+
   useLayoutEffect(() => {
     const saved = loadFloatingChatPersisted();
     if (saved) {
@@ -156,11 +167,16 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
   }, []);
 
   useEffect(() => {
-    const onConvUpd = () => {
-      void queryClient.invalidateQueries({ queryKey: ['floating-chat'] });
+    const onConvUpd = (e: Event) => {
+      const d = (e as CustomEvent<Record<string, unknown>>).detail;
+      const cid = (d?.conversation_id as string) || (d?.conversationId as string);
+      invalidateFloatingChatAggregates(queryClient);
+      if (typeof cid === 'string') {
+        invalidateFloatingChatConversationMeta(queryClient, cid);
+      }
     };
     const onNotif = () => {
-      void queryClient.invalidateQueries({ queryKey: ['floating-chat'] });
+      invalidateFloatingChatAggregates(queryClient);
     };
     window.addEventListener(REALTIME_WINDOW_EVENTS.conversationUpdated, onConvUpd);
     window.addEventListener(REALTIME_WINDOW_EVENTS.notificationCreated, onNotif);
@@ -189,7 +205,7 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
           void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'conversation-meta', cid] });
         }
         emitChatNavUnreadRefresh();
-        void queryClient.invalidateQueries({ queryKey: ['floating-chat'] });
+        invalidateFloatingChatAggregates(queryClient);
         return;
       }
 
@@ -384,7 +400,8 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
       emitKanbanConversationUnread(conversationId, 0);
       void chatService.markConversationRead(conversationId).then(() => {
         emitChatNavUnreadRefresh();
-        void queryClient.invalidateQueries({ queryKey: ['floating-chat'] });
+        invalidateFloatingChatAggregates(queryClient);
+        invalidateFloatingChatConversationMeta(queryClient, conversationId);
       });
     },
     [clearPulseFor, queryClient],
@@ -403,7 +420,8 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
         emitKanbanConversationUnread(conversationId, 0);
         void chatService.markConversationRead(conversationId).then(() => {
           emitChatNavUnreadRefresh();
-          void queryClient.invalidateQueries({ queryKey: ['floating-chat'] });
+          invalidateFloatingChatAggregates(queryClient);
+          invalidateFloatingChatConversationMeta(queryClient, conversationId);
         });
       } else {
         openOrFocusConversation(conversationId);
@@ -492,7 +510,8 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
       emitKanbanConversationUnread(conversationId, 0);
       void chatService.markConversationRead(conversationId).then(() => {
         emitChatNavUnreadRefresh();
-        void queryClient.invalidateQueries({ queryKey: ['floating-chat'] });
+        invalidateFloatingChatAggregates(queryClient);
+        invalidateFloatingChatConversationMeta(queryClient, conversationId);
       });
     },
     [clearPulseFor, queryClient],
@@ -526,8 +545,7 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
       if (mobileOverlayConversationIdRef.current === conversationId) {
         closeMobileConversationOverlay();
       }
-      void queryClient.invalidateQueries({ queryKey: ['floating-chat'] });
-      void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'conversations'] });
+      invalidateFloatingChatAggregates(queryClient);
       emitChatNavUnreadRefresh();
     };
     window.addEventListener(REALTIME_WINDOW_EVENTS.conversationDeleted, onConversationDeleted);

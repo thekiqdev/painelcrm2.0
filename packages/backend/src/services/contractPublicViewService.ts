@@ -5,7 +5,7 @@
 import crypto from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { pool } from '../utils/db.js';
-import { hasMeaningfulDocumentHtml } from './contractLifecycle.js';
+import { hasMeaningfulDocumentHtml, isPdfSignatureDocumentKind } from './contractLifecycle.js';
 
 const TOKEN_BYTES = Math.min(64, Math.max(16, parseInt(process.env.CONTRACT_PUBLIC_VIEW_TOKEN_BYTES || '32', 10) || 32));
 
@@ -68,12 +68,17 @@ export function decryptPublicViewTokenFromStorage(encoded: string | null | undef
 
 /** Dados de signatário seguros para a página pública de visualização (sem IP, UA, etc.). */
 export interface PublicContractViewSigner {
+  id: string;
   name: string;
   email: string;
   tax_id: string | null;
   signed: boolean;
   signed_at: string | null;
   signature_image_png_base64: string | null;
+  client_ip: string | null;
+  method: string | null;
+  signature_id: string | null;
+  confirmed_name: string | null;
 }
 
 export interface ContractPublicViewPayload {
@@ -81,7 +86,9 @@ export interface ContractPublicViewPayload {
   title: string;
   status: string;
   contract_number: string;
+  document_kind: 'html_editor' | 'pdf_signature';
   document_html: string;
+  signed_pdf_available: boolean;
   client_name: string | null;
   tenant_name: string | null;
   tenant_logo_url: string | null;
@@ -95,13 +102,14 @@ const MAX_PUBLIC_SIGNATURE_B64_LENGTH = 520_000;
 
 async function loadPublicViewSigners(contractId: string): Promise<PublicContractViewSigner[]> {
   const r = await pool.query<{
+    id: string;
     name: string;
     email: string;
     tax_id: string | null;
     signed_at: Date | string | null;
     signature_data: unknown;
   }>(
-    `SELECT name, email, tax_id, signed_at, signature_data
+    `SELECT id, name, email, tax_id, signed_at, signature_data
      FROM contract_signers
      WHERE contract_id = $1
      ORDER BY signing_order NULLS LAST, created_at`,
@@ -110,6 +118,10 @@ async function loadPublicViewSigners(contractId: string): Promise<PublicContract
   return r.rows.map((row) => {
     const signed = row.signed_at != null;
     let signature_image_png_base64: string | null = null;
+    let client_ip: string | null = null;
+    let method: string | null = null;
+    let signature_id: string | null = null;
+    let confirmed_name: string | null = null;
     if (signed && row.signature_data && typeof row.signature_data === 'object') {
       const o = row.signature_data as Record<string, unknown>;
       const b64 = o.signature_image_png_base64;
@@ -119,6 +131,10 @@ async function loadPublicViewSigners(contractId: string): Promise<PublicContract
           signature_image_png_base64 = t;
         }
       }
+      if (typeof o.client_ip === 'string') client_ip = o.client_ip;
+      if (typeof o.method === 'string') method = o.method;
+      if (typeof o.invite_id === 'string') signature_id = o.invite_id;
+      if (typeof o.confirmed_name === 'string') confirmed_name = o.confirmed_name.trim() || null;
     }
     let signed_at: string | null = null;
     if (row.signed_at) {
@@ -126,12 +142,17 @@ async function loadPublicViewSigners(contractId: string): Promise<PublicContract
       if (!Number.isNaN(d.getTime())) signed_at = d.toISOString();
     }
     return {
-      name: row.name,
+      id: row.id,
+      name: confirmed_name || row.name,
       email: row.email,
       tax_id: row.tax_id ?? null,
       signed,
       signed_at,
       signature_image_png_base64,
+      client_ip,
+      method,
+      signature_id: signature_id || row.id,
+      confirmed_name,
     };
   });
 }
@@ -175,6 +196,18 @@ export async function getPublicContractViewByRawToken(rawToken: string): Promise
   );
   const row = r.rows[0];
   if (!row?.contract_id) return null;
+  const meta = await pool.query<{
+    document_kind: string | null;
+    signed_pdf_storage_key: string | null;
+    frozen_pdf_storage_key: string | null;
+    original_pdf_storage_key: string | null;
+  }>(
+    `SELECT document_kind, signed_pdf_storage_key, frozen_pdf_storage_key, original_pdf_storage_key
+     FROM contracts WHERE id = $1`,
+    [row.contract_id],
+  );
+  const cm = meta.rows[0];
+  const isPdf = isPdfSignatureDocumentKind(cm?.document_kind);
   const html = row.document_html ?? '';
   const signers = await loadPublicViewSigners(row.contract_id);
   return {
@@ -182,7 +215,9 @@ export async function getPublicContractViewByRawToken(rawToken: string): Promise
     title: row.title,
     status: row.status,
     contract_number: row.contract_number,
-    document_html: hasMeaningfulDocumentHtml(html) ? html : '',
+    document_kind: isPdf ? 'pdf_signature' : 'html_editor',
+    signed_pdf_available: Boolean(cm?.signed_pdf_storage_key?.trim()),
+    document_html: isPdf ? '' : hasMeaningfulDocumentHtml(html) ? html : '',
     client_name: row.client_name,
     tenant_name: row.tenant_name,
     tenant_logo_url: row.tenant_logo_url,

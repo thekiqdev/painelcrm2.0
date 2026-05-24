@@ -40,6 +40,26 @@ export function hasMeaningfulDocumentHtml(html: string | null | undefined): bool
   return text.length >= 3;
 }
 
+export function isPdfSignatureDocumentKind(kind: string | null | undefined): boolean {
+  return String(kind || '').trim() === 'pdf_signature';
+}
+
+export function hasMeaningfulPdfDocument(storageKey: string | null | undefined): boolean {
+  return Boolean(storageKey && String(storageKey).trim().length > 0);
+}
+
+/** Documento válido para envio: HTML ou PDF conforme o modo. */
+export function hasMeaningfulContractDocument(params: {
+  documentKind?: string | null;
+  contentHtml?: string | null;
+  originalPdfStorageKey?: string | null;
+}): boolean {
+  if (isPdfSignatureDocumentKind(params.documentKind)) {
+    return hasMeaningfulPdfDocument(params.originalPdfStorageKey);
+  }
+  return hasMeaningfulDocumentHtml(params.contentHtml);
+}
+
 const TRANSITIONS: Record<string, Set<string>> = {
   DRAFT: new Set(['PENDING_SIGNATURE', 'ACTIVE', 'CANCELLED', 'INACTIVE']),
   PENDING_SIGNATURE: new Set(['PARTIALLY_SIGNED', 'ACTIVE', 'CANCELLED', 'INACTIVE', 'EXPIRED']),

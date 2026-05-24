@@ -805,6 +805,8 @@ export async function createAppointment(
     recurrence?: AppointmentRecurrenceInput | null;
     /** Quando true, não grava `agenda_appointment_created` (ex.: origem chat com evento próprio). */
     skip_initial_client_timeline?: boolean;
+    /** Quando true, não dispara `appointment.invited` (ex.: chat já enviou confirmação na conversa). */
+    skip_client_invite_notification?: boolean;
   },
 ): Promise<{ primary: AppointmentRow; createdCount: number; warnings: string[] }> {
   if (data.client_id && data.lead_id) {
@@ -1001,7 +1003,7 @@ export async function createAppointment(
 
   const primaryId = createdRows[0]?.id;
   const finalRow = (await getAppointmentById(tenantId, primaryId, userId, { can_view: true })) as AppointmentRow;
-  if (sendToClient) {
+  if (sendToClient && data.skip_client_invite_notification !== true) {
     const sendAll = recurrence?.send_invite_for_all_occurrences === true;
     const inviteTargets = sendAll ? createdRows : createdRows.slice(0, 1);
     for (const row of inviteTargets) {

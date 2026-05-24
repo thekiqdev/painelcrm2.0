@@ -5,6 +5,7 @@ import { assertModulePermission, ModulePermissionError } from '../permissions/in
 import { findContractInTenant, findSignerInTenant } from '../utils/contractAccess.js';
 import { isDraftStatus } from '../services/contractLifecycle.js';
 import { normalizeBrazilTaxIdInput, isBrazilTaxIdDigits } from '../utils/brazilTaxId.js';
+import { normalizeBrazilWhatsappPhone } from '../utils/phone/normalizeBrazilPhone.js';
 import { z } from 'zod';
 
 const taxIdDigitsSchema = z
@@ -13,12 +14,25 @@ const taxIdDigitsSchema = z
   .transform((s) => normalizeBrazilTaxIdInput(s))
   .refine(isBrazilTaxIdDigits, { message: 'Informe CPF (11 dígitos) ou CNPJ (14 dígitos)' });
 
+const whatsappPhoneSchema = z
+  .union([z.string(), z.null(), z.undefined()])
+  .optional()
+  .transform((s) => {
+    if (s === undefined || s === null || !String(s).trim()) return null;
+    const norm = normalizeBrazilWhatsappPhone(String(s));
+    return norm.ok && norm.phone ? norm.phone : null;
+  })
+  .refine((v) => v === null || (typeof v === 'string' && v.length >= 12), {
+    message: 'WhatsApp inválido. Informe DDD + número (ex.: 11 99999-9999).',
+  });
+
 const signerSchema = z.object({
   name: z.string().min(1),
   email: z.string().email(),
   role: z.enum(['CLIENT', 'INTERNAL']),
   signing_order: z.number().int().optional().nullable(),
   tax_id: taxIdDigitsSchema,
+  whatsapp_phone: whatsappPhoneSchema,
 });
 
 const signerUpdateSchema = z.object({
@@ -34,6 +48,7 @@ const signerUpdateSchema = z.object({
       return normalizeBrazilTaxIdInput(String(s));
     })
     .refine((d) => d === undefined || isBrazilTaxIdDigits(d), { message: 'CPF/CNPJ inválido' }),
+  whatsapp_phone: whatsappPhoneSchema,
 });
 
 // Get contract signers
@@ -108,6 +123,7 @@ export async function getContractSigners(req: AuthRequest, res: Response): Promi
         name: row.name,
         email: row.email,
         tax_id: row.tax_id ?? null,
+        whatsapp_phone: row.whatsapp_phone ?? null,
         role: row.role,
         signing_order: row.signing_order,
         signed_at: row.signed_at,
@@ -171,10 +187,18 @@ export async function createContractSigner(req: AuthRequest, res: Response): Pro
 
     const result = await pool.query(
       `INSERT INTO contract_signers (
-        contract_id, name, email, tax_id, role, signing_order
-      ) VALUES ($1, $2, $3, $4, $5, $6)
+        contract_id, name, email, tax_id, whatsapp_phone, role, signing_order
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING *`,
-      [contractId, signerData.name, signerData.email, signerData.tax_id, signerData.role, signingOrder]
+      [
+        contractId,
+        signerData.name,
+        signerData.email,
+        signerData.tax_id,
+        signerData.whatsapp_phone ?? null,
+        signerData.role,
+        signingOrder,
+      ]
     );
 
     res.status(201).json(result.rows[0]);

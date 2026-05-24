@@ -2,27 +2,33 @@
  * Página pública read-only: visualização do contrato por token (Etapa 3).
  * Não exige login; não oferece assinatura. Assinaturas concluídas são exibidas; PDF alinhado ao snapshot.
  */
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { publicApiGet, publicApiGetPdf } from "@/integrations/api/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
 import { ContractA4Document } from "@/components/contracts/ContractA4Document";
-import { FileText, Loader2, Eye, Download } from "lucide-react";
+import { ContractPdfViewer } from "@/components/contracts/ContractPdfViewer";
+import { ContractPdfDownloadButton } from "@/components/contracts/ContractPdfDownloadButton";
+import { FileText, Loader2, Eye } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 import { PublicTenantBrandMark } from "@/components/tenant/PublicTenantBrand";
 import { hasTenantLogoForTheme } from "@/utils/tenantBranding";
 import { useTheme } from "next-themes";
 
 export interface PublicContractViewSigner {
+  id?: string;
   name: string;
   email: string;
   tax_id: string | null;
   signed: boolean;
   signed_at: string | null;
   signature_image_png_base64: string | null;
+  client_ip?: string | null;
+  method?: string | null;
+  signature_id?: string | null;
+  confirmed_name?: string | null;
 }
 
 export interface PublicContractViewPayload {
@@ -31,6 +37,8 @@ export interface PublicContractViewPayload {
   status: string;
   status_label: string;
   contract_number: string;
+  document_kind?: "html_editor" | "pdf_signature";
+  signed_pdf_available?: boolean;
   document_html: string;
   client_name: string | null;
   tenant: {
@@ -50,7 +58,14 @@ const PublicContractView = () => {
   const [data, setData] = useState<PublicContractViewPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [pdfLoading, setPdfLoading] = useState(false);
+  const loadPublicViewPdf = useCallback(async () => {
+    if (!token?.trim()) throw new Error("Link inválido.");
+    const res = await publicApiGetPdf(
+      `/api/public/contracts/view/${encodeURIComponent(token)}/pdf`,
+    );
+    if (!res.ok) throw new Error(res.error);
+    return res.blob;
+  }, [token]);
 
   useEffect(() => {
     let cancelled = false;
@@ -81,9 +96,7 @@ const PublicContractView = () => {
 
   const handleDownloadPdf = async () => {
     if (!token?.trim()) return;
-    setPdfLoading(true);
     const res = await publicApiGetPdf(`/api/public/contracts/view/${encodeURIComponent(token)}/pdf`);
-    setPdfLoading(false);
     if (!res.ok) {
       toast.error(res.error);
       return;
@@ -122,6 +135,12 @@ const PublicContractView = () => {
   }
 
   const hasTenantLogo = hasTenantLogoForTheme(resolvedTheme, data.tenant);
+  const isPdfDoc = data.document_kind === "pdf_signature";
+  const downloadLabel = data.signed_pdf_available
+    ? "Baixar PDF assinado"
+    : isPdfDoc
+      ? "Baixar PDF"
+      : "Baixar contrato (PDF)";
 
   return (
     <div className="min-h-screen bg-muted/40">
@@ -146,21 +165,13 @@ const PublicContractView = () => {
             <Badge variant="secondary" className="w-fit font-normal">
               {data.status_label}
             </Badge>
-            <Button
-              type="button"
-              variant="default"
+            <ContractPdfDownloadButton
+              label={downloadLabel}
+              prominent={Boolean(data.signed_pdf_available)}
               size="sm"
-              className="w-full sm:w-auto gap-2"
-              disabled={pdfLoading}
-              onClick={() => void handleDownloadPdf()}
-            >
-              {pdfLoading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Download className="h-4 w-4" />
-              )}
-              Baixar contrato (PDF)
-            </Button>
+              className="w-full sm:w-auto"
+              onDownload={handleDownloadPdf}
+            />
           </div>
         </div>
       </header>
@@ -196,12 +207,33 @@ const PublicContractView = () => {
         <section className="space-y-2">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-1">Documento</p>
           <div className="rounded-xl border border-border/60 bg-muted/30 p-3 sm:p-5 dark:bg-muted/20">
-            <ContractA4Document
-              html={data.document_html || "<p>Sem conteúdo.</p>"}
-              signersAppendix={data.signers}
-            />
+            {isPdfDoc && token ? (
+              <ContractPdfViewer loadPdf={loadPublicViewPdf} reloadKey={token} />
+            ) : (
+              <ContractA4Document
+                html={data.document_html || "<p>Sem conteúdo.</p>"}
+                signersAppendix={data.signers.map((s) => ({
+                  id: s.id,
+                  name: s.name,
+                  email: s.email,
+                  tax_id: s.tax_id,
+                  signed: s.signed,
+                  signed_at: s.signed_at,
+                  signature_image_png_base64: s.signature_image_png_base64,
+                  signature_data: {
+                    signature_image_png_base64: s.signature_image_png_base64,
+                    client_ip: s.client_ip,
+                    method: s.method,
+                    invite_id: s.signature_id,
+                    confirmed_name: s.confirmed_name,
+                    signed_at: s.signed_at,
+                  },
+                }))}
+              />
+            )}
           </div>
         </section>
+
       </main>
     </div>
   );

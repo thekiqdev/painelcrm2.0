@@ -43,7 +43,9 @@ export async function getPublicContractView(req: Request, res: Response): Promis
       status: payload.status,
       status_label: statusLabelPt(payload.status),
       contract_number: payload.contract_number,
+      document_kind: payload.document_kind,
       document_html: payload.document_html,
+      signed_pdf_available: payload.signed_pdf_available,
       client_name: payload.client_name,
       tenant: {
         name: payload.tenant_name,
@@ -53,12 +55,17 @@ export async function getPublicContractView(req: Request, res: Response): Promis
       },
       responsible_display_name: payload.responsible_display_name,
       signers: payload.signers.map((s) => ({
+        id: s.id,
         name: s.name,
         email: s.email,
         tax_id: s.tax_id,
         signed: s.signed,
         signed_at: s.signed_at,
         signature_image_png_base64: s.signature_image_png_base64,
+        client_ip: s.client_ip,
+        method: s.method,
+        signature_id: s.signature_id,
+        confirmed_name: s.confirmed_name,
       })),
       disclaimer: VIEW_DISCLAIMER,
     });

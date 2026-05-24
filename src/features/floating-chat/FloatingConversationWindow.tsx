@@ -44,6 +44,11 @@ import {
 } from '@/lib/conversationDragPreview';
 import { FloatingCompactProfile } from './FloatingCompactProfile';
 import { getCachedFloatingConversationById } from './queryCache';
+import {
+  FLOATING_CHAT_MESSAGES_STALE_MS,
+  FLOATING_CHAT_META_STALE_MS,
+  invalidateFloatingChatAggregates,
+} from './floatingChatQueries';
 import { useNavigate } from 'react-router-dom';
 import { useModulePermissions } from '@/contexts/ModulePermissionsContext';
 import { chatCommercialGates } from '@/utils/chatCommercialGates';
@@ -151,7 +156,7 @@ export function FloatingConversationWindow({
         return null;
       }
     },
-    staleTime: 20_000,
+    staleTime: FLOATING_CHAT_META_STALE_MS,
     placeholderData: () => getCachedFloatingConversationById(queryClient, conversationId),
   });
 
@@ -283,7 +288,7 @@ export function FloatingConversationWindow({
     void queryClient.invalidateQueries({
       queryKey: ['floating-chat', 'conversation-meta', conversationId],
     });
-    void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'conversations'] });
+    invalidateFloatingChatAggregates(queryClient);
   }, [queryClient, conversationId]);
 
   const { enqueueText, retryFailed } = useChatOutboundQueue({
@@ -296,10 +301,12 @@ export function FloatingConversationWindow({
   const { data: messages = [], isLoading } = useQuery({
     queryKey: ['floating-chat', 'messages', conversationId],
     queryFn: async () => {
+      const rows = await chatService.getConversationMessages(conversationId);
       void chatService.syncConversationMessages(conversationId, {}).catch(() => {});
-      return chatService.getConversationMessages(conversationId);
+      return rows;
     },
-    staleTime: 5_000,
+    staleTime: FLOATING_CHAT_MESSAGES_STALE_MS,
+    placeholderData: (prev) => prev,
   });
 
   const { data: connectedInstances = [] } = useQuery({
@@ -329,7 +336,7 @@ export function FloatingConversationWindow({
       if (typeof cid === 'string' && cid !== conversationId) return;
       void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'messages', conversationId] });
       void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'conversation-meta', conversationId] });
-      void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'conversations'] });
+      invalidateFloatingChatAggregates(queryClient);
     };
     window.addEventListener(REALTIME_WINDOW_EVENTS.messageCreated, onMsg);
     window.addEventListener(REALTIME_WINDOW_EVENTS.conversationUpdated, onConv);

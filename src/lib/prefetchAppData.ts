@@ -3,6 +3,8 @@ import { dashboardService } from "@/services/dashboard";
 import { tasksService } from "@/services/tasks";
 import { clientsService } from "@/services/clients";
 import { apiClient } from "@/integrations/api/client";
+import { chatService } from "@/services/chat";
+import { prefetchFloatingChatLists } from "@/features/floating-chat/floatingChatQueries";
 
 export function prefetchDashboardOverview(tenantId: string, userId: string): void {
   if (!tenantId || !userId) return;
@@ -70,4 +72,25 @@ export function prefetchLeadsListNav(tenantId: string, userId: string): void {
     },
     staleTime: 60_000,
   });
+}
+
+/** Pré-aquece chunk do chat + listas do float (cache React Query). */
+export function prefetchChatWarm(tenantId: string, userId: string, hasTenantInbox: boolean): void {
+  if (!tenantId || !userId) return;
+  void import("@/pages/Chat");
+  void (async () => {
+    try {
+      const instances = await chatService.listInstances();
+      const ids = instances
+        .filter(
+          (inst) =>
+            (inst.metadata as Record<string, unknown> | null | undefined)?.enabled_in_chat !== false,
+        )
+        .map((i) => i.id);
+      const inboxScope = hasTenantInbox ? ("tenant" as const) : ("owner" as const);
+      await prefetchFloatingChatLists(queryClient, ids, inboxScope);
+    } catch {
+      /* ignore */
+    }
+  })();
 }

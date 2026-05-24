@@ -9,7 +9,11 @@ import { useChatNavUnreadCount } from '@/hooks/useChatNavUnreadCount';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { chatService, type ChatConversation } from '@/services/chat';
+import { fetchBubbleRecentConversations } from '@/lib/chatConversationsFetch';
+import {
+  FLOATING_CHAT_LIST_STALE_MS,
+  floatingChatBubbleQueryKey,
+} from './floatingChatQueries';
 import { resolveConversationIdentity } from '@/utils/chatIdentityDisplay';
 import { cn } from '@/lib/utils';
 import { useFloatingChat } from './floatingChatContext';
@@ -30,43 +34,6 @@ import { getFloatingChatLayout } from './floatingChatLayout';
 const bubbleBottom = 'calc(var(--floating-chat-bottom) + env(safe-area-inset-bottom, 0px))';
 const bubbleRight = 'calc(var(--floating-chat-right) + env(safe-area-inset-right, 0px))';
 const listRight = 'calc(var(--floating-chat-right) + env(safe-area-inset-right, 0px))';
-
-/** Até 4 itens: 3 para exibir + 1 sonda para saber se existe “mais” (reticências). */
-async function fetchBubbleRecentConversations(
-  instanceIds: string[],
-  inboxScope: 'tenant' | 'owner',
-): Promise<ChatConversation[]> {
-  const merged: ChatConversation[] = [];
-  for (const instanceId of instanceIds) {
-    const rows = await chatService.getConversations({ instanceId, inboxScope });
-    merged.push(...rows);
-  }
-  try {
-    const officialRows = await chatService.getConversations({
-      includeWhatsAppOfficial: true,
-      inboxScope,
-      channelOrigin: 'official',
-    });
-    merged.push(...officialRows);
-  } catch {
-    /* ignore */
-  }
-  const byId = new Map<string, ChatConversation>();
-  for (const c of merged) {
-    if (!byId.has(c.id)) byId.set(c.id, c);
-  }
-  const list = Array.from(byId.values()).sort((a, b) => {
-    const ta = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
-    const tb = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
-    if (ta && tb) return tb - ta;
-    if (ta && !tb) return -1;
-    if (!ta && tb) return 1;
-    const ca = a.created_at ? new Date(a.created_at).getTime() : 0;
-    const cb = b.created_at ? new Date(b.created_at).getTime() : 0;
-    return cb - ca;
-  });
-  return list.slice(0, 4);
-}
 
 function useFloatingChatShellEligible(): boolean {
   const { pathname } = useLocation();
@@ -102,10 +69,11 @@ function FloatingChatChrome() {
   const bubbleUnread = useChatNavUnreadCount(true);
 
   const { data: bubbleRecentRaw = [] } = useQuery({
-    queryKey: ['floating-chat', 'bubble-recent', instanceIds.join(','), inboxScope],
+    queryKey: floatingChatBubbleQueryKey(instanceIds, inboxScope),
     enabled: instanceIds.length > 0,
     queryFn: () => fetchBubbleRecentConversations(instanceIds, inboxScope),
-    staleTime: 15_000,
+    staleTime: FLOATING_CHAT_LIST_STALE_MS,
+    placeholderData: (prev) => prev,
   });
 
   const bubbleRecentPreview = useMemo(() => {

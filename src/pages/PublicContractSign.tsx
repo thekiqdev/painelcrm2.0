@@ -2,11 +2,15 @@
  * Página pública de assinatura por convite (Etapa 4).
  * Separada de /contract-view (visualização somente leitura).
  */
-import React, { useEffect, useMemo, useState, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { useParams } from "react-router-dom";
-import { publicApiGet, publicApiPost } from "@/integrations/api/client";
+import { publicApiGet, publicApiGetPdf, publicApiPost } from "@/integrations/api/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ContractA4Document } from "@/components/contracts/ContractA4Document";
+import { ContractPdfViewer } from "@/components/contracts/ContractPdfViewer";
+import { ContractPdfDownloadButton } from "@/components/contracts/ContractPdfDownloadButton";
+import { ContractSignatureBlock } from "@/components/contracts/ContractSignatureBlock";
+import { parseContractSignerSignatureDisplay } from "@/utils/contractSignatureDisplay";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -32,7 +36,9 @@ type PendingPayload = {
   state: "pending";
   title: string;
   contract_number: string;
-  document_html: string;
+  document_kind?: "html_editor" | "pdf_signature";
+  document_html: string | null;
+  pdf_page_count?: number | null;
   signer_name: string;
   tenant: TenantPublic;
   accept_terms_version: string;
@@ -44,8 +50,12 @@ type AlreadyPayload = {
   state: "already_signed";
   title: string;
   contract_number: string;
+  document_kind?: "html_editor" | "pdf_signature";
   signer_name: string;
+  signer_email?: string | null;
+  signer_tax_id?: string | null;
   signed_at: string | null;
+  signature_data?: Record<string, unknown> | null;
   tenant: TenantPublic;
   message: string;
 };
@@ -100,6 +110,15 @@ const PublicContractSign = () => {
     return acceptTerms && confirmedName.trim().length >= 2 && signaturePadReady;
   }, [acceptTerms, confirmedName, isPending, payload, signaturePadReady]);
 
+  const loadPublicSignPdf = useCallback(async () => {
+    if (!token?.trim()) throw new Error("Convite inválido.");
+    const res = await publicApiGetPdf(
+      `/api/public/contracts/sign/${encodeURIComponent(token)}/pdf`,
+    );
+    if (!res.ok) throw new Error(res.error);
+    return res.blob;
+  }, [token]);
+
   const handleSubmit = async () => {
     if (!token?.trim() || !isPending || !canSubmit) return;
     setSubmitting(true);
@@ -147,33 +166,66 @@ const PublicContractSign = () => {
   }
 
   if (payload.state === "already_signed") {
+    const done = payload as AlreadyPayload;
+    const doneIsPdf = done.document_kind === "pdf_signature";
     return (
-      <div className="min-h-screen bg-muted/30 flex items-center justify-center p-4">
-        <Card className="max-w-lg w-full shadow-sm">
-          <CardHeader>
+      <div className="min-h-screen bg-muted/40">
+        <header className="border-b bg-background/95 backdrop-blur">
+          <div className="max-w-4xl mx-auto px-4 py-5">
             <div className="flex items-center gap-2 text-green-600">
-              <CheckCircle2 className="h-6 w-6" />
-              <CardTitle>Assinatura já concluída</CardTitle>
+              <CheckCircle2 className="h-6 w-6 shrink-0" />
+              <h1 className="text-lg font-semibold">Assinatura concluída</h1>
             </div>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            <p>{payload.message}</p>
-            <p className="text-muted-foreground">
-              <strong>{payload.title}</strong> · Nº {payload.contract_number}
+            <p className="text-sm text-muted-foreground mt-2">
+              <strong>{done.title}</strong> · Nº {done.contract_number}
             </p>
-            <p className="text-muted-foreground">Signatário: {payload.signer_name}</p>
-            {payload.signed_at ? (
-              <p className="text-muted-foreground text-xs">
-                Registo: {new Date(payload.signed_at).toLocaleString("pt-BR")}
-              </p>
-            ) : null}
-          </CardContent>
-        </Card>
+          </div>
+        </header>
+        <main className="max-w-4xl mx-auto px-3 sm:px-4 py-8 space-y-6">
+          <p className="text-sm">{done.message}</p>
+          {doneIsPdf && token ? (
+            <>
+              <ContractPdfDownloadButton
+                label="Baixar PDF assinado"
+                prominent
+                size="lg"
+                className="w-full sm:w-auto"
+                onDownload={async () => {
+                  const res = await publicApiGetPdf(
+                    `/api/public/contracts/sign/${encodeURIComponent(token)}/pdf`,
+                  );
+                  if (!res.ok) throw new Error(res.error);
+                  const u = URL.createObjectURL(res.blob);
+                  const a = document.createElement("a");
+                  a.href = u;
+                  a.download = res.filename;
+                  a.click();
+                  URL.revokeObjectURL(u);
+                  toast.success("Download iniciado.");
+                }}
+              />
+              <ContractPdfViewer loadPdf={loadPublicSignPdf} reloadKey={`done-${token}`} />
+            </>
+          ) : null}
+          {!doneIsPdf ? (
+            <ContractSignatureBlock
+              model={parseContractSignerSignatureDisplay({
+                id: done.signer_email ?? done.signer_name,
+                name: done.signer_name,
+                email: done.signer_email ?? "",
+                tax_id: done.signer_tax_id,
+                signed_at: done.signed_at,
+                signature_data: done.signature_data ?? null,
+              })}
+            />
+          ) : null}
+        </main>
       </div>
     );
   }
 
   const p = payload as PendingPayload;
+  const isPdfDoc = p.document_kind === "pdf_signature";
   const hasTenantLogo = hasTenantLogoForTheme(resolvedTheme, p.tenant);
 
   return (
@@ -220,7 +272,11 @@ const PublicContractSign = () => {
             Documento (conteúdo congelado)
           </p>
           <div className="rounded-xl bg-muted/50 p-3 sm:p-5 border border-border/60">
-            <ContractA4Document html={p.document_html || "<p>Sem conteúdo.</p>"} />
+            {isPdfDoc && token ? (
+              <ContractPdfViewer loadPdf={loadPublicSignPdf} reloadKey={token} />
+            ) : (
+              <ContractA4Document html={p.document_html || "<p>Sem conteúdo.</p>"} />
+            )}
           </div>
         </section>
 

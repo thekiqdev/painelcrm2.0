@@ -9,11 +9,15 @@ import {
   CONTRACT_DELETE_ALLOWED_STATUSES,
   canDeleteContractStatus,
   canTransitionStatus,
+  hasMeaningfulContractDocument,
   hasMeaningfulDocumentHtml,
   isDocumentFrozen,
   isDraftStatus,
+  isPdfSignatureDocumentKind,
   statusFreezesDocument,
 } from '../services/contractLifecycle.js';
+import { copyPdfToFrozen } from '../services/contractPdfStorageService.js';
+import { listSignatureFields } from '../services/contractSignatureFieldsService.js';
 import { computeCreationTenancyDates } from '../services/contractTenancyService.js';
 import { applyContractMergeFieldsToHtml } from '../utils/contractMergeFields.js';
 import { loadContractMergeEnrichment } from '../services/contractMergeContextLoader.js';
@@ -39,6 +43,7 @@ const contractSchema = z.object({
   linked_proposal_id: z.string().uuid().optional().nullable(),
   linked_invoice_id: z.string().uuid().optional().nullable(),
   signature_settings: z.any().optional(),
+  document_kind: z.enum(['html_editor', 'pdf_signature']).optional(),
 });
 
 /** Remove strings vazias em UUIDs opcionais — evita falha de parse Zod e garante persistência do vínculo quando o ID é válido. */
@@ -338,8 +343,8 @@ export async function createContract(req: AuthRequest, res: Response): Promise<v
         variables, auto_renew, renewal_period, total_value, currency,
         linked_proposal_id, linked_invoice_id, signature_settings,
         tenancy_rules,
-        content_snapshot_html, document_frozen_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+        content_snapshot_html, document_frozen_at, document_kind
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
       RETURNING *`,
         [
           userId,
@@ -365,6 +370,7 @@ export async function createContract(req: AuthRequest, res: Response): Promise<v
           tenancyRulesSnapshot != null ? JSON.stringify(tenancyRulesSnapshot) : null,
           null,
           null,
+          contractData.document_kind === 'pdf_signature' ? 'pdf_signature' : 'html_editor',
         ]
       );
 
@@ -499,12 +505,38 @@ export async function updateContract(req: AuthRequest, res: Response): Promise<v
           res.status(400).json({ error: 'Título obrigatório para enviar ou ativar o contrato.', code: 'CONTRACT_TITLE_REQUIRED' });
           return;
         }
-        if (!hasMeaningfulDocumentHtml(mergedContentHtml)) {
+        const docKind =
+          row.document_kind != null
+            ? String(row.document_kind)
+            : contractData.document_kind != null
+              ? String(contractData.document_kind)
+              : 'html_editor';
+        const pdfKey = (row.original_pdf_storage_key as string | null) ?? null;
+        if (
+          !hasMeaningfulContractDocument({
+            documentKind: docKind,
+            contentHtml: mergedContentHtml,
+            originalPdfStorageKey: pdfKey,
+          })
+        ) {
           res.status(400).json({
-            error: 'Conteúdo do contrato é obrigatório e deve ter texto antes de enviar ou ativar.',
-            code: 'CONTRACT_BODY_REQUIRED',
+            error: isPdfSignatureDocumentKind(docKind)
+              ? 'Faça upload do PDF antes de enviar ou ativar.'
+              : 'Conteúdo do contrato é obrigatório e deve ter texto antes de enviar ou ativar.',
+            code: isPdfSignatureDocumentKind(docKind) ? 'CONTRACT_PDF_REQUIRED' : 'CONTRACT_BODY_REQUIRED',
           });
           return;
+        }
+        if (isPdfSignatureDocumentKind(docKind) && mergedStatus === 'PENDING_SIGNATURE') {
+          const sigFields = await listSignatureFields(id);
+          const hasSig = sigFields.some((f) => f.field_type === 'signature');
+          if (!hasSig) {
+            res.status(400).json({
+              error: 'Adicione pelo menos um campo de assinatura no PDF antes de enviar.',
+              code: 'CONTRACT_PDF_SIGNATURE_FIELD_REQUIRED',
+            });
+            return;
+          }
         }
         if (mergedStatus === 'PENDING_SIGNATURE') {
           const cr = await pool.query(`SELECT COUNT(*)::int AS n FROM contract_signers WHERE contract_id = $1`, [id]);
@@ -573,26 +605,47 @@ export async function updateContract(req: AuthRequest, res: Response): Promise<v
       } else {
         mergedVariablesFreeze = formatContractRow(row).variables as Record<string, unknown>;
       }
-      const enrichment = await loadContractMergeEnrichment(id, pool);
-      const snapshotMergedHtml = applyContractMergeFieldsToHtml(mergedContentForFreeze || '', {
-        title: mergedTitleFreeze,
-        total_value: mergedTotalFreeze,
-        currency: mergedCurrencyFreeze,
-        start_date: mergedStartFreeze,
-        end_date: mergedEndFreeze,
-        variables: mergedVariablesFreeze,
-        contract_number: row.contract_number as string,
-        status: mergedStatusForFreeze,
-        created_at: row.created_at as Date,
-        updated_at: row.updated_at as Date,
-        tenant: enrichment.tenant,
-        client: enrichment.client,
-        operator: enrichment.operator,
-        signerPrimary: enrichment.signerPrimary,
-      });
-      updates.push(`content_snapshot_html = $${paramIndex}`);
-      values.push(snapshotMergedHtml);
-      paramIndex++;
+      const rowDocKind = String(row.document_kind || 'html_editor');
+      if (isPdfSignatureDocumentKind(rowDocKind)) {
+        const tenantR = await pool.query<{ tenant_id: string }>(
+          `SELECT tenant_id FROM users WHERE id = $1`,
+          [row.user_id as string],
+        );
+        const tenantId = tenantR.rows[0]?.tenant_id;
+        const origKey = row.original_pdf_storage_key as string | null;
+        if (!tenantId || !origKey) {
+          res.status(400).json({
+            error: 'PDF do contrato não encontrado para congelar.',
+            code: 'CONTRACT_PDF_REQUIRED',
+          });
+          return;
+        }
+        const frozenKey = await copyPdfToFrozen(tenantId, id, origKey);
+        updates.push(`frozen_pdf_storage_key = $${paramIndex}`);
+        values.push(frozenKey);
+        paramIndex++;
+      } else {
+        const enrichment = await loadContractMergeEnrichment(id, pool);
+        const snapshotMergedHtml = applyContractMergeFieldsToHtml(mergedContentForFreeze || '', {
+          title: mergedTitleFreeze,
+          total_value: mergedTotalFreeze,
+          currency: mergedCurrencyFreeze,
+          start_date: mergedStartFreeze,
+          end_date: mergedEndFreeze,
+          variables: mergedVariablesFreeze,
+          contract_number: row.contract_number as string,
+          status: mergedStatusForFreeze,
+          created_at: row.created_at as Date,
+          updated_at: row.updated_at as Date,
+          tenant: enrichment.tenant,
+          client: enrichment.client,
+          operator: enrichment.operator,
+          signerPrimary: enrichment.signerPrimary,
+        });
+        updates.push(`content_snapshot_html = $${paramIndex}`);
+        values.push(snapshotMergedHtml);
+        paramIndex++;
+      }
       updates.push(`document_frozen_at = $${paramIndex}`);
       values.push(new Date());
       paramIndex++;

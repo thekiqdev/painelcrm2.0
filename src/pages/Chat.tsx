@@ -82,6 +82,11 @@ import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Label } from '@/components/ui/label';
+import { AppointmentRemindersFields } from '@/components/appointments/AppointmentRemindersFields';
+import {
+  buildAppointmentRemindersPayload,
+  DEFAULT_CHAT_APPOINTMENT_REMINDERS,
+} from '@/lib/appointmentReminders';
 import { Calendar } from '@/components/ui/calendar';
 import {
   Select,
@@ -189,6 +194,15 @@ import {
   logChatRealtimeV2EventReceived,
 } from '@/lib/chatRealtimeDiagnostics';
 import { emitChatNavUnreadRefresh } from '@/lib/chatNavUnreadEvents';
+import {
+  buildChatPageFiltersKey,
+  readChatPageCache,
+  readChatPageMessages,
+  saveChatPageConversations,
+  saveChatPageLastConversation,
+  saveChatPageMessages,
+} from '@/lib/chatPageCache';
+import { markChatPerf, measureChatPerf } from '@/lib/chatPerformance';
 import { ChatBubbleContent } from '@/components/chat/ChatBubbleContent';
 import { MessageStatusIndicator } from '@/components/chat/MessageStatusIndicator';
 import {
@@ -633,6 +647,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   const [schedCreateMeet, setSchedCreateMeet] = useState(true);
   const [schedNote, setSchedNote] = useState('');
   const [schedTitle, setSchedTitle] = useState('');
+  const [schedReminders, setSchedReminders] = useState(() => ({ ...DEFAULT_CHAT_APPOINTMENT_REMINDERS }));
   const [scheduleChatDlgOpen, setScheduleChatDlgOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'leads' | 'clients'>('all');
   /** Etapa 5 — inbox partilhada por defeito quando há tenant (evita lista vazia com escopo “equipa”). */
@@ -719,6 +734,54 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     [isPlatformScope, enabledInstanceIds.size, chatChannelOrigin],
   );
 
+  const chatPageFiltersKey = useMemo(
+    () =>
+      buildChatPageFiltersKey({
+        tenant: user?.tenant_id ?? '',
+        inbox: chatInboxScope,
+        attendance: chatAttendanceFilter,
+        channel: chatChannelOrigin,
+        listFilter: chatListConversationFilter,
+        instances: Array.from(enabledInstanceIds).sort().join(','),
+      }),
+    [
+      user?.tenant_id,
+      chatInboxScope,
+      chatAttendanceFilter,
+      chatChannelOrigin,
+      chatListConversationFilter,
+      enabledInstanceIds,
+    ],
+  );
+
+  useLayoutEffect(() => {
+    const cached = readChatPageCache(chatPageFiltersKey);
+    if (!cached?.conversations.length) return;
+    setConversations((prev) => (prev.length > 0 ? prev : cached.conversations));
+    conversationsHydratedRef.current = true;
+    if (!routeConversationId && !selectedConversationIdRef.current && cached.lastConversationId) {
+      const hit = cached.conversations.some((c) => c.id === cached.lastConversationId);
+      if (hit) {
+        setSelectedConversationId(cached.lastConversationId);
+        const msgs = readChatPageMessages(cached.lastConversationId);
+        if (msgs?.length) setMessages(msgs);
+      }
+    }
+  }, [chatPageFiltersKey, routeConversationId]);
+
+  useEffect(() => {
+    markChatPerf('chat_mount_started');
+    requestAnimationFrame(() => {
+      markChatPerf('chat_first_paint');
+      markChatPerf('chat_ready');
+      measureChatPerf('chat_mount_started', 'chat_ready');
+    });
+  }, []);
+
+  useEffect(() => {
+    conversationsCountRef.current = conversations.length;
+  }, [conversations]);
+
   const [slaUiContext, setSlaUiContext] = useState<SlaContextForUi | null>(null);
   const [operationsRefreshTick, setOperationsRefreshTick] = useState(0);
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
@@ -789,6 +852,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   const pendingFocusInstanceIdRef = useRef<string | null>(null);
   /** Evita restaurar no primeiro paint com lista vazia e loading=false (race antes do primeiro setLoading(true) aplicar). */
   const conversationsHydratedRef = useRef(false);
+  const conversationsCountRef = useRef(0);
   /**
    * `/clients` ou `/leads` quando a conversa foi aberta a partir dessas listas (mobile).
    * Mantém o destino de «voltar» se `location.state` se perder (ex.: botão físico «voltar»).
@@ -931,8 +995,12 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   }, []);
 
   const loadConversations = useCallback(async (instanceIds: string | string[]) => {
-    conversationsHydratedRef.current = false;
-    setLoadingConversations(true);
+    const blocking = conversationsCountRef.current === 0;
+    if (blocking) {
+      setLoadingConversations(true);
+    } else {
+      setSyncingConversations(true);
+    }
     try {
       const ids = Array.isArray(instanceIds) ? instanceIds : [instanceIds];
       const allConversations: ChatConversation[] = [];
@@ -1039,6 +1107,11 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       }
       
       setConversations(uniqueConversations);
+      saveChatPageConversations(
+        chatPageFiltersKey,
+        uniqueConversations,
+        selectedConversationIdRef.current,
+      );
 
       try {
         const scope =
@@ -1055,19 +1128,21 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       emitChatNavUnreadRefresh();
     } catch (error) {
       console.error('Erro ao carregar conversas:', error);
-      toast.error('Erro ao carregar conversas', {
-        description: error instanceof Error ? error.message : undefined,
-      });
+      if (conversationsCountRef.current === 0) {
+        toast.error('Erro ao carregar conversas', {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      }
     } finally {
       setLoadingConversations(false);
+      setSyncingConversations(false);
       conversationsHydratedRef.current = true;
     }
   }, [
     user?.tenant_id,
     chatInboxScope,
     chatAttendanceFilter,
-    activeTab,
-    searchTerm,
+    chatPageFiltersKey,
     scheduleOperationsPanelRefresh,
     chatChannelOrigin,
     whatsappGroupsUiEnabled,
@@ -1125,6 +1200,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
           return;
         }
       setMessages(data);
+      saveChatPageMessages(conversationId, data);
     } catch (error) {
       console.error('Erro ao carregar mensagens:', error);
         if (!silent) {
@@ -1256,10 +1332,15 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   useEffect(() => {
     if (!selectedConversationId) {
       setMessages([]);
-          return;
-        }
-        
-    loadMessages(selectedConversationId);
+      return;
+    }
+    const cachedMsgs = readChatPageMessages(selectedConversationId);
+    if (cachedMsgs?.length) {
+      setMessages(cachedMsgs);
+      void loadMessages(selectedConversationId, { silent: true });
+    } else {
+      void loadMessages(selectedConversationId);
+    }
   }, [selectedConversationId, loadMessages]);
 
   // WebSocket para atualização em tempo real de conversas
@@ -2023,10 +2104,6 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       }
       return;
     }
-    if (!pendingConversationRestoreRef.current) {
-      setSelectedConversationId(null);
-    }
-    setMessages([]);
     loadConversations(Array.from(enabledInstanceIds));
   }, [
     enabledInstanceIds,
@@ -2764,6 +2841,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       });
     }
     setSelectedConversationId(conversationId);
+    saveChatPageLastConversation(conversationId);
 
     void chatService.syncConversationMessages(conversationId, {}).catch((error) => {
       console.error('Erro ao sincronizar mensagens ao selecionar conversa:', error);
@@ -3958,6 +4036,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     setSchedCreateMeet(true);
     setSchedNote('');
     setSchedTitle(`Atendimento com ${label}`);
+    setSchedReminders({ ...DEFAULT_CHAT_APPOINTMENT_REMINDERS });
     setScheduleLaterOpen(true);
   }, [selectedConversation, selectedIdentity?.displayName]);
 
@@ -3987,6 +4066,8 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
         create_google_event: schedCreateMeet,
         create_meet: schedCreateMeet,
         send_chat_confirmation: true,
+        reminders: buildAppointmentRemindersPayload(schedReminders),
+        send_reminder_to_client: schedReminders.sendReminderToClient,
       });
       setScheduleLaterOpen(false);
       void loadMessages(selectedConversationId, { silent: true });
@@ -4012,6 +4093,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     schedCreateMeet,
     schedNote,
     schedTitle,
+    schedReminders,
     selectedIdentity?.displayName,
     loadMessages,
   ]);
@@ -5593,7 +5675,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                           ) : null}
                         </div>
                       ) : null}
-                      {loadingConversations ? (
+                      {loadingConversations && conversations.length === 0 ? (
                         <div className="flex min-h-[12rem] flex-col items-center justify-center gap-3 px-6 py-10 text-center text-muted-foreground">
                           <RefreshCw className="h-8 w-8 animate-spin text-primary/70" aria-hidden />
                           <div>
@@ -6096,7 +6178,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                           )}
                         >
                           <div className="min-w-0 max-w-full px-2 py-2 md:px-4 md:pb-2 md:pt-3">
-                            {loadingMessages ? (
+                            {loadingMessages && messages.length === 0 ? (
                               <div className="flex min-h-[10rem] flex-col items-center justify-center gap-3 py-10 text-center text-muted-foreground">
                                 <RefreshCw className="h-7 w-7 animate-spin text-primary/70" aria-hidden />
                                 <div>
@@ -6807,6 +6889,12 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                 placeholder="Notas internas / descrição do compromisso"
               />
             </div>
+            <AppointmentRemindersFields
+              value={schedReminders}
+              onChange={(patch) => setSchedReminders((prev) => ({ ...prev, ...patch }))}
+              disabled={scheduleLaterBusy}
+              description="Mesmas opções da agenda: lembretes internos e WhatsApp ao cliente antes do horário."
+            />
           </div>
           <DialogFooter className="gap-2 sm:gap-0">
             <Button type="button" variant="outline" onClick={() => setScheduleLaterOpen(false)}>

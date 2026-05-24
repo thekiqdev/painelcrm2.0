@@ -15,6 +15,7 @@ import {
 } from '../controllers/publicContractViewController.js';
 import {
   getPublicSignatureInvite,
+  getPublicSignaturePdf,
   postPublicSignature,
 } from '../controllers/publicContractSignatureController.js';
 import {
@@ -157,6 +158,7 @@ const contractPublicSignaturePostLimiter = rateLimit({
 });
 
 router.get('/contracts/sign/:token', contractPublicSignatureReadLimiter, getPublicSignatureInvite);
+router.get('/contracts/sign/:token/pdf', contractPublicSignatureReadLimiter, getPublicSignaturePdf);
 router.post('/contracts/sign/:token', contractPublicSignaturePostLimiter, postPublicSignature);
 
 router.get('/customer-invoices/pay/:token', getPayByToken);
