@@ -7,8 +7,6 @@ const ACTIONS_REQUIRING_COMPACT_PROFILE = new Set([
   'invoice_recurring',
   'proposal',
   'contract',
-  'schedule',
-  'meet_later',
   'task',
   'group_manage',
   'convert_lead',
@@ -21,6 +19,8 @@ export type DispatchFloatingCompactActionOpts = {
   action: string;
   compactProfileOpen: boolean;
   ensureCompactProfileOpen: (conversationId: string) => void;
+  /** Abre painel lateral de agendamento (sem popup). */
+  openAppointmentPanel?: (conversationId: string) => void;
 };
 
 /**
@@ -28,10 +28,15 @@ export type DispatchFloatingCompactActionOpts = {
  * @returns `true` se o caller deve tratar `meet_now` localmente (sem abrir perfil).
  */
 export function dispatchFloatingCompactAction(opts: DispatchFloatingCompactActionOpts): boolean {
-  const { conversationId, action, compactProfileOpen, ensureCompactProfileOpen } = opts;
+  const { conversationId, action, compactProfileOpen, ensureCompactProfileOpen, openAppointmentPanel } = opts;
 
   if (action === 'meet_now') {
     return true;
+  }
+
+  if ((action === 'schedule' || action === 'meet_later') && openAppointmentPanel) {
+    openAppointmentPanel(conversationId);
+    return false;
   }
 
   if (ACTIONS_REQUIRING_COMPACT_PROFILE.has(action) && !compactProfileOpen) {

@@ -61,14 +61,10 @@ import { ChatScheduledMessagesStrip } from '@/components/chat/ChatScheduledMessa
 import { DEFAULT_CHAT_TAG_COLOR, normalizeHexColor } from '@/lib/chatKanbanTagStyle';
 import { patchConversationKanbanTagsEverywhere } from './conversationKanbanTagsCache';
 import { FLOATING_COMPACT_ACTION_EVENT } from './dispatchFloatingCompactAction';
+import { useFloatingChat } from './floatingChatContext';
 import { format, formatDistanceToNow, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { apiClient } from '@/integrations/api/client';
-import { AppointmentRemindersFields } from '@/components/appointments/AppointmentRemindersFields';
-import {
-  buildAppointmentRemindersPayload,
-  DEFAULT_CHAT_APPOINTMENT_REMINDERS,
-} from '@/lib/appointmentReminders';
 type LeadProfileForConversion = {
   id?: string;
   name?: string;
@@ -127,10 +123,8 @@ export function FloatingCompactProfile({
   const [invoiceBillingPreset, setInvoiceBillingPreset] = useState<'one_off' | 'subscription'>('one_off');
   const [proposalOpen, setProposalOpen] = useState(false);
   const [contractOpen, setContractOpen] = useState(false);
-  const [scheduleOpen, setScheduleOpen] = useState(false);
   const [taskOpen, setTaskOpen] = useState(false);
   const [groupManageOpen, setGroupManageOpen] = useState(false);
-  const [savingSchedule, setSavingSchedule] = useState(false);
   const [savingTask, setSavingTask] = useState(false);
   const [kanbanTagsBusy, setKanbanTagsBusy] = useState(false);
   const [profileSurface, setProfileSurface] = useState<'summary' | 'edit'>('summary');
@@ -139,18 +133,26 @@ export function FloatingCompactProfile({
   const [conversationKanbanTagsLoading, setConversationKanbanTagsLoading] = useState(false);
   const [tenantKanbanTagsCatalog, setTenantKanbanTagsCatalog] = useState<ChatKanbanTagUi[]>([]);
   const [tenantKanbanTagsLoading, setTenantKanbanTagsLoading] = useState(false);
-  const [schedTitle, setSchedTitle] = useState('Compromisso');
-  const [schedReminders, setSchedReminders] = useState(() => ({ ...DEFAULT_CHAT_APPOINTMENT_REMINDERS }));
-  const [schedDate, setSchedDate] = useState(() => format(new Date(), 'yyyy-MM-dd'));
-  const [schedStart, setSchedStart] = useState('10:00');
-  const [schedEnd, setSchedEnd] = useState('11:00');
-  const [schedNote, setSchedNote] = useState('');
+  const { openAppointmentPanel } = useFloatingChat();
 
-  useEffect(() => {
-    if (scheduleOpen) {
-      setSchedReminders({ ...DEFAULT_CHAT_APPOINTMENT_REMINDERS });
+  const openSchedulePanel = useCallback(() => {
+    if (!hasPermissionKey('chat.schedule_from_chat')) {
+      toast.error(commercial.permDenied);
+      return;
     }
-  }, [scheduleOpen]);
+    if (!conversation?.client_id && !conversation?.leadId) {
+      toast.error('Vincule um cliente a esta conversa para agendar um compromisso.');
+      return;
+    }
+    openAppointmentPanel(conversationId);
+  }, [
+    hasPermissionKey,
+    commercial.permDenied,
+    conversation?.client_id,
+    conversation?.leadId,
+    openAppointmentPanel,
+    conversationId,
+  ]);
 
   const [taskTitle, setTaskTitle] = useState(() => {
     const base = identity.displayName?.trim() || 'Follow-up';
@@ -368,7 +370,7 @@ export function FloatingCompactProfile({
           return openOnlyWhenClient('Contrato', () => setContractOpen(true));
         case 'schedule':
         case 'meet_later':
-          return setScheduleOpen(true);
+          return openSchedulePanel();
         case 'task':
           return setTaskOpen(true);
         case 'group_manage':
@@ -401,6 +403,7 @@ export function FloatingCompactProfile({
     openOnlyWhenClient,
     handleCreateClientAndLink,
     handleCreateLeadAndLink,
+    openSchedulePanel,
   ]);
 
   const isUnlinked = !isGroup && !conversation?.client_id && !conversation?.leadId;
@@ -679,55 +682,6 @@ export function FloatingCompactProfile({
     },
     [conversationId, queryClient],
   );
-
-  const handleCreateSchedule = async () => {
-    if (!hasPermissionKey('chat.schedule_from_chat')) {
-      toast.error(commercial.permDenied);
-      return;
-    }
-    try {
-      setSavingSchedule(true);
-      const starts_at = new Date(`${schedDate}T${schedStart}:00`).toISOString();
-      const ends_at = new Date(`${schedDate}T${schedEnd}:00`).toISOString();
-      await chatService.scheduleAppointmentFromChat(conversationId, {
-        title: schedTitle.trim() || 'Compromisso',
-        starts_at,
-        ends_at,
-        type: 'meeting',
-        description: schedNote.trim() || null,
-        create_google_event: false,
-        create_meet: false,
-        send_chat_confirmation: true,
-        reminders: buildAppointmentRemindersPayload(schedReminders),
-        send_reminder_to_client: schedReminders.sendReminderToClient,
-      });
-      void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'messages', conversationId] });
-      debugChatActionNotification({
-        source: 'floating_chat',
-        action: 'appointment',
-        entityId: null,
-        conversationId,
-        notificationCreated: true,
-        deduped: false,
-        reason: 'scheduleAppointmentFromChat',
-      });
-      toast.success('Compromisso agendado');
-      setScheduleOpen(false);
-    } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Falha ao agendar');
-      debugChatActionNotification({
-        source: 'floating_chat',
-        action: 'appointment',
-        entityId: null,
-        conversationId,
-        notificationCreated: false,
-        deduped: false,
-        reason: e instanceof Error ? e.message : 'unknown_error',
-      });
-    } finally {
-      setSavingSchedule(false);
-    }
-  };
 
   const handleCreateTask = async () => {
     try {
@@ -1030,7 +984,7 @@ export function FloatingCompactProfile({
                 label="Agenda"
                 disabled={!hasPermissionKey('chat.schedule_from_chat')}
                 title={!hasPermissionKey('chat.schedule_from_chat') ? commercial.permDenied : undefined}
-                onClick={() => setScheduleOpen(true)}
+                onClick={openSchedulePanel}
               />
               <QuickAction icon={<ListTodo className="h-3.5 w-3.5" />} label="Tarefa" onClick={() => setTaskOpen(true)} />
             </>
@@ -1057,7 +1011,7 @@ export function FloatingCompactProfile({
                 label="Agenda"
                 disabled={!hasPermissionKey('chat.schedule_from_chat')}
                 title={!hasPermissionKey('chat.schedule_from_chat') ? commercial.permDenied : undefined}
-                onClick={() => setScheduleOpen(true)}
+                onClick={openSchedulePanel}
               />
               <QuickAction icon={<ListTodo className="h-3.5 w-3.5" />} label="Tarefa" onClick={() => setTaskOpen(true)} />
             </>
@@ -1071,7 +1025,7 @@ export function FloatingCompactProfile({
                 label="Agenda"
                 disabled={!hasPermissionKey('chat.schedule_from_chat')}
                 title={!hasPermissionKey('chat.schedule_from_chat') ? commercial.permDenied : undefined}
-                onClick={() => setScheduleOpen(true)}
+                onClick={openSchedulePanel}
               />
               <QuickAction icon={<ListTodo className="h-3.5 w-3.5" />} label="Tarefa" onClick={() => setTaskOpen(true)} />
             </>
@@ -1085,7 +1039,7 @@ export function FloatingCompactProfile({
                 label="Agenda"
                 disabled={!hasPermissionKey('chat.schedule_from_chat')}
                 title={!hasPermissionKey('chat.schedule_from_chat') ? commercial.permDenied : undefined}
-                onClick={() => setScheduleOpen(true)}
+                onClick={openSchedulePanel}
               />
               <QuickAction icon={<ListTodo className="h-3.5 w-3.5" />} label="Tarefa" onClick={() => setTaskOpen(true)} />
             </>
@@ -1202,46 +1156,6 @@ export function FloatingCompactProfile({
               setContractOpen(false);
             }}
           />
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={scheduleOpen} onOpenChange={setScheduleOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Agendar compromisso</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <Label>Título</Label>
-              <Input value={schedTitle} onChange={(e) => setSchedTitle(e.target.value)} />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div className="space-y-1.5">
-                <Label>Data</Label>
-                <Input type="date" value={schedDate} onChange={(e) => setSchedDate(e.target.value)} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Início</Label>
-                <Input type="time" value={schedStart} onChange={(e) => setSchedStart(e.target.value)} />
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Fim</Label>
-              <Input type="time" value={schedEnd} onChange={(e) => setSchedEnd(e.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Observação</Label>
-              <Textarea rows={2} value={schedNote} onChange={(e) => setSchedNote(e.target.value)} />
-            </div>
-            <AppointmentRemindersFields
-              value={schedReminders}
-              onChange={(patch) => setSchedReminders((prev) => ({ ...prev, ...patch }))}
-              disabled={savingSchedule}
-            />
-            <Button type="button" className="w-full" disabled={savingSchedule} onClick={() => void handleCreateSchedule()}>
-              {savingSchedule ? 'A guardar…' : 'Salvar compromisso'}
-            </Button>
-          </div>
         </DialogContent>
       </Dialog>
 

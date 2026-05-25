@@ -82,12 +82,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Label } from '@/components/ui/label';
-import { AppointmentRemindersFields } from '@/components/appointments/AppointmentRemindersFields';
-import {
-  buildAppointmentRemindersPayload,
-  DEFAULT_CHAT_APPOINTMENT_REMINDERS,
-} from '@/lib/appointmentReminders';
-import { Calendar } from '@/components/ui/calendar';
+import { ChatAppointmentSchedulePanel } from '@/components/chat/ChatAppointmentSchedulePanel';
 import {
   Select,
   SelectContent,
@@ -639,15 +634,6 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   const [whatsappModelPickerOpen, setWhatsappModelPickerOpen] = useState(false);
   const [meetNowConfirmOpen, setMeetNowConfirmOpen] = useState(false);
   const [meetNowSubmitting, setMeetNowSubmitting] = useState(false);
-  const [scheduleLaterOpen, setScheduleLaterOpen] = useState(false);
-  const [scheduleLaterBusy, setScheduleLaterBusy] = useState(false);
-  const [schedDay, setSchedDay] = useState<Date>(() => new Date());
-  const [schedTime, setSchedTime] = useState('10:00');
-  const [schedDuration, setSchedDuration] = useState(60);
-  const [schedCreateMeet, setSchedCreateMeet] = useState(true);
-  const [schedNote, setSchedNote] = useState('');
-  const [schedTitle, setSchedTitle] = useState('');
-  const [schedReminders, setSchedReminders] = useState(() => ({ ...DEFAULT_CHAT_APPOINTMENT_REMINDERS }));
   const [scheduleChatDlgOpen, setScheduleChatDlgOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'leads' | 'clients'>('all');
   /** Etapa 5 — inbox partilhada por defeito quando há tenant (evita lista vazia com escopo “equipa”). */
@@ -908,7 +894,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   const [selectedLinkTarget, setSelectedLinkTarget] = useState<{ type: 'client' | 'lead'; id: string } | null>(null);
   const [linkPage, setLinkPage] = useState(1);
   const [viewMode, setViewMode] = useState<
-    'conversation' | 'invoice-create' | 'proposal-create' | 'contract-create'
+    'conversation' | 'invoice-create' | 'proposal-create' | 'contract-create' | 'appointment-create'
   >('conversation');
   const isMobileConversationView = Boolean(
     isMobile && routeConversationId && viewMode === 'conversation',
@@ -4029,74 +4015,17 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       toast.error('Vincule um cliente a esta conversa para agendar um compromisso.');
       return;
     }
-    const label = selectedIdentity?.displayName?.trim() || 'cliente';
-    setSchedDay(new Date());
-    setSchedTime('10:00');
-    setSchedDuration(60);
-    setSchedCreateMeet(true);
-    setSchedNote('');
-    setSchedTitle(`Atendimento com ${label}`);
-    setSchedReminders({ ...DEFAULT_CHAT_APPOINTMENT_REMINDERS });
-    setScheduleLaterOpen(true);
-  }, [selectedConversation, selectedIdentity?.displayName]);
+    setViewMode('appointment-create');
+  }, [selectedConversation]);
 
   /** Mesmo fluxo que «Reunião depois», sem navegar para /agenda (CRM contextual no chat). */
   const handleChatOpenAgendaComposer = useCallback(() => {
     handleChatOpenScheduleLater();
   }, [handleChatOpenScheduleLater]);
 
-  const handleChatScheduleLaterSubmit = useCallback(async () => {
-    if (!selectedConversationId || !selectedConversation) return;
-    const dayStr = format(schedDay, 'yyyy-MM-dd');
-    const startLocal = parse(`${dayStr} ${schedTime}`, 'yyyy-MM-dd HH:mm', new Date());
-    if (Number.isNaN(startLocal.getTime())) {
-      toast.error('Data ou horário inválido');
-      return;
-    }
-    const endLocal = addMinutes(startLocal, schedDuration);
-    const label = selectedIdentity?.displayName?.trim() || 'cliente';
-    setScheduleLaterBusy(true);
-    try {
-      const r = await chatService.scheduleAppointmentFromChat(selectedConversationId, {
-        title: schedTitle.trim() || `Atendimento com ${label}`,
-        starts_at: startLocal.toISOString(),
-        ends_at: endLocal.toISOString(),
-        type: 'meeting',
-        description: schedNote.trim() || 'Agendado a partir do chat',
-        create_google_event: schedCreateMeet,
-        create_meet: schedCreateMeet,
-        send_chat_confirmation: true,
-        reminders: buildAppointmentRemindersPayload(schedReminders),
-        send_reminder_to_client: schedReminders.sendReminderToClient,
-      });
-      setScheduleLaterOpen(false);
-      void loadMessages(selectedConversationId, { silent: true });
-      if (r.warnings?.length) {
-        for (const w of r.warnings) toast.message(w);
-      }
-      if (r.message_sent) {
-        toast.success('Compromisso criado e confirmação enviada no chat.');
-      } else {
-        toast.warning('Compromisso criado, mas a mensagem não foi enviada no WhatsApp.');
-      }
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Erro ao agendar');
-    } finally {
-      setScheduleLaterBusy(false);
-    }
-  }, [
-    selectedConversationId,
-    selectedConversation,
-    schedDay,
-    schedTime,
-    schedDuration,
-    schedCreateMeet,
-    schedNote,
-    schedTitle,
-    schedReminders,
-    selectedIdentity?.displayName,
-    loadMessages,
-  ]);
+  const handleBackFromAppointmentCreate = useCallback(() => {
+    setViewMode('conversation');
+  }, []);
 
   const handleCreateTask = () => {
     setTaskDialogOpen(true);
@@ -4618,7 +4547,8 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     const showTags =
       !isGroup && hasPermissionKey('chat.manage_tags');
     const agendaDisabled = sendingMessage || meetNowSubmitting || !selectedConversationId;
-    const meetLaterDisabled = sendingMessage || scheduleLaterBusy || !selectedConversationId;
+    const meetLaterDisabled =
+      sendingMessage || viewMode === 'appointment-create' || !selectedConversationId;
 
     const messages: ChatComposerQuickActionSection['items'] = [
       ...(isMobile
@@ -4908,7 +4838,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     selectedConversationId,
     sendingMessage,
     meetNowSubmitting,
-    scheduleLaterBusy,
+    viewMode,
     isMobile,
     canCreateAgendaInChat,
     canCreateInvoicesInChat,
@@ -5824,6 +5754,19 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                           />
                         </CardContent>
                         </MobileCommerceScreenLayout>
+                      ) : viewMode === 'appointment-create' ? (
+                        <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
+                          <ChatAppointmentSchedulePanel
+                            key={`appt-${selectedConversation.id}`}
+                            variant="chat"
+                            conversationId={selectedConversation.id}
+                            contactLabel={selectedIdentity?.displayName?.trim() || 'cliente'}
+                            onBack={handleBackFromAppointmentCreate}
+                            onSuccess={() => {
+                              void loadMessages(selectedConversation.id, { silent: true });
+                            }}
+                          />
+                        </CardContent>
                       ) : (
                         <>
                       <CardHeader
@@ -6807,105 +6750,6 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
           });
         }}
       />
-
-      <Dialog open={scheduleLaterOpen} onOpenChange={setScheduleLaterOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Agendar compromisso</DialogTitle>
-            <DialogDescription>
-              Cliente ou lead já vinculado à conversa. Defina o título, data e horário; opcionalmente crie evento no
-              Google com Meet e envie confirmação no chat.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-3 py-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="chat-sched-title">Título</Label>
-              <Input
-                id="chat-sched-title"
-                value={schedTitle}
-                onChange={(e) => setSchedTitle(e.target.value)}
-                placeholder="Ex.: Atendimento com Maria Silva"
-                autoComplete="off"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Data</Label>
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button variant="outline" className="w-full justify-start font-normal">
-                    {format(schedDay, 'PPP', { locale: ptBR })}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar mode="single" selected={schedDay} onSelect={(d) => d && setSchedDay(d)} locale={ptBR} />
-                </PopoverContent>
-              </Popover>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="chat-sched-time">Hora inicial</Label>
-                <Input
-                  id="chat-sched-time"
-                  type="time"
-                  value={schedTime}
-                  onChange={(e) => setSchedTime(e.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Duração (min)</Label>
-                <Select
-                  value={String(schedDuration)}
-                  onValueChange={(v) => setSchedDuration(Number(v))}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="30">30</SelectItem>
-                    <SelectItem value="45">45</SelectItem>
-                    <SelectItem value="60">60</SelectItem>
-                    <SelectItem value="90">90</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="chat-sched-meet"
-                checked={schedCreateMeet}
-                onCheckedChange={(c) => setSchedCreateMeet(c === true)}
-              />
-              <Label htmlFor="chat-sched-meet" className="text-sm font-normal">
-                Criar Google Calendar e Meet
-              </Label>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="chat-sched-note">Observação (opcional)</Label>
-              <Textarea
-                id="chat-sched-note"
-                value={schedNote}
-                onChange={(e) => setSchedNote(e.target.value)}
-                rows={2}
-                placeholder="Notas internas / descrição do compromisso"
-              />
-            </div>
-            <AppointmentRemindersFields
-              value={schedReminders}
-              onChange={(patch) => setSchedReminders((prev) => ({ ...prev, ...patch }))}
-              disabled={scheduleLaterBusy}
-              description="Mesmas opções da agenda: lembretes internos e WhatsApp ao cliente antes do horário."
-            />
-          </div>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button type="button" variant="outline" onClick={() => setScheduleLaterOpen(false)}>
-              Cancelar
-            </Button>
-            <Button type="button" disabled={scheduleLaterBusy} onClick={() => void handleChatScheduleLaterSubmit()}>
-              {scheduleLaterBusy ? 'A guardar…' : 'Agendar e notificar'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {selectedConversation && user && isMobile && selectedIsGroupChat ? (
         <ChatGroupProfileSheet

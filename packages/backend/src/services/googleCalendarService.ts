@@ -2,6 +2,7 @@
  * Google Calendar API + OAuth (authorization code flow).
  */
 import { randomUUID } from 'crypto';
+import { APPOINTMENT_DISPLAY_TZ, googleCalendarDateTimeFromIso } from '../utils/appointmentWallClockBr.js';
 import { getGoogleOAuthClientConfig } from '../config/googleCalendarEnv.js';
 import {
   getConnectionForUser,
@@ -264,11 +265,12 @@ export type CreateGoogleCalendarEventInput = {
 function buildEventResourceBody(
   data: CreateGoogleCalendarEventInput & { createMeet?: boolean },
 ): Record<string, unknown> {
+  const tz = APPOINTMENT_DISPLAY_TZ;
   const event: Record<string, unknown> = {
     summary: data.title,
     description: data.description ?? '',
-    start: { dateTime: data.start },
-    end: { dateTime: data.end },
+    start: { dateTime: googleCalendarDateTimeFromIso(data.start, tz), timeZone: tz },
+    end: { dateTime: googleCalendarDateTimeFromIso(data.end, tz), timeZone: tz },
   };
   if (data.attendees?.length) {
     event.attendees = data.attendees.map((a) => ({ email: a.email }));

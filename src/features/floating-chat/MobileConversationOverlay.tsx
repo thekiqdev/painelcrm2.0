@@ -44,6 +44,7 @@ import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
 import { useModulePermissions } from '@/contexts/ModulePermissionsContext';
 import { chatCommercialGates } from '@/utils/chatCommercialGates';
 import { dispatchFloatingCompactAction } from './dispatchFloatingCompactAction';
+import { ChatAppointmentSchedulePanel } from '@/components/chat/ChatAppointmentSchedulePanel';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -97,6 +98,9 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
     inboxScope,
     compactProfileOpenByConversationId,
     toggleCompactProfile,
+    appointmentPanelOpenByConversationId,
+    openAppointmentPanel,
+    closeAppointmentPanel,
   } = useFloatingChat();
 
   const messagesQueryKey = useMemo(
@@ -205,6 +209,7 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
 
   const identity = useFloatingConversationIdentity(conversationId, conversation);
   const compactProfileOpen = compactProfileOpenByConversationId[conversationId] === true;
+  const appointmentPanelOpen = appointmentPanelOpenByConversationId[conversationId] === true;
   const headerTags = resolveChatKanbanTagsForUi(conversation);
   const draft = composerDrafts[conversationId] ?? '';
   const commercial = useMemo(() => chatCommercialGates(hasPermissionKey), [hasPermissionKey]);
@@ -219,6 +224,7 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
         action,
         compactProfileOpen,
         ensureCompactProfileOpen: toggleCompactProfile,
+        openAppointmentPanel,
       });
       if (handleMeetNow) {
         if (!conversation?.client_id && !conversation?.leadId) {
@@ -228,7 +234,7 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
         setMeetNowConfirmOpen(true);
       }
     },
-    [compactProfileOpen, toggleCompactProfile, conversationId, conversation?.client_id, conversation?.leadId],
+    [compactProfileOpen, toggleCompactProfile, openAppointmentPanel, conversationId, conversation?.client_id, conversation?.leadId],
   );
 
   const handleMobileMeetNowConfirmed = useCallback(async () => {
@@ -523,10 +529,20 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
           <Info className="h-4 w-4" />
         </Button>
       </header>
-      {compactProfileOpen ? (
+      {compactProfileOpen && !appointmentPanelOpen ? (
         <FloatingCompactProfile conversationId={conversationId} conversation={conversation} />
       ) : null}
-
+      {appointmentPanelOpen ? (
+        <ChatAppointmentSchedulePanel
+          variant="floating"
+          conversationId={conversationId}
+          contactLabel={identity.displayName?.trim() || 'cliente'}
+          onBack={() => closeAppointmentPanel(conversationId)}
+          onSuccess={() => {
+            void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'messages', conversationId] });
+          }}
+        />
+      ) : (
       <ChatComposerDropZone
         disabled
         className="flex min-h-0 flex-1 flex-col"
@@ -691,6 +707,7 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
         )}
       </div>
       </ChatComposerDropZone>
+      )}
       <ScheduleChatMessageDialog
         open={scheduleChatDlgOpen}
         onOpenChange={setScheduleChatDlgOpen}

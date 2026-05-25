@@ -58,6 +58,7 @@ import { ChatKanbanTagQuickPicker } from '@/components/chat/ChatKanbanTagQuickPi
 import { patchConversationKanbanTagsEverywhere } from './conversationKanbanTagsCache';
 import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
 import { dispatchFloatingCompactAction } from './dispatchFloatingCompactAction';
+import { ChatAppointmentSchedulePanel } from '@/components/chat/ChatAppointmentSchedulePanel';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -128,8 +129,12 @@ export function FloatingConversationWindow({
     inboxScope,
     compactProfileOpenByConversationId,
     toggleCompactProfile,
+    appointmentPanelOpenByConversationId,
+    openAppointmentPanel,
+    closeAppointmentPanel,
   } = useFloatingChat();
   const compactProfileOpen = compactProfileOpenByConversationId[conversationId] === true;
+  const appointmentPanelOpen = appointmentPanelOpenByConversationId[conversationId] === true;
 
   const { canChatReply, hasPermissionKey } = useModulePermissions();
   const commercial = useMemo(() => chatCommercialGates(hasPermissionKey), [hasPermissionKey]);
@@ -167,6 +172,7 @@ export function FloatingConversationWindow({
         action,
         compactProfileOpen,
         ensureCompactProfileOpen: toggleCompactProfile,
+        openAppointmentPanel,
       });
       if (handleMeetNow) {
         if (!conversation?.client_id && !conversation?.leadId) {
@@ -176,7 +182,7 @@ export function FloatingConversationWindow({
         setMeetNowConfirmOpen(true);
       }
     },
-    [compactProfileOpen, toggleCompactProfile, conversationId, conversation?.client_id, conversation?.leadId],
+    [compactProfileOpen, toggleCompactProfile, openAppointmentPanel, conversationId, conversation?.client_id, conversation?.leadId],
   );
 
   const handleFloatingMeetNowConfirmed = useCallback(async () => {
@@ -793,9 +799,20 @@ export function FloatingConversationWindow({
           <X className="h-3.5 w-3.5" />
         </Button>
       </div>
-      {compactProfileOpen ? (
+      {compactProfileOpen && !appointmentPanelOpen ? (
         <FloatingCompactProfile conversationId={conversationId} conversation={conversation} />
       ) : null}
+      {appointmentPanelOpen ? (
+        <ChatAppointmentSchedulePanel
+          variant="floating"
+          conversationId={conversationId}
+          contactLabel={identity.displayName?.trim() || 'cliente'}
+          onBack={() => closeAppointmentPanel(conversationId)}
+          onSuccess={() => {
+            void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'messages', conversationId] });
+          }}
+        />
+      ) : (
       <ChatComposerDropZone
         disabled={!canChatReply() || isMobile}
         className="flex min-h-0 min-w-0 flex-1 flex-col"
@@ -979,6 +996,7 @@ export function FloatingConversationWindow({
         )}
       </div>
       </ChatComposerDropZone>
+      )}
       <ScheduleChatMessageDialog
         open={scheduleChatDlgOpen}
         onOpenChange={setScheduleChatDlgOpen}

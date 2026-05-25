@@ -11,6 +11,10 @@ import { loadConnectionForUser } from '../services/googleCalendarService.js';
 import { sendKanbanAutomationOutboundText } from './chatController.js';
 import { createClientTimelineEvent } from '../services/clientTimelineEventsService.js';
 import { getDefaultDurationMinutesForAppointmentType } from '../services/appointmentTypeSettingsService.js';
+import {
+  formatAppointmentDateLabelBr,
+  formatAppointmentTimeRangeBr,
+} from '../utils/appointmentWallClockBr.js';
 
 const AGENDA_MODULE = 'agenda' as const;
 
@@ -403,9 +407,8 @@ export async function postChatConversationScheduleAppointment(req: AuthRequest, 
     let messageSent = false;
     let messageError: string | null = null;
     if (d.send_chat_confirmation) {
-      const startD = new Date(d.starts_at);
-      const dateLabel = startD.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-      const timeLabel = `${startD.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} – ${new Date(d.ends_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+      const dateLabel = formatAppointmentDateLabelBr(d.starts_at);
+      const timeLabel = formatAppointmentTimeRangeBr(d.starts_at, d.ends_at);
       const text = buildScheduledChatMessage({
         contactLabel: label,
         title: d.title,

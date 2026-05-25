@@ -106,6 +106,31 @@ const FinanceCreditCardDetailPage = () => {
     return opens;
   }, [statements]);
 
+  const bottomActions = useMemo((): FinanceMobileBottomAction[] => {
+    if (!cardId || !card) return [];
+    const list: FinanceMobileBottomAction[] = [
+      {
+        key: "purchase",
+        label: "+ Nova compra",
+        variant: "outline",
+        icon: Plus,
+        onClick: () => setPurchaseOpen(true),
+        loading: savingPurchase && purchaseOpen,
+      },
+    ];
+    if (nextOpenStatement) {
+      list.push({
+        key: "pay",
+        label: "Pagar fatura",
+        variant: "primary",
+        icon: Receipt,
+        onClick: () =>
+          navigate(`/finance/credit-cards/${cardId}/faturas/${nextOpenStatement.id}`),
+      });
+    }
+    return list;
+  }, [card, cardId, navigate, nextOpenStatement, purchaseOpen, savingPurchase]);
+
   const handlePurchase = async () => {
     if (!cardId) return;
     if (!desc.trim()) {
@@ -156,36 +181,6 @@ const FinanceCreditCardDetailPage = () => {
   if (!card) {
     return <p className="text-sm text-muted-foreground">Cartão não encontrado.</p>;
   }
-
-  const bottomActions = useMemo((): FinanceMobileBottomAction[] => {
-    const list: FinanceMobileBottomAction[] = [
-      {
-        key: "purchase",
-        label: "+ Nova compra",
-        variant: "outline",
-        icon: Plus,
-        onClick: () => setPurchaseOpen(true),
-        loading: savingPurchase && purchaseOpen,
-      },
-    ];
-    if (nextOpenStatement && cardId) {
-      list.push({
-        key: "pay",
-        label: "Pagar fatura",
-        variant: "primary",
-        icon: Receipt,
-        onClick: () =>
-          navigate(`/finance/credit-cards/${cardId}/faturas/${nextOpenStatement.id}`),
-      });
-    }
-    return list;
-  }, [
-    cardId,
-    navigate,
-    nextOpenStatement,
-    purchaseOpen,
-    savingPurchase,
-  ]);
 
   return (
     <div className={cn("space-y-6", financeMobilePageBottomPad)}>

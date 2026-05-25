@@ -28,6 +28,9 @@ export type FloatingChatContextValue = {
   compactProfileOpenByConversationId: Record<string, boolean>;
   toggleCompactProfile: (conversationId: string) => void;
   setCompactProfileOpen: (conversationId: string, open: boolean) => void;
+  appointmentPanelOpenByConversationId: Record<string, boolean>;
+  openAppointmentPanel: (conversationId: string) => void;
+  closeAppointmentPanel: (conversationId: string) => void;
 };
 
 export const FloatingChatContext = createContext<FloatingChatContextValue | null>(null);

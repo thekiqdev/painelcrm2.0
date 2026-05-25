@@ -62,6 +62,9 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
   const [compactProfileOpenByConversationId, setCompactProfileOpenByConversationId] = useState<Record<string, boolean>>(
     {},
   );
+  const [appointmentPanelOpenByConversationId, setAppointmentPanelOpenByConversationId] = useState<
+    Record<string, boolean>
+  >({});
   const [instanceIds, setInstanceIds] = useState<string[]>([]);
   const [mobileOverlayConversationId, setMobileOverlayConversationId] = useState<string | null>(null);
   const mobileOverlayConversationIdRef = useRef<string | null>(null);
@@ -527,6 +530,10 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
       const { [conversationId]: _omit, ...rest } = prev;
       return rest;
     });
+    setAppointmentPanelOpenByConversationId((prev) => {
+      const { [conversationId]: _omitAppt, ...rest } = prev;
+      return rest;
+    });
     setActiveWindowId((prev) => (prev === conversationId ? null : prev));
     clearPulseFor(conversationId);
   }, [clearPulseFor]);
@@ -557,10 +564,22 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
   }, []);
 
   const toggleCompactProfile = useCallback((conversationId: string) => {
-    setCompactProfileOpenByConversationId((prev) => ({
-      ...prev,
-      [conversationId]: !prev[conversationId],
-    }));
+    setCompactProfileOpenByConversationId((prev) => {
+      const next = !prev[conversationId];
+      if (next) {
+        setAppointmentPanelOpenByConversationId((ap) => ({ ...ap, [conversationId]: false }));
+      }
+      return { ...prev, [conversationId]: next };
+    });
+  }, []);
+
+  const openAppointmentPanel = useCallback((conversationId: string) => {
+    setAppointmentPanelOpenByConversationId((prev) => ({ ...prev, [conversationId]: true }));
+    setCompactProfileOpenByConversationId((prev) => ({ ...prev, [conversationId]: false }));
+  }, []);
+
+  const closeAppointmentPanel = useCallback((conversationId: string) => {
+    setAppointmentPanelOpenByConversationId((prev) => ({ ...prev, [conversationId]: false }));
   }, []);
 
   const value = useMemo<FloatingChatContextValue>(
@@ -588,6 +607,9 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
       compactProfileOpenByConversationId,
       toggleCompactProfile,
       setCompactProfileOpen,
+      appointmentPanelOpenByConversationId,
+      openAppointmentPanel,
+      closeAppointmentPanel,
     }),
     [
       listOpen,
@@ -611,6 +633,9 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
       compactProfileOpenByConversationId,
       toggleCompactProfile,
       setCompactProfileOpen,
+      appointmentPanelOpenByConversationId,
+      openAppointmentPanel,
+      closeAppointmentPanel,
     ],
   );
 
