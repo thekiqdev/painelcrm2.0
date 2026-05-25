@@ -199,6 +199,12 @@ import {
   type ChatPageCacheScope,
 } from '@/lib/chatPageCache';
 import { markChatPerf, measureChatPerf } from '@/lib/chatPerformance';
+import {
+  chatRouteMarkChatMount,
+  chatRouteMarkConversationsLoaded,
+  chatRouteMarkInstancesLoaded,
+  chatRouteSummary,
+} from '@/lib/chatRouteTiming';
 import { ChatShell, ChatComposerPlaceholder } from '@/components/chat/ChatShell';
 import { ConversationListSkeleton } from '@/components/chat/skeletons/ConversationListSkeleton';
 import { MessageListSkeleton } from '@/components/chat/skeletons/MessageListSkeleton';
@@ -770,6 +776,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   }, [chatPageCacheScope, chatPageFiltersKey, routeConversationId]);
 
   useEffect(() => {
+    chatRouteMarkChatMount();
     markChatPerf('chat_mount_started');
     requestAnimationFrame(() => {
       markChatPerf('chat_first_paint');
@@ -959,8 +966,10 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
 
   const loadInstances = useCallback(async () => {
     setLoadingInstances(true);
+    let loadedCount = 0;
     try {
       const data = await chatService.listInstances();
+      loadedCount = data.length;
       setInstances(data);
     } catch (error) {
       console.error('Erro ao carregar instâncias:', error);
@@ -969,6 +978,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       });
     } finally {
       setLoadingInstances(false);
+      chatRouteMarkInstancesLoaded(loadedCount);
     }
   }, []);
 
@@ -1011,6 +1021,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
 
   const loadConversations = useCallback(async (instanceIds: string | string[]) => {
     const blocking = conversationsCountRef.current === 0;
+    let loadedConvCount = 0;
     if (blocking) {
       setLoadingConversations(true);
     } else {
@@ -1121,6 +1132,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
         });
       }
       
+      loadedConvCount = uniqueConversations.length;
       setConversations(uniqueConversations);
       saveChatPageConversations(
         chatPageCacheScope,
@@ -1153,6 +1165,10 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       setLoadingConversations(false);
       setSyncingConversations(false);
       conversationsHydratedRef.current = true;
+      chatRouteMarkConversationsLoaded(loadedConvCount);
+      if (loadedConvCount > 0 || !blocking) {
+        chatRouteSummary();
+      }
     }
   }, [
     user?.tenant_id,

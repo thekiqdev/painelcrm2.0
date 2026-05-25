@@ -18,6 +18,9 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 import { MetaPixelTrackingBridge } from "@/components/MetaPixelTrackingBridge";
 import { ChatQueryPersistBridge } from "@/components/chat/ChatQueryPersistBridge";
+import { ChatRouteFallback } from "@/components/chat/ChatRouteFallback";
+import { ChatRouteTimingListener } from "@/components/chat/ChatRouteTimingListener";
+import { loadChatPage } from "@/pages/chatLazy";
 import { EntityDrawerContainer } from "@/components/entities/EntityDrawerContainer";
 
 /**
@@ -103,7 +106,7 @@ const SettingsIndex = lazyWithReload(() => import("./pages/settings/SettingsInde
 const SettingsSectionPage = lazyWithReload(() => import("./pages/settings/SettingsSectionPage"));
 const PaymentsPanelPage = lazyWithReload(() => import("./pages/settings/PaymentsPanelPage"));
 const GatewayConfigPage = lazyWithReload(() => import("./pages/settings/GatewayConfigPage"));
-const Chat = lazyWithReload(() => import("./pages/Chat"));
+const Chat = lazyWithReload(() => loadChatPage('lazy'));
 const ChatKanbanPage = lazyWithReload(() => import("./pages/ChatKanbanPage"));
 const FunnelDetails = lazyWithReload(() => import("./pages/FunnelDetails"));
 const ProposalDetails = lazyWithReload(() => import("./pages/ProposalDetails"));
@@ -193,6 +196,7 @@ const App = () => (
         <ThemeProvider>
         <AuthProvider>
           <ChatQueryPersistBridge />
+          <ChatRouteTimingListener />
           <ModulePermissionsProvider>
           <MetaPixelTrackingBridge />
           <Suspense fallback={<LoadingFallback />}>
@@ -795,7 +799,7 @@ const App = () => (
             <Route path="/chat/:conversationId" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<ChatRouteFallback />}>
                       <Chat />
                     </Suspense>
                   </AppLayout>
@@ -804,7 +808,7 @@ const App = () => (
             <Route path="/chat" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<ChatRouteFallback />}>
                       <Chat />
                     </Suspense>
                   </AppLayout>

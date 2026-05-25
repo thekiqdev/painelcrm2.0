@@ -1,4 +1,5 @@
 import type { QueryClient } from '@tanstack/react-query';
+import { preloadChatPageChunk } from '@/pages/chatLazy';
 import { queryClient } from '@/lib/queryClient';
 import { chatService } from '@/services/chat';
 import {
@@ -165,12 +166,12 @@ export async function prefetchChatCore(
 
 /** Alias legado — mantém chunk do Chat + prefetch silencioso. */
 export function prefetchFloatChat(tenantId: string, userId: string, hasTenantInbox: boolean): void {
-  void import('@/pages/Chat');
+  preloadChatPageChunk();
   scheduleIdleChatPrefetch(() => prefetchChatCore(queryClient, tenantId, userId, hasTenantInbox));
 }
 
 export function prefetchChatCoreIdle(tenantId: string, userId: string, hasTenantInbox: boolean): void {
   if (!tenantId || !userId) return;
-  void import('@/pages/Chat');
+  preloadChatPageChunk();
   scheduleIdleChatPrefetch(() => prefetchChatCore(queryClient, tenantId, userId, hasTenantInbox));
 }

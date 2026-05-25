@@ -10,6 +10,7 @@ import {
   registerActiveChatPersistSession,
   shouldPersistChatQueryKey,
 } from '@/lib/chatPersistentCache';
+import { chatRouteMarkIndexedDbRestoreDone } from '@/lib/chatRouteTiming';
 
 /**
  * Hidrata/persiste cache React Query do chat (IndexedDB) por tenant+user.
@@ -32,7 +33,7 @@ export function ChatQueryPersistBridge() {
     registerActiveChatPersistSession(tenantId, userId);
 
     const persister = createChatPersister(tenantId, userId);
-    const [unsubscribe] = persistQueryClient({
+    const [unsubscribe, restorePromise] = persistQueryClient({
       queryClient,
       persister,
       maxAge: CHAT_PERSIST_MAX_AGE_MS,
@@ -44,6 +45,14 @@ export function ChatQueryPersistBridge() {
         },
       },
     });
+
+    void restorePromise
+      .then(() => {
+        chatRouteMarkIndexedDbRestoreDone();
+      })
+      .catch(() => {
+        /* restore falhou — app segue com fetch normal */
+      });
 
     return () => {
       unsubscribe();

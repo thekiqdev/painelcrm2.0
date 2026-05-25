@@ -172,6 +172,7 @@ const Nav = () => {
           hasTasks && canView('tasks') && hasPermissionKey('tasks.view'),
         );
         if (hasChat && canView('chat')) {
+          routePreload.chat();
           scheduleIdleChatPrefetch(() => {
             prefetchChatWarm(tenantId, userId, Boolean(user?.tenant_id));
           });

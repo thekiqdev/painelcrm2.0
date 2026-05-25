@@ -1,3 +1,5 @@
+import { preloadChatPageChunk } from './pages/chatLazy';
+
 /**
  * Preload dos chunks das rotas – mesmo path do lazy() no App.tsx.
  * Chamar no onMouseEnter dos links do menu para a página abrir na hora ao clicar.
@@ -27,7 +29,9 @@ export const routePreload = {
   customerCharges: () => import("./pages/CustomerCharges"),
   finance: () => import("./pages/finance/FinanceLayout"),
   settings: () => import("./pages/settings/SettingsIndex"),
-  chat: () => import("./pages/Chat"),
+  chat: () => {
+    preloadChatPageChunk();
+  },
   chatKanban: () => import("./pages/ChatKanbanPage"),
   tickets: () => import("./pages/Tickets"),
   meuPlano: () => import("./pages/MeuPlano"),
