@@ -54,6 +54,12 @@ import { useModulePermissions } from '@/contexts/ModulePermissionsContext';
 import { chatCommercialGates } from '@/utils/chatCommercialGates';
 import { toast } from '@/components/ui/sonner';
 import { ChatKanbanTagBadge } from '@/components/chat/ChatKanbanTagBadge';
+import { MessageListSkeleton } from '@/components/chat/skeletons/MessageListSkeleton';
+import { VirtualizedMessageList } from '@/components/chat/virtualized/VirtualizedMessageList';
+import {
+  isChatMessageVirtualizationEnabled,
+  useVirtualizedMessages,
+} from '@/components/chat/virtualized/useVirtualizedMessages';
 import { ChatKanbanTagQuickPicker } from '@/components/chat/ChatKanbanTagQuickPicker';
 import { patchConversationKanbanTagsEverywhere } from './conversationKanbanTagsCache';
 import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
@@ -352,12 +358,23 @@ export function FloatingConversationWindow({
     };
   }, [conversationId, queryClient]);
 
+  const messageVirtualEnabled = isChatMessageVirtualizationEnabled(messages.length);
+
+  const messageVirtual = useVirtualizedMessages({
+    messages,
+    scrollRef,
+    conversationKey: conversationId,
+    variant: 'floating',
+    enabled: messageVirtualEnabled,
+  });
+
   useEffect(() => {
+    if (messageVirtual.enabled) return;
     const el = scrollRef.current;
     if (el) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [messages.length]);
+  }, [messages.length, messageVirtual.enabled]);
 
   const identity = useFloatingConversationIdentity(conversationId, conversation);
   const headerTags = resolveChatKanbanTagsForUi(conversation);
@@ -821,6 +838,7 @@ export function FloatingConversationWindow({
       >
       <div
         ref={scrollRef}
+        onScroll={messageVirtual.onScroll}
         draggable
         title="Arrastar conversa para o Kanban"
         onDragStart={(e) => {
@@ -843,8 +861,8 @@ export function FloatingConversationWindow({
         )}
       >
         <div className="space-y-1.5 px-2 py-1.5">
-          {isLoading ? (
-            <p className="py-8 text-center text-xs text-muted-foreground">Carregando mensagens…</p>
+          {isLoading && messages.length === 0 ? (
+            <MessageListSkeleton className="py-2" />
           ) : isEmptyLeadConversation ? (
             <div className="flex min-h-[210px] flex-col items-center justify-center px-4 py-8 text-center">
               <Avatar className="mb-3 h-12 w-12 border border-border/70">
@@ -875,49 +893,55 @@ export function FloatingConversationWindow({
           ) : messages.length === 0 ? (
             <p className="py-8 text-center text-xs text-muted-foreground">Sem mensagens.</p>
           ) : (
-            messages.map((message) => (
-              <div
-                key={message.id}
-                draggable={false}
-                className={cn(
-                  'flex w-full min-w-0',
-                  message.direction === 'outgoing' ? 'justify-end' : 'justify-start',
-                )}
-              >
+            <VirtualizedMessageList
+              messages={messages}
+              virtual={messageVirtual}
+              itemGapClassName="pb-1.5"
+              legacyListClassName="w-full min-w-0"
+              legacyInnerClassName="space-y-1.5"
+              renderMessage={(message) => (
                 <div
+                  draggable={false}
                   className={cn(
-                    'w-fit max-w-[min(100%,17.5rem)] shrink-0 rounded-2xl px-2 py-1 text-[13px] leading-snug shadow-sm',
-                    message.direction === 'outgoing'
-                      ? 'bg-primary text-primary-foreground'
-                      : 'border border-neutral-200 bg-white text-foreground dark:border-slate-700 dark:bg-slate-800',
+                    'flex w-full min-w-0',
+                    message.direction === 'outgoing' ? 'justify-end' : 'justify-start',
                   )}
                 >
-                  <ChatBubbleContent message={message} />
-                  <span
+                  <div
                     className={cn(
-                      'mt-0.5 flex items-center gap-1 text-[9px]',
-                      message.direction === 'outgoing' ? 'text-primary-foreground/75' : 'text-muted-foreground',
+                      'w-fit max-w-[min(100%,17.5rem)] shrink-0 rounded-2xl px-2 py-1 text-[13px] leading-snug shadow-sm',
+                      message.direction === 'outgoing'
+                        ? 'bg-primary text-primary-foreground'
+                        : 'border border-neutral-200 bg-white text-foreground dark:border-slate-700 dark:bg-slate-800',
                     )}
                   >
-                    <span>{formatHour(message.sentAt)}</span>
-                    {message.direction === 'outgoing' ? (
-                      <>
-                        <MessageStatusIndicator status={message.status} className="h-2.5 w-2.5" />
-                        {message.status === 'failed' ? (
-                          <button
-                            type="button"
-                            className="ml-0.5 text-[9px] font-semibold underline underline-offset-2"
-                            onClick={() => retryFailed(message)}
-                          >
-                            Reenviar
-                          </button>
-                        ) : null}
-                      </>
-                    ) : null}
-                  </span>
+                    <ChatBubbleContent message={message} />
+                    <span
+                      className={cn(
+                        'mt-0.5 flex items-center gap-1 text-[9px]',
+                        message.direction === 'outgoing' ? 'text-primary-foreground/75' : 'text-muted-foreground',
+                      )}
+                    >
+                      <span>{formatHour(message.sentAt)}</span>
+                      {message.direction === 'outgoing' ? (
+                        <>
+                          <MessageStatusIndicator status={message.status} className="h-2.5 w-2.5" />
+                          {message.status === 'failed' ? (
+                            <button
+                              type="button"
+                              className="ml-0.5 text-[9px] font-semibold underline underline-offset-2"
+                              onClick={() => retryFailed(message)}
+                            >
+                              Reenviar
+                            </button>
+                          ) : null}
+                        </>
+                      ) : null}
+                    </span>
+                  </div>
                 </div>
-              </div>
-            ))
+              )}
+            />
           )}
         </div>
       </div>

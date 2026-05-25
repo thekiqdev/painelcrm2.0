@@ -19,6 +19,7 @@ export type FloatingChatContextValue = {
   composerDrafts: Record<string, string>;
   setComposerDraft: (conversationId: string, text: string) => void;
   instanceIds: string[];
+  instancesLoading: boolean;
   inboxScope: 'tenant' | 'owner';
   /** Desktop: janela flutuante; mobile (< md): overlay full-screen sem mudar de rota. */
   openConversationInContext: (conversationId: string) => void;

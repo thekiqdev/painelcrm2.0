@@ -17,6 +17,7 @@ import HomeOrRedirect from "./components/HomeOrRedirect";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 import { MetaPixelTrackingBridge } from "@/components/MetaPixelTrackingBridge";
+import { ChatQueryPersistBridge } from "@/components/chat/ChatQueryPersistBridge";
 import { EntityDrawerContainer } from "@/components/entities/EntityDrawerContainer";
 
 /**
@@ -191,6 +192,7 @@ const App = () => (
       <BrowserRouter>
         <ThemeProvider>
         <AuthProvider>
+          <ChatQueryPersistBridge />
           <ModulePermissionsProvider>
           <MetaPixelTrackingBridge />
           <Suspense fallback={<LoadingFallback />}>

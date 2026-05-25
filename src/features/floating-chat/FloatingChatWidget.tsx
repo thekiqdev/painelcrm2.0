@@ -29,6 +29,7 @@ import {
 } from './constants';
 import { shouldHideFloatingChat } from './floatingChatRouteGuard';
 import { getFloatingChatLayout } from './floatingChatLayout';
+import { FloatingChatListShellLoading } from '@/components/chat/FloatingChatListShell';
 
 /** Alinha com `--floating-chat-bottom` / `--floating-chat-right` em index.css */
 const bubbleBottom = 'calc(var(--floating-chat-bottom) + env(safe-area-inset-bottom, 0px))';
@@ -47,7 +48,7 @@ function useFloatingChatShellEligible(): boolean {
 }
 
 function FloatingChatChrome() {
-  const { listOpen, toggleList, panels, activeWindowId, focusWindow, instanceIds, inboxScope } =
+  const { listOpen, toggleList, panels, activeWindowId, focusWindow, instanceIds, instancesLoading, inboxScope } =
     useFloatingChat();
 
   const expanded = useMemo(() => panels.filter((p) => !p.minimized), [panels]);
@@ -143,7 +144,11 @@ function FloatingChatChrome() {
             width: FLOATING_LIST_WIDTH_PX,
           }}
         >
-          <FloatingConversationList className="h-full min-h-0" />
+          {instancesLoading && instanceIds.length === 0 ? (
+            <FloatingChatListShellLoading className="h-full min-h-0" />
+          ) : (
+            <FloatingConversationList className="h-full min-h-0" />
+          )}
         </div>
       ) : null}
 

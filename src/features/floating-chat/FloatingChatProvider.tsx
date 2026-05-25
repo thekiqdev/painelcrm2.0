@@ -66,6 +66,7 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
     Record<string, boolean>
   >({});
   const [instanceIds, setInstanceIds] = useState<string[]>([]);
+  const [instancesLoading, setInstancesLoading] = useState(true);
   const [mobileOverlayConversationId, setMobileOverlayConversationId] = useState<string | null>(null);
   const mobileOverlayConversationIdRef = useRef<string | null>(null);
   const mobileOverlayPushedRef = useRef(false);
@@ -88,8 +89,10 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
   const refreshInstances = useCallback(async () => {
     if (!user?.id) {
       setInstanceIds([]);
+      setInstancesLoading(false);
       return;
     }
+    setInstancesLoading(true);
     try {
       const instances = await chatService.listInstances();
       const ids = instances
@@ -101,6 +104,8 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
       setInstanceIds(ids);
     } catch {
       setInstanceIds([]);
+    } finally {
+      setInstancesLoading(false);
     }
   }, [user?.id]);
 
@@ -599,6 +604,7 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
       composerDrafts,
       setComposerDraft,
       instanceIds,
+      instancesLoading,
       inboxScope,
       openConversationInContext,
       openChatForClient,
@@ -625,6 +631,7 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
       composerDrafts,
       setComposerDraft,
       instanceIds,
+      instancesLoading,
       inboxScope,
       openConversationInContext,
       openChatForClient,

@@ -196,8 +196,18 @@ import {
   saveChatPageConversations,
   saveChatPageLastConversation,
   saveChatPageMessages,
+  type ChatPageCacheScope,
 } from '@/lib/chatPageCache';
 import { markChatPerf, measureChatPerf } from '@/lib/chatPerformance';
+import { ChatShell, ChatComposerPlaceholder } from '@/components/chat/ChatShell';
+import { ConversationListSkeleton } from '@/components/chat/skeletons/ConversationListSkeleton';
+import { MessageListSkeleton } from '@/components/chat/skeletons/MessageListSkeleton';
+import { ChatHeaderSkeleton } from '@/components/chat/skeletons/ChatHeaderSkeleton';
+import { VirtualizedMessageList } from '@/components/chat/virtualized/VirtualizedMessageList';
+import {
+  isChatMessageVirtualizationEnabled,
+  useVirtualizedMessages,
+} from '@/components/chat/virtualized/useVirtualizedMessages';
 import { ChatBubbleContent } from '@/components/chat/ChatBubbleContent';
 import { MessageStatusIndicator } from '@/components/chat/MessageStatusIndicator';
 import {
@@ -705,11 +715,6 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     };
   }, [isPlatformScope, isPlatformSuperAdmin]);
 
-  const showMainChatLayout = useMemo(() => {
-    if (!isPlatformScope) return instances.length > 0;
-    return instances.length > 0 || chatChannelOrigin === 'official' || chatChannelOrigin === 'all';
-  }, [isPlatformScope, instances.length, chatChannelOrigin]);
-
   const platformConversationRestoreAllowed = useMemo(
     () =>
       !isPlatformScope
@@ -740,8 +745,17 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     ],
   );
 
+  const chatPageCacheScope = useMemo<ChatPageCacheScope>(
+    () => ({
+      tenantId: user?.tenant_id ?? '__owner__',
+      userId: user?.id ?? '',
+    }),
+    [user?.tenant_id, user?.id],
+  );
+
   useLayoutEffect(() => {
-    const cached = readChatPageCache(chatPageFiltersKey);
+    if (!chatPageCacheScope.userId) return;
+    const cached = readChatPageCache(chatPageCacheScope, chatPageFiltersKey);
     if (!cached?.conversations.length) return;
     setConversations((prev) => (prev.length > 0 ? prev : cached.conversations));
     conversationsHydratedRef.current = true;
@@ -749,11 +763,11 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       const hit = cached.conversations.some((c) => c.id === cached.lastConversationId);
       if (hit) {
         setSelectedConversationId(cached.lastConversationId);
-        const msgs = readChatPageMessages(cached.lastConversationId);
+        const msgs = readChatPageMessages(chatPageCacheScope, cached.lastConversationId);
         if (msgs?.length) setMessages(msgs);
       }
     }
-  }, [chatPageFiltersKey, routeConversationId]);
+  }, [chatPageCacheScope, chatPageFiltersKey, routeConversationId]);
 
   useEffect(() => {
     markChatPerf('chat_mount_started');
@@ -804,8 +818,23 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   const whatsappGroupsUiEnabled = chatRuntimeConfig?.whatsappGroupsEnabled !== false;
   const [attendingConversation, setAttendingConversation] = useState(false);
 
-  const [loadingInstances, setLoadingInstances] = useState(false);
+  const [loadingInstances, setLoadingInstances] = useState(true);
   const [loadingConversations, setLoadingConversations] = useState(false);
+
+  /** Só após a API confirmar ausência de instância (evita flash «Configure WhatsApp»). */
+  const showNoInstancesSetup = useMemo(() => {
+    if (loadingInstances) return false;
+    if (isPlatformScope) {
+      return !(
+        instances.length > 0 ||
+        chatChannelOrigin === 'official' ||
+        chatChannelOrigin === 'all'
+      );
+    }
+    return instances.length === 0;
+  }, [loadingInstances, isPlatformScope, instances.length, chatChannelOrigin]);
+
+  const showMainChatLayout = !showNoInstancesSetup;
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [syncingConversations, setSyncingConversations] = useState(false);
   const [syncingMessages, setSyncingMessages] = useState(false);
@@ -1094,6 +1123,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       
       setConversations(uniqueConversations);
       saveChatPageConversations(
+        chatPageCacheScope,
         chatPageFiltersKey,
         uniqueConversations,
         selectedConversationIdRef.current,
@@ -1186,7 +1216,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
           return;
         }
       setMessages(data);
-      saveChatPageMessages(conversationId, data);
+      saveChatPageMessages(chatPageCacheScope, conversationId, data);
     } catch (error) {
       console.error('Erro ao carregar mensagens:', error);
         if (!silent) {
@@ -1320,7 +1350,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       setMessages([]);
       return;
     }
-    const cachedMsgs = readChatPageMessages(selectedConversationId);
+    const cachedMsgs = readChatPageMessages(chatPageCacheScope, selectedConversationId);
     if (cachedMsgs?.length) {
       setMessages(cachedMsgs);
       void loadMessages(selectedConversationId, { silent: true });
@@ -2128,8 +2158,23 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     );
   }, [conversations]);
 
+  const messageVirtualEnabled =
+    isChatMessageVirtualizationEnabled(messages.length) && viewMode === 'conversation';
+
+  const messageVirtual = useVirtualizedMessages({
+    messages,
+    scrollRef: messagesScrollContainerRef,
+    conversationKey: selectedConversationId ?? '',
+    variant: 'page',
+    enabled: messageVirtualEnabled,
+  });
+
   /** Mantém o viewport no fim do histórico (mensagem mais recente visível). */
   const scrollMessagesToBottom = useCallback(() => {
+    if (messageVirtual.enabled) {
+      messageVirtual.scrollToBottom('auto');
+      return;
+    }
     const run = () => {
       const scrollEl = messagesScrollContainerRef.current;
       if (scrollEl) {
@@ -2152,15 +2197,16 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
         requestAnimationFrame(run);
       });
     });
-  }, []);
+  }, [messageVirtual]);
 
   // Scroll para o fim: mensagens novas, troca de conversa, fim do carregamento, ou volta ao painel da conversa
   // (ex.: criar fatura desmonta a lista — sem mudar `messages`, o efeito antigo não corria e o scroll ia ao topo)
   useLayoutEffect(() => {
+    if (messageVirtual.enabled) return;
     if (messages.length === 0 || loadingMessages) return;
     if (viewMode !== 'conversation') return;
     scrollMessagesToBottom();
-  }, [messages, selectedConversationId, loadingMessages, viewMode, scrollMessagesToBottom]);
+  }, [messages, selectedConversationId, loadingMessages, viewMode, scrollMessagesToBottom, messageVirtual.enabled]);
 
   const searchFilteredConversations = useMemo(() => {
     if (!searchTerm.trim()) return conversations;
@@ -2376,9 +2422,10 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   }, [selectedConversationId]);
 
   const scrollToMessageId = useCallback((id: string) => {
+    if (messageVirtual.scrollToMessageId(id)) return;
     const el = messageRowRefs.current[id];
     el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, []);
+  }, [messageVirtual]);
 
   const openAllCommentsDialogForMessage = useCallback(async (messageId: string) => {
     setAllCommentsDialog({ messageId });
@@ -2424,6 +2471,16 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     let attempts = 0;
     const run = () => {
       if (cancelled || attempts++ > 50) return;
+      if (messageVirtual.scrollToMessageId(mid)) {
+        setFlashMessageId(mid);
+        setSearchParams((prev) => {
+          const n = new URLSearchParams(prev);
+          n.delete('focusMessageId');
+          return n;
+        }, { replace: true });
+        window.setTimeout(() => setFlashMessageId(null), 2800);
+        return;
+      }
       const el = messageRowRefs.current[mid];
       if (!el) {
         window.setTimeout(run, 60);
@@ -2443,7 +2500,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       cancelled = true;
       window.clearTimeout(t);
     };
-  }, [focusMessageIdParam, selectedConversationId, loadingMessages, messages, setSearchParams]);
+  }, [focusMessageIdParam, selectedConversationId, loadingMessages, messages, setSearchParams, messageVirtual]);
 
   useEffect(() => {
     if (!contactProfileOpen || !selectedConversation) {
@@ -2827,7 +2884,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       });
     }
     setSelectedConversationId(conversationId);
-    saveChatPageLastConversation(conversationId);
+    saveChatPageLastConversation(chatPageCacheScope, conversationId);
 
     void chatService.syncConversationMessages(conversationId, {}).catch((error) => {
       console.error('Erro ao sincronizar mensagens ao selecionar conversa:', error);
@@ -5103,46 +5160,40 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   );
   };
 
-  return (
-    <div
-      className={cn(
-        'flex min-h-0 flex-1 flex-col overflow-hidden max-md:mx-0 max-md:h-full max-md:min-h-0 md:-m-6',
-        isMobileConversationView &&
-          'fixed inset-0 z-[60] m-0 max-h-[100dvh] h-[100dvh] bg-background',
-        !isMobileConversationView &&
-          'md:h-[calc(100dvh-var(--app-topbar-height)-var(--chat-page-offset)+var(--chat-extra-height))] md:max-h-[calc(100dvh-var(--app-topbar-height)-var(--chat-page-offset)+var(--chat-extra-height))] md:overflow-hidden md:pb-0',
-      )}
-    >
-      {!isMobileConversationView && isPlatformScope ? (
-        <div className="shrink-0 px-3 pt-3 md:px-3">
-          <div className="rounded-xl border border-border/70 bg-card/80 px-4 py-3 shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h1 className="text-lg font-semibold leading-tight text-foreground">Chat da Plataforma</h1>
-                <p className="mt-0.5 text-sm text-muted-foreground">
-                  Mensagens dos canais conectados no Super Admin.
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="secondary">UazAPI</Badge>
-                {platformMetaStatusLoading ? (
-                  <Badge variant="outline">Meta — a carregar…</Badge>
-                ) : !platformMetaStatus?.feature_enabled ? (
-                  <Badge variant="outline">API Oficial Meta (desativada)</Badge>
-                ) : platformMetaStatus.account?.is_active && platformMetaStatus.account.status === 'connected' ? (
-                  <Badge variant="default" className="bg-emerald-700 hover:bg-emerald-700">
-                    API Oficial Meta — {platformMetaStatus.account.display_phone_number || 'ligada'}
-                  </Badge>
-                ) : platformMetaStatus.account?.status === 'error' ? (
-                  <Badge variant="destructive">Meta — token / conta em erro</Badge>
-                ) : (
-                  <Badge variant="outline">API Oficial Meta — não ligada</Badge>
-                )}
-              </div>
+  const platformChatBanner =
+    !isMobileConversationView && isPlatformScope ? (
+      <div className="shrink-0 px-3 pt-3 md:px-3">
+        <div className="rounded-xl border border-border/70 bg-card/80 px-4 py-3 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h1 className="text-lg font-semibold leading-tight text-foreground">Chat da Plataforma</h1>
+              <p className="mt-0.5 text-sm text-muted-foreground">
+                Mensagens dos canais conectados no Super Admin.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="secondary">UazAPI</Badge>
+              {platformMetaStatusLoading ? (
+                <Badge variant="outline">Meta — a carregar…</Badge>
+              ) : !platformMetaStatus?.feature_enabled ? (
+                <Badge variant="outline">API Oficial Meta (desativada)</Badge>
+              ) : platformMetaStatus.account?.is_active && platformMetaStatus.account.status === 'connected' ? (
+                <Badge variant="default" className="bg-emerald-700 hover:bg-emerald-700">
+                  API Oficial Meta — {platformMetaStatus.account.display_phone_number || 'ligada'}
+                </Badge>
+              ) : platformMetaStatus.account?.status === 'error' ? (
+                <Badge variant="destructive">Meta — token / conta em erro</Badge>
+              ) : (
+                <Badge variant="outline">API Oficial Meta — não ligada</Badge>
+              )}
             </div>
           </div>
         </div>
-      ) : null}
+      </div>
+    ) : null;
+
+  return (
+    <ChatShell isMobileConversationView={isMobileConversationView} topBanner={platformChatBanner}>
       {showMainChatLayout ? (
         <div className="flex flex-1 flex-col min-h-0 overflow-hidden max-md:h-full max-md:min-h-0 md:h-full">
           {/* Renderizar conteúdo do chat - apenas uma vez, reutilizado para todas as abas */}
@@ -5605,14 +5656,8 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                           ) : null}
                         </div>
                       ) : null}
-                      {loadingConversations && conversations.length === 0 ? (
-                        <div className="flex min-h-[12rem] flex-col items-center justify-center gap-3 px-6 py-10 text-center text-muted-foreground">
-                          <RefreshCw className="h-8 w-8 animate-spin text-primary/70" aria-hidden />
-                          <div>
-                            <p className="text-sm font-medium text-foreground">Carregando conversas</p>
-                            <p className="mt-1 text-xs">Aguarde um momento.</p>
-                          </div>
-                        </div>
+                      {(loadingInstances || loadingConversations) && conversations.length === 0 ? (
+                        <ConversationListSkeleton />
                       ) : enabledInstanceIds.size === 0 &&
                         chatChannelOrigin !== 'official' &&
                         !(isPlatformScope && chatChannelOrigin === 'all') ? (
@@ -6116,19 +6161,14 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                         >
                         <div
                           ref={messagesScrollContainerRef}
+                          onScroll={messageVirtual.onScroll}
                           className={cn(
                             'min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain touch-pan-y [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border/50',
                           )}
                         >
                           <div className="min-w-0 max-w-full px-2 py-2 md:px-4 md:pb-2 md:pt-3">
                             {loadingMessages && messages.length === 0 ? (
-                              <div className="flex min-h-[10rem] flex-col items-center justify-center gap-3 py-10 text-center text-muted-foreground">
-                                <RefreshCw className="h-7 w-7 animate-spin text-primary/70" aria-hidden />
-                                <div>
-                                  <p className="text-sm font-medium text-foreground">Carregando mensagens</p>
-                                  <p className="mt-1 text-xs">Histórico da conversa.</p>
-                                </div>
-                          </div>
+                              <MessageListSkeleton />
                             ) : messages.length === 0 ? (
                               <div className="flex min-h-[10rem] flex-col items-center justify-center gap-2 px-4 py-10 text-center">
                                 <MessageSquare className="h-8 w-8 text-muted-foreground/80" aria-hidden />
@@ -6136,9 +6176,10 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                                 <p className="text-xs text-muted-foreground">Envie a primeira mensagem abaixo.</p>
                         </div>
                       ) : (
-                              <div className="flex min-h-full w-full min-w-0 flex-col justify-end">
-                                <div className="w-full min-w-0 space-y-2 pb-2 md:space-y-2">
-                                  {messages.map((message) => {
+                              <VirtualizedMessageList
+                                messages={messages}
+                                virtual={messageVirtual}
+                                renderMessage={(message) => {
                                     const mc = message.message_contract;
                                     const rawPrev =
                                       coerceChatPlainText(mc?.body) ||
@@ -6365,12 +6406,10 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                                         </div>
                                       </div>
                                     );
-                                  })}
-                                </div>
-                              </div>
+                                }}
+                              />
                             )}
-                            {/* Elemento invisível no final para scroll automático */}
-                            <div ref={messagesEndRef} />
+                            {!messageVirtual.enabled ? <div ref={messagesEndRef} /> : null}
                           </div>
                         </div>
                         <form
@@ -6471,17 +6510,13 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                       )}
                     </>
                   ) : (
-                    <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 py-8 text-center text-muted-foreground md:py-6">
-                      <div>
-                        <div className="mx-auto mb-4 h-16 w-16 rounded-full bg-muted flex items-center justify-center">
-                          <MessageSquare className="h-6 w-6 text-muted-foreground" />
-                        </div>
-                        <p className="font-medium">Selecione uma conversa</p>
-                        <p className="text-sm">
-                          Escolha um contato na lista ao lado para carregar o histórico e responder via
-                          WhatsApp
-                        </p>
+                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                      <ChatHeaderSkeleton />
+                      <div className="min-h-0 flex-1 overflow-hidden">
+                        <MessageListSkeleton className="min-h-0 flex-1" />
                       </div>
+                      <ChatComposerPlaceholder />
+                      <p className="sr-only">Selecione uma conversa na lista ao lado</p>
                     </div>
                   )}
                 </Card>
@@ -6645,7 +6680,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
               </div>
                           </div>
                         </div>
-      ) : (
+      ) : showNoInstancesSetup ? (
         <Card className="flex-shrink-0">
           <CardContent className="py-10 text-center text-muted-foreground space-y-4">
             <p>
@@ -6667,7 +6702,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
             </div>
                   </CardContent>
                 </Card>
-      )}
+      ) : null}
 
       <Dialog open={metaManualStepsOpen} onOpenChange={setMetaManualStepsOpen}>
         <DialogContent className="max-w-lg">
@@ -7293,7 +7328,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
         onCreateCategory={handleCreateTicketCategoryFromChat}
         onSubmit={handleSaveTicket}
       />
-    </div>
+    </ChatShell>
   );
 };
 

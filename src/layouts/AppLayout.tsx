@@ -87,6 +87,7 @@ import {
   prefetchLeadsListNav,
   prefetchTasksSummaryNav,
 } from '@/lib/prefetchAppData';
+import { scheduleIdleChatPrefetch } from '@/lib/chatPrefetch';
 import { cn } from '@/lib/utils';
 import { MobileAppNavigation } from '@/components/navigation/MobileAppNavigation';
 import {
@@ -134,23 +135,6 @@ const Nav = () => {
   const tenantId = user?.tenant_id ?? "";
   const userId = user?.id ?? "";
 
-  useEffect(() => {
-    const t = setTimeout(() => {
-      routePreload.dashboard();
-      routePreload.clients();
-      routePreload.tasks();
-      routePreload.agenda();
-      routePreload.projects();
-      routePreload.products();
-      if (tenantId && userId) {
-        prefetchDashboardOverview(tenantId, userId);
-        prefetchTasksSummaryNav(tenantId, userId);
-        prefetchChatWarm(tenantId, userId, Boolean(user?.tenant_id));
-      }
-    }, 1500);
-    return () => clearTimeout(t);
-  }, [tenantId, userId]);
-
   const { canView, hasPermissionKey } = useModulePermissions();
   const hasDashboard = useFeatureFlag('dashboard');
   const hasClients = useFeatureFlag('clients');
@@ -167,6 +151,44 @@ const Nav = () => {
   const hasInvoices = useFeatureFlag('invoices');
   const hasExpenses = useFeatureFlag('expenses');
   const hasSettings = useFeatureFlag('settings');
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      routePreload.dashboard();
+      routePreload.clients();
+      routePreload.tasks();
+      routePreload.agenda();
+      routePreload.projects();
+      routePreload.products();
+      if (tenantId && userId) {
+        prefetchDashboardOverview(
+          tenantId,
+          userId,
+          hasDashboard && canView('dashboard'),
+        );
+        prefetchTasksSummaryNav(
+          tenantId,
+          userId,
+          hasTasks && canView('tasks') && hasPermissionKey('tasks.view'),
+        );
+        if (hasChat && canView('chat')) {
+          scheduleIdleChatPrefetch(() => {
+            prefetchChatWarm(tenantId, userId, Boolean(user?.tenant_id));
+          });
+        }
+      }
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [
+    tenantId,
+    userId,
+    user?.tenant_id,
+    hasDashboard,
+    hasTasks,
+    hasChat,
+    canView,
+    hasPermissionKey,
+  ]);
 
   const show = (feature: boolean, moduleId: string) => feature && canView(moduleId);
 
@@ -353,7 +375,11 @@ const Nav = () => {
                 label="Dashboard"
                 preload={() => {
                   routePreload.dashboard();
-                  prefetchDashboardOverview(tenantId, userId);
+                  prefetchDashboardOverview(
+                    tenantId,
+                    userId,
+                    show(hasDashboard, 'dashboard'),
+                  );
                 }}
               />
             )}
@@ -373,7 +399,11 @@ const Nav = () => {
                   label="Clientes"
                   preload={() => {
                     routePreload.clients();
-                    prefetchClientsListNav(tenantId, userId);
+                    prefetchClientsListNav(
+                      tenantId,
+                      userId,
+                      show(hasClients, 'clients') && hasPermissionKey('clients.view'),
+                    );
                   }}
                 />
               )}
@@ -384,7 +414,11 @@ const Nav = () => {
                   label="Leads"
                   preload={() => {
                     routePreload.leads();
-                    prefetchLeadsListNav(tenantId, userId);
+                    prefetchLeadsListNav(
+                      tenantId,
+                      userId,
+                      show(hasLeads, 'leads') && hasPermissionKey('leads.view'),
+                    );
                   }}
                 />
               )}
