@@ -32,7 +32,7 @@ export function ChatQueryPersistBridge() {
     registerActiveChatPersistSession(tenantId, userId);
 
     const persister = createChatPersister(tenantId, userId);
-    const unsubscribe = persistQueryClient({
+    const [unsubscribe] = persistQueryClient({
       queryClient,
       persister,
       maxAge: CHAT_PERSIST_MAX_AGE_MS,
