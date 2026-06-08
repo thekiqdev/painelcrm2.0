@@ -11,6 +11,7 @@ import {
   listTenantCommercialOverrides,
   patchTenantCommercialOverride,
   simulateTenantCommercialPrice,
+  type CreateCommercialOverrideInput,
 } from '../commercial/commercialOverridesManagementService.js';
 import { TENANT_COMMERCIAL_OVERRIDE_TYPES } from '../commercial/tenantCommercialTypes.js';
 
@@ -130,7 +131,12 @@ export async function postTenantCommercialSimulate(
     if (!requireSuperAdmin(req, res)) return;
     const { tenantId } = req.params;
     const body = patchBodySchema.parse(req.body ?? {});
-    const simulation = await simulateTenantCommercialPrice(tenantId, body.override_type ? body : undefined);
+    const simulation = await simulateTenantCommercialPrice(
+      tenantId,
+      body.override_type
+        ? ({ ...body, override_type: body.override_type } as CreateCommercialOverrideInput)
+        : undefined,
+    );
     res.json({ ok: true, simulation });
   } catch (e) {
     if (e instanceof z.ZodError) {

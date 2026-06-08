@@ -2533,5 +2533,8 @@ async function runKanbanPhase2AutomationsFoundation(
     side_effects: 'deferred',
   });
 
-  return { attempted: hasConfiguredAction || parsed.version === 1, foundation: true };
+  return {
+    attempted: Boolean(hasConfiguredAction || parsed.version === 1),
+    foundation: true,
+  };
 }

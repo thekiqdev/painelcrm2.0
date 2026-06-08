@@ -128,7 +128,7 @@ async function ensureKanbanColumns(
        LIMIT 1`,
       [boardId, tenantId, col.position],
     );
-    let position = col.position;
+    let position: number = col.position;
     if (posTaken.rows.length > 0) {
       const maxPos = await client.query<{ p: number }>(
         `SELECT COALESCE(MAX(position), -1) + 1 AS p FROM chat_kanban_columns WHERE board_id = $1`,

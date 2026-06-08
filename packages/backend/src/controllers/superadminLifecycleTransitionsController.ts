@@ -19,7 +19,7 @@ export async function getSuperadminLifecycleTransitions(req: AuthRequest, res: R
     const page = Math.max(1, parseInt(String(req.query.page), 10) || 1);
     const limit = parseInt(String(req.query.limit), 10) || 50;
     const order = req.query.order === 'asc' ? 'asc' : 'desc';
-    const sort = req.query.sort === 'created_at' ? 'created_at' : 'created_at';
+    const sort = 'created_at' as const;
 
     const filters = {
       eventType: pickQueryString(req.query.event_type),

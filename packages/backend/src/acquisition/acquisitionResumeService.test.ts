@@ -24,7 +24,6 @@ function lead(
     campaign: null,
     utm_json: {},
     selected_plan_id: null,
-    current_stage: overrides.current_stage,
     activation_score: 'low',
     abandoned_at: null,
     converted_at: null,
@@ -34,6 +33,7 @@ function lead(
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     ...overrides,
+    current_stage: overrides.current_stage,
   };
 }
 

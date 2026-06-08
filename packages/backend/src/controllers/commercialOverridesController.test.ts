@@ -36,14 +36,21 @@ describe('commercialOverridesController', () => {
   it('rejeita não superadmin', async () => {
     const req = { user: { id: 'u1', is_super_admin: false } } as AuthRequest;
     const res = mockRes();
-    await getTenantCommercial({ ...req, params: { tenantId: 't1' } } as AuthRequest, res);
+    await getTenantCommercial({ ...req, params: { tenantId: 't1' } } as unknown as AuthRequest, res);
     expect(res.status).toHaveBeenCalledWith(403);
   });
 
   it('GET commercial retorna resumo', async () => {
     vi.mocked(getTenantCommercialSummary).mockResolvedValue({
-      tenant: { id: 't1', name: 'A', status: 'active', plan_id: 'p1' },
-      plan: { id: 'p1', name: 'Pro', slug: 'pro', plan_type: 'standard', price_cents: 9900 },
+      tenant: { id: 't1', name: 'A', status: 'active', plan_id: 'p1', max_users_override: null },
+      plan: {
+        id: 'p1',
+        name: 'Pro',
+        slug: 'pro',
+        plan_type: 'standard',
+        price_cents: 9900,
+        billing_interval: 'monthly',
+      },
       billing_interval: 'monthly',
       catalog_price_cents: 9900,
       effective_price_cents: 5900,

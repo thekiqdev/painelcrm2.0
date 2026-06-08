@@ -45,7 +45,7 @@ describe('expireTrialsPastDue', () => {
       fallback: false,
       boardName: 'Reativação',
       columnName: 'Trial expirado',
-      reason: null,
+      reason: '',
     });
     vi.mocked(promoteLifecycleCard).mockResolvedValue({
       status: 'moved',
