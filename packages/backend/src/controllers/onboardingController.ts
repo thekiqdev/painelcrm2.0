@@ -37,7 +37,7 @@ export async function postOnboardingCreateAdmin(req: import('express').Request, 
       return;
     }
     const tenant = tenantRow.rows[0];
-    if (tenant.status !== 'active') {
+    if (!['active', 'trial'].includes(tenant.status)) {
       res.status(400).json({ error: 'Conta ainda não está ativa. Aguarde a confirmação do pagamento.' });
       return;
     }
@@ -279,7 +279,7 @@ export async function postOnboardingComplete(req: AuthRequest, res: Response): P
       return;
     }
     const tenant = tenantRow.rows[0];
-    if (tenant.status !== 'active') {
+    if (!['active', 'trial'].includes(tenant.status)) {
       res.status(400).json({ error: 'Conta não está ativa' });
       return;
     }

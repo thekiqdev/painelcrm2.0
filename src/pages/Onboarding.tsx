@@ -45,11 +45,25 @@ export default function Onboarding() {
   });
   const [prefill] = useState<Prefill>(() => (location.state as { prefill?: Prefill })?.prefill ?? {});
 
-  const [admin, setAdmin] = useState({ name: prefill.name ?? '', email: prefill.email ?? '', password: '', confirmPassword: '' });
+  const [admin, setAdmin] = useState({
+    name: prefill.name ?? user?.first_name ?? '',
+    email: prefill.email ?? user?.email ?? '',
+    password: '',
+    confirmPassword: '',
+  });
   const [company, setCompany] = useState<TenantData>({ company_name: '', cpf_cnpj: '', billing_email: '', billing_phone: '' });
   const [loading, setLoading] = useState(false);
   const [tenantDataLoaded, setTenantDataLoaded] = useState(false);
   const resolvedTenantId = tenantId ?? user?.tenant_id ?? null;
+
+  useEffect(() => {
+    if (!user) return;
+    setAdmin((a) => ({
+      ...a,
+      email: a.email || user.email || '',
+      name: a.name || user.first_name || prefill.name || '',
+    }));
+  }, [user, prefill.name]);
 
   useEffect(() => {
     const s = Math.min(3, Math.max(1, parseInt(searchParams.get('step') || '1', 10)));

@@ -4,9 +4,11 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { CheckCircle } from "lucide-react";
 import { Logo } from "@/components/Logo";
+import { useSignupEntry } from "@/hooks/useSignupEntry";
 
 const Index = () => {
   const navigate = useNavigate();
+  const { signupPath } = useSignupEntry();
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -21,7 +23,7 @@ const Index = () => {
             <Button variant="ghost" onClick={() => navigate("/login")}>
               Login
             </Button>
-            <Button onClick={() => navigate("/checkout")}>
+            <Button onClick={() => navigate(signupPath)}>
               Começar Agora
             </Button>
           </div>
@@ -38,7 +40,7 @@ const Index = () => {
             Aumente suas vendas, melhore o relacionamento com clientes e impulsione seu negócio com nossa solução completa de CRM
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Button size="lg" className="bg-white hover:bg-gray-100 text-crm-primary" onClick={() => navigate("/checkout")}>
+            <Button size="lg" className="bg-white hover:bg-gray-100 text-crm-primary" onClick={() => navigate(signupPath)}>
               Comece Gratuitamente
             </Button>
             <Button size="lg" variant="outline" className="text-white border-white hover:bg-white/10" onClick={() => navigate("/login")}>
@@ -137,7 +139,7 @@ const Index = () => {
                   <Button 
                     className={`w-full ${plan.popular ? 'bg-white text-crm-primary hover:bg-gray-100' : ''}`}
                     variant={plan.popular ? "default" : "outline"}
-                    onClick={() => navigate("/checkout")}
+                    onClick={() => navigate(signupPath)}
                   >
                     {plan.cta}
                   </Button>
@@ -170,7 +172,7 @@ const Index = () => {
           <Button 
             size="lg" 
             className="bg-crm-accent hover:bg-crm-accent/90"
-            onClick={() => navigate("/checkout")}
+            onClick={() => navigate(signupPath)}
           >
             Começar Gratuitamente
           </Button>

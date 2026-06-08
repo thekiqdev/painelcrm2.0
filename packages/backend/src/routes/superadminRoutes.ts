@@ -26,8 +26,14 @@ import rateLimit from 'express-rate-limit';
 import superadminWhatsappOfficialRoutes from './superadminWhatsappOfficialRoutes.js';
 import connectionsRoutes from './connectionsRoutes.js';
 import superadminChatRoutes from './superadminChatRoutes.js';
+import * as platformFeatureFlagsController from '../controllers/platformFeatureFlagsController.js';
+import * as platformFeatureFlagsAdminController from '../controllers/platformFeatureFlagsAdminController.js';
+import * as platformSignupEntryController from '../controllers/platformSignupEntryController.js';
 import * as superadminWhatsappOfficialController from '../controllers/superadminWhatsappOfficialController.js';
 import * as adminScriptsController from '../controllers/adminScriptsController.js';
+import * as superadminLifecycleTransitionsController from '../controllers/superadminLifecycleTransitionsController.js';
+import * as superadminTrialExpirationController from '../controllers/superadminTrialExpirationController.js';
+import * as commercialAnalyticsController from '../controllers/commercialAnalyticsController.js';
 import {
   getSuperadminMediaStorageDiagnostics,
   listSuperadminRecentMediaAssets,
@@ -47,8 +53,19 @@ const metaIntegrationWriteLimit = rateLimit({
 router.use(...superadminAuth);
 
 router.get('/me', superadminController.getSuperAdminMe);
+router.get('/platform-feature-flags', platformFeatureFlagsController.listPlatformFeatureFlags);
+router.get('/platform/signup-acquisition', platformSignupEntryController.getSuperadminSignupAcquisitionSettings);
+router.patch('/platform/signup-acquisition', platformSignupEntryController.patchSuperadminSignupAcquisitionSettings);
+router.get('/advanced/feature-flags', platformFeatureFlagsAdminController.listAdvancedFeatureFlags);
+router.patch('/advanced/feature-flags/:key', platformFeatureFlagsAdminController.patchAdvancedFeatureFlag);
 router.get('/dashboard', superadminDashboardController.getSuperadminDashboard);
+router.get('/commercial/metrics', commercialAnalyticsController.getSuperadminCommercialMetrics);
+router.get(
+  '/commercial/overrides/report',
+  commercialAnalyticsController.getSuperadminCommercialOverridesReport,
+);
 router.get('/audit-log', auditLogController.getAuditLog);
+router.get('/lifecycle/transitions', superadminLifecycleTransitionsController.getSuperadminLifecycleTransitions);
 router.get('/reports', reportsController.getReports);
 
 router.get('/export/clients', exportController.exportClients);
@@ -229,6 +246,10 @@ router.delete('/leads/:id', superadminLeadsController.deleteSuperadminLead);
 router.get(
   '/advanced/whatsapp-avatar-cache-worker/status',
   adminScriptsController.getWhatsappAvatarCacheWorkerStatus,
+);
+router.post(
+  '/advanced/trial-expiration/execute',
+  superadminTrialExpirationController.postSuperadminTrialExpirationExecute,
 );
 router.get('/advanced/scripts', adminScriptsController.listAdminScripts);
 router.post('/advanced/scripts/:scriptKey/preview', adminScriptsController.previewAdminScript);

@@ -303,7 +303,20 @@ class ApiClient {
       if (aborted) {
         return {};
       }
-      console.error('API request error:', error, 'URL:', url);
+      const isNetwork =
+        error instanceof TypeError &&
+        (error.message === 'Failed to fetch' || error.message.includes('fetch'));
+      if (import.meta.env.DEV && isNetwork) {
+        console.error(
+          'API request error (rede/CORS/backend offline):',
+          error,
+          'URL:',
+          url,
+          '— Verifique se o backend está rodando (API_PORT no .env) e se VITE_API_URL coincide com essa porta, ou use VITE_API_URL vazio + proxy Vite.',
+        );
+      } else {
+        console.error('API request error:', error, 'URL:', url);
+      }
       return {
         error: error instanceof Error ? error.message : 'Network error',
         details: { url },

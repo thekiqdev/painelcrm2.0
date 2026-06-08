@@ -25,7 +25,8 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
-import { chatKanbanService, type ChatKanbanColumn } from '@/services/chatKanban';
+import type { ChatKanbanColumn } from '@/services/chatKanban';
+import { useKanbanService } from '@/components/chat-kanban/KanbanServiceContext';
 import { KANBAN_COLUMN_COLOR_PRESETS } from '@/components/chat-kanban/kanbanColumnPresets';
 import { parseKanbanColumnUi } from '@/utils/kanbanColumnRulesUi';
 
@@ -81,6 +82,7 @@ export function ChatKanbanColumnManagerDialog({
   onChanged,
   onConfigureColumn,
 }: Props) {
+  const kanban = useKanbanService();
   const sorted = useMemo(
     () => [...columns].sort((a, b) => a.position - b.position || a.name.localeCompare(b.name)),
     [columns],
@@ -109,7 +111,7 @@ export function ChatKanbanColumnManagerDialog({
     }
     setCreating(true);
     try {
-      await chatKanbanService.createColumn(boardId, {
+      await kanban.createColumn(boardId, {
         name,
         color: newColor,
       });
@@ -128,7 +130,7 @@ export function ChatKanbanColumnManagerDialog({
     if (!pendingDelete) return;
     setDeleting(true);
     try {
-      await chatKanbanService.deleteColumn(pendingDelete.id);
+      await kanban.deleteColumn(pendingDelete.id);
       toast.success('Coluna excluída');
       setPendingDelete(null);
       onChanged();

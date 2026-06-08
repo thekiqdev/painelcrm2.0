@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { superadminAuth } from '../middleware/auth.js';
+import * as commercialOverridesController from '../controllers/commercialOverridesController.js';
 import * as tenantsController from '../controllers/tenantsController.js';
 
 const router = Router();
@@ -16,6 +17,27 @@ router.get('/:id/primary-user', tenantsController.getPrimaryUser);
 router.get('/:id/notes', tenantsController.getTenantNotes);
 router.get('/:id/tags', tenantsController.getTenantTags);
 router.get('/:id/audit-log', tenantsController.getTenantAuditLog);
+router.get('/:tenantId/commercial', commercialOverridesController.getTenantCommercial);
+router.get(
+  '/:tenantId/commercial/overrides',
+  commercialOverridesController.listTenantCommercialOverridesHandler,
+);
+router.post(
+  '/:tenantId/commercial/overrides',
+  commercialOverridesController.postTenantCommercialOverride,
+);
+router.post(
+  '/:tenantId/commercial/simulate',
+  commercialOverridesController.postTenantCommercialSimulate,
+);
+router.patch(
+  '/:tenantId/commercial/overrides/:id',
+  commercialOverridesController.patchTenantCommercialOverrideHandler,
+);
+router.delete(
+  '/:tenantId/commercial/overrides/:id',
+  commercialOverridesController.deleteTenantCommercialOverride,
+);
 router.get('/:id', tenantsController.getTenant);
 router.post('/:id/billing/charge', tenantsController.createTenantCharge);
 router.post('/:id/notes', tenantsController.postTenantNote);

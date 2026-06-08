@@ -94,6 +94,14 @@ export async function syncOverdueBillingStatuses(
 
   for (const billingId of overdueTenantBillingIds) {
     schedulePublishPlatformBillingChargeOverdue(billingId);
+    // lifecycle shadow observation (future — overdue route Sprint I+)
+    void import('../lifecycle/lifecycleBillingObserver.js').then(({ observeFutureBillingLifecycleEvent }) =>
+      observeFutureBillingLifecycleEvent(
+        'subscription.overdue',
+        { tenantId: options.tenantId ?? undefined, invoiceId: billingId },
+        { source: 'tenant_billing_overdue' },
+      ),
+    );
   }
 
   return {

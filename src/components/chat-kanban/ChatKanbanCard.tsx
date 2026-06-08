@@ -48,7 +48,10 @@ export function ChatKanbanCard({
 }: Props) {
   const title = kanbanCardTitle(card);
   const phone = kanbanCardPhoneLine(card);
-  const preview = (card.conv_last_message_preview || '').trim() || 'Sem mensagens ainda';
+  const isAcquisitionLead = card.conv_link_state === 'acquisition_lead' || Boolean(card.acquisition_lead_id);
+  const preview =
+    (card.conv_last_message_preview || '').trim() ||
+    (isAcquisitionLead ? 'Lead de aquisição' : 'Sem mensagens ainda');
   const when = formatKanbanActivity(card.conv_last_message_at);
   const unread = Math.max(0, Number(card.conv_unread_count ?? 0));
   const att = kanbanAttendanceShort(card.conv_attendance_status);
@@ -132,6 +135,21 @@ export function ChatKanbanCard({
             {card.conv_lead_id && !card.conv_client_id ? (
               <Badge className="text-[10px] px-1.5 py-0 h-5 bg-blue-100 text-blue-800 border-blue-200 hover:bg-blue-100">
                 Lead
+              </Badge>
+            ) : null}
+            {isAcquisitionLead ? (
+              <Badge className="text-[10px] px-1.5 py-0 h-5 bg-amber-100 text-amber-900 border-amber-200 hover:bg-amber-100">
+                Aquisição
+              </Badge>
+            ) : null}
+            {card.op_activation_score ? (
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5">
+                {card.op_activation_score}
+              </Badge>
+            ) : null}
+            {card.op_lead_source ? (
+              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-5 max-w-[90px] truncate">
+                {card.op_lead_source}
               </Badge>
             ) : null}
             {card.conv_link_state === 'review_required' && !card.conv_client_id && !card.conv_lead_id ? (

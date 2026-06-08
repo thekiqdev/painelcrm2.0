@@ -16,10 +16,25 @@ export function getPostAuthHomePath(user: {
   is_super_admin?: boolean;
   tenant_id?: string | null;
   registration_complete?: boolean;
+  onboarding_completed?: boolean;
   commercial_access_required?: boolean;
 } | null | undefined): string {
   if (!user) return '/login';
   if (isSuperAdminPlatformUser(user)) return '/superadmin';
+  if (user.tenant_id && user.onboarding_completed === false) {
+    try {
+      const sess = sessionStorage.getItem('acquisition_onboarding_session');
+      if (sess) {
+        return `/onboarding/acquisition?session=${encodeURIComponent(sess)}`;
+      }
+    } catch {
+      /* SSR */
+    }
+    if (user.registration_complete === false) {
+      return '/onboarding';
+    }
+    return '/onboarding/acquisition';
+  }
   if (!user.registration_complete) return '/register/steps';
   if (user.commercial_access_required) return '/meu-plano?reason=payment_required';
   return '/dashboard';

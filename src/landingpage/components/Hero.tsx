@@ -1,7 +1,7 @@
 import { Suspense, lazy } from "react";
 import ArrowRight from "lucide-react/dist/esm/icons/arrow-right.js";
-import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { SignupEntryLink } from "@/components/acquisition/SignupEntryLink";
 
 const HeroInteractiveMockup = lazy(() =>
   import("./hero-mockup/HeroInteractiveMockup").then((m) => ({ default: m.HeroInteractiveMockup })),
@@ -57,17 +57,10 @@ const Hero = () => {
               style={{ animationDelay: "0.25s" }}
             >
               <Button size="lg" className="gap-2 px-8 text-base font-semibold" asChild>
-                {import.meta.env.VITE_LANDING_STANDALONE === "1" ? (
-                  <a href="/checkout" className="inline-flex items-center gap-2">
-                    Começar agora
-                    <ArrowRight size={18} />
-                  </a>
-                ) : (
-                  <Link to="/checkout">
-                    Começar agora
-                    <ArrowRight size={18} />
-                  </Link>
-                )}
+                <SignupEntryLink className="inline-flex items-center gap-2">
+                  Começar agora
+                  <ArrowRight size={18} />
+                </SignupEntryLink>
               </Button>
             </div>
 

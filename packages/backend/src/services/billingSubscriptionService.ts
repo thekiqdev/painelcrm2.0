@@ -549,6 +549,19 @@ export async function cancelSubscription(
       `UPDATE tenants SET status = 'trial', plan_period_end = CURRENT_DATE, updated_at = now() WHERE id = $1`,
       [tenantId]
     );
+    // lifecycle shadow observation
+    const { observeBillingLifecycleEventWithKanbanActual } = await import('../lifecycle/lifecycleBillingObserver.js');
+    void observeBillingLifecycleEventWithKanbanActual(
+      'subscription.cancelled',
+      { tenantId, subscriptionId },
+      'cancelSubscription_immediate',
+    );
+    const { promoteLifecycleCard } = await import('../lifecycle/lifecyclePromotionService.js');
+    void promoteLifecycleCard({
+      eventType: 'subscription.cancelled',
+      context: { tenantId, subscriptionId },
+      source: 'cancelSubscription_immediate',
+    });
   } else {
     await pool.query(
       `UPDATE subscriptions SET cancel_at_period_end = true, updated_at = now() WHERE id = $1 AND tenant_id = $2`,
@@ -569,6 +582,7 @@ export async function expireCancelledSubscriptions(): Promise<number> {
      WHERE cancel_at_period_end = true AND current_period_end < CURRENT_DATE AND status = 'active'
      RETURNING id`
   );
+  const { observeBillingLifecycleEventWithKanbanActual } = await import('../lifecycle/lifecycleBillingObserver.js');
   for (const row of r.rows) {
     const sub = await getSubscriptionById(row.id);
     if (sub) {
@@ -576,6 +590,18 @@ export async function expireCancelledSubscriptions(): Promise<number> {
         `UPDATE tenants SET status = 'trial', plan_period_end = CURRENT_DATE, updated_at = now() WHERE id = $1`,
         [sub.tenant_id]
       );
+      // lifecycle shadow observation
+      void observeBillingLifecycleEventWithKanbanActual(
+        'subscription.cancelled',
+        { tenantId: sub.tenant_id, subscriptionId: sub.id },
+        'expireCancelledSubscriptions',
+      );
+      const { promoteLifecycleCard } = await import('../lifecycle/lifecyclePromotionService.js');
+      void promoteLifecycleCard({
+        eventType: 'subscription.cancelled',
+        context: { tenantId: sub.tenant_id, subscriptionId: sub.id },
+        source: 'expireCancelledSubscriptions',
+      });
     }
   }
   return r.rows.length;
@@ -832,7 +858,8 @@ export async function changeSubscriptionPlan(
   let amountCents = await calculateInvoiceAmount(
     data.plan_id,
     interval,
-    data.users_count ?? sub.users_count ?? null
+    data.users_count ?? sub.users_count ?? null,
+    { tenantId, context: 'checkout' },
   );
 
   if (samePlanContract) {

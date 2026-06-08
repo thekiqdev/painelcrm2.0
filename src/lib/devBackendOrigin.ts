@@ -5,6 +5,8 @@
  */
 export function getDevApiBaseUrl(): string {
   if (!import.meta.env.DEV) return '';
+  if (import.meta.env.VITE_API_USE_PROXY === 'true') return '';
+
   const raw = import.meta.env.VITE_API_URL?.trim() ?? '';
   if (!raw) return '';
   if (typeof window === 'undefined') return raw;
@@ -17,9 +19,17 @@ export function getDevApiBaseUrl(): string {
     const locPort = loc.port || defPort(loc.protocol);
     if (u.hostname === loc.hostname && apiPort === locPort) {
       console.warn(
-        '[PainelCRM] VITE_API_URL usa a mesma origem que o Vite; API passará por /api (proxy). Ajuste .env para http://127.0.0.1:3001 se quiser ligar direto ao backend.',
+        '[PainelCRM] VITE_API_URL usa a mesma origem que o Vite; API passará por /api (proxy). Defina API em outra porta ou use VITE_API_USE_PROXY=true.',
       );
       return '';
+    }
+    const proxyTarget = import.meta.env.VITE_API_PROXY_TARGET?.trim() ?? 'http://127.0.0.1:3001';
+    const proxyPort = new URL(proxyTarget).port || '3001';
+    if (apiPort === '3002' && proxyPort === '3001' && u.hostname === 'localhost') {
+      console.warn(
+        '[PainelCRM] VITE_API_URL aponta para :3002 mas VITE_API_PROXY_TARGET usa :3001. ' +
+          'Se o backend está na 3001, use VITE_API_URL=http://127.0.0.1:3001 ou deixe VITE_API_URL vazio (proxy /api).',
+      );
     }
   } catch {
     return raw;

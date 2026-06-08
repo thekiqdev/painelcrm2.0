@@ -19,6 +19,7 @@ import {
   ScrollText,
   Briefcase,
   Wallet,
+  Columns3,
   MessageSquare,
   Globe,
   Shield,
@@ -28,6 +29,7 @@ import {
   Terminal,
   FileCode2,
   LifeBuoy,
+  GitBranch,
 } from "lucide-react";
 
 /** Item da sidebar do Super Admin — `to` deve coincidir com rotas em `App.tsx`. */
@@ -75,6 +77,28 @@ export const superAdminNavGroups: SuperAdminNavGroup[] = [
         label: "Nova empresa",
         to: "/superadmin/clients/new",
         icon: UserPlus,
+      },
+    ],
+  },
+  {
+    id: "operacao",
+    label: "Operação",
+    items: [
+      {
+        label: "Kanbans operacionais",
+        to: "/superadmin/operacao/kanbans",
+        icon: Columns3,
+      },
+    ],
+  },
+  {
+    id: "operacoes",
+    label: "Operações",
+    items: [
+      {
+        label: "Lifecycle",
+        to: "/superadmin/operacoes/lifecycle",
+        icon: GitBranch,
       },
     ],
   },
@@ -232,6 +256,11 @@ export const superAdminNavGroups: SuperAdminNavGroup[] = [
         to: "/superadmin/configuracoes/legal",
         icon: Scale,
       },
+      {
+        label: "Signup / Acquisition",
+        to: "/superadmin/plataforma/signup-acquisition",
+        icon: Flag,
+      },
     ],
   },
   {
@@ -265,6 +294,11 @@ export const superAdminNavGroups: SuperAdminNavGroup[] = [
         to: "/superadmin/avancado",
         icon: Terminal,
         end: true,
+      },
+      {
+        label: "Feature Flags",
+        to: "/superadmin/avancado/feature-flags",
+        icon: Flag,
       },
       {
         label: "Scripts",

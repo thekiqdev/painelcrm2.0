@@ -551,6 +551,30 @@ export async function activatePlanFromBilling(billingId: string): Promise<void> 
   });
 
   schedulePublishPlatformPlanActivated({ tenantId, billingId });
+
+  // lifecycle shadow observation
+  const sub = await getActiveSaasSubscriptionByTenant(tenantId);
+  const { observeBillingLifecycleEventWithKanbanActual, observeFutureBillingLifecycleEvent } = await import(
+    '../lifecycle/lifecycleBillingObserver.js'
+  );
+  void observeBillingLifecycleEventWithKanbanActual(
+    'subscription.activated',
+    { tenantId, invoiceId: billingId, subscriptionId: sub?.id ?? null },
+    'activatePlanFromBilling',
+  );
+  const { promoteLifecycleCard } = await import('../lifecycle/lifecyclePromotionService.js');
+  void promoteLifecycleCard({
+    eventType: 'subscription.activated',
+    context: { tenantId, invoiceId: billingId, subscriptionId: sub?.id ?? null },
+    source: 'activatePlanFromBilling',
+  });
+  if (billingReason === 'plan_upgrade') {
+    void observeFutureBillingLifecycleEvent(
+      'subscription.upgraded',
+      { tenantId, invoiceId: billingId, subscriptionId: sub?.id ?? null },
+      { source: 'activatePlanFromBilling_plan_upgrade' },
+    );
+  }
 }
 
 export interface SubscribePlanResult {
@@ -683,7 +707,10 @@ export async function getPendingSaasPlanCheckoutPresentation(
   }
 
   await validatePlanForPurchase(planId, usersCountNorm);
-  const amountCents = await calculateInvoiceAmount(planId, billingInterval, usersCountNorm);
+  const amountCents = await calculateInvoiceAmount(planId, billingInterval, usersCountNorm, {
+    tenantId,
+    context: 'checkout',
+  });
 
   const billing = await findReusableSaasPlanCheckoutInvoice({
     tenantId,
@@ -897,7 +924,11 @@ export async function subscribePlan(
   }
 ): Promise<SubscribePlanResult> {
   await validatePlanForPurchase(planId, options?.usersCount ?? null);
-  const amountCents = await calculateInvoiceAmount(planId, billingInterval, options?.usersCount ?? null);
+  const billingReason: BillingReason = options?.billingReason ?? 'plan_purchase';
+  const amountCents = await calculateInvoiceAmount(planId, billingInterval, options?.usersCount ?? null, {
+    tenantId,
+    context: billingReason === 'manual_charge' ? 'manual_charge' : 'checkout',
+  });
 
   const dueDate = new Date();
   dueDate.setDate(dueDate.getDate() + 7);
@@ -907,7 +938,6 @@ export async function subscribePlan(
   const gatewayKey = config?.gateway_key ?? 'asaas';
   const paymentMethod = options?.paymentMethod ?? 'BOLETO';
   const usersCountNorm = options?.usersCount ?? null;
-  const billingReason: BillingReason = options?.billingReason ?? 'plan_purchase';
 
   const invoiceData: CreateInvoiceInput = {
     tenant_id: tenantId,
@@ -1298,13 +1328,24 @@ export async function cancelExpiredPendingBillings(expireAfterHours: number = DE
   return { cancelledBillings, revertedTenants: reverted.rows.length };
 }
 
+export type ExpireTrialsPastDueResult = {
+  suspended: number;
+  lifecycle_events: number;
+  promotions_executed: number;
+};
+
 /**
  * Job idempotente: trial vencido sem pagamento → suspended + trial_expired.
  * Respeita feature flag TRIAL_EXPIRATION_JOB.
  */
-export async function expireTrialsPastDue(): Promise<{ suspended: number }> {
+export async function expireTrialsPastDue(): Promise<ExpireTrialsPastDueResult> {
+  const empty: ExpireTrialsPastDueResult = {
+    suspended: 0,
+    lifecycle_events: 0,
+    promotions_executed: 0,
+  };
   if (!isTrialExpirationJobEnabled()) {
-    return { suspended: 0 };
+    return empty;
   }
   const r = await pool.query<{ id: string }>(
     `UPDATE tenants
@@ -1320,8 +1361,37 @@ export async function expireTrialsPastDue(): Promise<{ suspended: number }> {
        AND status IN ('trial', 'payment_pending')
      RETURNING id`
   );
+  const suspended = r.rowCount ?? r.rows.length;
+  if (suspended === 0) {
+    return empty;
+  }
+
+  const { observeBillingLifecycleEventWithKanbanActual } = await import('../lifecycle/lifecycleBillingObserver.js');
+  const { promoteLifecycleCard } = await import('../lifecycle/lifecyclePromotionService.js');
+  let lifecycleEvents = 0;
+  let promotionsExecuted = 0;
+
   for (const row of r.rows) {
     schedulePublishPlatformTrialEnded(row.id);
+    await observeBillingLifecycleEventWithKanbanActual(
+      'trial.expired',
+      { tenantId: row.id },
+      'expireTrialsPastDue',
+    );
+    lifecycleEvents += 1;
+    const promotion = await promoteLifecycleCard({
+      eventType: 'trial.expired',
+      context: { tenantId: row.id },
+      source: 'expireTrialsPastDue',
+    });
+    if (promotion.status === 'moved' || promotion.status === 'already_at_destination') {
+      promotionsExecuted += 1;
+    }
   }
-  return { suspended: r.rowCount ?? r.rows.length };
+
+  return {
+    suspended,
+    lifecycle_events: lifecycleEvents,
+    promotions_executed: promotionsExecuted,
+  };
 }

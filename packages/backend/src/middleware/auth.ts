@@ -6,6 +6,7 @@ import { userHasFeature } from '../services/featureFlagService.js';
 import { isPhase2TrialCrmGateEnabled } from '../config/checkoutTrialFeatureFlags.js';
 import { getTenantIdForUser } from '../utils/tenant.js';
 import type { ModulePermissionsMap } from '../permissions/permissionTypes.js';
+import { bindRequestContext } from './bindRequestContext.js';
 
 export interface AuthRequest extends Request {
   userId?: string;
@@ -388,6 +389,7 @@ export async function requireActivePlanPeriod(
 export const tenantAuthCommercialHub = [
   authenticateToken,
   setCurrentTenant,
+  bindRequestContext,
   requireTenantForBusinessApp,
   setRequestDb,
 ];
@@ -396,12 +398,13 @@ export const tenantAuthCommercialHub = [
  * Contexto de sessão para /api/auth/me e /me/features: sem gate comercial nem exigência de período ativo.
  * Trial expirado precisa receber 200 com requires_checkout_resume (o CRM continua bloqueado em outras rotas).
  */
-export const authSessionContext = [authenticateToken, setCurrentTenant];
+export const authSessionContext = [authenticateToken, setCurrentTenant, bindRequestContext];
 
 /** Cadeia para rotas tenant-scoped: auth + tenant + período ativo + RLS (SET LOCAL). */
 export const tenantAuth = [
   authenticateToken,
   setCurrentTenant,
+  bindRequestContext,
   requireTenantCommercialAccess,
   requireActivePlanPeriod,
   setRequestDb,
@@ -411,6 +414,7 @@ export const tenantAuth = [
 export const tenantAuthCrm = [
   authenticateToken,
   setCurrentTenant,
+  bindRequestContext,
   requireTenantForBusinessApp,
   requireTenantCommercialAccess,
   requireActivePlanPeriod,
@@ -421,6 +425,7 @@ export const tenantAuthCrm = [
 export const appointmentsAuth = [
   authenticateToken,
   setCurrentTenant,
+  bindRequestContext,
   requireTenantForBusinessApp,
   requireTenantCommercialAccess,
   requireActivePlanPeriod,
@@ -429,6 +434,6 @@ export const appointmentsAuth = [
 ];
 
 /** Cadeia para rotas superadmin: auth + superadmin + RLS (bypass). */
-export const superadminAuth = [authenticateToken, requireSuperAdmin, setRequestDb];
+export const superadminAuth = [authenticateToken, requireSuperAdmin, bindRequestContext, setRequestDb];
 
 

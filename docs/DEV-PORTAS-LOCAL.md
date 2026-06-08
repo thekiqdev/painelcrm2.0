@@ -35,6 +35,18 @@ Assim:
 3. Frontend: na raiz, `npm run dev` (Vite usa `VITE_DEV_PORT`).
 4. Acesse o sistema em `http://localhost:8081` (ou a porta que definiu).
 
+**Importante:** `VITE_API_URL` deve usar a **mesma porta** que `API_PORT`. Se o backend subir na 3001 mas o front apontar para 3002, o Kanban Ops falha (`Failed to fetch` ou 404).
+
+Alternativa (recomendada se o proxy Vite aponta para `http://127.0.0.1:3001`):
+
+```env
+# Deixe vazio ou use proxy explícito
+VITE_API_URL=
+VITE_API_USE_PROXY=true
+VITE_API_PROXY_TARGET=http://127.0.0.1:3001
+API_PORT=3001
+```
+
 ## Resumo
 
 | Variável         | Uso                    | Exemplo (padrão)   |

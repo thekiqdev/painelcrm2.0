@@ -16,6 +16,7 @@ import {
   Settings,
   Flag,
   BarChart3,
+  BadgePercent,
   MessageSquare,
   ScrollText,
   ArrowLeft,
@@ -40,6 +41,7 @@ const navItems = [
   { to: 'configuracoes', label: 'Configurações', icon: Settings },
   { to: 'recursos', label: 'Recursos', icon: Flag },
   { to: 'limites', label: 'Limites', icon: BarChart3 },
+  { to: 'comercial', label: 'Comercial', icon: BadgePercent },
   { to: 'observacoes', label: 'Observações', icon: MessageSquare },
   { to: 'logs', label: 'Logs', icon: ScrollText },
 ];

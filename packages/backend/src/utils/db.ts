@@ -25,7 +25,18 @@ const internalPool = new Pool({
 });
 
 /** Contexto por request para RLS (Etapa 5): client com SET LOCAL app.current_tenant_id e opcionalmente app.bypass_rls. */
-export const dbRequestStorage = new AsyncLocalStorage<{ client: pg.PoolClient }>();
+export const dbRequestStorage = new AsyncLocalStorage<{ client?: pg.PoolClient }>();
+
+/**
+ * Executa trabalho fora do client HTTP (evita "Connection terminated" em fire-and-forget
+ * que continua após o middleware libertar o PoolClient do request).
+ */
+export async function runDetachedFromRequestDb<T>(work: () => Promise<T>): Promise<T> {
+  if (!dbRequestStorage.getStore()?.client) {
+    return work();
+  }
+  return dbRequestStorage.run({}, work);
+}
 
 /** Escapa valor para SET LOCAL (evita quebra de string SQL). */
 export function escapeSetLocalAppValue(value: string): string {
@@ -73,6 +84,14 @@ export async function withTenantRlsContext<T>(tenantId: string, work: () => Prom
  */
 function getQueryText(textOrConfig: string | pg.QueryConfig): string {
   return typeof textOrConfig === 'string' ? textOrConfig : textOrConfig.text;
+}
+
+/**
+ * Encerra o pool PostgreSQL interno. Usar em scripts cron/worker one-shot ao terminar.
+ * O export `pool` é um facade RLS (query/connect/on) — não expõe `.end()`.
+ */
+export async function endDatabasePool(): Promise<void> {
+  await internalPool.end();
 }
 
 export const pool = {

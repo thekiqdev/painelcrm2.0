@@ -862,6 +862,8 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   const socketRef = useRef<Socket | null>(null);
   // Refs para evitar closure stale nos handlers do Socket.IO
   const selectedConversationIdRef = useRef<string | null>(null);
+  /** Evita aplicar perfil CRM de um fetch antigo após troca rápida de conversa. */
+  const profileLoadGenRef = useRef(0);
   const enabledInstanceIdsRef = useRef<Set<string>>(new Set());
   type PendingConversationRestore = {
     internalId?: string;
@@ -2937,7 +2939,9 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   };
 
   const loadConversationProfile = useCallback(async (conversationId: string, opts?: { skipCrm?: boolean }) => {
+    const gen = ++profileLoadGenRef.current;
     if (opts?.skipCrm) {
+      if (selectedConversationIdRef.current !== conversationId) return;
       setCurrentClient(null);
       setCurrentLead(null);
       setLoadingClient(false);
@@ -2948,6 +2952,8 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     setLoadingLead(true);
     try {
       const profile = await chatService.getConversationProfile(conversationId);
+      if (profileLoadGenRef.current !== gen) return;
+      if (selectedConversationIdRef.current !== conversationId) return;
       if (profile.type === 'client' && profile.profile) {
         setCurrentClient(profile.profile);
         setCurrentLead(null);
@@ -2958,15 +2964,50 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
         setCurrentClient(null);
         setCurrentLead(null);
       }
-      } catch (error) {
+    } catch (error) {
       console.error('Erro ao carregar perfil da conversa:', error);
+      if (profileLoadGenRef.current !== gen) return;
+      if (selectedConversationIdRef.current !== conversationId) return;
       setCurrentClient(null);
       setCurrentLead(null);
     } finally {
-      setLoadingClient(false);
-      setLoadingLead(false);
+      if (profileLoadGenRef.current === gen && selectedConversationIdRef.current === conversationId) {
+        setLoadingClient(false);
+        setLoadingLead(false);
+      }
     }
   }, []);
+
+  /** Garante perfil CRM após refresh, cache ou vínculo novo sem re-selecionar a conversa. */
+  useEffect(() => {
+    const convId = selectedConversationId;
+    if (!convId) {
+      setCurrentClient(null);
+      setCurrentLead(null);
+      return;
+    }
+    const conv = conversations.find((c) => c.id === convId);
+    const skipCrm =
+      whatsappGroupsUiEnabled &&
+      !!conv &&
+      (conv.conversation_type === 'group' || Boolean(conv.external_chat_id?.endsWith('@g.us')));
+    if (conv && !skipCrm && !conv.client_id && !conv.leadId) {
+      setCurrentClient(null);
+      setCurrentLead(null);
+      setLoadingClient(false);
+      setLoadingLead(false);
+      return;
+    }
+    void loadConversationProfile(convId, skipCrm ? { skipCrm: true } : undefined);
+  }, [
+    selectedConversationId,
+    selectedConversation?.client_id,
+    selectedConversation?.leadId,
+    selectedConversation?.conversation_type,
+    selectedConversation?.external_chat_id,
+    loadConversationProfile,
+    whatsappGroupsUiEnabled,
+  ]);
 
   const canEditChatProfileFields = useMemo(
     () =>
@@ -4377,7 +4418,6 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
 
   const handleCreateContract = () => {
     if (!selectedConversation?.client_id && !selectedConversation?.leadId) return;
-    if (!currentClient && !currentLead) return;
     if (!commercial.canCreateContractFromChatFull) {
       toast.error(commercial.permDenied);
       return;
@@ -4606,6 +4646,9 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   const composerQuickActionSections = useMemo((): ChatComposerQuickActionSection[] => {
     const conv = selectedConversation;
     const crmLinked = Boolean(conv?.client_id || conv?.leadId);
+    const crmProfileLoading = Boolean(
+      crmLinked && (loadingClient || loadingLead) && !(currentClient || currentLead),
+    );
     const isGroup =
       conv?.conversation_type === 'group' || Boolean(conv?.external_chat_id?.endsWith('@g.us'));
     const canTransferThisConv =
@@ -4718,8 +4761,8 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
         description: 'Formalize acordos',
         icon: FileSignature,
         onSelect: () => handleCreateContract(),
-        disabled: !(conv?.client_id || conv?.leadId) || !(currentClient || currentLead),
-        disabledReason: !(currentClient || currentLead) ? 'Carregue o vínculo CRM' : undefined,
+        disabled: crmProfileLoading,
+        disabledReason: crmProfileLoading ? 'A carregar vínculo CRM…' : undefined,
         searchAliases: ['contratos', 'assinatura digital'],
       });
     }
@@ -4805,11 +4848,12 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
         description: 'Ficha completa no CRM',
         icon: UserCircle,
         onSelect: () => {
-          if (!currentClient?.id || !conv) return;
-          goToClientProfileFromChat(currentClient.id, conv);
+          const clientId = currentClient?.id ?? conv?.client_id;
+          if (!clientId || !conv) return;
+          goToClientProfileFromChat(clientId, conv);
         },
-        disabled: !currentClient?.id,
-        disabledReason: !currentClient?.id ? 'A carregar dados do cliente…' : undefined,
+        disabled: !conv?.client_id || crmProfileLoading,
+        disabledReason: crmProfileLoading ? 'A carregar dados do cliente…' : undefined,
         searchAliases: ['crm', 'perfil', 'ficha', 'cliente'],
       });
     }
@@ -4922,6 +4966,8 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     user,
     currentClient,
     currentLead,
+    loadingClient,
+    loadingLead,
     showCreateGroupSectionInProfile,
     createGroupWithClientDisabled,
     createGroupWithClientDisabledHint,
@@ -5771,50 +5817,68 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                           />
                         </CardContent>
                       ) : viewMode === 'contract-create' ? (
-                        <MobileCommerceScreenLayout
-                          className="min-h-0 flex-1"
-                          enabled={isMobile}
-                          header={
-                            <div className="flex items-center gap-2 px-2 py-2">
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                className="shrink-0 gap-1"
-                                onClick={handleBackFromContractCreate}
-                              >
-                                <ChevronLeft className="h-4 w-4" />
-                                Conversa
-                              </Button>
-                              <span className="min-w-0 flex-1 truncate text-sm font-semibold">Novo contrato</span>
-                            </div>
-                          }
-                        >
-                          <CardContent className={cn('flex-1 min-h-0 overflow-auto p-4', isMobile && 'p-0 pt-2')}>
-                            {!isMobile ? (
-                          <div className="mb-3">
-                            <Button variant="ghost" size="sm" onClick={handleBackFromContractCreate}>
-                              Voltar para conversa
-                            </Button>
-                          </div>
-                            ) : null}
-                          <ContractCreateForm
-                            key={selectedConversation.id}
-                            embedded
-                            initialClientId={selectedConversation.client_id ?? null}
-                            initialSigners={chatContractInitialSigners}
-                            initialTitleHint={
-                              currentClient?.name || currentLead?.name
-                                ? `Contrato — ${currentClient?.name || currentLead?.name}`
-                                : ''
+                        isMobile ? (
+                          <MobileCommerceScreenLayout
+                            className="min-h-0 flex-1"
+                            enabled
+                            header={
+                              <div className="flex items-center gap-2 px-2 py-2">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="shrink-0 gap-1"
+                                  onClick={handleBackFromContractCreate}
+                                >
+                                  <ChevronLeft className="h-4 w-4" />
+                                  Conversa
+                                </Button>
+                                <span className="min-w-0 flex-1 truncate text-sm font-semibold">Novo contrato</span>
+                              </div>
                             }
-                            onBack={handleBackFromContractCreate}
-                            onCreated={(created, mode) => {
-                              void handleContractCreatedInChat(created, mode);
-                            }}
-                          />
-                        </CardContent>
-                        </MobileCommerceScreenLayout>
+                          >
+                            <ContractCreateForm
+                              key={selectedConversation.id}
+                              embedded
+                              initialClientId={selectedConversation.client_id ?? null}
+                              initialSigners={chatContractInitialSigners}
+                              initialTitleHint={
+                                currentClient?.name || currentLead?.name
+                                  ? `Contrato — ${currentClient?.name || currentLead?.name}`
+                                  : ''
+                              }
+                              onBack={handleBackFromContractCreate}
+                              onCreated={(created, mode) => {
+                                void handleContractCreatedInChat(created, mode);
+                              }}
+                            />
+                          </MobileCommerceScreenLayout>
+                        ) : (
+                          <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-4">
+                            <div className="mb-3 shrink-0">
+                              <Button variant="ghost" size="sm" onClick={handleBackFromContractCreate}>
+                                Voltar para conversa
+                              </Button>
+                            </div>
+                            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+                              <ContractCreateForm
+                                key={selectedConversation.id}
+                                embedded
+                                initialClientId={selectedConversation.client_id ?? null}
+                                initialSigners={chatContractInitialSigners}
+                                initialTitleHint={
+                                  currentClient?.name || currentLead?.name
+                                    ? `Contrato — ${currentClient?.name || currentLead?.name}`
+                                    : ''
+                                }
+                                onBack={handleBackFromContractCreate}
+                                onCreated={(created, mode) => {
+                                  void handleContractCreatedInChat(created, mode);
+                                }}
+                              />
+                            </div>
+                          </CardContent>
+                        )
                       ) : viewMode === 'appointment-create' ? (
                         <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
                           <ChatAppointmentSchedulePanel
@@ -5916,12 +5980,19 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                                   ) : null
                                 ) : null}
                               </div>
-                              <button
-                                type="button"
+                              <div
+                                role="button"
+                                tabIndex={0}
                                 className={cn(
                                   'min-w-0 flex-1 cursor-pointer rounded-md text-left outline-none transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-ring/40',
                                 )}
                                 onClick={toggleContactProfilePanel}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' || e.key === ' ') {
+                                    e.preventDefault();
+                                    toggleContactProfilePanel();
+                                  }
+                                }}
                                 aria-expanded={contactProfileOpen}
                                 aria-controls="chat-contact-profile-panel"
                                 title="Abrir ou fechar perfil do contato"
@@ -6061,7 +6132,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                                 ) : null}
                             </div>
                           </div>
-                              </button>
+                              </div>
                             </div>
                           </div>
                           <div className="flex shrink-0 items-center justify-end gap-1 md:gap-2">

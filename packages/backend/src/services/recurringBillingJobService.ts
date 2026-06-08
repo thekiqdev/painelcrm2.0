@@ -1824,6 +1824,7 @@ async function processOneRenewalJob(
     usersForRenewal,
     contracted_plan_price_cents: subscription.contracted_plan_price_cents,
     contracted_price_per_user_cents: subscription.contracted_price_per_user_cents,
+    tenantId: subscription.tenant_id,
   });
   const amountCents = renewalPricing.amountCents;
 
@@ -1891,6 +1892,15 @@ async function processOneRenewalJob(
   }
 
   schedulePublishPlatformBillingChargeCreated(billing.id);
+
+  // lifecycle shadow observation (future — renewal route Sprint I+)
+  void import('../lifecycle/lifecycleBillingObserver.js').then(({ observeFutureBillingLifecycleEvent }) =>
+    observeFutureBillingLifecycleEvent(
+      'subscription.renewed',
+      { tenantId: subscription.tenant_id, subscriptionId: subscription.id, invoiceId: billing.id },
+      { source: 'recurring_renewal_invoice' },
+    ),
+  );
 
   await advanceSubscriptionAfterCompletedCycle(client, {
     jobId: job.id,

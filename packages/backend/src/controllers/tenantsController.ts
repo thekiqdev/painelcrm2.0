@@ -14,6 +14,8 @@ import {
 } from '../services/platformNotifications/platformBusinessNotifications.js';
 import { yyyyMmDdFromDbDateValue } from '../utils/calendarDateBr.js';
 import { z } from 'zod';
+import { deleteTenantWithDependencies } from '../services/tenantDeletionService.js';
+import { SUPERADMIN_OPS_KANBAN_TENANT_ID } from '../config/superadminOpsKanban.js';
 
 const createTenantSchema = z.object({
   name: z.string().min(1),
@@ -280,22 +282,29 @@ export async function updateTenant(req: AuthRequest, res: Response): Promise<voi
 export async function deleteTenant(req: AuthRequest, res: Response): Promise<void> {
   try {
     const { id } = req.params;
+    if (id === SUPERADMIN_OPS_KANBAN_TENANT_ID) {
+      res.status(400).json({
+        error: 'Não é permitido excluir o tenant operacional do Super Admin (Kanban Ops).',
+      });
+      return;
+    }
     const row = await pool.query('SELECT id, name FROM tenants WHERE id = $1', [id]);
     if (row.rows.length === 0) {
       res.status(404).json({ error: 'Cliente não encontrado' });
       return;
     }
-    // Excluir usuários do tenant antes do tenant para evitar ON DELETE SET NULL em users:
-    // senão, usuários com mesmo e-mail do super admin violariam users_email_null_tenant_key.
-    await pool.query('DELETE FROM users WHERE tenant_id = $1', [id]);
-    await pool.query('DELETE FROM tenants WHERE id = $1', [id]);
+    await deleteTenantWithDependencies(id);
     if (req.user?.id) {
       await logSuperAdminAction(req.user.id, 'tenant.deleted', 'tenant', id, { name: row.rows[0].name });
     }
     res.status(204).send();
   } catch (error: any) {
     console.error('deleteTenant error:', error);
-    res.status(500).json({ error: error.message || 'Internal server error' });
+    const code = error?.code === '23503' ? 409 : 500;
+    res.status(code).json({
+      error: error.message || 'Internal server error',
+      code: error?.code,
+    });
   }
 }
 

@@ -44,6 +44,10 @@ type Props = {
   paying: boolean;
   /** Mesmo fallback da página pública de faturas (link hosted do provedor). */
   hostedCheckoutUrl?: string | null;
+  /** Exibe link alternativo para checkout hosted do provedor (desligado no /checkout). */
+  showHostedCheckoutFallback?: boolean;
+  /** Destaque no CTA principal (ex.: checkout de plano). */
+  emphasizeSubmit?: boolean;
   /** Prefixo opcional para ids de campo (evita colisão se houver dois formulários na página). */
   fieldIdPrefix?: string;
 };
@@ -57,6 +61,8 @@ export function InlineCreditCardPaymentForm({
   onSubmit,
   paying,
   hostedCheckoutUrl,
+  showHostedCheckoutFallback = true,
+  emphasizeSubmit = false,
   fieldIdPrefix = '',
 }: Props) {
   const p = fieldIdPrefix;
@@ -259,7 +265,16 @@ export function InlineCreditCardPaymentForm({
           </div>
         </div>
       </div>
-      <Button type="submit" className="w-full sm:w-auto" disabled={paying}>
+      <Button
+        type="submit"
+        size={emphasizeSubmit ? 'lg' : 'default'}
+        className={
+          emphasizeSubmit
+            ? 'w-full text-base font-semibold shadow-md'
+            : 'w-full sm:w-auto'
+        }
+        disabled={paying}
+      >
         {paying ? (
           <>
             <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -272,7 +287,7 @@ export function InlineCreditCardPaymentForm({
           </>
         )}
       </Button>
-      {hostedCheckoutUrl ? (
+      {showHostedCheckoutFallback && hostedCheckoutUrl ? (
         <p className="text-xs text-muted-foreground">
           Alternativa:{' '}
           <a

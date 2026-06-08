@@ -188,6 +188,28 @@ export async function createPlatformSupportTicket(params: {
        VALUES ($1, 'customer', $2, $3)`,
       [ticket.id, params.userId, params.message],
     );
+    try {
+      const { publishDomainEvent } = await import('../../outbox/publishDomainEvent.js');
+      const { buildDomainEventIdempotencyKey } = await import('../../outbox/idempotency.js');
+      await publishDomainEvent(
+        {
+          eventKey: 'ticket.created',
+          aggregateType: 'ticket',
+          aggregateId: ticket.id,
+          tenantId: params.tenantId,
+          payload: {
+            ticket_id: ticket.id,
+            subject: params.subject,
+            category: params.category,
+            priority: params.priority,
+          },
+          idempotencyKey: buildDomainEventIdempotencyKey('ticket.created', ticket.id),
+        },
+        { client },
+      );
+    } catch (outboxErr) {
+      console.error('[outbox] ticket.created shadow publish failed (non-fatal):', outboxErr);
+    }
     await client.query('COMMIT');
     return ticket;
   } catch (e) {

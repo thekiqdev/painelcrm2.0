@@ -3,6 +3,8 @@
  * Workers one-shot devem chamar flushBillingNotificationSideEffects() antes de exit.
  */
 
+import { runDetachedFromRequestDb } from '../../utils/db.js';
+
 const pending = new Set<Promise<void>>();
 
 export type BillingNotificationFlushResult = {
@@ -19,10 +21,10 @@ export function scheduleBillingNotificationSideEffect(
 ): void {
   const run = async (): Promise<void> => {
     try {
-      await fn();
+      await runDetachedFromRequestDb(fn);
     } catch (err) {
       console.error(`[notifications-engine/business] ${label}`, err);
-      throw err;
+      // Fire-and-forget: nunca propagar — evita uncaught rejection e crash do processo.
     }
   };
   const tracked = run().finally(() => {

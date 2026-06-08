@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { chatService, type ChatConversation } from '@/services/chat';
-import { chatKanbanService } from '@/services/chatKanban';
+import { useKanbanService } from '@/components/chat-kanban/KanbanServiceContext';
 import { setStoredProposalPublicUrl } from '@/utils/proposalPublicLinkSession';
 import type { ChatKanbanColumn } from '@/services/chatKanban';
 import { ChatKanbanConversationPicker } from '@/components/chat-kanban/ChatKanbanConversationPicker';
@@ -34,6 +34,7 @@ export function ChatKanbanAddCardDialog({
   excludedConversationIds,
   onCreated,
 }: Props) {
+  const kanban = useKanbanService();
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [loading, setLoading] = useState(false);
@@ -105,7 +106,7 @@ export function ChatKanbanAddCardDialog({
 
       for (const conversationId of ids) {
         try {
-          const created = await chatKanbanService.createCard(boardId, {
+          const created = await kanban.createCard(boardId, {
             conversation_id: conversationId,
             column_id: column.id,
           });

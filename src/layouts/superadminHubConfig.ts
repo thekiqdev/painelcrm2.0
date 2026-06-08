@@ -214,6 +214,13 @@ export const superAdminHubAreas: SuperAdminHubAreaDef[] = [
       "Ferramentas operacionais restritas: scripts de manutenção controlados e pré-aprovados no backend.",
     cards: [
       {
+        to: "/superadmin/avancado/feature-flags",
+        title: "Feature Flags",
+        description:
+          "Ativar/desativar, shadow mode e rollout percentual com refresh imediato do registry e trilha de auditoria.",
+        icon: Flag,
+      },
+      {
         to: "/superadmin/avancado/scripts",
         title: "Scripts de manutenção",
         description:

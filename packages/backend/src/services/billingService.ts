@@ -2,8 +2,15 @@
  * Serviço de cálculo e validação de cobrança (planos standard vs custom).
  * Usado por subscriptionService e pelo fluxo de compra de plano.
  */
+import { resolveTenantCommercialPrice } from '../commercial/tenantCommercialOverrideService.js';
+import type { TenantCommercialPriceContext } from '../commercial/tenantCommercialTypes.js';
 import { pool } from '../utils/db.js';
 import { effectiveCheckoutTrialDays } from '../utils/checkoutTrialPlan.js';
+
+export type CalculateInvoiceAmountOptions = {
+  tenantId?: string | null;
+  context?: TenantCommercialPriceContext;
+};
 
 export type BillingInterval = 'monthly' | 'quarterly' | 'semi_annual' | 'yearly';
 
@@ -145,7 +152,8 @@ export async function calculateSeatAddonProrata(
 export async function calculateInvoiceAmount(
   planId: string,
   billingInterval: BillingInterval,
-  usersCount?: number | null
+  usersCount?: number | null,
+  options?: CalculateInvoiceAmountOptions,
 ): Promise<number> {
   const planRow = await pool.query<{ plan_type: string; price_cents: number | null }>(
     'SELECT plan_type, price_cents FROM plans WHERE id = $1 AND is_active = true',
@@ -157,6 +165,7 @@ export async function calculateInvoiceAmount(
   const plan = planRow.rows[0];
   const planType = plan.plan_type ?? 'standard';
 
+  let catalogAmount: number;
   if (planType === 'custom') {
     const count = usersCount != null && usersCount > 0 ? usersCount : 1;
     const priceRow = await pool.query<{ price_per_user_cents: number }>(
@@ -169,10 +178,24 @@ export async function calculateInvoiceAmount(
       );
     }
     const pricePerUser = priceRow.rows[0].price_per_user_cents;
-    return Math.max(0, pricePerUser * count);
+    catalogAmount = Math.max(0, pricePerUser * count);
+  } else {
+    catalogAmount = Math.max(0, plan.price_cents ?? 0);
   }
 
-  return Math.max(0, plan.price_cents ?? 0);
+  const tenantId = options?.tenantId?.trim();
+  if (!tenantId) {
+    return catalogAmount;
+  }
+
+  const resolved = await resolveTenantCommercialPrice({
+    tenantId,
+    planId,
+    billingInterval,
+    catalogAmountCents: catalogAmount,
+    context: options?.context ?? 'checkout',
+  });
+  return resolved.finalAmountCents;
 }
 
 /** Origem do valor na renovação SaaS (Etapa 2 — snapshot vs catálogo). */
@@ -228,6 +251,8 @@ export interface CalculateSaasRenewalInvoiceAmountParams {
   usersForRenewal: number | null;
   contracted_plan_price_cents?: number | null;
   contracted_price_per_user_cents?: number | null;
+  /** Quando informado, aplica override comercial na renovação. */
+  tenantId?: string | null;
 }
 
 /**
@@ -249,8 +274,20 @@ export async function calculateSaasRenewalInvoiceAmount(
     params.contracted_price_per_user_cents
   );
   if (snap) {
+    let amountCents = snap.amountCents;
+    const tenantId = params.tenantId?.trim();
+    if (tenantId) {
+      const resolved = await resolveTenantCommercialPrice({
+        tenantId,
+        planId: params.planId,
+        billingInterval: params.billingInterval,
+        catalogAmountCents: amountCents,
+        context: 'renewal',
+      });
+      amountCents = resolved.finalAmountCents;
+    }
     return {
-      amountCents: snap.amountCents,
+      amountCents,
       priceSource: 'contracted_snapshot',
       planPriceSnapshotForInvoice: snap.planPriceSnapshotForInvoice,
     };
@@ -259,7 +296,10 @@ export async function calculateSaasRenewalInvoiceAmount(
   const amountCents = await calculateInvoiceAmount(
     params.planId,
     params.billingInterval,
-    params.usersForRenewal
+    params.usersForRenewal,
+    params.tenantId
+      ? { tenantId: params.tenantId, context: 'renewal' }
+      : undefined,
   );
   const planPriceSnapshotForInvoice =
     params.planType === 'custom'

@@ -10,6 +10,8 @@ import {
 import type { ChatKanbanBoard } from '@/services/chatKanban';
 
 type Props = {
+  title?: string;
+  description?: string;
   boards: ChatKanbanBoard[];
   selectedBoardId: string | null;
   onBoardChange: (boardId: string) => void;
@@ -25,6 +27,8 @@ type Props = {
 };
 
 export function ChatKanbanToolbar({
+  title,
+  description,
   boards,
   selectedBoardId,
   onBoardChange,
@@ -39,8 +43,10 @@ export function ChatKanbanToolbar({
   return (
     <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
       <div className="space-y-1">
-        <h1 className="text-2xl font-bold tracking-tight">Kanban de conversas</h1>
-        <p className="text-sm text-muted-foreground max-w-xl">Organize conversas do WhatsApp em colunas.</p>
+        <h1 className="text-2xl font-bold tracking-tight">{title ?? 'Kanban de conversas'}</h1>
+        <p className="text-sm text-muted-foreground max-w-xl">
+          {description ?? 'Organize conversas do WhatsApp em colunas.'}
+        </p>
       </div>
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
         <div className="w-full sm:w-[260px]">

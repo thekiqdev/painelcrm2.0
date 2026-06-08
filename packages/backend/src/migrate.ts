@@ -401,6 +401,22 @@ const order = [
   /** Campos PDF vinculados a contract_signers + template e-mail contract.sent */
   '251_contract_signature_fields_signer_id.sql',
   '252_contract_pdf_extra_pages_overlay.sql',
+  '253_platform_feature_flags_p0.sql',
+  '254_outbox_events_p0.sql',
+  '255_platform_worker_heartbeats_p0.sql',
+  '256_communication_messages_p0.sql',
+  '257_workflow_automation_p0.sql',
+  '258_acquisition_foundation_p0.sql',
+  '259_superadmin_ops_tenant_p0.sql',
+  '260_chat_kanban_operational_lead_cards.sql',
+  '261_platform_signup_entry_config.sql',
+  '262_acquisition_onboarding_sessions.sql',
+  '263_onboarding_wizard_foundation.sql',
+  '264_ops_kanban_canonical_board_guard.sql',
+  '265_ops_lifecycle_transitions.sql',
+  '266_ops_trial_recovery_columns.sql',
+  '267_tenant_commercial_overrides.sql',
+  '268_tenant_commercial_override_audit.sql',
   'create-admin-user.sql',
 ];
 

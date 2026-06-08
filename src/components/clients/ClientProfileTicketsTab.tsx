@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { Loader2, Ticket } from "lucide-react";
+import { Loader2, Ticket as TicketIcon } from "lucide-react";
 import { ticketsService } from "@/services/tickets";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -80,7 +80,7 @@ export function ClientProfileTicketsTab({ clientId }: Props) {
       <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1">
           <CardTitle className="flex items-center gap-2 text-lg">
-            <Ticket className="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden />
+            <TicketIcon className="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden />
             Chamados de suporte
           </CardTitle>
           <CardDescription>

@@ -1,4 +1,4 @@
-import { pool } from '../utils/db.js';
+import { pool, runDetachedFromRequestDb } from '../utils/db.js';
 import { createNotification, type NotificationType } from './notifications.js';
 import {
   publishInvoiceCreatedNotification,
@@ -192,8 +192,8 @@ export function notifyInvoicePaid(params: {
     invoiceId: params.invoiceId,
     preferredSenderUserId: params.preferredSenderUserId ?? null,
   });
-  void notifyInvoiceInApp(params.invoiceId, 'invoice_paid').catch((err) =>
-    console.error('[invoiceNotifications] notifyInvoicePaid:', err)
+  void runDetachedFromRequestDb(() => notifyInvoiceInApp(params.invoiceId, 'invoice_paid')).catch((err) =>
+    console.error('[invoiceNotifications] notifyInvoicePaid:', err),
   );
 }
 
@@ -214,9 +214,9 @@ export function notifyInvoiceOverdue(params: {
       preferredSenderUserId: params.preferredSenderUserId ?? null,
     });
   }
-  void notifyInvoiceInApp(params.invoiceId, 'invoice_overdue', { idempotencyDay: day }).catch((err) =>
-    console.error('[invoiceNotifications] notifyInvoiceOverdue:', err)
-  );
+  void runDetachedFromRequestDb(() =>
+    notifyInvoiceInApp(params.invoiceId, 'invoice_overdue', { idempotencyDay: day }),
+  ).catch((err) => console.error('[invoiceNotifications] notifyInvoiceOverdue:', err));
 }
 
 export function notifyInvoiceDueSoon(params: {
@@ -236,13 +236,13 @@ export function notifyInvoiceDueSoon(params: {
       preferredSenderUserId: params.preferredSenderUserId ?? null,
     });
   }
-  void notifyInvoiceInApp(params.invoiceId, 'invoice_due_soon', { idempotencyDay: day }).catch((err) =>
-    console.error('[invoiceNotifications] notifyInvoiceDueSoon:', err)
-  );
+  void runDetachedFromRequestDb(() =>
+    notifyInvoiceInApp(params.invoiceId, 'invoice_due_soon', { idempotencyDay: day }),
+  ).catch((err) => console.error('[invoiceNotifications] notifyInvoiceDueSoon:', err));
 }
 
 export function notifyInvoicePaymentFailed(invoiceId: string): void {
-  void notifyInvoiceInApp(invoiceId, 'payment_failed').catch((err) =>
-    console.error('[invoiceNotifications] notifyInvoicePaymentFailed:', err)
+  void runDetachedFromRequestDb(() => notifyInvoiceInApp(invoiceId, 'payment_failed')).catch((err) =>
+    console.error('[invoiceNotifications] notifyInvoicePaymentFailed:', err),
   );
 }

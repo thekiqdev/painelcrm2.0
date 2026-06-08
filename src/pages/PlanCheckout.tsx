@@ -2598,11 +2598,9 @@ export default function PlanCheckout() {
                 setForm={setPlanCardForm}
                 onSubmit={handlePlanPayWithCard}
                 paying={payingPlanCard}
-                hostedCheckoutUrl={result.invoice_url?.trim() || null}
+                emphasizeSubmit
+                showHostedCheckoutFallback={false}
               />
-              <Button className="w-full" onClick={() => (isCheckoutUpgrade ? navigate('/meu-plano') : navigate('/landing'))}>
-                Concluir depois
-              </Button>
             </div>
           )}
         </div>

@@ -29,10 +29,8 @@ import {
 } from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/utils';
 import { apiClient } from '@/integrations/api/client';
-import {
-  chatKanbanService,
-  type ChatKanbanBoardVisibilityMode,
-} from '@/services/chatKanban';
+import type { ChatKanbanBoardVisibilityMode } from '@/services/chatKanban';
+import { useKanbanService } from '@/components/chat-kanban/KanbanServiceContext';
 import { getMyTenantUsers, type TenantUser } from '@/services/tenantLimits';
 type TeamRow = { id: string; name: string };
 
@@ -46,6 +44,7 @@ type Props = {
 };
 
 export function ChatKanbanBoardSettingsSheet({ open, onOpenChange, boardId, onSaved, onDeleted }: Props) {
+  const kanban = useKanbanService();
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [name, setName] = useState('');
@@ -64,7 +63,7 @@ export function ChatKanbanBoardSettingsSheet({ open, onOpenChange, boardId, onSa
     setLoading(true);
     try {
       const [settings, users, teamsRes] = await Promise.all([
-        chatKanbanService.getBoardSettings(boardId),
+        kanban.getBoardSettings(boardId),
         getMyTenantUsers().catch(() => [] as TenantUser[]),
         apiClient.get<TeamRow[]>('/api/teams'),
       ]);
@@ -89,7 +88,7 @@ export function ChatKanbanBoardSettingsSheet({ open, onOpenChange, boardId, onSa
     } finally {
       setLoading(false);
     }
-  }, [boardId, onOpenChange]);
+  }, [boardId, onOpenChange, kanban]);
 
   useEffect(() => {
     if (!open || !boardId) return;
@@ -125,7 +124,7 @@ export function ChatKanbanBoardSettingsSheet({ open, onOpenChange, boardId, onSa
     try {
       const uids = [...userIds];
       const tids = [...teamIds];
-      await chatKanbanService.patchBoard(boardId, {
+      await kanban.patchBoard(boardId, {
         name: trimmed,
         description: description.trim() ? description.trim() : null,
         is_active: isActive,
@@ -147,8 +146,8 @@ export function ChatKanbanBoardSettingsSheet({ open, onOpenChange, boardId, onSa
     if (!boardId) return;
     setDeletingBoard(true);
     try {
-      await chatKanbanService.patchBoard(boardId, { is_active: false });
-      await chatKanbanService.deleteBoard(boardId);
+      await kanban.patchBoard(boardId, { is_active: false });
+      await kanban.deleteBoard(boardId);
       toast.success('Quadro eliminado');
       setDeleteDialogOpen(false);
       onOpenChange(false);

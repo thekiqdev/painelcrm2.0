@@ -6,7 +6,12 @@ Documentação **oficial de arquitetura** (planejamento e implementação futura
 
 | Documento | Descrição |
 |-----------|-----------|
+| **[`AI_INTEGRATION_ARCHITECTURE_AUDIT.md`](./AI_INTEGRATION_ARCHITECTURE_AUDIT.md)** | **Auditoria AS-IS do código real — pré-integração AI Platform (auth, domínios, APIs, eventos, pontos de extensão)** |
 | **[`IMPLEMENTATION_ROADMAP_AND_ROLLOUT_STRATEGY.md`](./IMPLEMENTATION_ROADMAP_AND_ROLLOUT_STRATEGY.md)** | **Ponte arquitetura → produção: fases 0–9, rollout, flags, coexistência, governança** |
+| **[`IMPLEMENTATION_P0_FOUNDATION_EXECUTION_PLAN.md`](./IMPLEMENTATION_P0_FOUNDATION_EXECUTION_PLAN.md)** | **Fase 2 implementação controlada — blueprint executável P0 (flags, outbox, workers, shadow, rollout)** |
+| **[`P0_IMPLEMENTATION_SPRINTS.md`](./P0_IMPLEMENTATION_SPRINTS.md)** | **Sprints 1–8: PRs, milestones, validação, rollout e critérios de aceite por onda** |
+| **[`sprint1/SPRINT1_IMPLEMENTATION_NOTES.md`](./sprint1/SPRINT1_IMPLEMENTATION_NOTES.md)** | **Sprint 1 implementado: featureFlagRegistry + correlation id** |
+| **[`sprint2/SPRINT2_IMPLEMENTATION_NOTES.md`](./sprint2/SPRINT2_IMPLEMENTATION_NOTES.md)** | **Sprint 2 implementado: outbox_events + publisher shadow + passive consumers** |
 | [`ARCHITECTURE_SYSTEM_CONTEXT_MAP.md`](./ARCHITECTURE_SYSTEM_CONTEXT_MAP.md) | Bounded contexts, eventos, ownership, fronteiras transacionais |
 | [`MASTER_PLAN_SIGNUP_TRIAL_ONBOARDING_CONVERSION.md`](./MASTER_PLAN_SIGNUP_TRIAL_ONBOARDING_CONVERSION.md) | Plano mestre: aquisição, trial, onboarding, communication platform, operação em escala (AS-IS/TO-BE detalhado) |
 
@@ -26,7 +31,7 @@ Documentação **oficial de arquitetura** (planejamento e implementação futura
 | [`automation/AUTOMATION_ORCHESTRATOR_ARCHITECTURE.md`](./automation/AUTOMATION_ORCHESTRATOR_ARCHITECTURE.md) | **Workflow engine, scheduling, retries, saga coordination** |
 | [`observability/`](./observability/) | Audit, correlation, dashboards, retenção |
 | [`runbooks/`](./runbooks/) | Playbooks operacionais (aquisição, comunicação) |
-| [`future/`](./future/) | IA, omnichannel, multi-produto, escalabilidade |
+| [`future/`](./future/) | IA, omnichannel, multi-produto, escalabilidade (ver também [`AI_INTEGRATION_ARCHITECTURE_AUDIT.md`](./AI_INTEGRATION_ARCHITECTURE_AUDIT.md)) |
 
 ## Documentação operacional (fora desta pasta)
 

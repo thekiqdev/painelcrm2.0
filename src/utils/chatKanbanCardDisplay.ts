@@ -31,17 +31,19 @@ export function pickerConversationPhoneLine(c: {
 export function kanbanCardTitle(card: ChatKanbanBoardCard): string {
   const d =
     card.conv_display_name?.trim() ||
+    card.op_lead_name?.trim() ||
     card.conv_profile_name?.trim() ||
     card.conv_contact_name?.trim() ||
+    card.op_lead_email?.trim() ||
     '';
   if (d) return d;
-  const p = card.conv_canonical_phone || card.conv_phone_number;
+  const p = card.conv_canonical_phone || card.conv_phone_number || card.op_lead_phone;
   if (p?.trim()) return p.trim();
-  return 'Contato';
+  return card.acquisition_lead_id ? 'Lead' : 'Contato';
 }
 
 export function kanbanCardPhoneLine(card: ChatKanbanBoardCard): string | null {
-  const raw = card.conv_canonical_phone || card.conv_phone_number;
+  const raw = card.conv_canonical_phone || card.conv_phone_number || card.op_lead_phone;
   if (!raw?.trim()) return null;
   const d = raw.replace(/\D/g, '');
   if (d.length >= 10 && d.length <= 11) return formatPhoneBrDigits(d);

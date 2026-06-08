@@ -9,7 +9,11 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const devPort = parseInt(env.VITE_DEV_PORT || "8080", 10);
   /** Destino real do backend em dev (não usar VITE_API_URL aqui — pode coincidir com a porta do Vite). */
-  const apiProxyTarget = (env.VITE_API_PROXY_TARGET || "http://127.0.0.1:3001").replace(/\/$/, "");
+  const apiPort = env.API_PORT || "3001";
+  const apiProxyTarget = (env.VITE_API_PROXY_TARGET || `http://127.0.0.1:${apiPort}`).replace(
+    /\/$/,
+    "",
+  );
   const analyze = process.env.ANALYZE === "1" || process.env.ANALYZE === "true";
 
   return {

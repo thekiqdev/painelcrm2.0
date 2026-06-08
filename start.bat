@@ -61,8 +61,10 @@ if exist "packages\backend\node_modules" if exist "node_modules" (
     echo.
 )
 
-REM Backend em nova janela
-echo [3/4] Abrindo Backend (http://localhost:3001)...
+REM Backend em nova janela (porta = API_PORT no .env da raiz, padrao 3001)
+set "API_PORT=3001"
+for /f "usebackq tokens=1,* delims==" %%a in (`powershell -NoProfile -Command "(Get-Content -LiteralPath '%~dp0.env' | Where-Object { $_ -match '^API_PORT=' } | Select-Object -Last 1) -replace '^API_PORT=','' -replace '\s',''"`) do set "API_PORT=%%a"
+echo [3/4] Abrindo Backend (http://localhost:%API_PORT%)...
 start "Backend - PainelCRM" cmd /k "cd /d "%~dp0packages\backend" && npm run dev"
 timeout /t 2 /nobreak >nul
 
@@ -85,15 +87,15 @@ start "Billing Worker - PainelCRM" powershell -NoExit -NoProfile -ExecutionPolic
 echo.
 echo === Pronto! ===
 echo.
-echo   Backend:  http://localhost:3001
-echo   Frontend: http://localhost:5173  ou  http://localhost:8080  (conforme .env / vite)
-echo   Health:   http://localhost:3001/health
+echo   Backend:  http://localhost:%API_PORT%
+echo   Frontend: http://localhost:8081  (VITE_DEV_PORT no .env)
+echo   Health:   http://localhost:%API_PORT%/health
 echo.
 echo   Recorrencia: janelas "Billing Scheduler" e "Billing Worker"
 echo.
 echo Feche as janelas "Backend", "Frontend", "Billing Scheduler" e "Billing Worker" para parar.
 echo.
-echo Se aparecer "porta 3001 em uso": execute .\kill-port-3001.bat (PowerShell) e nao inicie
+echo Se a porta %API_PORT% estiver em uso, encerre o processo antigo antes de subir de novo.
 echo o backend em dois lugares (apenas esta janela OU apenas um terminal).
 echo.
 pause

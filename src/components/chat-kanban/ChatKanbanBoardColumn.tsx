@@ -34,7 +34,8 @@ type Props = {
   onCardClick: (card: ChatKanbanBoardCard) => void;
   /** Remove só o cartão desta coluna (API delete do kanban card). */
   onRemoveCard?: (card: ChatKanbanBoardCard) => void;
-  onAddCard: () => void;
+  /** No modo operacional (Super Admin), não existe “adicionar conversa”. */
+  onAddCard?: (() => void) | null;
   onConfigureColumn: (column: ChatKanbanColumn) => void;
   /** Drop nativo de conversa (chat / flutuante) → coluna. */
   nativeDrop?: ChatKanbanColumnNativeDropProps | null;
@@ -197,17 +198,33 @@ export function ChatKanbanBoardColumn({
               {orderedCards.length === 0 ? (
                 <div className="flex min-h-[220px] flex-1 flex-col justify-center space-y-2 rounded-md border border-dashed border-border/50 bg-background/40 px-3 py-6 text-center">
                   <p className="text-xs text-muted-foreground">Nenhum cartão nesta etapa.</p>
-                  <p className="text-[10px] text-muted-foreground/90">
-                    Arraste uma conversa do chat, de outra coluna ou adicione pelo botão abaixo.
-                  </p>
-                  <Button type="button" variant="secondary" size="sm" className="w-full gap-1" onClick={onAddCard}>
-                    <Plus className="h-3.5 w-3.5" />
-                    Adicionar conversa
-                  </Button>
+                  {onAddCard ? (
+                    <>
+                      <p className="text-[10px] text-muted-foreground/90">
+                        Arraste uma conversa do chat, de outra coluna ou adicione pelo botão abaixo.
+                      </p>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        className="w-full gap-1"
+                        onClick={onAddCard}
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        Adicionar conversa
+                      </Button>
+                    </>
+                  ) : (
+                    <p className="text-[10px] text-muted-foreground/90">
+                      Esta etapa recebe cartões operacionais automaticamente (ex.: lead criado, checkout abandonado).
+                    </p>
+                  )}
                 </div>
               ) : (
                 orderedCards.map((c) => {
-                  const pulseUntil = pulseUnreadUntilByConversationId?.[c.conversation_id] ?? 0;
+                  const pulseUntil = c.conversation_id
+                    ? (pulseUnreadUntilByConversationId?.[c.conversation_id] ?? 0)
+                    : 0;
                   const pulseUnreadHighlight = pulseUntil > Date.now();
                   return (
                     <ChatKanbanSortableCard
@@ -224,12 +241,20 @@ export function ChatKanbanBoardColumn({
             </div>
           </SortableContext>
         </ScrollArea>
-        <div className="p-2 border-t border-border/40 bg-background/70 shrink-0">
-          <Button type="button" variant="outline" size="sm" className="w-full gap-1 h-8 text-xs" onClick={onAddCard}>
-            <Plus className="h-3.5 w-3.5" />
-            Adicionar conversa
-          </Button>
-        </div>
+        {onAddCard ? (
+          <div className="p-2 border-t border-border/40 bg-background/70 shrink-0">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="w-full gap-1 h-8 text-xs"
+              onClick={onAddCard}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Adicionar conversa
+            </Button>
+          </div>
+        ) : null}
       </CardContent>
     </div>
   );

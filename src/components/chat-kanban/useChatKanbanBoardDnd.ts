@@ -13,7 +13,8 @@ import {
 } from '@dnd-kit/core';
 import { arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { toast } from '@/components/ui/sonner';
-import { chatKanbanService, type ChatKanbanBoardCard, type ChatKanbanColumn } from '@/services/chatKanban';
+import type { ChatKanbanBoardCard, ChatKanbanColumn } from '@/services/chatKanban';
+import { useKanbanService } from '@/components/chat-kanban/KanbanServiceContext';
 import { setStoredProposalPublicUrl } from '@/utils/proposalPublicLinkSession';
 import { computeKanbanInsertPosition } from '@/utils/kanbanFractionalPosition';
 import { KANBAN_DROP_PREFIX } from '@/components/chat-kanban/kanbanDndIds';
@@ -101,6 +102,7 @@ export function useChatKanbanBoardDnd({
   requestMoveConfirmation,
   onCardSynced,
 }: Params) {
+  const kanban = useKanbanService();
   const [dndItems, setDndItems] = useState<Record<string, string[]>>({});
   const [activeId, setActiveId] = useState<string | null>(null);
 
@@ -286,7 +288,7 @@ export function useChatKanbanBoardDnd({
       isDraggingRef.current = false;
 
       try {
-        const updated = await chatKanbanService.patchCard(activeIdStr, {
+        const updated = await kanban.patchCard(activeIdStr, {
           column_id: targetCol,
           position: newPos,
           ...(moveReason ? { move_reason: moveReason } : {}),

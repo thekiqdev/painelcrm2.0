@@ -14,8 +14,10 @@ import {
 import { useTenantDetail } from '@/contexts/TenantDetailContext';
 import { apiClient } from '@/integrations/api/client';
 import { toast } from '@/components/ui/sonner';
-import { UserCog, LogIn } from 'lucide-react';
+import { UserCog, LogIn, Pencil, KeyRound } from 'lucide-react';
 import { useSuperadminImpersonation } from '@/hooks/useSuperadminImpersonation';
+import { SuperAdminEditTenantUserDialog } from '@/pages/superadmin/SuperAdminEditTenantUserDialog';
+import { SuperAdminResetTenantUserPasswordDialog } from '@/pages/superadmin/SuperAdminResetTenantUserPasswordDialog';
 
 interface TenantUser {
   id: string;
@@ -58,6 +60,8 @@ export default function SuperAdminClientUsuarios() {
   const { tenant } = useTenantDetail();
   const [users, setUsers] = useState<TenantUser[]>([]);
   const [loading, setLoading] = useState(true);
+  const [editUserId, setEditUserId] = useState<string | null>(null);
+  const [resetUserId, setResetUserId] = useState<string | null>(null);
   const { openAsUser, impersonatingUserId } = useSuperadminImpersonation();
 
   const load = useCallback(async () => {
@@ -79,7 +83,9 @@ export default function SuperAdminClientUsuarios() {
     <div className="space-y-6">
       <div>
         <h2 className="text-lg font-semibold">Usuários</h2>
-        <p className="text-sm text-muted-foreground">Lista de usuários vinculados à empresa. Use &quot;Acessar como&quot; para abrir o painel no lugar do usuário.</p>
+        <p className="text-sm text-muted-foreground">
+          Gerencie usuários da empresa: editar dados, redefinir senha ou acessar o painel como o usuário.
+        </p>
       </div>
 
       <Card>
@@ -124,15 +130,33 @@ export default function SuperAdminClientUsuarios() {
                       </TableCell>
                       <TableCell className="text-right">
                         {canImpersonate ? (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => openAsUser(u.id)}
-                            disabled={!!impersonatingUserId}
-                          >
-                            <LogIn className="mr-2 h-4 w-4" />
-                            {impersonatingUserId === u.id ? 'Abrindo...' : 'Acessar como'}
-                          </Button>
+                          <div className="flex flex-col items-end gap-1.5 sm:flex-row sm:flex-wrap sm:justify-end">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setEditUserId(u.id)}
+                            >
+                              <Pencil className="mr-2 h-4 w-4" />
+                              Editar
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setResetUserId(u.id)}
+                            >
+                              <KeyRound className="mr-2 h-4 w-4" />
+                              Alterar senha
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => openAsUser(u.id)}
+                              disabled={!!impersonatingUserId}
+                            >
+                              <LogIn className="mr-2 h-4 w-4" />
+                              {impersonatingUserId === u.id ? 'Abrindo...' : 'Acessar como'}
+                            </Button>
+                          </div>
                         ) : (
                           <span className="text-xs text-muted-foreground">Super Admin</span>
                         )}
@@ -145,6 +169,25 @@ export default function SuperAdminClientUsuarios() {
           )}
         </CardContent>
       </Card>
+
+      {id ? (
+        <>
+          <SuperAdminEditTenantUserDialog
+            open={!!editUserId}
+            onOpenChange={(open) => !open && setEditUserId(null)}
+            tenantId={id}
+            userId={editUserId}
+            onSaved={() => void load()}
+          />
+          <SuperAdminResetTenantUserPasswordDialog
+            open={!!resetUserId}
+            onOpenChange={(open) => !open && setResetUserId(null)}
+            tenantId={id}
+            userId={resetUserId}
+            userLabel={users.find((u) => u.id === resetUserId)?.email}
+          />
+        </>
+      ) : null}
     </div>
   );
 }

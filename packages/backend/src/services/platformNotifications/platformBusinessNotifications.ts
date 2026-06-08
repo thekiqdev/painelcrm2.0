@@ -15,6 +15,10 @@ import {
   resolveRecipientWhatsapp,
   type TenantAdminNotifyRow,
 } from './platformTenantAdminForNotify.js';
+import {
+  isProvisionalOperationalName,
+  isProvisionalOperationalSlug,
+} from '../../acquisition/tenantOperationalSlug.js';
 
 export type { TenantAdminNotifyRow } from './platformTenantAdminForNotify.js';
 export { loadPrimaryTenantAdminForNotify } from './platformTenantAdminForNotify.js';
@@ -56,7 +60,31 @@ async function loadTenantTrialEndsAtIso(tenantId: string): Promise<string | null
   return r.rows[0]?.t ?? null;
 }
 
+/** Nome/slug oficiais lidos do banco no momento do envio (P0-F.1). */
+async function loadOfficialTenantIdentityForNotify(
+  tenantId: string,
+): Promise<{ name: string; slug: string } | null> {
+  const identity = await pool.query<{ name: string; slug: string }>(
+    `SELECT name, slug FROM tenants WHERE id = $1::uuid LIMIT 1`,
+    [tenantId],
+  );
+  const row = identity.rows[0];
+  if (!row || isProvisionalOperationalSlug(row.slug) || isProvisionalOperationalName(row.name)) {
+    return null;
+  }
+  return { name: row.name.trim(), slug: row.slug.trim() };
+}
+
 export async function publishPlatformAccountCreated(tenantId: string): Promise<void> {
+  const official = await loadOfficialTenantIdentityForNotify(tenantId);
+  if (!official) {
+    pnLogWarn('platform_business_defer_account_created', {
+      tenant_id: tenantId,
+      event_key: 'platform.account.created',
+    });
+    return;
+  }
+
   const admin = await loadPrimaryTenantAdminForNotify(pool, tenantId);
   if (!admin) {
     pnLogWarn('platform_business_skip_no_admin', { tenant_id: tenantId, event_key: 'platform.account.created' });
@@ -72,7 +100,7 @@ export async function publishPlatformAccountCreated(tenantId: string): Promise<v
     mergeContext: {
       'platform.name': platformPublicName(),
       'platform.support_link': buildPlatformSupportLink(),
-      'tenant.name': admin.tenant_name,
+      'tenant.name': official.name,
       'tenant.admin_name': adminDisplayName(admin),
       'tenant.admin_email': admin.email ?? '',
       'tenant.admin_whatsapp': resolveRecipientWhatsapp(admin) ?? '',
@@ -237,6 +265,15 @@ export async function publishPlatformPlanActivated(params: { tenantId: string; b
 }
 
 export async function publishPlatformTrialStarted(tenantId: string): Promise<void> {
+  const official = await loadOfficialTenantIdentityForNotify(tenantId);
+  if (!official) {
+    pnLogWarn('platform_business_defer_trial_started', {
+      tenant_id: tenantId,
+      event_key: 'platform.trial.started',
+    });
+    return;
+  }
+
   const endsRaw = await loadTenantTrialEndsAtIso(tenantId);
   if (!endsRaw) {
     pnLogWarn('platform_trial_started_skip', { tenant_id: tenantId, reason: 'no_trial_ends_at' });
@@ -258,7 +295,7 @@ export async function publishPlatformTrialStarted(tenantId: string): Promise<voi
     mergeContext: {
       'platform.name': platformPublicName(),
       'platform.support_link': buildPlatformSupportLink(),
-      'tenant.name': admin.tenant_name,
+      'tenant.name': official.name,
       'tenant.admin_name': adminDisplayName(admin),
       'trial.ends_at': formatDateBr(endsRaw),
       'auth.login_link': `${fe}/login`,
@@ -368,6 +405,16 @@ export function schedulePublishPlatformPlanActivated(params: { tenantId: string;
 }
 
 export function schedulePublishPlatformTrialStarted(tenantId: string): void {
+  // lifecycle shadow observation
+  void import('../../lifecycle/lifecycleBillingObserver.js')
+    .then(({ observeBillingLifecycleEventWithKanbanActual }) =>
+      observeBillingLifecycleEventWithKanbanActual('trial.started', { tenantId }, 'platform.trial.started'),
+    )
+    .catch((e) => {
+      const message = e instanceof Error ? e.message : String(e);
+      const stack = e instanceof Error ? e.stack : undefined;
+      console.error('[lifecycle_billing_observe_import_error]', { message, stack });
+    });
   setImmediate(() => {
     void publishPlatformTrialStarted(tenantId).catch((e) =>
       console.error('[platform-notifications/business] trial.started', e),

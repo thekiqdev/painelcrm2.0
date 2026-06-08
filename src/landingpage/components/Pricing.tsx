@@ -327,16 +327,28 @@ const Pricing = () => {
                       billingInterval: INTERVALS[intervalIndex[plan.id] ?? 0]?.key ?? "monthly",
                       usersCount: usersCount[plan.id] ?? 1,
                     };
-                    if (import.meta.env.VITE_LANDING_STANDALONE === "1") {
-                      try {
-                        sessionStorage.setItem(LANDING_CHECKOUT_PREFILL_KEY, JSON.stringify(checkoutState));
-                      } catch {
-                        /* ignore */
+                    void (async () => {
+                      const { buildSignupUrl, loadSignupEntryConfig } = await import("@/lib/signupEntry");
+                      const cfg = await loadSignupEntryConfig();
+                      const target = buildSignupUrl(cfg, { planId: plan.id });
+                      if (import.meta.env.VITE_LANDING_STANDALONE === "1") {
+                        if (target === "/checkout" || target.startsWith("/checkout")) {
+                          try {
+                            sessionStorage.setItem(LANDING_CHECKOUT_PREFILL_KEY, JSON.stringify(checkoutState));
+                          } catch {
+                            /* ignore */
+                          }
+                        }
+                        window.location.assign(target);
+                        return;
                       }
-                      window.location.assign("/checkout");
-                      return;
-                    }
-                    navigate("/checkout", { state: checkoutState });
+                      if (target.startsWith("/cadastro")) {
+                        navigate(target);
+                      } else {
+                        navigate(target, { state: checkoutState });
+                      }
+                    })();
+                    return;
                   }}
                 >
                   Contratar

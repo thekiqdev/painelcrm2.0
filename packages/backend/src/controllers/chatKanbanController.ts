@@ -27,6 +27,18 @@ import {
   type KanbanDestColumnPostUpdateResult,
 } from '../services/kanbanInternalCardColumnPipeline.js';
 import { runDeferredKanbanEntryAutomationsAfterCommit } from '../services/chatKanbanAutomationService.js';
+import { queryEnrichedKanbanCardById, queryEnrichedKanbanCards } from '../services/kanbanCardEnrichmentQuery.js';
+import { SUPERADMIN_OPS_KANBAN_TENANT_ID } from '../config/superadminOpsKanban.js';
+import {
+  isCheckoutAbandonedColumnName,
+  runOpsCheckoutAbandonedAutomation,
+} from '../services/superadminOpsColumnAutomationService.js';
+import {
+  isOpsAcquisitionLeadCard,
+  resolveKanbanAutomationContext,
+} from '../services/kanbanAutomationContext.js';
+import { executeOpsLeadColumnAutomationFoundation } from '../services/kanbanOpsAutomationFoundation.js';
+import { requireCorrelationId } from '../context/requestContext.js';
 import {
   cancelAllPendingScheduledMovesFromColumn,
   cancelPendingScheduledMovesForCardColumn,
@@ -280,6 +292,13 @@ async function loadCard(tenantId: string, cardId: string) {
   return r.rows[0] ?? null;
 }
 
+function isOperationalAcquisitionLeadCard(
+  tenantId: string,
+  card: Record<string, unknown>,
+): boolean {
+  return isOpsAcquisitionLeadCard(tenantId, card);
+}
+
 let chatKanbanLeadIdColumnPromise: Promise<boolean> | null = null;
 async function hasChatKanbanLeadIdColumn(): Promise<boolean> {
   if (!chatKanbanLeadIdColumnPromise) {
@@ -369,71 +388,8 @@ function finalizeKanbanEnrichedCardRow(row: Record<string, unknown>): Record<str
 /** Mesma projeção que `listCards`, para um cartão (resposta de PATCH com dados de conversa atualizados). */
 async function loadEnrichedKanbanCard(tenantId: string, cardId: string) {
   const av = await kanbanConversationAvatarResolutionFragments(2);
-  const q = `
- SELECT
-        kc.id,
-        kc.board_id,
-        kc.column_id,
-        kc.tenant_id,
-        kc.conversation_id,
-        kc.position,
-        kc.metadata,
-        kc.archived_at,
-        kc.created_by_user_id,
-        kc.updated_by_user_id,
-        kc.created_at,
-        kc.updated_at,
-        c.display_name AS conv_display_name,
-        c.contact_name AS conv_contact_name,
-        c.profile_name AS conv_profile_name,
-        c.phone_number AS conv_phone_number,
-        c.canonical_phone AS conv_canonical_phone,
-        c.last_message_preview AS conv_last_message_preview,
-        c.last_message_at AS conv_last_message_at,
-        COALESCE(c.unread_count, 0)::int AS conv_unread_count,
-        c.client_id AS conv_client_id,
-        c.lead_id AS conv_lead_id,
-        ${av.resolverSelect}
-        c.attendance_status AS conv_attendance_status,
-        c.assigned_to_user_id AS conv_assigned_to_user_id,
-        c.assigned_team_id AS conv_assigned_team_id,
-        c.queue_id AS conv_queue_id,
-        c.metadata AS conv_metadata,
-        COALESCE(
-          NULLIF(TRIM(COALESCE(pf.first_name, '') || ' ' || COALESCE(pf.last_name, '')), ''),
-          assignee.email
-        ) AS conv_assignee_display,
-        t_team.name AS conv_assigned_team_name,
-        CASE
-          WHEN c.client_id IS NOT NULL THEN 'client_linked'
-          WHEN c.lead_id IS NOT NULL THEN 'lead_linked'
-          WHEN COALESCE((c.metadata->>'link_confidence'), '') = 'review' THEN 'review_required'
-          ELSE 'unlinked'
-        END AS conv_link_state,
-        proposal_agg.proposal_pending_total,
-        proposal_agg.proposal_accepted_total
-      FROM chat_kanban_cards kc
-      INNER JOIN chat_conversations c ON c.id = kc.conversation_id
-      ${av.joins}
-      LEFT JOIN users assignee ON assignee.id = c.assigned_to_user_id
-      LEFT JOIN profiles pf ON pf.id = assignee.id
-      LEFT JOIN teams t_team ON t_team.id = c.assigned_team_id
-      LEFT JOIN LATERAL (
-        SELECT
-          COALESCE(SUM(CASE WHEN p.status = 'sent' THEN p.amount::numeric ELSE 0 END), 0)::double precision AS proposal_pending_total,
-          COALESCE(SUM(CASE WHEN p.status IN ('accepted', 'invoiced') THEN p.amount::numeric ELSE 0 END), 0)::double precision AS proposal_accepted_total
-        FROM proposals p
-        INNER JOIN users pu ON pu.id = p.user_id AND pu.tenant_id = $2
-        WHERE
-          (c.client_id IS NOT NULL AND p.client_id = c.client_id)
-          OR (c.client_id IS NULL AND c.lead_id IS NOT NULL AND p.lead_id = c.lead_id)
-      ) proposal_agg ON TRUE
-      WHERE kc.id = $1 AND kc.tenant_id = $2
-      LIMIT 1
-    `;
-  const r = await pool.query(q, [cardId, tenantId]);
-  const row = r.rows[0];
-  return row ? finalizeKanbanEnrichedCardRow(row as Record<string, unknown>) : null;
+  const row = await queryEnrichedKanbanCardById(cardId, tenantId, av);
+  return row ? finalizeKanbanEnrichedCardRow(row) : null;
 }
 
 /** Próxima position na coluna (fractional indexing; novos cards ao fim). */
@@ -1273,71 +1229,8 @@ export async function listCards(req: AuthRequest, res: Response): Promise<void> 
     const includeArchived = String(req.query.includeArchived || '') === 'true' || String(req.query.includeArchived || '') === '1';
     const archivedClause = includeArchived ? '' : 'AND kc.archived_at IS NULL';
     const av = await kanbanConversationAvatarResolutionFragments(2);
-    const q = `
-      SELECT
-        kc.id,
-        kc.board_id,
-        kc.column_id,
-        kc.tenant_id,
-        kc.conversation_id,
-        kc.position,
-        kc.metadata,
-        kc.archived_at,
-        kc.created_by_user_id,
-        kc.updated_by_user_id,
-        kc.created_at,
-        kc.updated_at,
-        c.display_name AS conv_display_name,
-        c.contact_name AS conv_contact_name,
-        c.profile_name AS conv_profile_name,
-        c.phone_number AS conv_phone_number,
-        c.canonical_phone AS conv_canonical_phone,
-        c.last_message_preview AS conv_last_message_preview,
-        c.last_message_at AS conv_last_message_at,
-        COALESCE(c.unread_count, 0)::int AS conv_unread_count,
-        c.client_id AS conv_client_id,
-        c.lead_id AS conv_lead_id,
-        ${av.resolverSelect}
-        c.attendance_status AS conv_attendance_status,
-        c.assigned_to_user_id AS conv_assigned_to_user_id,
-        c.assigned_team_id AS conv_assigned_team_id,
-        c.queue_id AS conv_queue_id,
-        c.metadata AS conv_metadata,
-        COALESCE(
-          NULLIF(TRIM(COALESCE(pf.first_name, '') || ' ' || COALESCE(pf.last_name, '')), ''),
-          assignee.email
-        ) AS conv_assignee_display,
-        t_team.name AS conv_assigned_team_name,
-        CASE
-          WHEN c.client_id IS NOT NULL THEN 'client_linked'
-          WHEN c.lead_id IS NOT NULL THEN 'lead_linked'
-          WHEN COALESCE((c.metadata->>'link_confidence'), '') = 'review' THEN 'review_required'
-          ELSE 'unlinked'
-        END AS conv_link_state,
-        proposal_agg.proposal_pending_total,
-        proposal_agg.proposal_accepted_total
-      FROM chat_kanban_cards kc
-      INNER JOIN chat_conversations c ON c.id = kc.conversation_id
-      ${av.joins}
-      LEFT JOIN users assignee ON assignee.id = c.assigned_to_user_id
-      LEFT JOIN profiles pf ON pf.id = assignee.id
-      LEFT JOIN teams t_team ON t_team.id = c.assigned_team_id
-      LEFT JOIN LATERAL (
-        SELECT
-          COALESCE(SUM(CASE WHEN p.status = 'sent' THEN p.amount::numeric ELSE 0 END), 0)::double precision AS proposal_pending_total,
-          COALESCE(SUM(CASE WHEN p.status IN ('accepted', 'invoiced') THEN p.amount::numeric ELSE 0 END), 0)::double precision AS proposal_accepted_total
-        FROM proposals p
-        INNER JOIN users pu ON pu.id = p.user_id AND pu.tenant_id = $2
-        WHERE
-          (c.client_id IS NOT NULL AND p.client_id = c.client_id)
-          OR (c.client_id IS NULL AND c.lead_id IS NOT NULL AND p.lead_id = c.lead_id)
-      ) proposal_agg ON TRUE
-      WHERE kc.board_id = $1 AND kc.tenant_id = $2
-      ${archivedClause}
-      ORDER BY kc.column_id, kc.position ASC, kc.created_at ASC
-    `;
-    const r = await pool.query(q, [boardId, tenantId]);
-    res.json(r.rows.map((row) => finalizeKanbanEnrichedCardRow(row as Record<string, unknown>)));
+    const rows = await queryEnrichedKanbanCards(boardId, tenantId, archivedClause, av);
+    res.json(rows.map((row) => finalizeKanbanEnrichedCardRow(row)));
   } catch (e: any) {
     console.error('[chatKanban] listCards', e);
     res.status(500).json({ error: e?.message || 'Erro' });
@@ -1551,6 +1444,7 @@ export async function patchCard(req: AuthRequest, res: Response): Promise<void> 
     }
     const board = await requireVisibleKanbanBoard(req, res, tenantId, String(card.board_id));
     if (!board) return;
+    const leadOnlyCard = isOperationalAcquisitionLeadCard(tenantId, card as Record<string, unknown>);
     let nextColumnId = card.column_id as string;
     if (body.column_id !== undefined) {
       const col = await loadColumn(tenantId, body.column_id);
@@ -1589,10 +1483,12 @@ export async function patchCard(req: AuthRequest, res: Response): Promise<void> 
         });
         return;
       }
-      const visible = await conversationVisibleToTenantUser(card.conversation_id as string, userId);
-      if (!visible) {
-        res.status(403).json({ error: 'Sem acesso à conversa deste cartão' });
-        return;
+      if (!leadOnlyCard) {
+        const visible = await conversationVisibleToTenantUser(card.conversation_id as string, userId);
+        if (!visible) {
+          res.status(403).json({ error: 'Sem acesso à conversa deste cartão' });
+          return;
+        }
       }
     }
 
@@ -1633,7 +1529,7 @@ export async function patchCard(req: AuthRequest, res: Response): Promise<void> 
     let orgRulesApplied = false;
     let phase2Ctx: KanbanPhase2AutomationContext | null = null;
 
-    if (columnChanged && body.column_id && destColForRules) {
+    if (columnChanged && body.column_id && destColForRules && !leadOnlyCard) {
       const moveReason =
         typeof body.move_reason === 'string' && body.move_reason.trim()
           ? body.move_reason.trim().slice(0, 2000)
@@ -1697,7 +1593,7 @@ export async function patchCard(req: AuthRequest, res: Response): Promise<void> 
       params,
     );
 
-    if (columnChanged && destColForRules) {
+    if (columnChanged && destColForRules && !leadOnlyCard) {
       try {
         const postRes = await runKanbanDestColumnPostUpdateAutomations(client, {
           tenantId,
@@ -1737,13 +1633,60 @@ export async function patchCard(req: AuthRequest, res: Response): Promise<void> 
 
     await client.query('COMMIT');
 
-    if (postColumnUpdateResult?.deferredEntryAutomations?.length) {
+    if (postColumnUpdateResult?.deferredEntryAutomations?.length && !leadOnlyCard) {
       void runDeferredKanbanEntryAutomationsAfterCommit({
         tenantId,
         actorUserId: userId,
         conversationId: String(card.conversation_id),
         reasons: postColumnUpdateResult.deferredEntryAutomations,
       });
+    }
+
+    if (
+      columnChanged &&
+      destColForRules &&
+      leadOnlyCard &&
+      tenantId === SUPERADMIN_OPS_KANBAN_TENANT_ID
+    ) {
+      let correlationId: string;
+      try {
+        correlationId = requireCorrelationId();
+      } catch {
+        correlationId = `ops-kanban:${cardId}:${Date.now()}`;
+      }
+
+      void resolveKanbanAutomationContext({
+        tenantId,
+        actorUserId: userId,
+        card: card as Record<string, unknown>,
+        cardId,
+        destColumn: {
+          id: String(destColForRules.id),
+          name: String(destColForRules.name),
+          metadata: destColForRules.metadata,
+        },
+        boardId: String(board.id),
+        boardName: typeof board.name === 'string' ? board.name : null,
+        boardLinkedFunnelId: (board.linked_sales_funnel_id as string | null) ?? null,
+        correlationId,
+      }).then((automationCtx) => {
+        if (!automationCtx) return;
+        return executeOpsLeadColumnAutomationFoundation(automationCtx, {
+          boardLinkedFunnelId: (board.linked_sales_funnel_id as string | null) ?? null,
+        });
+      });
+
+      if (
+        isCheckoutAbandonedColumnName(String(destColForRules.name)) &&
+        card.acquisition_lead_id
+      ) {
+        void runOpsCheckoutAbandonedAutomation({
+          acquisitionLeadId: String(card.acquisition_lead_id),
+          correlationId,
+          cardId,
+          trigger: 'kanban_column_enter',
+        });
+      }
     }
 
     let kanbanAutoForResponse: KanbanAutoCreatedProposalPayload | undefined;
@@ -1770,7 +1713,7 @@ export async function patchCard(req: AuthRequest, res: Response): Promise<void> 
       }
     }
 
-    if (columnChanged && destColForRules) {
+    if (columnChanged && destColForRules && !leadOnlyCard) {
       const schedClient = await pool.connect();
       try {
         await beginKanbanTxWithRls(schedClient, tenantId, userId);

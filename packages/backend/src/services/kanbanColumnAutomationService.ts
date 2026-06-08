@@ -30,6 +30,10 @@ export type KanbanPhase2AutomationContext = {
   queueId: string | null;
   attendanceStatus: string | null;
   columnMetadata: unknown;
+  /** Sprint 3.1 — subject union (conversation default quando ausente). */
+  subjectKind?: 'conversation' | 'acquisition_lead';
+  acquisitionLeadId?: string | null;
+  correlationId?: string;
 };
 
 async function insertAutomationAudit(
@@ -2378,7 +2382,13 @@ async function runKanbanWhatsappModelSequence(
 
 export async function runKanbanPhase2Automations(
   ctx: KanbanPhase2AutomationContext,
-): Promise<{ attempted: boolean }> {
+): Promise<{ attempted: boolean; foundation?: boolean }> {
+  const subjectKind = ctx.subjectKind ?? 'conversation';
+
+  if (subjectKind === 'acquisition_lead') {
+    return runKanbanPhase2AutomationsFoundation(ctx);
+  }
+
   const parsed = parseKanbanPhase2(ctx.columnMetadata);
   if (parsed.version !== 1) return { attempted: false };
   const shouldNotifyOperator = parsed.notifications.notify_operator;
@@ -2461,4 +2471,67 @@ export async function runKanbanPhase2Automations(
     });
   }
   return { attempted: true };
+}
+
+function logKanbanPhase2Foundation(ctx: KanbanPhase2AutomationContext, extra: Record<string, unknown>): void {
+  console.info('[kanban_phase2_foundation]', {
+    subject_kind: 'acquisition_lead',
+    column_id: ctx.columnId,
+    column_name: ctx.columnName,
+    card_id: ctx.cardId,
+    acquisition_lead_id: ctx.acquisitionLeadId ?? null,
+    correlation_id: ctx.correlationId ?? null,
+    tenant_id: ctx.tenantId,
+    ...extra,
+  });
+}
+
+/**
+ * Sprint 3.1 — acquisition lead: atravessa phase2 sem side effects (mensagem, webhook, notify).
+ */
+async function runKanbanPhase2AutomationsFoundation(
+  ctx: KanbanPhase2AutomationContext,
+): Promise<{ attempted: boolean; foundation: true }> {
+  const parsed = parseKanbanPhase2(ctx.columnMetadata);
+  const meta =
+    ctx.columnMetadata && typeof ctx.columnMetadata === 'object' && !Array.isArray(ctx.columnMetadata)
+      ? (ctx.columnMetadata as Record<string, unknown>)
+      : {};
+  const automationConfigEnabled =
+    meta.automation_config &&
+    typeof meta.automation_config === 'object' &&
+    !Array.isArray(meta.automation_config) &&
+    (meta.automation_config as { enabled?: boolean }).enabled === true;
+
+  const wouldNotifyOperator = parsed.notifications.notify_operator;
+  const wouldNotifyTeam = parsed.notifications.notify_team;
+  const wouldWebhook = parsed.webhook.enabled;
+  const wouldAutoText = parsed.notifications.auto_message_enabled === true;
+  const wouldCrm = parsed.crm.enabled || parsed.crm.auto_link_or_create_lead;
+  const wouldTask = parsed.productivity.auto_create_task;
+  const wouldAutoMove = parsed.automations.auto_move_by_time.enabled;
+
+  const hasConfiguredAction =
+    automationConfigEnabled ||
+    wouldNotifyOperator ||
+    wouldNotifyTeam ||
+    wouldWebhook ||
+    wouldAutoText ||
+    wouldCrm ||
+    wouldTask ||
+    wouldAutoMove;
+
+  logKanbanPhase2Foundation(ctx, {
+    automation_config_enabled: automationConfigEnabled,
+    would_notify_operator: wouldNotifyOperator,
+    would_notify_team: wouldNotifyTeam,
+    would_webhook: wouldWebhook,
+    would_auto_message: wouldAutoText,
+    would_crm: wouldCrm,
+    would_task: wouldTask,
+    would_auto_move: wouldAutoMove,
+    side_effects: 'deferred',
+  });
+
+  return { attempted: hasConfiguredAction || parsed.version === 1, foundation: true };
 }

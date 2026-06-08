@@ -50,6 +50,7 @@ import membersRoutes from './routes/membersRoutes.js';
 import dashboardRoutes from './routes/dashboardRoutes.js';
 import chatRoutes from './routes/chatRoutes.js';
 import chatKanbanRoutes from './routes/chatKanbanRoutes.js';
+import superadminOpsKanbanRoutes from './routes/superadminOpsKanbanRoutes.js';
 import kanbanAttachRoutes from './routes/kanbanAttachRoutes.js';
 import uazapiWebhookRoutes from './routes/uazapiWebhookRoutes.js';
 import asaasWebhookRoutes from './routes/asaasWebhookRoutes.js';
@@ -81,11 +82,15 @@ import customerInvoicesRoutes from './routes/customerInvoicesRoutes.js';
 import crmSubscriptionsRoutes from './routes/crmSubscriptionsRoutes.js';
 import customerChargesRoutes from './routes/customerChargesRoutes.js';
 import publicRoutes from './routes/publicRoutes.js';
+import acquisitionPublicRoutes from './routes/acquisitionPublicRoutes.js';
+import platformPublicRoutes from './routes/platformPublicRoutes.js';
 import mediaRoutes from './services/media/mediaRoutes.js';
 import whatsappOfficialWebhookRoutes from './routes/whatsappOfficialWebhookRoutes.js';
 import storeCheckoutRoutes from './routes/storeCheckoutRoutes.js';
 import onboardingRoutes from './routes/onboardingRoutes.js';
+import acquisitionOnboardingWizardRoutes from './routes/acquisitionOnboardingWizardRoutes.js';
 import tenantsRoutes from './routes/tenantsRoutes.js';
+import superadminCompanyUsersRoutes from './routes/superadminCompanyUsersRoutes.js';
 import { pool } from './utils/db.js';
 import { startWhatsappAvatarCacheWorkerInterval } from './services/whatsappAvatarCacheWorker.js';
 import { processDueKanbanScheduledMovesBatch } from './services/kanbanScheduledMoveService.js';
@@ -124,6 +129,8 @@ import {
   getWhatsappOfficialCampaignWorkerPollMs,
 } from './config/whatsappOfficialCampaignEnv.js';
 import { refreshSystemFeatureFlagsFromPool } from './services/systemFeatureFlagsService.js';
+import { refreshPlatformFeatureFlagRegistry } from './platform/featureFlagRegistry.js';
+import { correlationIdMiddleware } from './middleware/correlationId.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootEnv = path.resolve(__dirname, '../../../.env');
@@ -169,6 +176,9 @@ app.use('/webhooks/meta/whatsapp', whatsappOfficialWebhookRoutes);
 const jsonBodyLimit = process.env.API_JSON_BODY_LIMIT || '25mb';
 app.use(express.json({ limit: jsonBodyLimit }));
 app.use(express.urlencoded({ extended: true, limit: jsonBodyLimit }));
+
+/** P0 Sprint 1: correlation id + ALS (antes das rotas; não altera body/auth). */
+app.use(correlationIdMiddleware);
 
 /** Mídia do catálogo (upload local). Montar volume persistente em getCatalogMediaStorageRoot(). */
 try {
@@ -370,6 +380,8 @@ app.use('/api', (req, res, next) => {
 // Mas como o rate limiter já foi aplicado acima, vamos garantir que testes tenham tratamento especial
 app.use('/api/auth', authRoutes);
 app.use('/api/public', publicRoutes);
+app.use('/api/public/acquisition', acquisitionPublicRoutes);
+app.use('/api/public/platform', platformPublicRoutes);
 app.use('/api/store-checkout', storeCheckoutRoutes);
 app.use('/api/products', productsRoutes);
 app.use('/api/store-profile', storeProfileRoutes);
@@ -414,6 +426,7 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/chat/kanban', chatKanbanRoutes);
 app.use('/api/kanban', kanbanAttachRoutes);
+app.use('/api/superadmin/ops/kanban', superadminOpsKanbanRoutes);
 app.use('/api/notifications', notificationsRoutes);
 app.use('/api/notifications-engine', notificationsEngineRoutes);
 app.use('/api/message-templates', messageTemplatesRoutes);
@@ -429,6 +442,7 @@ app.use('/api/crm-subscriptions', crmSubscriptionsRoutes);
 app.use('/api/customer-charges', customerChargesRoutes);
 app.use('/api/media', mediaRoutes);
 app.use('/api/onboarding', onboardingRoutes);
+app.use('/api/onboarding/wizard', acquisitionOnboardingWizardRoutes);
 app.get(
   '/api/me/tenant/checkout-context',
   authenticateToken,
@@ -451,6 +465,7 @@ app.use('/api/announcements', authenticateToken, setCurrentTenant, announcements
 app.use('/api/superadmin', superadminRoutes);
 app.use('/api/superadmin/plans', plansRoutes);
 app.use('/api/superadmin/tenants', tenantsRoutes);
+app.use('/api/superadmin/companies', superadminCompanyUsersRoutes);
 // Alias de compatibilidade: alguns provedores foram configurados com /api/webhooks/...
 app.use('/api/webhooks/uazapi', uazapiWebhookRoutes);
 app.use('/api/webhooks/asaas', asaasWebhookRoutes);
@@ -510,7 +525,8 @@ void (async () => {
     const { ensureSmtpEncryptionMaterial } = await import('./services/smtpEncryptionBootstrap.js');
     await ensureSmtpEncryptionMaterial(pool);
     await refreshSystemFeatureFlagsFromPool(pool);
-    console.log('[boot] Flags globais (system_feature_flags) e cifra WhatsApp oficial carregadas.');
+    await refreshPlatformFeatureFlagRegistry();
+    console.log('[boot] Flags globais (system_feature_flags + platform_feature_flags P0) e cifra carregadas.');
   } catch (err) {
     console.error('❌ Falha no arranque (PostgreSQL / flags / cifra):', err);
   }
@@ -523,6 +539,7 @@ void (async () => {
 
   setInterval(() => {
     void refreshSystemFeatureFlagsFromPool(pool).catch(() => undefined);
+    void refreshPlatformFeatureFlagRegistry().catch(() => undefined);
   }, 120_000);
   const kanbanPollMs = Math.max(5000, parseInt(process.env.KANBAN_SCHEDULED_MOVE_POLL_MS || '30000', 10));
   setInterval(() => {
@@ -652,6 +669,26 @@ void (async () => {
       })
       .catch((err) => console.error('[tickets-auto-resolve] tick error', err));
   }, ticketAutoResolveMs);
+
+  const trialRecoveryMs = Math.max(
+    3_600_000,
+    parseInt(process.env.TRIAL_RECOVERY_LIFECYCLE_POLL_MS || '86400000', 10),
+  );
+  setInterval(() => {
+    void import('./jobs/trialRecoveryLifecycleJob.js')
+      .then(({ runTrialRecoveryLifecycleOnce }) => runTrialRecoveryLifecycleOnce())
+      .catch((err) => console.error('[trial-recovery-lifecycle] tick error', err));
+  }, trialRecoveryMs);
+
+  void import('./jobs/trialExpirationJob.js')
+    .then(({ runTrialExpirationOnce }) => runTrialExpirationOnce())
+    .catch((err) => console.error('[trial-expiration] startup error', err));
+
+  setInterval(() => {
+    void import('./jobs/trialExpirationJob.js')
+      .then(({ runTrialExpirationOnce }) => runTrialExpirationOnce())
+      .catch((err) => console.error('[trial-expiration] tick error', err));
+  }, 3_600_000);
   });
 })();
 

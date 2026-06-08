@@ -1,8 +1,8 @@
 import { apiClient } from '@/integrations/api/client';
 
-const BASE = '/api/chat/kanban';
+export const CHAT_KANBAN_BASE = '/api/chat/kanban';
 /** Alias do contrato pedido (também registado em `/api/chat/kanban/attach-conversation`). */
-const ATTACH_CONVERSATION_PATH = '/api/kanban/attach-conversation';
+const LEGACY_ATTACH_CONVERSATION_PATH = '/api/kanban/attach-conversation';
 
 export type ChatKanbanBoardVisibilityMode = 'tenant_all' | 'restricted';
 
@@ -48,7 +48,8 @@ export interface ChatKanbanCard {
   board_id: string;
   column_id: string;
   tenant_id: string;
-  conversation_id: string;
+  conversation_id: string | null;
+  acquisition_lead_id?: string | null;
   position: number;
   metadata: Record<string, unknown>;
   archived_at: string | null;
@@ -100,18 +101,40 @@ export interface ChatKanbanBoardCard extends ChatKanbanCard {
   proposal_accepted_total?: number | null;
   /** Só em respostas de PATCH/POST do cartão; não vem na listagem do quadro. */
   kanban_auto_created_proposal?: KanbanAutoCreatedProposalPayload;
+  /** Cartão operacional Super Admin (acquisition_leads). */
+  op_lead_name?: string | null;
+  op_lead_email?: string | null;
+  op_lead_phone?: string | null;
+  op_lead_source?: string | null;
+  op_lead_stage?: string | null;
+  op_activation_score?: string | null;
 }
 
-export const chatKanbanService = {
+export type ChatKanbanService = ReturnType<typeof createChatKanbanService>;
+
+export function createChatKanbanService(
+  base: string,
+  opts?: {
+    /** Compat: alguns fluxos usam `/api/kanban/attach-conversation` (alias legado). */
+    useLegacyAttachAlias?: boolean;
+    /** Kanban operacional Super Admin — não usa APIs de funil do tenant. */
+    isOpsLayer?: boolean;
+  },
+) {
+  const attachPath = opts?.useLegacyAttachAlias ? LEGACY_ATTACH_CONVERSATION_PATH : `${base}/attach-conversation`;
+  const isOpsLayer = opts?.isOpsLayer ?? base.includes('/superadmin/ops/kanban');
+
+  return {
+  isOpsLayer,
   async listTenantKanbanTags(): Promise<ChatKanbanTenantTag[]> {
-    const res = await apiClient.get<ChatKanbanTenantTag[]>(`${BASE}/tags`);
+    const res = await apiClient.get<ChatKanbanTenantTag[]>(`${base}/tags`);
     if (res.error) throw new Error(res.error);
     const data = res.data as unknown;
     return Array.isArray(data) ? data : [];
   },
 
   async createTenantKanbanTag(label: string, color?: string): Promise<ChatKanbanTenantTag> {
-    const res = await apiClient.post<ChatKanbanTenantTag>(`${BASE}/tags`, {
+    const res = await apiClient.post<ChatKanbanTenantTag>(`${base}/tags`, {
       label: label.trim(),
       ...(color?.trim() ? { color: color.trim() } : {}),
     });
@@ -124,7 +147,7 @@ export const chatKanbanService = {
     tagId: string,
     body: { label?: string; color?: string | null },
   ): Promise<ChatKanbanTenantTag> {
-    const res = await apiClient.patch<ChatKanbanTenantTag>(`${BASE}/tags/${tagId}`, body);
+    const res = await apiClient.patch<ChatKanbanTenantTag>(`${base}/tags/${tagId}`, body);
     if (res.error) throw new Error(res.error);
     if (!res.data) throw new Error('Falha ao atualizar tag');
     return res.data;
@@ -132,21 +155,21 @@ export const chatKanbanService = {
 
   async listBoards(includeArchived = false): Promise<ChatKanbanBoard[]> {
     const q = includeArchived ? '?includeArchived=true' : '';
-    const res = await apiClient.get<ChatKanbanBoard[]>(`${BASE}/boards${q}`);
+    const res = await apiClient.get<ChatKanbanBoard[]>(`${base}/boards${q}`);
     if (res.error) throw new Error(res.error);
     const data = res.data as unknown;
     return Array.isArray(data) ? data : [];
   },
 
   async getBoard(boardId: string): Promise<ChatKanbanBoard> {
-    const res = await apiClient.get<ChatKanbanBoard>(`${BASE}/boards/${boardId}`);
+    const res = await apiClient.get<ChatKanbanBoard>(`${base}/boards/${boardId}`);
     if (res.error) throw new Error(res.error);
     if (!res.data) throw new Error('Board não encontrado');
     return res.data as ChatKanbanBoard;
   },
 
   async getBoardSettings(boardId: string): Promise<ChatKanbanBoardSettingsPayload> {
-    const res = await apiClient.get<ChatKanbanBoardSettingsPayload>(`${BASE}/boards/${boardId}/settings`);
+    const res = await apiClient.get<ChatKanbanBoardSettingsPayload>(`${base}/boards/${boardId}/settings`);
     if (res.error) throw new Error(res.error);
     if (!res.data) throw new Error('Definições do quadro indisponíveis');
     return res.data;
@@ -158,7 +181,7 @@ export const chatKanbanService = {
     sort_order?: number;
     linked_sales_funnel_id?: string | null;
   }): Promise<ChatKanbanBoard> {
-    const res = await apiClient.post<ChatKanbanBoard>(`${BASE}/boards`, payload);
+    const res = await apiClient.post<ChatKanbanBoard>(`${base}/boards`, payload);
     if (res.error) throw new Error(res.error);
     if (!res.data) throw new Error('Falha ao criar board');
     return res.data as ChatKanbanBoard;
@@ -178,19 +201,19 @@ export const chatKanbanService = {
       allowed_team_ids?: string[];
     },
   ): Promise<ChatKanbanBoard> {
-    const res = await apiClient.patch<ChatKanbanBoard>(`${BASE}/boards/${boardId}`, payload);
+    const res = await apiClient.patch<ChatKanbanBoard>(`${base}/boards/${boardId}`, payload);
     if (res.error) throw new Error(res.error);
     if (!res.data) throw new Error('Falha ao atualizar board');
     return res.data as ChatKanbanBoard;
   },
 
   async deleteBoard(boardId: string): Promise<void> {
-    const res = await apiClient.delete(`${BASE}/boards/${boardId}`);
+    const res = await apiClient.delete(`${base}/boards/${boardId}`);
     if (res.error) throw new Error(res.error);
   },
 
   async listColumns(boardId: string): Promise<ChatKanbanColumn[]> {
-    const res = await apiClient.get<ChatKanbanColumn[]>(`${BASE}/boards/${boardId}/columns`);
+    const res = await apiClient.get<ChatKanbanColumn[]>(`${base}/boards/${boardId}/columns`);
     if (res.error) throw new Error(res.error);
     const data = res.data as unknown;
     return Array.isArray(data) ? data : [];
@@ -198,7 +221,7 @@ export const chatKanbanService = {
 
   async listCards(boardId: string, includeArchived = false): Promise<ChatKanbanBoardCard[]> {
     const q = includeArchived ? '?includeArchived=true' : '';
-    const res = await apiClient.get<ChatKanbanBoardCard[]>(`${BASE}/boards/${boardId}/cards${q}`);
+    const res = await apiClient.get<ChatKanbanBoardCard[]>(`${base}/boards/${boardId}/cards${q}`);
     if (res.error) throw new Error(res.error);
     const data = res.data as unknown;
     return Array.isArray(data) ? data : [];
@@ -214,7 +237,7 @@ export const chatKanbanService = {
       metadata?: Record<string, unknown>;
     },
   ): Promise<ChatKanbanColumn> {
-    const res = await apiClient.post<ChatKanbanColumn>(`${BASE}/boards/${boardId}/columns`, payload);
+    const res = await apiClient.post<ChatKanbanColumn>(`${base}/boards/${boardId}/columns`, payload);
     if (res.error) throw new Error(res.error);
     if (!res.data) throw new Error('Falha ao criar coluna');
     return res.data as ChatKanbanColumn;
@@ -224,14 +247,14 @@ export const chatKanbanService = {
     columnId: string,
     payload: { name?: string; color?: string | null; position?: number; metadata?: Record<string, unknown> },
   ): Promise<ChatKanbanColumn> {
-    const res = await apiClient.patch<ChatKanbanColumn>(`${BASE}/columns/${columnId}`, payload);
+    const res = await apiClient.patch<ChatKanbanColumn>(`${base}/columns/${columnId}`, payload);
     if (res.error) throw new Error(res.error);
     if (!res.data) throw new Error('Falha ao atualizar coluna');
     return res.data as ChatKanbanColumn;
   },
 
   async deleteColumn(columnId: string): Promise<void> {
-    const res = await apiClient.delete(`${BASE}/columns/${columnId}`);
+    const res = await apiClient.delete(`${base}/columns/${columnId}`);
     if (res.error) throw new Error(res.error);
   },
 
@@ -240,7 +263,7 @@ export const chatKanbanService = {
     payload: { conversation_id: string; column_id: string; position?: number },
   ): Promise<ChatKanbanCard & { kanban_auto_created_proposal?: KanbanAutoCreatedProposalPayload }> {
     const res = await apiClient.post<ChatKanbanCard & { kanban_auto_created_proposal?: KanbanAutoCreatedProposalPayload }>(
-      `${BASE}/boards/${boardId}/cards`,
+      `${base}/boards/${boardId}/cards`,
       payload,
     );
     if (res.error) throw new Error(res.error);
@@ -252,7 +275,7 @@ export const chatKanbanService = {
     cardId: string,
     payload: { column_id?: string; position?: number; move_reason?: string; move_confirmed?: boolean },
   ): Promise<ChatKanbanBoardCard> {
-    const res = await apiClient.patch<ChatKanbanBoardCard>(`${BASE}/cards/${cardId}`, payload);
+    const res = await apiClient.patch<ChatKanbanBoardCard>(`${base}/cards/${cardId}`, payload);
     if (res.error) throw new Error(res.error);
     if (!res.data) throw new Error('Falha ao atualizar card');
     return res.data as ChatKanbanBoardCard;
@@ -260,7 +283,7 @@ export const chatKanbanService = {
 
   /** Remove o cartão do quadro (a conversa permanece; só some desta coluna). */
   async deleteCard(cardId: string): Promise<void> {
-    const res = await apiClient.delete(`${BASE}/cards/${cardId}`);
+    const res = await apiClient.delete(`${base}/cards/${cardId}`);
     if (res.error) throw new Error(res.error);
   },
 
@@ -277,7 +300,7 @@ export const chatKanbanService = {
   }): Promise<ChatKanbanBoardCard & { kanban_auto_created_proposal?: KanbanAutoCreatedProposalPayload }> {
     const res = await apiClient.post<
       ChatKanbanBoardCard & { kanban_auto_created_proposal?: KanbanAutoCreatedProposalPayload }
-    >(ATTACH_CONVERSATION_PATH, payload);
+    >(attachPath, payload);
     if (res.error) {
       const err = new Error(res.error) as Error & { code?: string };
       if (res.code) err.code = res.code;
@@ -286,4 +309,7 @@ export const chatKanbanService = {
     if (!res.data) throw new Error('Falha ao anexar conversa ao quadro');
     return res.data;
   },
-};
+  };
+}
+
+export const chatKanbanService = createChatKanbanService(CHAT_KANBAN_BASE, { useLegacyAttachAlias: true });

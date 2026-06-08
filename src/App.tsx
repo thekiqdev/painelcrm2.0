@@ -41,6 +41,14 @@ function SuperadminLegacyWhatsappOfficialRedirect() {
 const ForgotPasswordWhatsapp = lazyWithReload(() => import("./pages/ForgotPasswordWhatsapp"));
 const AuthWhatsApp = lazyWithReload(() => import("./pages/AuthWhatsApp"));
 const Register = lazyWithReload(() => import("./pages/Register"));
+const TesteGratis = lazyWithReload(() => import("./pages/TesteGratis"));
+const AcquisitionSignupFlow = lazyWithReload(() => import("./pages/AcquisitionSignupFlow"));
+const AcquisitionPremiumCheckout = lazyWithReload(() => import("./pages/AcquisitionPremiumCheckout"));
+const AcquisitionOperationalOnboarding = lazyWithReload(
+  () => import("./pages/AcquisitionOperationalOnboarding"),
+);
+const SuperAdminSignupAcquisitionPage = lazyWithReload(() => import("./pages/superadmin/SuperAdminSignupAcquisitionPage"));
+const OnboardingKickoffPlaceholder = lazyWithReload(() => import("./pages/OnboardingKickoffPlaceholder"));
 const RegistrationSteps = lazyWithReload(() => import("./pages/Registration/RegistrationSteps"));
 const NotFound = lazyWithReload(() => import("./pages/NotFound"));
 
@@ -108,6 +116,7 @@ const PaymentsPanelPage = lazyWithReload(() => import("./pages/settings/Payments
 const GatewayConfigPage = lazyWithReload(() => import("./pages/settings/GatewayConfigPage"));
 const Chat = lazyWithReload(() => loadChatPage('lazy'));
 const ChatKanbanPage = lazyWithReload(() => import("./pages/ChatKanbanPage"));
+const SuperAdminOpsKanbanPage = lazyWithReload(() => import("./pages/superadmin/SuperAdminOpsKanbanPage"));
 const FunnelDetails = lazyWithReload(() => import("./pages/FunnelDetails"));
 const ProposalDetails = lazyWithReload(() => import("./pages/ProposalDetails"));
 const PublicStore = lazyWithReload(() => import("./pages/PublicStore").then(m => ({ default: m.PublicStore })));
@@ -130,6 +139,7 @@ const SuperAdminClientUsuarios = lazyWithReload(() => import("./pages/superadmin
 const SuperAdminClientPlaceholder = lazyWithReload(() => import("./pages/superadmin/SuperAdminClientPlaceholder"));
 const SuperAdminClientRecursos = lazyWithReload(() => import("./pages/superadmin/SuperAdminClientRecursos"));
 const SuperAdminClientLimites = lazyWithReload(() => import("./pages/superadmin/SuperAdminClientLimites"));
+const SuperAdminClientCommercial = lazyWithReload(() => import("./pages/superadmin/SuperAdminClientCommercial"));
 const SuperAdminClientObservacoes = lazyWithReload(() => import("./pages/superadmin/SuperAdminClientObservacoes"));
 const SuperAdminClientLogs = lazyWithReload(() => import("./pages/superadmin/SuperAdminClientLogs"));
 const SuperAdminClientNew = lazyWithReload(() => import("./pages/superadmin/SuperAdminClientNew"));
@@ -148,6 +158,7 @@ const SuperAdminPlatformBillings = lazyWithReload(() => import("./pages/superadm
 const PublicSaasBillingPay = lazyWithReload(() => import("./pages/PublicSaasBillingPay"));
 const SuperAdminSubscriptionCyclesSettings = lazyWithReload(() => import("./pages/superadmin/SuperAdminSubscriptionCyclesSettings"));
 const SuperAdminBillingOperations = lazyWithReload(() => import("./pages/superadmin/SuperAdminBillingOperations"));
+const LifecycleDashboard = lazyWithReload(() => import("./pages/superadmin/LifecycleDashboard"));
 const SuperAdminAnnouncements = lazyWithReload(() => import("./pages/superadmin/SuperAdminAnnouncements"));
 const SuperAdminAnnouncementEditor = lazyWithReload(() => import("./pages/superadmin/SuperAdminAnnouncementEditor"));
 const SuperAdminAnnouncementSend = lazyWithReload(() => import("./pages/superadmin/SuperAdminAnnouncementSend"));
@@ -167,6 +178,7 @@ const SuperAdminSmtpSettings = lazyWithReload(() => import("./pages/superadmin/S
 const SuperAdminTrackingSettings = lazyWithReload(() => import("./pages/superadmin/SuperAdminTrackingSettings"));
 const SignupSuccess = lazyWithReload(() => import("./pages/SignupSuccess"));
 const SuperAdminAdvancedScriptsPage = lazyWithReload(() => import("./pages/superadmin/SuperAdminAdvancedScriptsPage"));
+const SuperAdminAdvancedFeatureFlagsPage = lazyWithReload(() => import("./pages/superadmin/SuperAdminAdvancedFeatureFlagsPage"));
 const PublicPrivacyPolicyPage = lazyWithReload(() =>
   import("./pages/legal/PublicLegalPage").then((m) => ({ default: m.PublicPrivacyPolicyPage })),
 );
@@ -212,6 +224,55 @@ const App = () => (
                 <AuthLayout>
                   <Suspense fallback={<LoadingFallback />}>
                     <Register />
+                  </Suspense>
+                </AuthLayout>
+              }
+            />
+
+            <Route
+              path="/teste-gratis"
+              element={
+                <AuthLayout>
+                  <Suspense fallback={<LoadingFallback />}>
+                    <TesteGratis />
+                  </Suspense>
+                </AuthLayout>
+              }
+            />
+
+            <Route
+              path="/cadastro"
+              element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <AcquisitionSignupFlow />
+                </Suspense>
+              }
+            />
+
+            <Route
+              path="/onboarding/acquisition"
+              element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <AcquisitionOperationalOnboarding />
+                </Suspense>
+              }
+            />
+
+            <Route
+              path="/ativacao/checkout"
+              element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <AcquisitionPremiumCheckout />
+                </Suspense>
+              }
+            />
+
+            <Route
+              path="/onboarding/kickoff"
+              element={
+                <AuthLayout>
+                  <Suspense fallback={<LoadingFallback />}>
+                    <OnboardingKickoffPlaceholder />
                   </Suspense>
                 </AuthLayout>
               }
@@ -920,6 +981,22 @@ const App = () => (
                 <Route path="comunicacao" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
                 <Route path="chat" element={<Suspense fallback={<LoadingFallback />}><Chat scope="platform" /></Suspense>} />
                 <Route path="chat/:conversationId" element={<Suspense fallback={<LoadingFallback />}><Chat scope="platform" /></Suspense>} />
+                <Route
+                  path="operacao/kanbans"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SuperAdminOpsKanbanPage />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="operacoes/lifecycle"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <LifecycleDashboard />
+                    </Suspense>
+                  }
+                />
                 <Route path="conexoes" element={<Suspense fallback={<LoadingFallback />}><ConnectionsPage /></Suspense>} />
                 <Route path="conexoes/whatsapp-oficial" element={<Suspense fallback={<LoadingFallback />}><WhatsappOfficialConnectionPage /></Suspense>} />
                 <Route path="conexoes/whatsapp-oficial/modelos" element={<Suspense fallback={<LoadingFallback />}><WhatsappOfficialModelosPage /></Suspense>} />
@@ -929,8 +1006,17 @@ const App = () => (
                 <Route path="conexoes/whatsapp-official/chat" element={<SuperadminLegacyWhatsappOfficialRedirect />} />
                 <Route path="conexoes/uazapi" element={<Suspense fallback={<LoadingFallback />}><UazapiConnectionPage /></Suspense>} />
                 <Route path="plataforma" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
+                <Route
+                  path="plataforma/signup-acquisition"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SuperAdminSignupAcquisitionPage />
+                    </Suspense>
+                  }
+                />
                 <Route path="avancado" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
                 <Route path="avancado/scripts" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAdvancedScriptsPage /></Suspense>} />
+                <Route path="avancado/feature-flags" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAdvancedFeatureFlagsPage /></Suspense>} />
                 <Route path="seguranca" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
                 <Route path="plans" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlans /></Suspense>} />
                 <Route path="plans/:id/features" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlanFeatures /></Suspense>} />
@@ -944,6 +1030,7 @@ const App = () => (
                   <Route path="usuarios" element={<SuperAdminClientUsuarios />} />
                   <Route path="recursos" element={<SuperAdminClientRecursos />} />
                   <Route path="limites" element={<SuperAdminClientLimites />} />
+                  <Route path="comercial" element={<SuperAdminClientCommercial />} />
                   <Route path="observacoes" element={<SuperAdminClientObservacoes />} />
                   <Route path="logs" element={<SuperAdminClientLogs />} />
                 </Route>

@@ -7,7 +7,7 @@
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { pool } from '../utils/db.js';
+import { endDatabasePool } from '../utils/db.js';
 import { runWhatsappAvatarCacheBackfillBatch } from '../services/whatsappAvatarBackfillService.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -18,7 +18,7 @@ async function main(): Promise<void> {
   const perType = Math.max(1, parseInt(process.argv[2] || process.env.AVATAR_BACKFILL_BATCH || '30', 10));
   const result = await runWhatsappAvatarCacheBackfillBatch(perType);
   console.log('[avatar-cache-backfill]', result);
-  await pool.end();
+  await endDatabasePool();
 }
 
 main().catch((e) => {

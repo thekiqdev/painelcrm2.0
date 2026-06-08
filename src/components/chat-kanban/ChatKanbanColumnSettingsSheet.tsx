@@ -46,7 +46,8 @@ import {
 } from '@/components/ui/accordion';
 import { cn } from '@/lib/utils';
 import { apiClient } from '@/integrations/api/client';
-import { chatKanbanService, type ChatKanbanBoard, type ChatKanbanColumn } from '@/services/chatKanban';
+import type { ChatKanbanBoard, ChatKanbanColumn } from '@/services/chatKanban';
+import { useKanbanService } from '@/components/chat-kanban/KanbanServiceContext';
 import { fetchFunnelById, fetchFunnels } from '@/services/funnels';
 import { getMyTenantUsers } from '@/services/tenantLimits';
 import { KANBAN_COLUMN_COLOR_PRESETS } from '@/components/chat-kanban/kanbanColumnPresets';
@@ -187,6 +188,8 @@ type FunnelOption = { id: string; name: string };
 type FunnelStageOption = { id: string; name: string };
 
 export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, positionLabel, onSaved }: Props) {
+  const kanban = useKanbanService();
+  const isOpsKanban = kanban.isOpsLayer === true;
   const [name, setName] = useState('');
   const [color, setColor] = useState<string | null>(null);
   const [ui, setUi] = useState<KanbanColumnUi>({ ...EMPTY_KANBAN_COLUMN_UI });
@@ -258,7 +261,7 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
     if (!open || !column) return;
     let cancelled = false;
     setKanbanCatalogLoading(true);
-    void chatKanbanService
+    void kanban
       .listTenantKanbanTags()
       .then((rows) => {
         if (!cancelled) {
@@ -281,7 +284,7 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
   useEffect(() => {
     if (!open || !column) return;
     let cancelled = false;
-    void chatKanbanService.listColumns(column.board_id).then((cols) => {
+    void kanban.listColumns(column.board_id).then((cols) => {
       if (!cancelled) setBoardColumnsForMove(cols);
     });
     return () => {
@@ -293,7 +296,7 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
     if (!open) return;
     let cancelled = false;
     setTenantBoardsForAutoMoveLoading(true);
-    void chatKanbanService
+    void kanban
       .listBoards(false)
       .then((boards) => {
         if (cancelled) return;
@@ -324,7 +327,7 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
     }
     let cancelled = false;
     setAutoMoveDestBoardColumnsLoading(true);
-    void chatKanbanService
+    void kanban
       .listColumns(destBoardId)
       .then((cols) => {
         if (!cancelled) setAutoMoveDestBoardColumns(cols);
@@ -346,12 +349,12 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
     void (async () => {
       setFunnelLoading(true);
       try {
-        const board = await chatKanbanService.getBoard(column.board_id);
+        const board = await kanban.getBoard(column.board_id);
         if (cancelled) return;
         setBoardDisplayName(board.name?.trim() || null);
         const linkedFunnelId = board.linked_sales_funnel_id ?? null;
         setBoardLinkedFunnelId(linkedFunnelId);
-        if (!linkedFunnelId) {
+        if (!linkedFunnelId || isOpsKanban) {
           setBoardFunnelName(null);
           setBoardStages([]);
           setSelectedFunnelStageId(null);
@@ -392,7 +395,7 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
     return () => {
       cancelled = true;
     };
-  }, [open, column?.id]);
+  }, [open, column?.id, isOpsKanban, kanban]);
 
   useEffect(() => {
     if (!open || !column) return;
@@ -619,7 +622,7 @@ export function ChatKanbanColumnSettingsSheet({ open, onOpenChange, column, posi
         },
       };
       const chosenStageId = selectedFunnelStageId ?? null;
-      await chatKanbanService.patchColumn(column.id, {
+      await kanban.patchColumn(column.id, {
         name: n,
         color,
         funnel_stage_id: chosenStageId,

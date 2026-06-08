@@ -52,6 +52,7 @@ import { ChatKanbanColumnSettingsSheet } from '@/components/chat-kanban/ChatKanb
 import { ChatKanbanBoardSettingsSheet } from '@/components/chat-kanban/ChatKanbanBoardSettingsSheet';
 import {
   chatKanbanService,
+  type ChatKanbanService,
   type ChatKanbanBoard,
   type ChatKanbanBoardCard,
   type ChatKanbanColumn,
@@ -71,10 +72,20 @@ import {
 import { useFloatingChatOptional } from '@/features/floating-chat';
 import { setStoredProposalPublicUrl } from '@/utils/proposalPublicLinkSession';
 import { kanbanCardTitle } from '@/utils/chatKanbanCardDisplay';
+import { KanbanServiceProvider } from '@/components/chat-kanban/KanbanServiceContext';
+import { ChatKanbanOpsLeadDialog } from '@/components/chat-kanban/ChatKanbanOpsLeadDialog';
+import { superadminOpsKanbanService } from '@/services/superadminOpsKanban';
 
 type FunnelOption = { id: string; name: string };
 
-const ChatKanbanPage = () => {
+type Props = {
+  /** Permite reutilizar a mesma UI no Super Admin (base diferente). */
+  service?: ChatKanbanService;
+};
+
+const ChatKanbanPage = ({ service }: Props) => {
+  const kanban = service ?? chatKanbanService;
+  const isOpsKanban = service === superadminOpsKanbanService;
   const { session } = useAuth();
   const floatingChat = useFloatingChatOptional();
   const [boards, setBoards] = useState<ChatKanbanBoard[]>([]);
@@ -114,6 +125,7 @@ const ChatKanbanPage = () => {
 
   const [removeCardConfirm, setRemoveCardConfirm] = useState<ChatKanbanBoardCard | null>(null);
   const [removingCard, setRemovingCard] = useState(false);
+  const [opsLeadDetail, setOpsLeadDetail] = useState<ChatKanbanBoardCard | null>(null);
 
   const requestMoveReason = useCallback((args: { columnName: string }) => {
     return new Promise<string | null>((resolve) => {
@@ -147,7 +159,7 @@ const ChatKanbanPage = () => {
     setLoadingBoards(true);
     setError(null);
     try {
-      const list = await chatKanbanService.listBoards(false);
+      const list = await kanban.listBoards(false);
       setBoards(list);
       setSelectedBoardId((prev) => {
         if (list.length === 0) return null;
@@ -163,15 +175,15 @@ const ChatKanbanPage = () => {
     } finally {
       setLoadingBoards(false);
     }
-  }, []);
+  }, [kanban]);
 
   const loadBoardDetail = useCallback(async (boardId: string) => {
     setLoadingBoardData(true);
     setError(null);
     try {
       const [cols, crds] = await Promise.all([
-        chatKanbanService.listColumns(boardId),
-        chatKanbanService.listCards(boardId, false),
+        kanban.listColumns(boardId),
+        kanban.listCards(boardId, false),
       ]);
       setColumns(cols);
       setCards(crds);
@@ -183,13 +195,17 @@ const ChatKanbanPage = () => {
     } finally {
       setLoadingBoardData(false);
     }
-  }, []);
+  }, [kanban]);
 
   useEffect(() => {
     void loadBoards();
-  }, [loadBoards]);
+  }, [loadBoards, kanban]);
 
   useEffect(() => {
+    if (isOpsKanban) {
+      setFunnels([]);
+      return;
+    }
     let cancelled = false;
     void (async () => {
       const res = await fetchFunnels();
@@ -207,7 +223,7 @@ const ChatKanbanPage = () => {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isOpsKanban]);
 
   useEffect(() => {
     if (!selectedBoardId) {
@@ -217,6 +233,14 @@ const ChatKanbanPage = () => {
     }
     void loadBoardDetail(selectedBoardId);
   }, [selectedBoardId, loadBoardDetail]);
+
+  useEffect(() => {
+    if (!isOpsKanban || !selectedBoardId) return;
+    const t = window.setInterval(() => {
+      void loadBoardDetail(selectedBoardId);
+    }, 20_000);
+    return () => window.clearInterval(t);
+  }, [isOpsKanban, selectedBoardId, loadBoardDetail]);
 
   useEffect(() => {
     setAddCardColumnId(null);
@@ -237,12 +261,12 @@ const ChatKanbanPage = () => {
   const refreshCardsOnly = useCallback(async () => {
     if (!selectedBoardId) return;
     try {
-      const crds = await chatKanbanService.listCards(selectedBoardId, false);
+      const crds = await kanban.listCards(selectedBoardId, false);
       setCards(crds);
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Erro ao atualizar cartões');
     }
-  }, [selectedBoardId]);
+  }, [selectedBoardId, kanban]);
 
   const handleRemoveCardRequest = useCallback((card: ChatKanbanBoardCard) => {
     setRemoveCardConfirm(card);
@@ -253,7 +277,7 @@ const ChatKanbanPage = () => {
     if (!target) return;
     setRemovingCard(true);
     try {
-      await chatKanbanService.deleteCard(target.id);
+      await kanban.deleteCard(target.id);
       toast.success('Cartão removido desta coluna. A conversa continua no chat.');
       setRemoveCardConfirm(null);
       await refreshCardsOnly();
@@ -267,7 +291,7 @@ const ChatKanbanPage = () => {
   useKanbanAttendanceSocketRefresh(
     session?.token,
     Boolean(selectedBoardId && !loadingBoardData),
-    () => cards.map((c) => c.conversation_id),
+    () => cards.map((c) => c.conversation_id).filter((id): id is string => Boolean(id)),
     refreshCardsOnly,
   );
 
@@ -289,9 +313,10 @@ const ChatKanbanPage = () => {
       conversationId: string,
       opts?: { move_reason?: string; move_confirmed?: boolean },
     ) => {
+      if (isOpsKanban) return;
       if (!selectedBoardId) return;
       try {
-        const updated = await chatKanbanService.attachConversation({
+        const updated = await kanban.attachConversation({
           board_id: selectedBoardId,
           column_id: columnId,
           conversation_id: conversationId,
@@ -342,11 +367,12 @@ const ChatKanbanPage = () => {
         toast.error(e.message || 'Não foi possível anexar a conversa ao quadro');
       }
     },
-    [selectedBoardId, cards, columns, refreshCardsOnly],
+    [isOpsKanban, selectedBoardId, cards, columns, refreshCardsOnly, kanban],
   );
 
   const handleNativeConversationDrop = useCallback(
     async (e: React.DragEvent, columnId: string) => {
+      if (isOpsKanban) return;
       e.preventDefault();
       const payload =
         readConversationDragFromDataTransfer(e.dataTransfer) || getActiveConversationDrag();
@@ -355,11 +381,12 @@ const ChatKanbanPage = () => {
       if (!payload?.conversationId || !selectedBoardId) return;
       await runAttachConversation(columnId, payload.conversationId);
     },
-    [selectedBoardId, runAttachConversation],
+    [isOpsKanban, selectedBoardId, runAttachConversation],
   );
 
   const buildNativeDropForColumn = useCallback(
     (columnId: string) => {
+      if (isOpsKanban) return null;
       if (!selectedBoardId || loadingBoardData || visibleSortedColumns.length === 0) return null;
       const session = getActiveConversationDrag();
       const convId = session?.conversationId;
@@ -398,6 +425,7 @@ const ChatKanbanPage = () => {
       };
     },
     [
+      isOpsKanban,
       selectedBoardId,
       loadingBoardData,
       visibleSortedColumns.length,
@@ -409,7 +437,12 @@ const ChatKanbanPage = () => {
 
   const openKanbanCardInFloating = useCallback(
     (card: ChatKanbanBoardCard) => {
+      if (!card.conversation_id && (card.acquisition_lead_id || card.conv_link_state === 'acquisition_lead')) {
+        setOpsLeadDetail(card);
+        return;
+      }
       const id = card.conversation_id;
+      if (!id) return;
       if (floatingChat) {
         floatingChat.openConversationInContext(id);
       } else {
@@ -460,7 +493,10 @@ const ChatKanbanPage = () => {
     return m;
   }, [cards]);
 
-  const boardConversationIds = useMemo(() => cards.map((c) => c.conversation_id), [cards]);
+  const boardConversationIds = useMemo(
+    () => cards.map((c) => c.conversation_id).filter((id): id is string => Boolean(id)),
+    [cards],
+  );
 
   const addCardColumn = useMemo(() => {
     if (!addCardColumnId) return null;
@@ -475,7 +511,7 @@ const ChatKanbanPage = () => {
     }
     setCreating(true);
     try {
-      const created = await chatKanbanService.createBoard({
+      const created = await kanban.createBoard({
         name,
         linked_sales_funnel_id: createLinkedFunnelId === 'none' ? null : createLinkedFunnelId,
       });
@@ -569,9 +605,16 @@ const ChatKanbanPage = () => {
   };
 
   return (
+    <KanbanServiceProvider service={kanban}>
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-6 -m-6 p-6">
       <div className="flex shrink-0 flex-col gap-4">
         <ChatKanbanToolbar
+          title={isOpsKanban ? 'Central Operacional — Kanbans' : undefined}
+          description={
+            isOpsKanban
+              ? 'Pipelines operacionais de aquisição, ativação e recovery (entidade ≠ conversa).'
+              : undefined
+          }
           boards={boards}
           selectedBoardId={selectedBoardId}
           onBoardChange={(id) => setSelectedBoardId(id)}
@@ -611,7 +654,11 @@ const ChatKanbanPage = () => {
         <ChatKanbanEmptyState
           icon={LayoutGrid}
           title="Nenhum quadro ainda"
-          description="Crie o primeiro quadro Kanban para organizar conversas por etapas. As colunas podem ser adicionadas depois pela API ou numa próxima versão da interface."
+          description={
+            isOpsKanban
+              ? 'Os Kanbans operacionais devem nascer automaticamente. Se você está vendo isto, o seed não executou.'
+              : 'Crie o primeiro quadro Kanban para organizar conversas por etapas. As colunas podem ser adicionadas depois pela API ou numa próxima versão da interface.'
+          }
           actionLabel="Criar quadro"
           onAction={() => setCreateOpen(true)}
         />
@@ -632,7 +679,11 @@ const ChatKanbanPage = () => {
             <ChatKanbanEmptyState
               icon={PanelTop}
               title="Este quadro ainda não tem colunas"
-              description="As colunas definem as etapas do Kanban (ex.: Novo lead, Qualificação, Fechamento). Crie a primeira para começar a adicionar conversas."
+              description={
+                isOpsKanban
+                  ? 'As colunas representam etapas operacionais do lifecycle (ex.: Novo lead, Checkout abandonado, Ativado).'
+                  : 'As colunas definem as etapas do Kanban (ex.: Novo lead, Qualificação, Fechamento). Crie a primeira para começar a adicionar conversas.'
+              }
               actionLabel="Criar primeira coluna"
               onAction={() => setColumnManagerOpen(true)}
             />
@@ -684,9 +735,9 @@ const ChatKanbanPage = () => {
                         cardMap={cardMap}
                         onCardClick={openKanbanCardInFloating}
                         onRemoveCard={handleRemoveCardRequest}
-                        onAddCard={() => setAddCardColumnId(col.id)}
+                        onAddCard={isOpsKanban ? null : () => setAddCardColumnId(col.id)}
                         onConfigureColumn={(c) => setSettingsColumn(c)}
-                        nativeDrop={buildNativeDropForColumn(col.id)}
+                        nativeDrop={isOpsKanban ? null : buildNativeDropForColumn(col.id)}
                         pulseUnreadUntilByConversationId={pulseUnreadUntilByConversationId}
                       />
                     ))}
@@ -697,8 +748,9 @@ const ChatKanbanPage = () => {
                 {(() => {
                   const dragCard = boardDnd.activeId ? cardMap.get(boardDnd.activeId) : undefined;
                   if (!dragCard) return null;
-                  const pulseUnreadHighlight =
-                    (pulseUnreadUntilByConversationId[dragCard.conversation_id] ?? 0) > Date.now();
+                  const pulseUnreadHighlight = dragCard.conversation_id
+                    ? (pulseUnreadUntilByConversationId[dragCard.conversation_id] ?? 0) > Date.now()
+                    : false;
                   return (
                     <div className="pointer-events-none w-[264px] max-w-[86vw] rotate-1 scale-[1.02] shadow-2xl opacity-95">
                       <ChatKanbanCard
@@ -753,16 +805,18 @@ const ChatKanbanPage = () => {
         }}
       />
 
-      <ChatKanbanAddCardDialog
-        open={addCardColumnId !== null}
-        onOpenChange={(o) => {
-          if (!o) setAddCardColumnId(null);
-        }}
-        boardId={selectedBoardId}
-        column={addCardColumn}
-        excludedConversationIds={boardConversationIds}
-        onCreated={() => void refreshCardsOnly()}
-      />
+      {!isOpsKanban ? (
+        <ChatKanbanAddCardDialog
+          open={addCardColumnId !== null}
+          onOpenChange={(o) => {
+            if (!o) setAddCardColumnId(null);
+          }}
+          boardId={selectedBoardId}
+          column={addCardColumn}
+          excludedConversationIds={boardConversationIds}
+          onCreated={() => void refreshCardsOnly()}
+        />
+      ) : null}
 
       <ChatKanbanMoveReasonDialog
         open={moveReasonUi !== null}
@@ -856,22 +910,24 @@ const ChatKanbanPage = () => {
                 if (e.key === 'Enter') void handleCreateBoard();
               }}
             />
-            <div className="space-y-1.5">
-              <Label>Funil vinculado (opcional)</Label>
-              <Select value={createLinkedFunnelId} onValueChange={setCreateLinkedFunnelId}>
-                <SelectTrigger className="h-9">
-                  <SelectValue placeholder="Sem funil vinculado" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Sem funil vinculado</SelectItem>
-                  {funnels.map((f) => (
-                    <SelectItem key={f.id} value={f.id}>
-                      {f.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {!isOpsKanban ? (
+              <div className="space-y-1.5">
+                <Label>Funil vinculado (opcional)</Label>
+                <Select value={createLinkedFunnelId} onValueChange={setCreateLinkedFunnelId}>
+                  <SelectTrigger className="h-9">
+                    <SelectValue placeholder="Sem funil vinculado" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Sem funil vinculado</SelectItem>
+                    {funnels.map((f) => (
+                      <SelectItem key={f.id} value={f.id}>
+                        {f.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setCreateOpen(false)} disabled={creating}>
@@ -883,7 +939,18 @@ const ChatKanbanPage = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {isOpsKanban ? (
+        <ChatKanbanOpsLeadDialog
+          card={opsLeadDetail}
+          open={opsLeadDetail != null}
+          onOpenChange={(open) => {
+            if (!open) setOpsLeadDetail(null);
+          }}
+        />
+      ) : null}
     </div>
+    </KanbanServiceProvider>
   );
 };
 

@@ -3,6 +3,7 @@ import Menu from "lucide-react/dist/esm/icons/menu.js";
 import X from "lucide-react/dist/esm/icons/x.js";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { SignupEntryLink } from "@/components/acquisition/SignupEntryLink";
 import { Logo } from "@/components/Logo";
 import { cn } from "@/lib/utils";
 
@@ -41,7 +42,7 @@ export default function PublicNavbar() {
             <a href="/login">Acessar</a>
           </Button>
           <Button size="sm" asChild>
-            <a href="/checkout">Começar grátis</a>
+            <SignupEntryLink>Começar grátis</SignupEntryLink>
           </Button>
         </div>
 
@@ -82,10 +83,8 @@ export default function PublicNavbar() {
             <a href="/login?redirect=%2Fsuporte" className="text-sm text-muted-foreground" onClick={() => setOpen(false)}>
               Suporte
             </a>
-            <Button size="sm" asChild>
-              <a href="/checkout" onClick={() => setOpen(false)}>
-                Começar grátis
-              </a>
+            <Button size="sm" asChild onClick={() => setOpen(false)}>
+              <SignupEntryLink>Começar grátis</SignupEntryLink>
             </Button>
           </div>
         </div>

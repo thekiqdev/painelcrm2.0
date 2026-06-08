@@ -15,7 +15,23 @@ import {
   MessageCircle,
   Mail,
   PlugZap,
+  BarChart3,
+  Percent,
 } from 'lucide-react';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import {
+  fetchCommercialMetrics,
+  fetchCommercialOverridesReport,
+  type CommercialMetrics,
+  type CommercialOverrideReportRow,
+} from '@/services/superadminCommercialAnalytics';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PlatformSupportSummaryCard } from '@/components/superadmin/PlatformSupportSummaryCard';
 import { useSuperadminPlatformSupportSummary } from '@/hooks/useSuperadminPlatformSupportSummary';
@@ -115,6 +131,24 @@ function formatCurrencyFromCents(value: unknown): string {
   const cents = safeInt(value ?? 0, 0);
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cents / 100);
 }
+
+function formatSignedCurrencyFromCents(value: unknown): string {
+  const cents = safeInt(value ?? 0, 0);
+  const formatted = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
+    Math.abs(cents) / 100,
+  );
+  if (cents < 0) return `-${formatted}`;
+  if (cents > 0) return `+${formatted}`;
+  return formatted;
+}
+
+const OVERRIDE_TYPE_LABELS: Record<string, string> = {
+  fixed_price: 'Preço fixo',
+  percent_discount: 'Desconto %',
+  amount_discount: 'Desconto valor',
+  waive: 'Isenção',
+  contract_snapshot: 'Contrato vigente',
+};
 
 /** Altura única dos gráficos / vazio (compacto, executivo). */
 const CHART_AREA_CLASS = 'h-[200px]';
@@ -282,16 +316,71 @@ function ExecutiveKpiCard(props: {
   );
 }
 
+function CommercialSaasSkeleton() {
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Card key={i} className="border-border/60 shadow-none">
+            <CardHeader className="px-3 pb-1 pt-3">
+              <Skeleton className="h-3.5 w-28" />
+            </CardHeader>
+            <CardContent className="px-3 pb-3">
+              <Skeleton className="h-8 w-[60%]" />
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+      <div className="grid gap-3 lg:grid-cols-2">
+        {[0, 1].map((i) => (
+          <Card key={i} className="border-border/60 shadow-none">
+            <CardHeader className="px-4 pb-0 pt-4">
+              <Skeleton className="h-4 w-40" />
+            </CardHeader>
+            <CardContent className="space-y-2 px-4 pb-4 pt-3">
+              {Array.from({ length: 5 }).map((_, j) => (
+                <Skeleton key={j} className="h-9 w-full rounded-md" />
+              ))}
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function SuperAdminDashboard() {
   const [data, setData] = useState<SuperadminDashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [commercialMetrics, setCommercialMetrics] = useState<CommercialMetrics | null>(null);
+  const [commercialOverrides, setCommercialOverrides] = useState<CommercialOverrideReportRow[]>([]);
+  const [commercialLoading, setCommercialLoading] = useState(true);
+  const [commercialError, setCommercialError] = useState<string | null>(null);
   const {
     summary: supportSummary,
     loading: supportSummaryLoading,
     error: supportSummaryError,
     refresh: refreshSupportSummary,
   } = useSuperadminPlatformSupportSummary();
+
+  const loadCommercial = useCallback(async () => {
+    setCommercialLoading(true);
+    setCommercialError(null);
+    const [metricsRes, reportRes] = await Promise.all([
+      fetchCommercialMetrics(),
+      fetchCommercialOverridesReport(),
+    ]);
+    if (metricsRes.error || reportRes.error) {
+      setCommercialError(metricsRes.error ?? reportRes.error ?? 'Erro ao carregar receita SaaS');
+      setCommercialMetrics(null);
+      setCommercialOverrides([]);
+    } else {
+      setCommercialMetrics(metricsRes.data);
+      setCommercialOverrides(reportRes.data?.items ?? []);
+    }
+    setCommercialLoading(false);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -308,7 +397,8 @@ export default function SuperAdminDashboard() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+    void loadCommercial();
+  }, [load, loadCommercial]);
 
   const formatDate = (s: string) =>
     new Date(s).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
@@ -326,6 +416,13 @@ export default function SuperAdminDashboard() {
         <section className="space-y-3">
           <SectionHeading title="Indicadores principais" description="MRR, caixa do mês, base ativa e risco de cobrança." />
           <ExecutiveKpiSkeleton />
+        </section>
+        <section className="space-y-3">
+          <SectionHeading
+            title="Receita SaaS"
+            description="MRR catálogo vs contratado, receita recebida e impacto comercial."
+          />
+          <CommercialSaasSkeleton />
         </section>
         <section className="space-y-3">
           <SectionHeading title="Suporte da plataforma" description="Fila de chamados e último atendimento recebido." />
@@ -511,6 +608,158 @@ export default function SuperAdminDashboard() {
           }
         />
         </div>
+      </section>
+
+      <section className="space-y-3">
+        <SectionHeading
+          title="Receita SaaS"
+          description="MRR catálogo vs contratado, receita recebida (30d) e impacto de overrides comerciais."
+        />
+        {commercialLoading ? (
+          <CommercialSaasSkeleton />
+        ) : commercialError ? (
+          <Card className="border-destructive/30 bg-destructive/5">
+            <CardHeader>
+              <CardTitle className="text-base text-destructive">Receita SaaS indisponível</CardTitle>
+              <CardDescription className="text-destructive/90">{commercialError}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button type="button" variant="outline" size="sm" onClick={() => void loadCommercial()}>
+                Tentar novamente
+              </Button>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="space-y-3">
+            <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
+              <ExecutiveKpiCard
+                title="MRR Catálogo"
+                subtitle="Se todos pagassem o preço oficial"
+                icon={BarChart3}
+                value={formatCurrencyFromCents(commercialMetrics?.mrrCatalog ?? 0)}
+              />
+              <ExecutiveKpiCard
+                title="MRR Contratado"
+                subtitle="Valor real dos contratos ativos"
+                icon={TrendingUp}
+                accent="success"
+                value={formatCurrencyFromCents(commercialMetrics?.mrrContracted ?? 0)}
+              />
+              <ExecutiveKpiCard
+                title="Receita Recebida (30d)"
+                subtitle="Pagamentos confirmados nos últimos 30 dias"
+                icon={Wallet}
+                value={formatCurrencyFromCents(commercialMetrics?.monthlyRevenue ?? 0)}
+              />
+              <ExecutiveKpiCard
+                title="Impacto Comercial"
+                subtitle="Diferença catálogo − contratado"
+                icon={Percent}
+                accent={safeInt(commercialMetrics?.commercialImpact, 0) > 0 ? 'warning' : 'default'}
+                value={formatSignedCurrencyFromCents(
+                  -safeInt(commercialMetrics?.commercialImpact, 0),
+                )}
+                footnote={
+                  commercialMetrics
+                    ? `${intFmt.format(commercialMetrics.activeOverrides)} override(s) · ${intFmt.format(commercialMetrics.waivedTenants)} isenção(ões)`
+                    : undefined
+                }
+              />
+            </div>
+
+            <div className="grid gap-3 lg:grid-cols-2">
+              <Card className="border-border/60 shadow-none">
+                <CardHeader className="space-y-1 px-4 pb-0 pt-4">
+                  <CardTitle className="text-sm font-semibold tracking-tight">Distribuição Comercial</CardTitle>
+                  <CardDescription className="text-xs">
+                    Categorias de preço e descontos na base ativa
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="px-4 pb-4 pt-3">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Categoria</TableHead>
+                        <TableHead className="text-right">Quantidade</TableHead>
+                        <TableHead className="text-right">Valor total</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {(commercialMetrics?.breakdown ?? []).map((row) => (
+                        <TableRow key={row.category_key}>
+                          <TableCell className="font-medium">{row.category}</TableCell>
+                          <TableCell className="text-right tabular-nums">{intFmt.format(row.count)}</TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatCurrencyFromCents(row.total_cents)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+
+              <Card className="border-border/60 shadow-none">
+                <CardHeader className="space-y-1 px-4 pb-0 pt-4">
+                  <CardTitle className="text-sm font-semibold tracking-tight">
+                    Empresas com condições especiais
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    Overrides ativos ou preço efetivo abaixo do catálogo
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="px-0 pb-4 pt-3">
+                  {commercialOverrides.length === 0 ? (
+                    <p className="px-4 text-sm text-muted-foreground">
+                      Nenhuma empresa com condição especial na base ativa.
+                    </p>
+                  ) : (
+                    <div className="max-h-[320px] overflow-auto px-4">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Empresa</TableHead>
+                            <TableHead>Plano</TableHead>
+                            <TableHead className="text-right">Catálogo</TableHead>
+                            <TableHead className="text-right">Efetivo</TableHead>
+                            <TableHead>Tipo</TableHead>
+                            <TableHead className="text-right">Economia</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {commercialOverrides.slice(0, 20).map((row) => (
+                            <TableRow key={row.tenant_id}>
+                              <TableCell className="max-w-[140px] truncate font-medium">
+                                {row.tenant_name}
+                              </TableCell>
+                              <TableCell className="max-w-[100px] truncate text-muted-foreground">
+                                {row.plan_name}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {formatCurrencyFromCents(row.catalog_mrr_cents)}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {formatCurrencyFromCents(row.effective_mrr_cents)}
+                              </TableCell>
+                              <TableCell>
+                                <Badge variant="secondary" className="text-[10px] font-normal">
+                                  {OVERRIDE_TYPE_LABELS[row.override_type ?? ''] ?? '—'}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums text-amber-700 dark:text-amber-300">
+                                {formatCurrencyFromCents(row.monthly_savings_cents)}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="space-y-3">
