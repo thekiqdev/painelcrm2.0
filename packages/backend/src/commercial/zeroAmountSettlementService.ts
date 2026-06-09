@@ -150,7 +150,8 @@ export async function settleZeroAmountBilling(
   });
 
   const paidAt = new Date();
-  await updateInvoiceStatus(billing.id, 'paid', paidAt, 'ZERO_AMOUNT', 'zero_amount_settled');
+  // payment_method CHECK só aceita PIX|BOLETO|CREDIT_CARD|null — liquidação zero fica em gateway_metadata/gateway_status
+  await updateInvoiceStatus(billing.id, 'paid', paidAt, null, 'zero_amount_settled');
   schedulePublishPlatformBillingPaymentConfirmed(billing.id);
 
   console.info('[zero_amount_settlement]', {

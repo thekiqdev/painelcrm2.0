@@ -157,7 +157,7 @@ describe('zeroAmountSettlementService', () => {
       BILLING_ID,
       'paid',
       expect.any(Date),
-      'ZERO_AMOUNT',
+      null,
       'zero_amount_settled',
     );
     expect(schedulePublishPlatformBillingPaymentConfirmed).toHaveBeenCalledWith(BILLING_ID);
