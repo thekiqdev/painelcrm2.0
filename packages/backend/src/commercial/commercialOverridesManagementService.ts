@@ -492,3 +492,40 @@ export async function disableTenantCommercialOverride(
   const ctx = await loadTenantCommercialContext(tenantId);
   return enrichOverrideListItem(disabled, ctx.catalog_price_cents);
 }
+
+export async function reactivateTenantWithCommercialWaive(
+  tenantId: string,
+  _actorId: string | null,
+): Promise<{
+  billing_id: string;
+  billing_status: string;
+  tenant_id: string;
+  override_type: TenantCommercialOverrideType | null;
+}> {
+  const summary = await getTenantCommercialSummary(tenantId);
+
+  if (summary.effective_price_cents !== 0) {
+    throw new Error('Reativação por isenção exige preço efetivo zero');
+  }
+
+  const activeOverride = summary.active_override;
+  if (!activeOverride || activeOverride.status !== 'active') {
+    throw new Error('Reativação por isenção exige override comercial ativo');
+  }
+
+  const ctx = await loadTenantCommercialContext(tenantId);
+  const { subscribePlan } = await import('../services/subscriptionService.js');
+  const result = await subscribePlan(tenantId, summary.tenant.plan_id, ctx.billing_interval, {
+    source: 'superadmin',
+    billingReason: 'plan_purchase',
+    usersCount: ctx.users_count,
+    zeroSettlementSource: 'waive_reactivation',
+  });
+
+  return {
+    billing_id: result.billing.id,
+    billing_status: result.billing.status,
+    tenant_id: tenantId,
+    override_type: activeOverride.override_type,
+  };
+}

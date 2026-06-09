@@ -40,6 +40,11 @@ import {
   patchActiveSaasSubscriptionIncompletePeriods,
   toYmd,
 } from './billingSubscriptionService.js';
+import { applySubscriptionCommercialMetadataFromPaidBilling } from '../commercial/subscriptionCommercialMetadata.js';
+import {
+  trySettleZeroAmountBillingIfEligible,
+  type ZeroAmountSettlementSource,
+} from '../commercial/zeroAmountSettlementService.js';
 import { getBillingSettings } from './billingSettingsService.js';
 import {
   isPhase2TrialCrmGateEnabled,
@@ -267,6 +272,13 @@ async function ensureSaasSubscriptionAfterPaidActivation(params: {
         billing: billingFresh,
         mode: 'explicit',
       });
+      if (billingFresh.status === 'paid') {
+        await applySubscriptionCommercialMetadataFromPaidBilling({
+          subscriptionId: subAfter.id,
+          tenantId,
+          billing: billingFresh,
+        });
+      }
     }
   });
 }
@@ -921,6 +933,7 @@ export async function subscribePlan(
     source?: 'superadmin' | 'self_service' | 'api';
     billingReason?: 'plan_purchase' | 'plan_upgrade' | 'plan_renewal' | 'manual_charge' | 'seat_addon';
     paymentMethod?: PaymentMethod;
+    zeroSettlementSource?: ZeroAmountSettlementSource;
   }
 ): Promise<SubscribePlanResult> {
   await validatePlanForPurchase(planId, options?.usersCount ?? null);
@@ -938,6 +951,9 @@ export async function subscribePlan(
   const gatewayKey = config?.gateway_key ?? 'asaas';
   const paymentMethod = options?.paymentMethod ?? 'BOLETO';
   const usersCountNorm = options?.usersCount ?? null;
+  const zeroSettlementSource: ZeroAmountSettlementSource =
+    options?.zeroSettlementSource ??
+    (options?.source === 'superadmin' ? 'manual_charge' : 'checkout');
 
   const invoiceData: CreateInvoiceInput = {
     tenant_id: tenantId,
@@ -955,6 +971,15 @@ export async function subscribePlan(
 
   if (!gateway) {
     const billing = await createInvoice(invoiceData);
+    const zeroSettlement = await trySettleZeroAmountBillingIfEligible({
+      billingId: billing.id,
+      amountCents,
+      source: zeroSettlementSource,
+    });
+    if (zeroSettlement) {
+      const settled = await getInvoiceById(billing.id);
+      return { billing: settled ?? billing };
+    }
     schedulePublishPlatformBillingChargeCreated(billing.id);
     return { billing };
   }
@@ -987,6 +1012,16 @@ export async function subscribePlan(
       billingReason,
     });
     billing = await createInvoice(invoiceData);
+  }
+
+  const zeroSettlement = await trySettleZeroAmountBillingIfEligible({
+    billingId: billing.id,
+    amountCents,
+    source: zeroSettlementSource,
+  });
+  if (zeroSettlement) {
+    const settled = await getInvoiceById(billing.id);
+    return { billing: settled ?? billing };
   }
 
   if (!billing.invoice_number) {

@@ -11,6 +11,7 @@ import {
   listTenantCommercialOverrides,
   patchTenantCommercialOverride,
   simulateTenantCommercialPrice,
+  reactivateTenantWithCommercialWaive,
   type CreateCommercialOverrideInput,
 } from '../commercial/commercialOverridesManagementService.js';
 import { TENANT_COMMERCIAL_OVERRIDE_TYPES } from '../commercial/tenantCommercialTypes.js';
@@ -119,6 +120,23 @@ export async function deleteTenantCommercialOverride(
   } catch (e) {
     const message = e instanceof Error ? e.message : 'Erro ao desativar override';
     const status = message.includes('não encontrado') ? 404 : 400;
+    res.status(status).json({ error: message });
+  }
+}
+
+export async function postCommercialWaiveReactivation(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!requireSuperAdmin(req, res)) return;
+    const { tenantId } = req.params;
+    const result = await reactivateTenantWithCommercialWaive(tenantId, req.user?.id ?? null);
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : 'Erro ao reativar com isenção';
+    const status =
+      message.includes('exige') || message.includes('não encontrado') ? 400 : 500;
     res.status(status).json({ error: message });
   }
 }

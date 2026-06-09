@@ -102,6 +102,21 @@ export async function simulateTenantCommercialPrice(tenantId: string, body?: Par
   );
 }
 
+export type CommercialWaiveReactivationResult = {
+  ok: boolean;
+  billing_id: string;
+  billing_status: string;
+  tenant_id: string;
+  override_type: CommercialOverrideType | null;
+};
+
+export async function reactivateTenantWithCommercialWaive(tenantId: string) {
+  return apiClient.post<CommercialWaiveReactivationResult>(
+    `/api/superadmin/tenants/${tenantId}/commercial/reactivate-waive`,
+    {},
+  );
+}
+
 export const OVERRIDE_TYPE_LABELS: Record<CommercialOverrideType, string> = {
   fixed_price: 'Preço fixo',
   percent_discount: 'Desconto percentual',

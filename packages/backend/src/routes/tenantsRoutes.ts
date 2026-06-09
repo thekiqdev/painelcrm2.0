@@ -30,6 +30,10 @@ router.post(
   '/:tenantId/commercial/simulate',
   commercialOverridesController.postTenantCommercialSimulate,
 );
+router.post(
+  '/:tenantId/commercial/reactivate-waive',
+  commercialOverridesController.postCommercialWaiveReactivation,
+);
 router.patch(
   '/:tenantId/commercial/overrides/:id',
   commercialOverridesController.patchTenantCommercialOverrideHandler,

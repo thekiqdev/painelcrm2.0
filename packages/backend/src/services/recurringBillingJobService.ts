@@ -37,6 +37,7 @@ import {
 } from './paymentCustomersService.js';
 import { isAsaasInvalidCustomerError } from '../modules/gateways/asaas/asaasErrors.js';
 import { calculateSaasRenewalInvoiceAmount, type BillingInterval } from './billingService.js';
+import { trySettleZeroAmountBillingIfEligible } from '../commercial/zeroAmountSettlementService.js';
 import { getActiveGateway } from '../modules/payments/gatewayProvider.js';
 import { getActiveConfig } from './paymentGatewayConfigService.js';
 import { resolveAutomaticInvoicePaymentMethod } from './gatewayPaymentMethodPolicy.js';
@@ -1859,7 +1860,15 @@ async function processOneRenewalJob(
 
   const billing = await createInvoice(invoiceData);
 
-  const gateway = await getActiveGateway({ billingType: 'saas', tenantId: subscription.tenant_id });
+  const zeroSettlement = await trySettleZeroAmountBillingIfEligible({
+    billingId: billing.id,
+    amountCents,
+    source: 'renewal',
+  });
+
+  const gateway = zeroSettlement
+    ? null
+    : await getActiveGateway({ billingType: 'saas', tenantId: subscription.tenant_id });
   if (gateway) {
     try {
       const customerId = await gateway.ensureCustomer?.(subscription.tenant_id);
@@ -1891,7 +1900,9 @@ async function processOneRenewalJob(
     }
   }
 
-  schedulePublishPlatformBillingChargeCreated(billing.id);
+  if (!zeroSettlement) {
+    schedulePublishPlatformBillingChargeCreated(billing.id);
+  }
 
   // lifecycle shadow observation (future — renewal route Sprint I+)
   void import('../lifecycle/lifecycleBillingObserver.js').then(({ observeFutureBillingLifecycleEvent }) =>

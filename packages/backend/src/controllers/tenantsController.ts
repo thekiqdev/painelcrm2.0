@@ -16,6 +16,9 @@ import { yyyyMmDdFromDbDateValue } from '../utils/calendarDateBr.js';
 import { z } from 'zod';
 import { deleteTenantWithDependencies } from '../services/tenantDeletionService.js';
 import { SUPERADMIN_OPS_KANBAN_TENANT_ID } from '../config/superadminOpsKanban.js';
+import { calculateInvoiceAmount, type BillingInterval } from '../services/billingService.js';
+import { createInvoice, getInvoiceById } from '../services/invoiceService.js';
+import { trySettleZeroAmountBillingIfEligible } from '../commercial/zeroAmountSettlementService.js';
 
 const createTenantSchema = z.object({
   name: z.string().min(1),
@@ -766,28 +769,26 @@ export async function createTenantCharge(req: AuthRequest, res: Response): Promi
     const row = tenantResult.rows[0];
     const planId = row.plan_id;
     const planType = row.plan_type || 'standard';
-    const billingInterval = body.billing_interval ?? row.plan_billing_interval ?? 'monthly';
+    const billingInterval = (body.billing_interval ??
+      row.plan_billing_interval ??
+      'monthly') as BillingInterval;
 
-    let amount: number;
-    if (planType === 'custom') {
-      const contractedUsers = row.max_users_override != null
-        ? Number(row.max_users_override)
-        : (row.plan_max_users != null ? Number(row.plan_max_users) : 1);
-      const priceRow = await pool.query(
-        'SELECT price_per_user_cents FROM plan_interval_prices WHERE plan_id = $1 AND billing_interval = $2',
-        [planId, billingInterval]
-      );
-      if (priceRow.rows.length === 0) {
-        res.status(400).json({
-          error: `Plano personalizado sem preço para o intervalo "${billingInterval}". Defina interval_prices para este plano.`,
-        });
-        return;
-      }
-      const pricePerUser = priceRow.rows[0].price_per_user_cents;
-      amount = body.amount_cents ?? Math.max(0, pricePerUser * contractedUsers);
-    } else {
-      amount = body.amount_cents ?? row.price_cents ?? 0;
-    }
+    const contractedUsers =
+      planType === 'custom'
+        ? row.max_users_override != null
+          ? Number(row.max_users_override)
+          : row.plan_max_users != null
+            ? Number(row.plan_max_users)
+            : 1
+        : null;
+
+    const resolvedAmount =
+      body.amount_cents ??
+      (await calculateInvoiceAmount(planId, billingInterval, contractedUsers, {
+        tenantId: id,
+        context: 'manual_charge',
+      }));
+    const amount = Math.max(0, Math.round(resolvedAmount));
 
     let dueDateStr: string;
     if (body.due_date?.trim()) {
@@ -805,7 +806,6 @@ export async function createTenantCharge(req: AuthRequest, res: Response): Promi
         return;
       }
     }
-    const invoiceNumber = `INV-${id.slice(0, 8)}-${Date.now().toString(36).toUpperCase()}`;
     const idempotencyKey = `saas_${id}_${planId}_${dueDateStr}`;
 
     const existing = await pool.query(
@@ -820,51 +820,71 @@ export async function createTenantCharge(req: AuthRequest, res: Response): Promi
     }
 
     const config = await getActiveConfig('saas');
-    const gateway = await getActiveGateway({ billingType: 'saas' });
-    const asaasConfig = await getActiveAsaasConfigForSaas();
     const gatewayKey = config?.gateway_key ?? 'asaas';
 
-    let chargeResult: { paymentId: string; status: string; invoiceUrl?: string; bankSlipUrl?: string; pixQrCode?: string; pixCopyPaste?: string } | null = null;
-    if (gateway) {
-      try {
-        const customerId = await ensureCustomerForTenant(id, asaasConfig ?? undefined);
-        chargeResult = await gateway.createCharge({
-          customerId,
-          amountCents: amount,
-          dueDate: dueDateStr,
-          paymentMethod: 'BOLETO',
-          description: invoiceNumber,
-          idempotencyKey,
-          externalReference: id,
-        });
-      } catch (err) {
-        console.error('createTenantCharge gateway error:', err);
-      }
-    }
+    const billing = await createInvoice({
+      tenant_id: id,
+      plan_id: planId,
+      billing_interval: billingInterval,
+      amount_cents: amount,
+      due_date: dueDateStr,
+      source: 'superadmin',
+      billing_reason: 'manual_charge',
+      users_count: contractedUsers,
+      gateway: gatewayKey,
+      idempotency_key: idempotencyKey,
+    });
 
-    const insert = await pool.query(
-      `INSERT INTO tenant_billing (
-        tenant_id, plan_id, billing_interval, amount_cents, due_date, status, invoice_number,
-        gateway, payment_method, gateway_reference_id, gateway_metadata, gateway_status, idempotency_key
-      ) VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10, $11, $12)
-      RETURNING id, tenant_id, plan_id, billing_interval, amount_cents, due_date, status, invoice_number,
-        gateway, payment_method, gateway_reference_id, gateway_metadata, gateway_status, idempotency_key, created_at`,
-      [
-        id,
-        planId,
-        billingInterval,
-        amount,
-        dueDateStr,
-        invoiceNumber,
-        gatewayKey,
-        chargeResult ? 'BOLETO' : null,
-        chargeResult?.paymentId ?? null,
-        null,
-        chargeResult?.status ?? null,
-        idempotencyKey,
-      ]
-    );
-    const createdCharge = insert.rows[0];
+    const zeroSettlement = await trySettleZeroAmountBillingIfEligible({
+      billingId: billing.id,
+      amountCents: amount,
+      source: 'manual_charge',
+    });
+
+    let createdCharge = billing;
+    let chargeResult: {
+      paymentId: string;
+      status: string;
+      invoiceUrl?: string;
+      bankSlipUrl?: string;
+      pixQrCode?: string;
+      pixCopyPaste?: string;
+    } | null = null;
+
+    if (!zeroSettlement) {
+      const gateway = await getActiveGateway({ billingType: 'saas' });
+      const asaasConfig = await getActiveAsaasConfigForSaas();
+      if (gateway && billing.invoice_number) {
+        try {
+          const customerId = await ensureCustomerForTenant(id, asaasConfig ?? undefined);
+          chargeResult = await gateway.createCharge({
+            customerId,
+            amountCents: amount,
+            dueDate: dueDateStr,
+            paymentMethod: 'BOLETO',
+            description: billing.invoice_number,
+            idempotencyKey,
+            externalReference: id,
+          });
+          await pool.query(
+            `UPDATE tenant_billing
+             SET payment_method = 'BOLETO',
+                 gateway_reference_id = $1,
+                 gateway_status = $2,
+                 updated_at = now()
+             WHERE id = $3`,
+            [chargeResult.paymentId, chargeResult.status, billing.id],
+          );
+          const refreshed = await getInvoiceById(billing.id);
+          if (refreshed) createdCharge = refreshed;
+        } catch (err) {
+          console.error('createTenantCharge gateway error:', err);
+        }
+      }
+    } else {
+      const refreshed = await getInvoiceById(billing.id);
+      if (refreshed) createdCharge = refreshed;
+    }
     if (req.user?.id) {
       await logSuperAdminAction(req.user.id, 'tenant.billing_created', 'tenant', id, {
         billing_id: createdCharge.id,
@@ -878,7 +898,9 @@ export async function createTenantCharge(req: AuthRequest, res: Response): Promi
     if (chargeResult?.bankSlipUrl) response.bankSlipUrl = chargeResult.bankSlipUrl;
     if (chargeResult?.pixQrCode) response.pixQrCode = chargeResult.pixQrCode;
     if (chargeResult?.pixCopyPaste) response.pixCopyPaste = chargeResult.pixCopyPaste;
-    schedulePublishPlatformBillingChargeCreated(String(createdCharge.id));
+    if (!zeroSettlement) {
+      schedulePublishPlatformBillingChargeCreated(String(createdCharge.id));
+    }
     res.status(201).json(response);
   } catch (error) {
     if (error instanceof z.ZodError) {

@@ -41,12 +41,13 @@ import {
   OVERRIDE_TYPE_LABELS,
   patchTenantCommercialOverride,
   simulateTenantCommercialPrice,
+  reactivateTenantWithCommercialWaive,
   type CommercialOverrideInput,
   type CommercialOverrideItem,
   type CommercialOverrideType,
   type TenantCommercialSummary,
 } from '@/services/superadminTenantCommercial';
-import { ArrowDown, Loader2, Plus, Receipt, Sparkles } from 'lucide-react';
+import { ArrowDown, Loader2, Plus, Receipt, RefreshCw, Sparkles } from 'lucide-react';
 
 const INTERVAL_OPTIONS = [
   { value: 'monthly', label: 'Mensal' },
@@ -93,6 +94,13 @@ export default function SuperAdminClientCommercial() {
   const [editing, setEditing] = useState<CommercialOverrideItem | null>(null);
   const [form, setForm] = useState<CommercialOverrideInput>(emptyForm);
   const [draftSimulation, setDraftSimulation] = useState<TenantCommercialSummary['simulation'] | null>(null);
+  const [reactivating, setReactivating] = useState(false);
+
+  const canReactivateWithWaive = useMemo(() => {
+    if (!summary) return false;
+    const active = summary.active_override?.status === 'active';
+    return active && summary.effective_price_cents === 0;
+  }, [summary]);
 
   const load = useCallback(async () => {
     if (!tenantId) return;
@@ -175,6 +183,26 @@ export default function SuperAdminClientCommercial() {
     void load();
   };
 
+  const handleReactivateWithWaive = async () => {
+    if (!tenantId || !canReactivateWithWaive) return;
+    if (
+      !window.confirm(
+        'Criar fatura R$ 0, liquidar automaticamente e ativar o plano desta empresa?',
+      )
+    ) {
+      return;
+    }
+    setReactivating(true);
+    const res = await reactivateTenantWithCommercialWaive(tenantId);
+    setReactivating(false);
+    if (res.error) {
+      toast.error(res.error);
+      return;
+    }
+    toast.success('Empresa reativada com isenção comercial.');
+    void load();
+  };
+
   const handleDisable = async (item: CommercialOverrideItem) => {
     if (!tenantId) return;
     if (!window.confirm('Desativar este override comercial?')) return;
@@ -249,6 +277,31 @@ export default function SuperAdminClientCommercial() {
           </CardHeader>
         </Card>
       </div>
+
+      {canReactivateWithWaive ? (
+        <Card className="border-crm-primary/25 bg-crm-primary/5">
+          <CardHeader>
+            <CardTitle className="text-base">Reativar com Isenção</CardTitle>
+            <CardDescription>
+              Override ativo com preço efetivo R$ 0 — gera fatura, liquida automaticamente e ativa o plano.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button
+              type="button"
+              onClick={() => void handleReactivateWithWaive()}
+              disabled={reactivating}
+            >
+              {reactivating ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="mr-2 h-4 w-4" />
+              )}
+              Reativar com Isenção
+            </Button>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader>
