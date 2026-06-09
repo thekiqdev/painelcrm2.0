@@ -262,16 +262,33 @@ async function ensureProposalPublicLinkForPublish(params: {
   tenantId: string;
   accessorUserId: string;
 }): Promise<{ resolvedPublicUrl: string } | null> {
-  const r = await pool.query<{ ct: string | null }>(
-    `SELECT p.public_link_token_ciphertext AS ct
-     FROM proposals p
-     INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
-     WHERE p.id = $1`,
-    [params.proposalId, params.accessorUserId],
-  );
-  if (r.rows.length === 0) return null;
+  let existingCiphertext: string | null = null;
+  try {
+    const r = await pool.query<{ ct: string | null }>(
+      `SELECT p.public_link_token_ciphertext AS ct
+       FROM proposals p
+       INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE p.id = $1`,
+      [params.proposalId, params.accessorUserId],
+    );
+    if (r.rows.length === 0) return null;
+    existingCiphertext = r.rows[0]?.ct ?? null;
+  } catch (e) {
+    if (pgErrorCode(e) !== PG_UNDEFINED_COLUMN) throw e;
+    const r = await pool.query(
+      `SELECT p.id
+       FROM proposals p
+       INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE p.id = $1`,
+      [params.proposalId, params.accessorUserId],
+    );
+    if (r.rows.length === 0) return null;
+    console.warn(
+      '[updateProposal] Coluna public_link_token_ciphertext ausente; emitindo token em memória para publicação.',
+    );
+  }
 
-  let rawToken = decryptProposalPublicLinkToken(r.rows[0]?.ct ?? null);
+  let rawToken = decryptProposalPublicLinkToken(existingCiphertext);
 
   if (!rawToken) {
     try {
