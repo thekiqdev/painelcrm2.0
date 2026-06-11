@@ -12,6 +12,7 @@ export const OPS_KANBAN_CANONICAL_BOARD_NAMES = [
   'Onboarding',
   'Expansão',
   'Reativação',
+  'Engajamento Trial',
 ] as const;
 
 /** Chave estável para pg_advisory_xact_lock (serializa seed no Postgres). */
@@ -88,7 +89,7 @@ export async function findCanonicalOpsBoardIdByNameFromPool(name: string): Promi
   return r.rows[0]?.id ?? null;
 }
 
-/** IDs canônicos dos 5 boards operacionais (para filtrar UI). */
+/** IDs canônicos dos boards operacionais (para filtrar UI). */
 export async function listCanonicalOpsBoardIds(): Promise<Set<string>> {
   const ids = new Set<string>();
   for (const name of OPS_KANBAN_CANONICAL_BOARD_NAMES) {

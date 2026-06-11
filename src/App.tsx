@@ -48,6 +48,9 @@ const AcquisitionOperationalOnboarding = lazyWithReload(
   () => import("./pages/AcquisitionOperationalOnboarding"),
 );
 const SuperAdminSignupAcquisitionPage = lazyWithReload(() => import("./pages/superadmin/SuperAdminSignupAcquisitionPage"));
+const SuperAdminGrowthSignupStrategyPage = lazyWithReload(
+  () => import("./pages/superadmin/SuperAdminGrowthSignupStrategyPage"),
+);
 const OnboardingKickoffPlaceholder = lazyWithReload(() => import("./pages/OnboardingKickoffPlaceholder"));
 const RegistrationSteps = lazyWithReload(() => import("./pages/Registration/RegistrationSteps"));
 const NotFound = lazyWithReload(() => import("./pages/NotFound"));
@@ -1011,6 +1014,18 @@ const App = () => (
                   element={
                     <Suspense fallback={<LoadingFallback />}>
                       <SuperAdminSignupAcquisitionPage />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="configuracoes/growth"
+                  element={<Navigate to="/superadmin/configuracoes/growth/signup-strategy" replace />}
+                />
+                <Route
+                  path="configuracoes/growth/signup-strategy"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SuperAdminGrowthSignupStrategyPage />
                     </Suspense>
                   }
                 />

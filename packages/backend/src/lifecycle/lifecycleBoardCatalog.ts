@@ -4,7 +4,11 @@
  */
 import { OPS_KANBAN_CANONICAL_BOARD_NAMES } from '../services/superadminOpsKanbanFoundation.js';
 
-export const LIFECYCLE_KNOWN_BOARD_NAMES: readonly string[] = OPS_KANBAN_CANONICAL_BOARD_NAMES;
+/** Boards canônicos Ops + boards lifecycle adicionais (ex.: Engajamento Trial — Sprint N1). */
+export const LIFECYCLE_KNOWN_BOARD_NAMES: readonly string[] = [
+  ...OPS_KANBAN_CANONICAL_BOARD_NAMES,
+  'Engajamento Trial',
+];
 
 /** Colunas seedadas hoje + destinos futuros do router. */
 export const LIFECYCLE_KNOWN_COLUMNS_BY_BOARD: Readonly<Record<string, readonly string[]>> = {
@@ -40,6 +44,13 @@ export const LIFECYCLE_KNOWN_COLUMNS_BY_BOARD: Readonly<Record<string, readonly 
     'Dia 7',
     'Última tentativa',
     'Cancelado',
+  ],
+  'Engajamento Trial': [
+    'Trial iniciado',
+    'Dia 2',
+    'Dia 4',
+    'Dia 6',
+    'Trial finalizando',
   ],
 };
 

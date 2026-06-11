@@ -1,4 +1,11 @@
-import { apiClient } from '@/integrations/api/client';
+import {
+  bumpSignupCacheEpoch,
+  clearSignupStrategyCache,
+  getSignupEntryUrl as getSignupEntryUrlFromStrategy,
+  isSignupSessionCacheValid,
+  loadSignupStrategy,
+  SIGNUP_CACHE_EPOCH_KEY,
+} from '@/lib/signupStrategy';
 
 export type SignupEntryMode = 'legacy_checkout' | 'acquisition_flow';
 
@@ -45,36 +52,65 @@ function writeSessionCache(cfg: SignupEntryConfig): void {
   }
 }
 
+export function clearSignupEntryCache(): void {
+  memoryCache = null;
+  try {
+    sessionStorage.removeItem(CACHE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+export const SIGNUP_CACHE_INVALIDATED_EVENT = 'signup-cache-invalidated';
+
+/** Limpa memory + sessionStorage e sinaliza outras abas/componentes. */
+export function invalidateSignupCaches(): void {
+  clearSignupStrategyCache();
+  clearSignupEntryCache();
+  bumpSignupCacheEpoch();
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(SIGNUP_CACHE_INVALIDATED_EVENT));
+  }
+}
+
 export function getCachedSignupEntry(): SignupEntryConfig {
-  return memoryCache ?? readSessionCache() ?? DEFAULT;
+  if (memoryCache && isSignupSessionCacheValid()) return memoryCache;
+  const cached = readSessionCache();
+  if (cached && isSignupSessionCacheValid()) return cached;
+  return DEFAULT;
 }
 
 export async function loadSignupEntryConfig(force = false): Promise<SignupEntryConfig> {
-  if (!force && memoryCache) return memoryCache;
+  const cacheValid = isSignupSessionCacheValid();
+
+  if (!force && cacheValid && memoryCache) return memoryCache;
+
   const cached = readSessionCache();
-  if (!force && cached) {
+  if (!force && cacheValid && cached) {
     memoryCache = cached;
     return cached;
   }
 
-  const res = await apiClient.get<{
-    ok?: boolean;
-    entry_mode?: SignupEntryMode;
-    paths?: SignupEntryConfig['paths'];
-  }>('/api/public/platform/signup-entry');
-
-  if (res.data?.paths && res.data.entry_mode) {
-    const cfg: SignupEntryConfig = {
-      entry_mode: res.data.entry_mode,
-      paths: res.data.paths,
-    };
-    memoryCache = cfg;
-    writeSessionCache(cfg);
-    return cfg;
-  }
-
-  return getCachedSignupEntry();
+  const strategy = await loadSignupStrategy(force);
+  const entry_mode: SignupEntryMode =
+    strategy.flow === 'exclusive_signup' ? 'acquisition_flow' : 'legacy_checkout';
+  const cfg: SignupEntryConfig = {
+    entry_mode,
+    paths: {
+      signup: strategy.entry_url,
+      legacy_checkout: '/checkout',
+      acquisition_signup: '/cadastro',
+      activation_checkout: '/ativacao/checkout',
+      post_activation: DEFAULT.paths.post_activation,
+    },
+  };
+  memoryCache = cfg;
+  writeSessionCache(cfg);
+  return cfg;
 }
+
+export { getSignupEntryUrlFromStrategy as getSignupEntryUrl };
+export { SIGNUP_CACHE_EPOCH_KEY };
 
 /** URL principal de signup para CTAs públicos. */
 export function buildSignupUrl(

@@ -15,15 +15,17 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Logo } from "@/components/Logo";
 import { cn } from "@/lib/utils";
 import { platformSupportHref } from "@/lib/platformSupportNav";
+import { useSignupEntry } from "@/hooks/useSignupEntry";
 
 const Navbar = () => {
   const [open, setOpen] = useState(false);
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
+  const { signupPath } = useSignupEntry();
 
-  const goToCheckout = () => {
+  const goToSignup = () => {
     setOpen(false);
-    navigate("/checkout");
+    navigate(signupPath);
   };
 
   const displayName =
@@ -127,7 +129,7 @@ const Navbar = () => {
               <Button variant="ghost" size="sm" onClick={() => navigate("/login")}>
                 Acessar
               </Button>
-              <Button size="sm" onClick={goToCheckout}>
+              <Button size="sm" onClick={goToSignup}>
                 Começar grátis
               </Button>
             </>

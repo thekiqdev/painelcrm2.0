@@ -10,6 +10,7 @@ describe('superadminOpsKanbanFoundation', () => {
   it('canonical board names match seed definitions', () => {
     const seedNames = SUPERADMIN_OPS_KANBAN_BOARD_SEEDS.map((b) => b.name);
     expect([...OPS_KANBAN_CANONICAL_BOARD_NAMES]).toEqual(seedNames);
+    expect(OPS_KANBAN_CANONICAL_BOARD_NAMES).toContain('Engajamento Trial');
   });
 
   it('normalizes board names for comparison', () => {

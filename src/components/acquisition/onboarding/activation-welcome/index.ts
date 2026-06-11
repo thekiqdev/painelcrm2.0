@@ -1,4 +1,5 @@
 export { ActivationWelcomeStep } from './ActivationWelcomeStep';
+export { ActivationEnvironmentReady } from './ActivationEnvironmentReady';
 export { ActivationWelcomeCta } from './ActivationLaunchPanel';
 export { ActivationMobileFooter } from './ActivationMobileFooter';
 export { ActivationMobileHeader } from './ActivationMobileHeader';

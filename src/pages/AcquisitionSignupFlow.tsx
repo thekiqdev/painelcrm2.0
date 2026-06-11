@@ -10,6 +10,8 @@ import { prepareOnboardingAvatarDataUrl } from '@/lib/onboardingAvatarImage';
 import {
   INITIAL_SIGNUP_FORM,
   ONBOARDING_CTA_LABELS,
+  ONBOARDING_CTA_ACCESS_REQUEST,
+  ACQUISITION_CAPTURE_NAME_PLACEHOLDER,
   ONBOARDING_HEADLINES,
   OnboardingCard,
   OnboardingConversionStep,
@@ -77,6 +79,15 @@ export default function AcquisitionSignupFlowPage() {
   const [extraTrialEligible, setExtraTrialEligible] = useState(false);
   const [contactBanner, setContactBanner] = useState<string | null>(null);
   const [leadSubStep, setLeadSubStep] = useState<LeadCaptureSubStep>('identity');
+  const [verificationCode, setVerificationCode] = useState('');
+  const [phoneVerificationId, setPhoneVerificationId] = useState<string | null>(null);
+  const [verificationUiState, setVerificationUiState] = useState<
+    'idle' | 'sending' | 'sent' | 'verified'
+  >('idle');
+  const [verificationError, setVerificationError] = useState<string | null>(null);
+  const [phoneVerified, setPhoneVerified] = useState(false);
+  const [resendCooldownSec, setResendCooldownSec] = useState(0);
+  const [resendLoading, setResendLoading] = useState(false);
 
   const stepId = WIZARD_STEP_IDS[stepIndex] ?? 'lead';
   const headline = ONBOARDING_HEADLINES[stepId];
@@ -241,11 +252,15 @@ export default function AcquisitionSignupFlowPage() {
     setForm((f) => ({ ...f, ...patch }));
   }, []);
 
+  useEffect(() => {
+    if (resendCooldownSec <= 0) return;
+    const timer = window.setInterval(() => {
+      setResendCooldownSec((s) => (s <= 1 ? 0 : s - 1));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [resendCooldownSec]);
+
   function validateLeadIdentityStep(): boolean {
-    if (!form.lead_name.trim()) {
-      toast.error('Informe seu nome.');
-      return false;
-    }
     const ph = form.lead_phone.replace(/\D/g, '');
     if (ph.length < 10) {
       toast.error('Informe seu WhatsApp com DDD.');
@@ -254,7 +269,77 @@ export default function AcquisitionSignupFlowPage() {
     return true;
   }
 
+  function validateLeadVerificationStep(): boolean {
+    const code = verificationCode.replace(/\D/g, '');
+    if (code.length !== 6) {
+      toast.error('Informe o código de 6 dígitos.');
+      return false;
+    }
+    return true;
+  }
+
+  async function sendPhoneAccessCode(): Promise<boolean> {
+    const phone = form.lead_phone.replace(/\D/g, '');
+    setVerificationError(null);
+    setVerificationUiState('sending');
+    try {
+      const res = await apiClient.post<{
+        ok: boolean;
+        verification_id?: string;
+        resend_available_at?: string;
+        error?: string;
+        code?: string;
+        resend_available_in_seconds?: number;
+      }>('/api/public/acquisition/phone/send-code', { phone });
+
+      if (res.error || !res.data?.ok || !res.data.verification_id) {
+        const msg = res.data?.error ?? res.error ?? 'Não foi possível enviar o código.';
+        toast.error(msg);
+        setVerificationUiState('idle');
+        if (res.data?.code === 'resend_cooldown' && res.data.resend_available_in_seconds) {
+          setResendCooldownSec(res.data.resend_available_in_seconds);
+        }
+        return false;
+      }
+
+      setPhoneVerificationId(res.data.verification_id);
+      setVerificationUiState('sent');
+      setResendCooldownSec(60);
+      return true;
+    } catch {
+      toast.error('Erro ao enviar código. Tente novamente.');
+      setVerificationUiState('idle');
+      return false;
+    }
+  }
+
+  async function captureVerifiedPhoneContact(): Promise<boolean> {
+    if (!phoneVerificationId) {
+      toast.error('Confirme seu WhatsApp antes de continuar.');
+      return false;
+    }
+    const captureRes = await apiClient.post<{ ok: boolean; lead_id?: string; error?: string }>(
+      '/api/public/acquisition/contact/capture',
+      {
+        name: ACQUISITION_CAPTURE_NAME_PLACEHOLDER,
+        phone: form.lead_phone.replace(/\D/g, ''),
+        lead_id: leadId || undefined,
+        phone_verification_id: phoneVerificationId,
+      },
+    );
+    if (captureRes.error || !captureRes.data?.ok) {
+      toast.error(captureRes.data?.error ?? captureRes.error ?? 'Não foi possível registrar seu contato.');
+      return false;
+    }
+    if (captureRes.data.lead_id) setLeadId(captureRes.data.lead_id);
+    return true;
+  }
+
   function validateLeadCredentialsStep(): boolean {
+    if (!form.lead_name.trim()) {
+      toast.error('Informe seu nome.');
+      return false;
+    }
     if (!form.lead_email.trim() || !form.lead_email.includes('@')) {
       toast.error('Informe um e-mail válido.');
       return false;
@@ -333,28 +418,62 @@ export default function AcquisitionSignupFlowPage() {
     return body;
   }
 
+  async function handleResendCode() {
+    if (resendCooldownSec > 0 || resendLoading) return;
+    setResendLoading(true);
+    try {
+      await sendPhoneAccessCode();
+    } finally {
+      setResendLoading(false);
+    }
+  }
+
   async function handleNext() {
     if (stepId === 'lead') {
       if (leadSubStep === 'identity') {
         if (!validateLeadIdentityStep()) return;
+        setLeadSubStep('verification');
         setLoading(true);
         try {
-          const captureRes = await apiClient.post<{ ok: boolean; lead_id?: string; error?: string }>(
-            '/api/public/acquisition/contact/capture',
-            {
-              name: form.lead_name.trim(),
-              phone: form.lead_phone.replace(/\D/g, ''),
-              lead_id: leadId || undefined,
-            },
-          );
-          if (captureRes.error || !captureRes.data?.ok) {
-            toast.error(captureRes.data?.error ?? captureRes.error ?? 'Não foi possível registrar seu contato.');
+          const sent = await sendPhoneAccessCode();
+          if (!sent) setLeadSubStep('identity');
+        } finally {
+          setLoading(false);
+        }
+        return;
+      }
+
+      if (leadSubStep === 'verification') {
+        if (!validateLeadVerificationStep() || !phoneVerificationId) return;
+        setLoading(true);
+        setVerificationError(null);
+        try {
+          const verifyRes = await apiClient.post<{
+            ok: boolean;
+            verification_id?: string;
+            error?: string;
+            code?: string;
+          }>('/api/public/acquisition/phone/verify-code', {
+            verification_id: phoneVerificationId,
+            phone: form.lead_phone.replace(/\D/g, ''),
+            code: verificationCode.replace(/\D/g, ''),
+          });
+
+          if (verifyRes.error || !verifyRes.data?.ok) {
+            const msg = verifyRes.data?.error ?? verifyRes.error ?? 'Código incorreto.';
+            setVerificationError(msg);
             return;
           }
-          if (captureRes.data.lead_id) setLeadId(captureRes.data.lead_id);
+
+          setPhoneVerified(true);
+          setVerificationUiState('verified');
+          await new Promise((r) => setTimeout(r, 700));
+
+          const captured = await captureVerifiedPhoneContact();
+          if (!captured) return;
           setLeadSubStep('credentials');
         } catch {
-          toast.error('Erro ao registrar contato. Tente novamente.');
+          toast.error('Erro ao verificar código. Tente novamente.');
         } finally {
           setLoading(false);
         }
@@ -589,7 +708,17 @@ export default function AcquisitionSignupFlowPage() {
 
   function handleBack() {
     if (stepId === 'lead' && leadSubStep === 'credentials') {
+      setLeadSubStep('verification');
+      return;
+    }
+    if (stepId === 'lead' && leadSubStep === 'verification') {
       setLeadSubStep('identity');
+      setVerificationCode('');
+      setVerificationError(null);
+      setVerificationUiState('idle');
+      setPhoneVerificationId(null);
+      setPhoneVerified(false);
+      setResendCooldownSec(0);
       return;
     }
     if (stepIndex > 0) {
@@ -618,7 +747,7 @@ export default function AcquisitionSignupFlowPage() {
           <button
             type="button"
             className="w-full rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground"
-            onClick={() => void loadSignupEntryConfig().then((c) => navigate(c.paths.signup))}
+            onClick={() => void loadSignupEntryConfig(true).then((c) => navigate(c.paths.signup))}
           >
             Ir para cadastro padrão
           </button>
@@ -627,7 +756,21 @@ export default function AcquisitionSignupFlowPage() {
     );
   }
 
-  const ctaLabel = ONBOARDING_CTA_LABELS[stepId as 'lead' | 'plan'] ?? 'Continuar';
+  const ctaLabel =
+    stepId === 'lead' && leadSubStep === 'identity'
+      ? ONBOARDING_CTA_ACCESS_REQUEST
+      : stepId === 'lead' && leadSubStep === 'verification'
+        ? 'Continuar'
+        : ONBOARDING_CTA_LABELS[stepId as 'lead' | 'plan'] ?? 'Continuar';
+
+  const leadStepNextDisabled =
+    stepId === 'lead' &&
+    (leadSubStep === 'verification'
+      ? verificationCode.replace(/\D/g, '').length !== 6 ||
+        verificationUiState === 'sending' ||
+        verificationUiState === 'verified' ||
+        !phoneVerificationId
+      : false);
 
   const mobileFooter =
     stepId !== 'conversion' || isTrialActivation ? (
@@ -655,7 +798,9 @@ export default function AcquisitionSignupFlowPage() {
             onNext={handleNext}
             loading={loading}
             nextLabel={ctaLabel}
-            nextDisabled={stepId === 'plan' && (plansLoading || !form.plan_id)}
+            nextDisabled={
+              leadStepNextDisabled || (stepId === 'plan' && (plansLoading || !form.plan_id))
+            }
           />
         )}
       </>
@@ -690,9 +835,21 @@ export default function AcquisitionSignupFlowPage() {
           confirmPassword={form.signup_password_confirm}
           onChange={patchForm}
           onContinue={() => void handleNext()}
-          onBack={leadSubStep === 'credentials' || stepIndex > 0 ? handleBack : undefined}
+          onBack={
+            leadSubStep === 'credentials' || leadSubStep === 'verification' || stepIndex > 0
+              ? handleBack
+              : undefined
+          }
           loading={loading}
           contactBanner={contactBanner}
+          verificationCode={verificationCode}
+          onVerificationCodeChange={setVerificationCode}
+          verificationUiState={verificationUiState}
+          verificationError={verificationError}
+          phoneVerified={phoneVerified}
+          resendCooldownSec={resendCooldownSec}
+          onResendCode={() => void handleResendCode()}
+          resendLoading={resendLoading}
         />
       ) : stepId === 'plan' ? (
         <OperationSetupStep
@@ -707,6 +864,11 @@ export default function AcquisitionSignupFlowPage() {
           continueLoading={loading}
           continueDisabled={plansLoading || !form.plan_id}
           continueLabel={ctaLabel}
+          activationPreview={{
+            name: form.lead_name,
+            email: form.lead_email,
+            phone: form.lead_phone,
+          }}
         />
       ) : (
       <OnboardingCard title={headline.title} subtitle={headline.subtitle}>

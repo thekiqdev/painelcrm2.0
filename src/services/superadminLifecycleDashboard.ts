@@ -9,6 +9,11 @@ export const LIFECYCLE_EVENT_FILTER_OPTIONS = [
   'trial.recovery.day3',
   'trial.recovery.day7',
   'trial.recovery.last_attempt',
+  'trial.engagement.started',
+  'trial.engagement.day2',
+  'trial.engagement.day4',
+  'trial.engagement.day6',
+  'trial.engagement.finalizing',
   'subscription.activated',
   'subscription.cancelled',
 ] as const;

@@ -19,7 +19,14 @@ import { captureAcquisitionPhoneContact } from '../acquisition/acquisitionPhoneC
 import { loadSessionWithLead } from '../acquisition/acquisitionOnboardingSessionService.js';
 import { provisionWorkspaceFromSession } from '../acquisition/acquisitionProvisioningService.js';
 import { getPublicSignupEntryPayload } from '../platform/platformRuntimeConfig.js';
+import { getSignupStrategy } from '../platform/signupStrategyService.js';
 import { checkOperationalSlugAvailability } from '../acquisition/tenantSlugAvailabilityService.js';
+import {
+  assertSignupPhoneVerified,
+  sendSignupPhoneVerificationCode,
+  verifySignupPhoneCode,
+} from '../acquisition/signupPhoneVerificationService.js';
+import { pool } from '../utils/db.js';
 
 const testeGratisSchema = z.object({
   name: z.string().min(1),
@@ -42,13 +49,18 @@ const signupStepSchema = z.object({
 });
 
 export async function getAcquisitionConfig(_req: Request, res: Response): Promise<void> {
-  const [flags, entry] = await Promise.all([
+  const [flags, entry, strategy] = await Promise.all([
     getAcquisitionPublicConfig(),
     getPublicSignupEntryPayload(),
+    getSignupStrategy(),
   ]);
   res.json({
     ok: true,
-    flags,
+    flags: {
+      ...flags,
+      signup_flow_v1: strategy.flow === 'exclusive_signup',
+    },
+    signup_strategy: strategy,
     entry_mode: entry.entry_mode,
     paths: entry.paths,
   });
@@ -59,6 +71,18 @@ const contactCaptureSchema = z.object({
   phone: z.string().min(10),
   lead_id: z.string().uuid().optional(),
   source: z.string().optional(),
+  phone_verification_id: z.string().uuid(),
+});
+
+const phoneSendCodeSchema = z.object({
+  phone: z.string().min(10),
+  ddi: z.string().optional(),
+});
+
+const phoneVerifyCodeSchema = z.object({
+  verification_id: z.string().uuid(),
+  phone: z.string().min(10),
+  code: z.string().min(6).max(6),
 });
 
 const contactResolveSchema = z.object({
@@ -91,6 +115,20 @@ export async function postContactCapture(req: Request, res: Response): Promise<v
     const correlationId = getCorrelationId() ?? randomUUID();
     mergeRequestContext({ correlationId });
 
+    const phoneVerified = await assertSignupPhoneVerified(
+      pool,
+      body.phone_verification_id,
+      body.phone.trim(),
+    );
+    if (!phoneVerified) {
+      res.status(400).json({
+        ok: false,
+        error: 'Confirme seu WhatsApp antes de continuar.',
+        code: 'phone_not_verified',
+      });
+      return;
+    }
+
     const result = await captureAcquisitionPhoneContact({
       name: body.name.trim(),
       phone: body.phone.trim(),
@@ -117,6 +155,104 @@ export async function postContactCapture(req: Request, res: Response): Promise<v
     console.error('[ACQUISITION] contact_capture_error', e);
     res.status(500).json({ ok: false, error: 'Erro ao registrar contato' });
   }
+}
+
+function mapSendCodeReason(reason: string): { status: number; error: string; code: string } {
+  switch (reason) {
+    case 'invalid_phone':
+      return { status: 400, error: 'Informe um WhatsApp válido com DDD.', code: reason };
+    case 'resend_cooldown':
+      return { status: 429, error: 'Aguarde antes de solicitar um novo código.', code: reason };
+    case 'whatsapp_unavailable':
+      return { status: 503, error: 'Envio por WhatsApp indisponível no momento.', code: reason };
+    case 'send_failed':
+      return { status: 502, error: 'Não foi possível enviar o código. Tente novamente.', code: reason };
+    default:
+      return { status: 500, error: 'Erro ao enviar código.', code: 'send_failed' };
+  }
+}
+
+function mapVerifyCodeReason(
+  reason: 'invalid_code' | 'expired' | 'max_attempts' | 'not_found',
+): { status: number; error: string; code: string } {
+  switch (reason) {
+    case 'invalid_code':
+      return { status: 400, error: 'Código incorreto.', code: reason };
+    case 'expired':
+      return {
+        status: 400,
+        error: 'O código expirou. Solicite um novo acesso.',
+        code: reason,
+      };
+    case 'max_attempts':
+      return {
+        status: 400,
+        error: 'O código expirou. Solicite um novo acesso.',
+        code: 'max_attempts',
+      };
+    case 'not_found':
+      return { status: 404, error: 'Solicitação não encontrada.', code: reason };
+    default:
+      return { status: 400, error: 'Código incorreto.', code: 'invalid_code' };
+  }
+}
+
+export async function postPhoneSendCode(req: Request, res: Response): Promise<void> {
+  try {
+    const body = phoneSendCodeSchema.parse(req.body);
+    const result = await sendSignupPhoneVerificationCode(pool, body.phone.trim(), body.ddi);
+    if (!result.ok) {
+      const mapped = mapSendCodeReason(result.reason);
+      res.status(mapped.status).json({
+        ok: false,
+        error: mapped.error,
+        code: mapped.code,
+        resend_available_in_seconds: result.resend_available_in_seconds,
+      });
+      return;
+    }
+    res.status(201).json({
+      ok: true,
+      verification_id: result.verification_id,
+      resend_available_at: result.resend_available_at,
+    });
+  } catch (e) {
+    if (e instanceof z.ZodError) {
+      res.status(400).json({ ok: false, error: 'Dados inválidos', details: e.errors });
+      return;
+    }
+    console.error('[ACQUISITION] phone_send_code_error', e);
+    res.status(500).json({ ok: false, error: 'Erro ao enviar código' });
+  }
+}
+
+export async function postPhoneVerifyCode(req: Request, res: Response): Promise<void> {
+  try {
+    const body = phoneVerifyCodeSchema.parse(req.body);
+    const result = await verifySignupPhoneCode(
+      pool,
+      body.verification_id,
+      body.phone.trim(),
+      body.code,
+    );
+    if (!result.ok) {
+      const mapped = mapVerifyCodeReason(result.reason);
+      res.status(mapped.status).json({ ok: false, error: mapped.error, code: mapped.code });
+      return;
+    }
+    res.json({ ok: true, verification_id: result.verification_id });
+  } catch (e) {
+    if (e instanceof z.ZodError) {
+      res.status(400).json({ ok: false, error: 'Dados inválidos', details: e.errors });
+      return;
+    }
+    console.error('[ACQUISITION] phone_verify_code_error', e);
+    res.status(500).json({ ok: false, error: 'Erro ao verificar código' });
+  }
+}
+
+export async function postPhoneResendCode(req: Request, res: Response): Promise<void> {
+  return postPhoneSendCode(req, res);
 }
 
 export async function postContactResolve(req: Request, res: Response): Promise<void> {

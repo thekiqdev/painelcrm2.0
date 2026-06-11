@@ -69,7 +69,7 @@ describe('ensureSuperadminOpsKanbanSeed P0-A', () => {
     const result = await ensureSuperadminOpsKanbanSeed('actor-1', { backfillLeads: false });
     expect(result.ok).toBe(true);
     expect(result.boardsCreated).toBe(0);
-    expect(result.boards).toHaveLength(5);
+    expect(result.boards).toHaveLength(6);
     const insertBoardCalls = query.mock.calls.filter(
       (c) => typeof c[0] === 'string' && c[0].includes('INSERT INTO chat_kanban_boards'),
     );

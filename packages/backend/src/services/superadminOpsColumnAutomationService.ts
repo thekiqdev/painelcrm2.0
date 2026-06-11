@@ -6,6 +6,8 @@ import { findAcquisitionLeadById } from '../acquisition/acquisitionLeadRepositor
 import { startWorkflow } from '../automation/orchestration/orchestrationService.js';
 import { scheduleAutomationJob } from '../automation/automationJobRepository.js';
 import { sendMessage } from '../communication/channelProviderGateway/channelProviderGateway.js';
+import { SUPERADMIN_OPS_KANBAN_TENANT_ID } from '../config/superadminOpsKanban.js';
+import { buildOpsLeadGatewaySendInput } from './opsLeadGatewaySend.js';
 import { findOpsKanbanCardForLead } from './superadminOpsKanbanLeadService.js';
 import {
   appendOperationalTimelineForLead,
@@ -58,20 +60,26 @@ export async function runOpsCheckoutAbandonedAutomation(input: {
   const phone = (lead.phone || '').replace(/\D/g, '');
   let communicationOutcome = 'skipped_no_phone';
   if (phone.length >= 10) {
-    const comm = await sendMessage({
-      tenantId: null,
-      channel: 'whatsapp',
-      messageIntent: 'transactional',
-      recipient: phone,
-      correlationId: input.correlationId,
-      idempotencyKey: `ops-recovery-wa:${lead.id}:${input.trigger}`,
-      body: 'Olá! Notamos que você não concluiu o cadastro no PainelCRM. Posso ajudar a finalizar?',
-      metadata: {
-        acquisition_lead_id: lead.id,
-        template_key: 'acquisition.checkout_abandoned.recovery',
-        shadow_ops: true,
+    const sendInput = await buildOpsLeadGatewaySendInput(
+      {
+        channel: 'whatsapp',
+        messageIntent: 'transactional',
+        recipient: phone,
+        correlationId: input.correlationId,
+        idempotencyKey: `ops-recovery-wa:${lead.id}:${input.trigger}`,
+        body: 'Olá! Notamos que você não concluiu o cadastro no PainelCRM. Posso ajudar a finalizar?',
+        metadata: {
+          template_key: 'acquisition.checkout_abandoned.recovery',
+          trigger: input.trigger,
+        },
       },
-    });
+      {
+        opsTenantId: SUPERADMIN_OPS_KANBAN_TENANT_ID,
+        acquisitionLeadId: lead.id,
+        targetTenantId: lead.tenant_id,
+      },
+    );
+    const comm = await sendMessage(sendInput);
     communicationOutcome =
       comm.outcome === 'skipped' ? 'gateway_off' : comm.shadow ? 'whatsapp_shadow' : String(comm.outcome);
   }

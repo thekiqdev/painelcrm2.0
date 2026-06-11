@@ -8,10 +8,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { toast } from "@/components/ui/sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { getPostAuthHomePath } from "@/utils/superAdminRedirect";
+import { useSignupEntry } from "@/hooks/useSignupEntry";
 
 const Login = () => {
   const navigate = useNavigate();
   const { user, signIn } = useAuth();
+  const { signupPath, signupLabel, showSignupOnLogin } = useSignupEntry();
   const [loginType, setLoginType] = useState<"email" | "phone">("email");
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
@@ -133,14 +135,16 @@ const Login = () => {
           </Button>
         </form>
         
-        <div className="mt-6 text-center">
-          <span className="text-sm text-muted-foreground">
-            Ainda não tem uma conta?{" "}
-            <Link to="/checkout" className="text-crm-primary font-medium hover:underline">
-              Cadastrar
-            </Link>
-          </span>
-        </div>
+        {showSignupOnLogin ? (
+          <div className="mt-6 text-center">
+            <span className="text-sm text-muted-foreground">
+              Ainda não tem uma conta?{' '}
+              <Link to={signupPath} className="text-crm-primary font-medium hover:underline">
+                {signupLabel}
+              </Link>
+            </span>
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   );

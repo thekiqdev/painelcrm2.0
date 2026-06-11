@@ -6,6 +6,11 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Loader2 } from 'lucide-react';
+import {
+  invalidateSignupCaches,
+  loadSignupEntryConfig,
+} from '@/lib/signupEntry';
+import { loadSignupStrategy } from '@/lib/signupStrategy';
 
 type SignupEntryMode = 'legacy_checkout' | 'acquisition_flow';
 
@@ -55,6 +60,10 @@ export default function SuperAdminSignupAcquisitionPage() {
       toast.error(res.error ?? 'Falha ao salvar');
       return;
     }
+    if (patch.mode !== undefined) {
+      invalidateSignupCaches();
+      await Promise.all([loadSignupStrategy(true), loadSignupEntryConfig(true)]);
+    }
     setData(res.data);
     toast.success('Configuração salva');
   }
@@ -78,7 +87,11 @@ export default function SuperAdminSignupAcquisitionPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Signup / Acquisition</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Gateway de entrada do site: checkout legado ou fluxo /cadastro com ativação operacional.
+          Configurações avançadas de redirect. O fluxo principal é controlado em{' '}
+          <a href="/superadmin/configuracoes/growth/signup-strategy" className="text-primary hover:underline">
+            Growth → Estratégia de Cadastro
+          </a>
+          .
         </p>
       </div>
 
@@ -129,7 +142,7 @@ export default function SuperAdminSignupAcquisitionPage() {
             <div>
               <p className="font-medium text-sm">Acquisition flow habilitado</p>
               <p className="text-xs text-muted-foreground">
-                Requer também <code>acquisition.signup_flow_v1</code> nas feature flags.
+                Sincronizado com <code>active_signup_flow</code> (Growth). Não depende de ENV.
               </p>
             </div>
             <Switch

@@ -3,7 +3,10 @@ import { Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { PublicAcquisitionPlan } from '../types';
 import { OperationDesktopFooter } from './OperationDesktopFooter';
-import { OperationLivePreview } from './OperationLivePreview';
+import {
+  ContactLivePreview,
+  type ContactPreviewState,
+} from '../contact-setup/ContactLivePreview';
 import { OperationOperationalSummary } from './OperationOperationalSummary';
 import { OperationPlanFoundation } from './OperationPlanFoundation';
 import { OperationResourcesGrid } from './OperationResourcesGrid';
@@ -23,6 +26,7 @@ type Props = {
   continueLoading?: boolean;
   continueDisabled?: boolean;
   continueLabel?: string;
+  activationPreview?: ContactPreviewState;
 };
 
 export function OperationSetupStep({
@@ -37,6 +41,7 @@ export function OperationSetupStep({
   continueLoading,
   continueDisabled,
   continueLabel,
+  activationPreview,
 }: Props) {
   const selectedPlan = useMemo(
     () => plans.find((p) => p.id === selectedId) ?? null,
@@ -127,11 +132,14 @@ export function OperationSetupStep({
           </div>
 
           <aside
-            className={cn('flex min-h-0 flex-col gap-4 overflow-hidden')}
-            aria-label="Preview da operação"
+            className={cn('flex min-h-0 flex-col overflow-y-auto lg:max-h-[calc(100dvh-8rem)]')}
+            aria-label="Status da ativação"
           >
-            <OperationLivePreview preview={preview} />
-            <OperationOperationalSummary preview={preview} />
+            {activationPreview ? (
+              <ContactLivePreview preview={activationPreview} timelineStage="operation" />
+            ) : (
+              <OperationOperationalSummary preview={preview} />
+            )}
           </aside>
         </div>
       </div>

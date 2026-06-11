@@ -1,6 +1,6 @@
 /**
- * Sprint 3.1 — Pipeline de fundação para automações ops em cards acquisition lead.
- * Timeline + logs; sem mensagens/workflows reais nesta sprint.
+ * Pipeline de automações ops para cards acquisition_lead.
+ * Sprint N4: delega Phase2 real via runKanbanPhase2AutomationsForLead.
  */
 import {
   appendOperationalTimelineByCardId,
@@ -54,10 +54,7 @@ async function appendTimeline(
   }
 }
 
-/**
- * Executa fundação de automação para card acquisition lead (ops tenant).
- * Registra timeline e logs; delega phase2 em modo foundation (sem side effects reais).
- */
+/** Executa automações de coluna para card acquisition lead (ops tenant). */
 export async function executeOpsLeadColumnAutomationFoundation(
   ctx: KanbanAutomationContext,
   opts?: { boardLinkedFunnelId?: string | null },
@@ -75,7 +72,6 @@ export async function executeOpsLeadColumnAutomationFoundation(
     column_id: ctx.columnId,
     column_name: ctx.columnName,
     automation_configured: configured,
-    foundation: true,
   });
 
   const phase2Ctx = toPhase2AutomationContext(ctx, opts);
@@ -84,7 +80,6 @@ export async function executeOpsLeadColumnAutomationFoundation(
     const result = await runKanbanPhase2Automations(phase2Ctx);
     logOpsColumnAutomation('column_automation_completed', ctx, {
       attempted: result.attempted,
-      foundation: result.foundation ?? false,
     });
     await appendTimeline(ctx.cardId, ctx.actorUserId, {
       type: 'column_automation_completed',
@@ -92,7 +87,6 @@ export async function executeOpsLeadColumnAutomationFoundation(
       correlation_id: ctx.correlationId,
       column_id: ctx.columnId,
       attempted: result.attempted,
-      foundation: true,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'unknown_error';

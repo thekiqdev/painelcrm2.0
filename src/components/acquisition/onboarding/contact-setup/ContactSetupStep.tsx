@@ -1,11 +1,20 @@
-import { ONBOARDING_HEADLINES, ONBOARDING_LEAD_CREDENTIALS_HEADLINE } from '../constants';
+import {
+  ONBOARDING_LEAD_ACCESS_HEADLINE,
+  ONBOARDING_LEAD_CREDENTIALS_HEADLINE,
+  ONBOARDING_LEAD_VERIFICATION_HEADLINE,
+} from '../constants';
 import { OnboardingIdentityCapture } from '../OnboardingIdentityCapture';
 import { OnboardingCredentialsCapture } from '../OnboardingCredentialsCapture';
+import {
+  OnboardingPhoneVerification,
+  type PhoneVerificationUiState,
+} from '../OnboardingPhoneVerification';
 import { ContactDesktopBackRow, ContactDesktopFooter } from './ContactDesktopFooter';
 import { ContactLivePreview } from './ContactLivePreview';
 import { ContactTrustIndicators } from './ContactTrustIndicators';
+import { CONTACT_ACCESS_CTA, CONTACT_CTA, CONTACT_VERIFICATION_CTA } from './contactSetupConstants';
 
-export type LeadCaptureSubStep = 'identity' | 'credentials';
+export type LeadCaptureSubStep = 'identity' | 'verification' | 'credentials';
 
 type Props = {
   subStep: LeadCaptureSubStep;
@@ -25,6 +34,14 @@ type Props = {
   onBack?: () => void;
   loading?: boolean;
   contactBanner?: string | null;
+  verificationCode?: string;
+  onVerificationCodeChange?: (code: string) => void;
+  verificationUiState?: PhoneVerificationUiState;
+  verificationError?: string | null;
+  phoneVerified?: boolean;
+  resendCooldownSec?: number;
+  onResendCode?: () => void;
+  resendLoading?: boolean;
 };
 
 export function ContactSetupStep({
@@ -39,52 +56,114 @@ export function ContactSetupStep({
   onBack,
   loading,
   contactBanner,
+  verificationCode = '',
+  onVerificationCodeChange,
+  verificationUiState = 'idle',
+  verificationError,
+  phoneVerified = false,
+  resendCooldownSec = 0,
+  onResendCode,
+  resendLoading,
 }: Props) {
-  const headline =
-    subStep === 'credentials' ? ONBOARDING_LEAD_CREDENTIALS_HEADLINE : ONBOARDING_HEADLINES.lead;
+  const isAccessRequest = subStep === 'identity';
+  const isVerification = subStep === 'verification';
+  const headline = isAccessRequest
+    ? ONBOARDING_LEAD_ACCESS_HEADLINE
+    : isVerification
+      ? ONBOARDING_LEAD_VERIFICATION_HEADLINE
+      : ONBOARDING_LEAD_CREDENTIALS_HEADLINE;
   const preview = { name, email, phone };
+  const cta = isAccessRequest
+    ? CONTACT_ACCESS_CTA
+    : isVerification
+      ? CONTACT_VERIFICATION_CTA
+      : CONTACT_CTA;
 
-  const fields =
-    subStep === 'identity' ? (
-      <OnboardingIdentityCapture name={name} phone={phone} onChange={onChange} />
-    ) : (
-      <OnboardingCredentialsCapture
-        email={email}
-        password={password}
-        confirmPassword={confirmPassword}
-        onChange={onChange}
-      />
-    );
+  const fields = isAccessRequest ? (
+    <OnboardingIdentityCapture phone={phone} onChange={onChange} />
+  ) : isVerification ? (
+    <OnboardingPhoneVerification
+      code={verificationCode}
+      onChange={(code) => onVerificationCodeChange?.(code)}
+      uiState={verificationUiState}
+      errorMessage={verificationError}
+      resendCooldownSec={resendCooldownSec}
+      onResend={() => onResendCode?.()}
+      resendLoading={resendLoading}
+    />
+  ) : (
+    <OnboardingCredentialsCapture
+      name={name}
+      email={email}
+      password={password}
+      confirmPassword={confirmPassword}
+      onChange={onChange}
+    />
+  );
 
   return (
     <>
       <div className="space-y-4 pb-2 lg:hidden">
-        <header className="space-y-1">
-          <h1 className="font-display text-xl font-semibold tracking-tight text-foreground">
-            {headline.title}
-          </h1>
+        <header className="space-y-2">
+          {isAccessRequest ? (
+            <>
+              <p className="text-xs font-medium uppercase tracking-[0.2em] text-primary/80">
+                {headline.kicker}
+              </p>
+              <h1 className="font-display text-xl font-semibold tracking-tight text-foreground">
+                {headline.title}
+              </h1>
+            </>
+          ) : (
+            <h1 className="font-display text-xl font-semibold tracking-tight text-foreground">
+              {headline.title}
+            </h1>
+          )}
           <p className="text-sm leading-relaxed text-muted-foreground">{headline.subtitle}</p>
         </header>
 
-        {contactBanner && subStep === 'identity' ? (
+        {contactBanner && isAccessRequest ? (
           <p className="rounded-lg border border-primary/25 bg-primary/10 px-3 py-2 text-sm text-foreground">
             {contactBanner}
           </p>
         ) : null}
 
         {fields}
-        <ContactTrustIndicators compact />
+        {isAccessRequest ? <ContactTrustIndicators compact /> : null}
+        <ContactLivePreview
+          preview={preview}
+          subStep={subStep}
+          timelineStage="contact"
+          phoneVerified={phoneVerified}
+          compact
+        />
       </div>
 
       <div className="hidden min-h-0 flex-1 flex-col overflow-hidden lg:flex">
         <header className="mb-4 shrink-0 space-y-2">
-          <h1 className="font-display text-[1.75rem] font-semibold tracking-tight text-foreground">
-            {headline.title}
-          </h1>
-          <p className="max-w-xl text-[15px] leading-relaxed text-muted-foreground">{headline.subtitle}</p>
+          {isAccessRequest ? (
+            <>
+              <p className="text-xs font-medium uppercase tracking-[0.22em] text-primary/80">
+                {ONBOARDING_LEAD_ACCESS_HEADLINE.kicker}
+              </p>
+              <h1 className="font-display text-[1.75rem] font-semibold tracking-tight text-foreground">
+                {ONBOARDING_LEAD_ACCESS_HEADLINE.title}
+              </h1>
+              <p className="max-w-xl text-[15px] leading-relaxed text-muted-foreground">
+                {ONBOARDING_LEAD_ACCESS_HEADLINE.subtitle}
+              </p>
+            </>
+          ) : (
+            <>
+              <h1 className="font-display text-[1.75rem] font-semibold tracking-tight text-foreground">
+                {headline.title}
+              </h1>
+              <p className="max-w-xl text-[15px] leading-relaxed text-muted-foreground">{headline.subtitle}</p>
+            </>
+          )}
         </header>
 
-        {contactBanner && subStep === 'identity' ? (
+        {contactBanner && isAccessRequest ? (
           <p className="mb-4 shrink-0 rounded-lg border border-primary/25 bg-primary/10 px-3 py-2 text-sm text-foreground">
             {contactBanner}
           </p>
@@ -95,13 +174,26 @@ export function ContactSetupStep({
             <ContactDesktopBackRow onBack={onBack} />
             <div className="shrink-0 space-y-4">
               {fields}
-              {subStep === 'identity' ? <ContactTrustIndicators /> : null}
+              {isAccessRequest ? <ContactTrustIndicators /> : null}
             </div>
-            <ContactDesktopFooter onContinue={onContinue} loading={loading} />
+            <ContactDesktopFooter
+              onContinue={onContinue}
+              loading={loading}
+              label={cta.label}
+              subtitle={cta.subtitle}
+            />
           </div>
 
-          <aside className="flex min-h-0 flex-col overflow-hidden" aria-label="Preview do acesso">
-            <ContactLivePreview preview={preview} />
+          <aside
+            className="flex min-h-0 flex-col overflow-y-auto lg:max-h-[calc(100dvh-8rem)]"
+            aria-label="Status da ativação"
+          >
+            <ContactLivePreview
+              preview={preview}
+              subStep={subStep}
+              timelineStage="contact"
+              phoneVerified={phoneVerified}
+            />
           </aside>
         </div>
       </div>

@@ -3,10 +3,12 @@ import { Label } from '@/components/ui/label';
 import { activationInputClass } from './activationAppStyles';
 
 type Props = {
+  name: string;
   email: string;
   password: string;
   confirmPassword: string;
   onChange: (patch: {
+    lead_name?: string;
     lead_email?: string;
     signup_password?: string;
     signup_password_confirm?: string;
@@ -14,6 +16,7 @@ type Props = {
 };
 
 export function OnboardingCredentialsCapture({
+  name,
   email,
   password,
   confirmPassword,
@@ -21,6 +24,21 @@ export function OnboardingCredentialsCapture({
 }: Props) {
   return (
     <div className="space-y-4">
+      <div className="space-y-2">
+        <Label htmlFor="leadName" className="text-sm text-muted-foreground">
+          Seu nome
+        </Label>
+        <Input
+          id="leadName"
+          className={activationInputClass}
+          value={name}
+          onChange={(e) => onChange({ lead_name: e.target.value })}
+          placeholder="Como podemos te chamar?"
+          autoComplete="name"
+          autoFocus
+        />
+      </div>
+
       <div className="space-y-2">
         <Label htmlFor="leadEmail" className="text-sm text-muted-foreground">
           E-mail

@@ -19,6 +19,7 @@ import {
   TIMELINE_LABELS,
 } from './superadminOpsLeadTimelineService.js';
 import { observeOpsKanbanAcquisitionSync } from '../lifecycle/lifecycleDebugService.js';
+import { moveOpsCardWithAutomations } from './moveOpsCardWithAutomations.js';
 
 export { ACQUISITION_BOARD_NAME };
 
@@ -207,70 +208,76 @@ export async function syncAcquisitionLeadToOpsKanban(input: {
     return { ok: false, reason: 'acquisition_board_missing' };
   }
 
+  const columnLookupClient = await pool.connect();
+  let columnId: string | null;
+  try {
+    columnId = await findColumnIdByName(columnLookupClient, boardId, columnName);
+  } finally {
+    columnLookupClient.release();
+  }
+  if (!columnId) {
+    console.warn('[opsKanban] syncAcquisitionLead skipped', {
+      acquisition_lead_id: input.acquisitionLeadId,
+      reason: `column_not_found:${columnName}`,
+      board_id: boardId,
+    });
+    return { ok: false, reason: `column_not_found:${columnName}` };
+  }
+
+  const meta = buildLeadCardMetadata(lead);
+  const existingOnBoard = await findOpsKanbanCardForLeadOnBoard(lead.id, boardId);
+  const existingCard = existingOnBoard ?? (await findOpsKanbanCardForLead(lead.id));
+  const timelineType = input.timelineType ?? (existingCard ? 'kanban_moved' : 'kanban_card_created');
+
+  if (existingCard) {
+    const moveResult = await moveOpsCardWithAutomations({
+      tenantId: SUPERADMIN_OPS_KANBAN_TENANT_ID,
+      actorUserId: actor,
+      cardId: existingCard.cardId,
+      sourceBoardId: existingCard.boardId,
+      sourceColumnId: existingCard.columnId,
+      destinationBoardId: boardId,
+      destinationColumnId: columnId,
+      source: 'syncAcquisitionLeadToOpsKanban',
+      correlationId: input.correlationId,
+      metadataPatch: meta,
+    });
+
+    const moved =
+      moveResult.status === 'moved' &&
+      (existingCard.columnId !== columnId || existingCard.boardId !== boardId);
+
+    observeOpsKanbanAcquisitionSync({
+      acquisitionLeadId: lead.id,
+      tenantId: lead.tenant_id,
+      correlationId: input.correlationId,
+      currentStage: lead.current_stage,
+      signupStep: input.signupStep,
+      columnName,
+      cardCreated: false,
+    });
+
+    if (
+      moveResult.status === 'card_not_found' ||
+      moveResult.status === 'board_not_found' ||
+      moveResult.status === 'column_not_found'
+    ) {
+      return { ok: false, reason: moveResult.status };
+    }
+
+    return {
+      ok: true,
+      cardId: moveResult.cardId ?? existingCard.cardId,
+      boardId,
+      columnId,
+      created: false,
+      moved: moved || moveResult.status === 'moved',
+    };
+  }
+
   const client = await pool.connect();
   try {
     await beginKanbanTxWithRls(client, SUPERADMIN_OPS_KANBAN_TENANT_ID, actor);
-
-    const columnId = await findColumnIdByName(client, boardId, columnName);
-    if (!columnId) {
-      await client.query('ROLLBACK');
-      console.warn('[opsKanban] syncAcquisitionLead skipped', {
-        acquisition_lead_id: input.acquisitionLeadId,
-        reason: `column_not_found:${columnName}`,
-        board_id: boardId,
-      });
-      return { ok: false, reason: `column_not_found:${columnName}` };
-    }
-
-    const existing = await client.query<{ id: string; column_id: string }>(
-      `SELECT id::text, column_id::text FROM chat_kanban_cards
-       WHERE tenant_id = $1 AND board_id = $2 AND acquisition_lead_id = $3 AND archived_at IS NULL
-       LIMIT 1`,
-      [SUPERADMIN_OPS_KANBAN_TENANT_ID, boardId, lead.id],
-    );
-
-    const meta = buildLeadCardMetadata(lead);
-    const timelineType = input.timelineType ?? (existing.rows[0] ? 'kanban_moved' : 'kanban_card_created');
-
-    if (existing.rows[0]) {
-      const cardId = existing.rows[0].id;
-      const prevColumnId = existing.rows[0].column_id;
-      const moved = prevColumnId !== columnId;
-
-      await client.query(
-        `UPDATE chat_kanban_cards
-         SET column_id = $1,
-             metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
-             updated_at = now()
-         WHERE id = $3 AND tenant_id = $4`,
-        [columnId, JSON.stringify(meta), cardId, SUPERADMIN_OPS_KANBAN_TENANT_ID],
-      );
-
-      if (moved) {
-        const fromName = (await findColumnNameById(client, prevColumnId)) ?? prevColumnId;
-        const toName = columnName;
-        await appendOperationalTimelineByCardId(client, cardId, {
-          type: timelineType,
-          label: TIMELINE_LABELS.kanban_moved ?? 'Movido no Kanban',
-          from_column: fromName,
-          to_column: toName,
-          current_stage: lead.current_stage,
-          correlation_id: input.correlationId,
-        });
-      }
-
-      await client.query('COMMIT');
-      observeOpsKanbanAcquisitionSync({
-        acquisitionLeadId: lead.id,
-        tenantId: lead.tenant_id,
-        correlationId: input.correlationId,
-        currentStage: lead.current_stage,
-        signupStep: input.signupStep,
-        columnName,
-        cardCreated: false,
-      });
-      return { ok: true, cardId, boardId, columnId, created: false, moved };
-    }
 
     const position = await nextKanbanCardPosition(client, columnId);
     const ins = await client.query<{ id: string }>(
@@ -332,19 +339,33 @@ export async function syncAcquisitionLeadToOpsKanban(input: {
     }
     const pgCode = typeof e === 'object' && e !== null && 'code' in e ? String((e as { code: string }).code) : '';
     if (pgCode === '23505') {
-      const existingCard = await findOpsKanbanCardForLead(input.acquisitionLeadId);
-      if (existingCard) {
+      const racedCard = await findOpsKanbanCardForLead(input.acquisitionLeadId);
+      if (racedCard && columnId) {
+        const moveResult = await moveOpsCardWithAutomations({
+          tenantId: SUPERADMIN_OPS_KANBAN_TENANT_ID,
+          actorUserId: actor,
+          cardId: racedCard.cardId,
+          sourceBoardId: racedCard.boardId,
+          sourceColumnId: racedCard.columnId,
+          destinationBoardId: boardId,
+          destinationColumnId: columnId,
+          source: 'syncAcquisitionLeadToOpsKanban',
+          correlationId: input.correlationId,
+          metadataPatch: meta,
+        });
         console.info('[opsKanban] syncAcquisitionLead idempotent', {
           acquisition_lead_id: input.acquisitionLeadId,
-          card_id: existingCard.cardId,
+          card_id: racedCard.cardId,
           reason: 'concurrent_create',
+          moveStatus: moveResult.status,
         });
         return {
-          ok: true,
-          cardId: existingCard.cardId,
-          columnId: existingCard.columnId,
+          ok: moveResult.status !== 'card_not_found',
+          cardId: racedCard.cardId,
+          boardId,
+          columnId,
           created: false,
-          moved: false,
+          moved: moveResult.status === 'moved',
         };
       }
     }
@@ -355,21 +376,75 @@ export async function syncAcquisitionLeadToOpsKanban(input: {
   }
 }
 
-export async function findOpsKanbanCardForLead(acquisitionLeadId: string): Promise<{
+export async function findOpsKanbanCardForLeadOnBoard(
+  acquisitionLeadId: string,
+  boardId: string,
+): Promise<{
   cardId: string;
+  boardId: string;
   columnId: string;
   columnName: string;
 } | null> {
   if (!(await hasKanbanAcquisitionLeadColumn())) return null;
-  const r = await pool.query<{ card_id: string; column_id: string; column_name: string }>(
-    `SELECT kc.id::text AS card_id, kc.column_id::text AS column_id, col.name AS column_name
+  const r = await pool.query<{
+    card_id: string;
+    board_id: string;
+    column_id: string;
+    column_name: string;
+  }>(
+    `SELECT kc.id::text AS card_id,
+            kc.board_id::text AS board_id,
+            kc.column_id::text AS column_id,
+            col.name AS column_name
+     FROM chat_kanban_cards kc
+     INNER JOIN chat_kanban_columns col ON col.id = kc.column_id
+     WHERE kc.tenant_id = $1
+       AND kc.board_id = $2
+       AND kc.acquisition_lead_id = $3
+       AND kc.archived_at IS NULL
+     LIMIT 1`,
+    [SUPERADMIN_OPS_KANBAN_TENANT_ID, boardId, acquisitionLeadId],
+  );
+  const row = r.rows[0];
+  if (!row) return null;
+  return {
+    cardId: row.card_id,
+    boardId: row.board_id,
+    columnId: row.column_id,
+    columnName: row.column_name,
+  };
+}
+
+export async function findOpsKanbanCardForLead(acquisitionLeadId: string): Promise<{
+  cardId: string;
+  boardId: string;
+  columnId: string;
+  columnName: string;
+} | null> {
+  if (!(await hasKanbanAcquisitionLeadColumn())) return null;
+  const r = await pool.query<{
+    card_id: string;
+    board_id: string;
+    column_id: string;
+    column_name: string;
+  }>(
+    `SELECT kc.id::text AS card_id,
+            kc.board_id::text AS board_id,
+            kc.column_id::text AS column_id,
+            col.name AS column_name
      FROM chat_kanban_cards kc
      INNER JOIN chat_kanban_columns col ON col.id = kc.column_id
      WHERE kc.tenant_id = $1 AND kc.acquisition_lead_id = $2 AND kc.archived_at IS NULL
+     ORDER BY kc.updated_at DESC
      LIMIT 1`,
     [SUPERADMIN_OPS_KANBAN_TENANT_ID, acquisitionLeadId],
   );
   const row = r.rows[0];
   if (!row) return null;
-  return { cardId: row.card_id, columnId: row.column_id, columnName: row.column_name };
+  return {
+    cardId: row.card_id,
+    boardId: row.board_id,
+    columnId: row.column_id,
+    columnName: row.column_name,
+  };
 }

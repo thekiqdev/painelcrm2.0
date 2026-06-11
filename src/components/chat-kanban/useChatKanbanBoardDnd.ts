@@ -13,8 +13,7 @@ import {
 } from '@dnd-kit/core';
 import { arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { toast } from '@/components/ui/sonner';
-import type { ChatKanbanBoardCard, ChatKanbanColumn } from '@/services/chatKanban';
-import { useKanbanService } from '@/components/chat-kanban/KanbanServiceContext';
+import type { ChatKanbanBoardCard, ChatKanbanColumn, ChatKanbanService } from '@/services/chatKanban';
 import { setStoredProposalPublicUrl } from '@/utils/proposalPublicLinkSession';
 import { computeKanbanInsertPosition } from '@/utils/kanbanFractionalPosition';
 import { KANBAN_DROP_PREFIX } from '@/components/chat-kanban/kanbanDndIds';
@@ -81,6 +80,7 @@ function itemMapsEqual(
 }
 
 type Params = {
+  kanban: ChatKanbanService;
   cards: ChatKanbanBoardCard[];
   setCards: React.Dispatch<React.SetStateAction<ChatKanbanBoardCard[]>>;
   sortedColumns: ChatKanbanColumn[];
@@ -94,6 +94,7 @@ type Params = {
 };
 
 export function useChatKanbanBoardDnd({
+  kanban,
   cards,
   setCards,
   sortedColumns,
@@ -102,7 +103,6 @@ export function useChatKanbanBoardDnd({
   requestMoveConfirmation,
   onCardSynced,
 }: Params) {
-  const kanban = useKanbanService();
   const [dndItems, setDndItems] = useState<Record<string, string[]>>({});
   const [activeId, setActiveId] = useState<string | null>(null);
 
@@ -326,7 +326,7 @@ export function useChatKanbanBoardDnd({
         toast.error(e instanceof Error ? e.message : 'Não foi possível mover o cartão');
       }
     },
-    [enabled, sortedColumns, setCards, requestMoveReason, requestMoveConfirmation, onCardSynced],
+    [enabled, kanban, sortedColumns, setCards, requestMoveReason, requestMoveConfirmation, onCardSynced],
   );
 
   const onDragCancel = useCallback(() => {

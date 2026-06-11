@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildOpsLeadPhase2ExecutionKey,
+  buildOpsLeadPhase2IdempotencyKey,
   isColumnAutomationConfigured,
   isOpsAcquisitionLeadCard,
   resolveKanbanAutomationSubject,
@@ -41,6 +43,16 @@ describe('kanbanAutomationContext', () => {
         conversation_id: null,
       }),
     ).toBe(false);
+  });
+
+  it('buildOpsLeadPhase2ExecutionKey — formato com correlationId', () => {
+    expect(buildOpsLeadPhase2ExecutionKey('lead-1', 'col-1', 'corr-1')).toBe(
+      'ops-lead-phase2:lead-1:col-1:corr-1',
+    );
+  });
+
+  it('buildOpsLeadPhase2IdempotencyKey — legado lead+coluna', () => {
+    expect(buildOpsLeadPhase2IdempotencyKey('lead-1', 'col-1')).toBe('ops-lead-phase2:lead-1:col-1');
   });
 
   it('isColumnAutomationConfigured — automation_config.enabled', () => {

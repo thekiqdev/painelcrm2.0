@@ -3,12 +3,12 @@
  */
 import { SUPERADMIN_OPS_KANBAN_TENANT_ID } from '../config/superadminOpsKanban.js';
 import { pool } from '../utils/db.js';
-import { beginKanbanTxWithRls } from '../utils/kanbanRlsTx.js';
 import { findCanonicalOpsBoardIdByNameFromPool } from '../services/superadminOpsKanbanFoundation.js';
 import { hasKanbanAcquisitionLeadColumn } from '../services/superadminOpsKanbanLeadService.js';
 import { resolveLifecycleRoute } from './lifecycleRouter.js';
 import { isOpsLifecyclePromotionEnabled } from './lifecyclePromotionConfig.js';
 import { insertLifecycleTransition } from './lifecyclePromotionRepository.js';
+import { moveOpsCardWithAutomations } from '../services/moveOpsCardWithAutomations.js';
 import type { BillingLifecycleContext } from './lifecycleBillingObserver.js';
 import type { LifecycleEventType } from './lifecycleTypes.js';
 
@@ -160,41 +160,6 @@ export async function resolveLifecycleDestinationColumn(
   if (!columnId) return null;
 
   return { boardId, columnId, boardName, columnName };
-}
-
-async function moveCardToDestination(input: {
-  cardId: string;
-  destBoardId: string;
-  destColumnId: string;
-  actorUserId: string;
-}): Promise<void> {
-  const client = await pool.connect();
-  try {
-    await beginKanbanTxWithRls(client, SUPERADMIN_OPS_KANBAN_TENANT_ID, input.actorUserId);
-    const posRes = await client.query<{ n: number }>(
-      `SELECT COALESCE(MAX(position), 0)::float8 + 1 AS n
-       FROM chat_kanban_cards
-       WHERE column_id = $1::uuid AND tenant_id = $2::uuid AND archived_at IS NULL`,
-      [input.destColumnId, SUPERADMIN_OPS_KANBAN_TENANT_ID],
-    );
-    const nextPos = Number(posRes.rows[0]?.n ?? 1);
-    await client.query(
-      `UPDATE chat_kanban_cards
-       SET board_id = $1::uuid, column_id = $2::uuid, position = $3, updated_at = now()
-       WHERE id = $4::uuid AND tenant_id = $5::uuid AND archived_at IS NULL`,
-      [input.destBoardId, input.destColumnId, nextPos, input.cardId, SUPERADMIN_OPS_KANBAN_TENANT_ID],
-    );
-    await client.query('COMMIT');
-  } catch (e) {
-    try {
-      await client.query('ROLLBACK');
-    } catch {
-      /* ignore */
-    }
-    throw e;
-  } finally {
-    client.release();
-  }
 }
 
 function logPromotion(payload: Record<string, unknown>): void {
@@ -350,12 +315,74 @@ export async function promoteLifecycleCard(input: PromoteLifecycleCardInput): Pr
   }
 
   try {
-    await moveCardToDestination({
-      cardId: card.cardId,
-      destBoardId: dest.boardId,
-      destColumnId: dest.columnId,
+    const moveResult = await moveOpsCardWithAutomations({
+      tenantId: SUPERADMIN_OPS_KANBAN_TENANT_ID,
       actorUserId: actor,
+      cardId: card.cardId,
+      sourceBoardId: card.boardId,
+      sourceColumnId: card.columnId,
+      destinationBoardId: dest.boardId,
+      destinationColumnId: dest.columnId,
+      source: input.source,
+      correlationId: input.correlationId ?? ctx.correlationId ?? `lifecycle:${input.eventType}`,
     });
+
+    if (moveResult.status === 'card_not_found') {
+      const result: LifecyclePromotionResult = {
+        status: 'card_not_found',
+        cardId: card.cardId,
+        fromBoard: card.boardName,
+        fromColumn: card.columnName,
+        toBoard: dest.boardName,
+        toColumn: dest.columnName,
+        reason: 'card_not_found',
+      };
+      logPromotion({ ...result, event: input.eventType, source: input.source });
+      return auditAndReturn(input, result, { card, dest, metadata: { route } });
+    }
+    if (moveResult.status === 'board_not_found') {
+      const result: LifecyclePromotionResult = {
+        status: 'board_not_found',
+        cardId: card.cardId,
+        fromBoard: card.boardName,
+        fromColumn: card.columnName,
+        toBoard: dest.boardName,
+        toColumn: dest.columnName,
+        reason: `board_not_found:${dest.boardName}`,
+      };
+      logPromotion({ ...result, event: input.eventType, source: input.source });
+      return auditAndReturn(input, result, { card, dest, metadata: { route } });
+    }
+    if (moveResult.status === 'column_not_found') {
+      const result: LifecyclePromotionResult = {
+        status: 'column_not_found',
+        cardId: card.cardId,
+        fromBoard: card.boardName,
+        fromColumn: card.columnName,
+        toBoard: dest.boardName,
+        toColumn: dest.columnName,
+        reason: `column_not_found:${dest.columnName}`,
+      };
+      logPromotion({ ...result, event: input.eventType, source: input.source });
+      return auditAndReturn(input, result, { card, dest, metadata: { route } });
+    }
+    if (moveResult.status === 'already_at_destination') {
+      const result: LifecyclePromotionResult = {
+        status: 'already_at_destination',
+        cardId: card.cardId,
+        fromBoard: card.boardName,
+        fromColumn: card.columnName,
+        toBoard: dest.boardName,
+        toColumn: dest.columnName,
+      };
+      logPromotion({ ...result, event: input.eventType, source: input.source });
+      return auditAndReturn(input, result, {
+        card,
+        dest,
+        metadata: { route, phase2Executed: moveResult.phase2Executed },
+      });
+    }
+
     const result: LifecyclePromotionResult = {
       status: 'moved',
       cardId: card.cardId,
@@ -364,8 +391,17 @@ export async function promoteLifecycleCard(input: PromoteLifecycleCardInput): Pr
       toBoard: dest.boardName,
       toColumn: dest.columnName,
     };
-    logPromotion({ ...result, event: input.eventType, source: input.source });
-    return auditAndReturn(input, result, { card, dest, metadata: { route } });
+    logPromotion({
+      ...result,
+      event: input.eventType,
+      source: input.source,
+      phase2Executed: moveResult.phase2Executed,
+    });
+    return auditAndReturn(input, result, {
+      card,
+      dest,
+      metadata: { route, phase2Executed: moveResult.phase2Executed },
+    });
   } catch (e) {
     const message = e instanceof Error ? e.message : 'move_failed';
     const result: LifecyclePromotionResult = {

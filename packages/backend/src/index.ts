@@ -527,8 +527,12 @@ void (async () => {
     await refreshSystemFeatureFlagsFromPool(pool);
     await refreshPlatformFeatureFlagRegistry();
     console.log('[boot] Flags globais (system_feature_flags + platform_feature_flags P0) e cifra carregadas.');
+
+    const { runMigrationGuard } = await import('./startup/migrationGuard.js');
+    await runMigrationGuard(pool);
   } catch (err) {
-    console.error('❌ Falha no arranque (PostgreSQL / flags / cifra):', err);
+    console.error('❌ Falha no arranque (PostgreSQL / flags / cifra / migration guard):', err);
+    process.exit(1);
   }
 
   httpServer.listen(PORT, '0.0.0.0', () => {
@@ -679,6 +683,16 @@ void (async () => {
       .then(({ runTrialRecoveryLifecycleOnce }) => runTrialRecoveryLifecycleOnce())
       .catch((err) => console.error('[trial-recovery-lifecycle] tick error', err));
   }, trialRecoveryMs);
+
+  void import('./jobs/trialEngagementLifecycleJob.js')
+    .then(({ runTrialEngagementLifecycleOnce }) => runTrialEngagementLifecycleOnce())
+    .catch((err) => console.error('[trial-engagement-lifecycle] startup error', err));
+
+  setInterval(() => {
+    void import('./jobs/trialEngagementLifecycleJob.js')
+      .then(({ runTrialEngagementLifecycleOnce }) => runTrialEngagementLifecycleOnce())
+      .catch((err) => console.error('[trial-engagement-lifecycle] tick error', err));
+  }, 3_600_000);
 
   void import('./jobs/trialExpirationJob.js')
     .then(({ runTrialExpirationOnce }) => runTrialExpirationOnce())

@@ -2,14 +2,29 @@ import { describe, expect, it } from 'vitest';
 import { SUPERADMIN_OPS_KANBAN_BOARD_SEEDS } from './superadminOpsKanbanSeedService.js';
 
 describe('SUPERADMIN_OPS_KANBAN_BOARD_SEEDS', () => {
-  it('defines five operational boards', () => {
-    expect(SUPERADMIN_OPS_KANBAN_BOARD_SEEDS).toHaveLength(5);
+  it('defines six operational boards including Engajamento Trial', () => {
+    expect(SUPERADMIN_OPS_KANBAN_BOARD_SEEDS).toHaveLength(6);
     const names = SUPERADMIN_OPS_KANBAN_BOARD_SEEDS.map((b) => b.name);
-    expect(names).toContain('Aquisição');
-    expect(names).toContain('Recovery');
-    expect(names).toContain('Onboarding');
-    expect(names).toContain('Expansão');
-    expect(names).toContain('Reativação');
+    expect(names).toEqual([
+      'Aquisição',
+      'Recovery',
+      'Onboarding',
+      'Expansão',
+      'Reativação',
+      'Engajamento Trial',
+    ]);
+  });
+
+  it('engagement trial board has Sprint N1 lifecycle columns', () => {
+    const engagement = SUPERADMIN_OPS_KANBAN_BOARD_SEEDS.find((b) => b.name === 'Engajamento Trial');
+    expect(engagement?.sort_order).toBe(55);
+    expect(engagement?.columns.map((c) => c.name)).toEqual([
+      'Trial iniciado',
+      'Dia 2',
+      'Dia 4',
+      'Dia 6',
+      'Trial finalizando',
+    ]);
   });
 
   it('acquisition board has full lifecycle columns', () => {

@@ -221,7 +221,7 @@ const MAX_MEDIA_BASE64_CHARS = 14 * 1024 * 1024; // ~10MB binário em base64
 
 const sendMessageSchema = z
   .object({
-  conversationId: z.string().uuid(),
+    conversationId: z.string().uuid(),
     /** Idempotência / correlação no cliente (UUID v4). */
     clientMessageId: z.string().uuid().optional(),
     /** Responder mensagem existente (citado no WhatsApp via UazAPI `replyid`). */
@@ -235,9 +235,9 @@ const sendMessageSchema = z
     fileUrl: z.string().url().optional(),
     mimeType: z.string().optional(),
     fileName: z.string().max(255).optional(),
-  readChat: z.boolean().optional(),
-  readMessages: z.boolean().optional(),
-  delay: z.number().optional(),
+    readChat: z.boolean().optional(),
+    readMessages: z.boolean().optional(),
+    delay: z.number().optional(),
   })
   .superRefine((data, ctx) => {
     const t = data.type ?? 'text';
@@ -258,7 +258,7 @@ const sendMessageSchema = z
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Arquivo muito grande' });
       }
     }
-});
+  });
 
 const prepareLeadConversationSchema = z.object({
   lead_id: z.string().uuid(),
@@ -610,8 +610,8 @@ function pickExternalChatJidForUaz(raw: any): string | null {
   if (idStr && idStr.includes('@')) return idStr;
   if (idStr && !isLikelyInternalUazChatId(idStr)) return idStr;
 
-    return null;
-  }
+  return null;
+}
 
 /** Chave estável para deduplicar linhas do /chat/find ao mesclar buscas (privado + grupo). */
 function chatFindRowDedupeKey(raw: any): string {
@@ -1728,10 +1728,10 @@ async function upsertConversation(
       }
     }
     if (!isGroupConversation) {
-      await persistConversationAvatarOnCrm(
-        instance.user_id,
-        (upserted.client_id as string | null) ?? null,
-        ((upserted as Record<string, unknown>).lead_id as string | null) ?? null,
+    await persistConversationAvatarOnCrm(
+      instance.user_id,
+      (upserted.client_id as string | null) ?? null,
+      ((upserted as Record<string, unknown>).lead_id as string | null) ?? null,
         ((upserted as Record<string, unknown>).avatar_url as string | null) ?? null,
         {
           cachedUrl: ((upserted as Record<string, unknown>).avatar_cached_url as string | null) ?? null,
@@ -1846,10 +1846,10 @@ async function saveMessage(
 
   const saveVerbose = isChatSaveVerboseLogs();
   if (saveVerbose) {
-  console.log(`[SaveMessage ${saveId}] Starting save`, {
-    conversationId,
-    direction,
-    externalMessageId: payload.externalMessageId,
+    console.log(`[SaveMessage ${saveId}] Starting save`, {
+      conversationId,
+      direction,
+      externalMessageId: payload.externalMessageId,
       bodyPreview: (bodyForInsert ?? '').substring(0, 50),
       hasMedia: mediaArr.length > 0,
       kind: messageContract.kind,
@@ -1874,7 +1874,7 @@ async function saveMessage(
     };
     try {
       messageResult = await pool.query<{ id: string; created_at: string; inserted: boolean }>(
-    `
+        `
     INSERT INTO chat_messages (
       conversation_id, direction, external_message_id, body,
       media, status, sent_at, metadata, provider,
@@ -1904,14 +1904,14 @@ async function saveMessage(
       client_message_id = COALESCE(EXCLUDED.client_message_id, chat_messages.client_message_id)
       RETURNING id, created_at, (xmax = 0) AS inserted
   `,
-    [
-      conversationId,
-      direction,
-      payload.externalMessageId,
+        [
+          conversationId,
+          direction,
+          payload.externalMessageId,
           bodyForInsert,
           JSON.stringify(mediaArr.length > 0 ? mediaArr : []),
-      payload.status,
-      payload.sentAt,
+          payload.status,
+          payload.sentAt,
           JSON.stringify(metadataMerged),
           replyToMessageId,
           replyToExternalMessageId,
@@ -2059,7 +2059,7 @@ async function saveMessage(
         newMessageSentAt: effectiveSentAt,
         newMessagePreview: messagePreview?.substring(0, 50),
       });
-    }
+      }
     }
 
     if (inserted && direction === 'incoming') {
@@ -2129,9 +2129,9 @@ export async function createInstance(req: AuthRequest, res: Response) {
   const verboseCreate = isUazIntegrationVerboseLogs();
   try {
     if (verboseCreate) {
-    console.log('[CreateInstance] Starting instance creation...');
+      console.log('[CreateInstance] Starting instance creation...');
     }
-    
+
     if (!isUazapiAdminConfigured()) {
       console.error('[CreateInstance] UAZAPI_ADMIN_TOKEN ausente ou em branco no servidor');
       res.status(503).json({
@@ -2145,13 +2145,13 @@ export async function createInstance(req: AuthRequest, res: Response) {
     }
 
     const userId = req.userId!;
-    
+
     // Validar dados
     let data;
     try {
       data = instanceSchema.parse(req.body);
       if (verboseCreate) {
-      console.log('[CreateInstance] Validated data:', { name: data.name });
+        console.log('[CreateInstance] Validated data:', { name: data.name });
       }
     } catch (validationError: any) {
       console.error('[CreateInstance] Validation error:', validationError.errors);
@@ -2178,19 +2178,19 @@ export async function createInstance(req: AuthRequest, res: Response) {
     let remoteInstance: AnyObject;
     try {
       if (verboseCreate) {
-      console.log('[CreateInstance] Calling UazAPI createInstance...');
+        console.log('[CreateInstance] Calling UazAPI createInstance...');
       }
       remoteInstance = (await uazapiService.createInstance(
       data.name,
       data.metadata
     )) as AnyObject;
-      
+
       if (verboseCreate) {
-      console.log('[CreateInstance] UazAPI response received:', {
-        hasInstance: !!remoteInstance?.instance,
-        hasToken: !!(remoteInstance?.instance?.token || remoteInstance?.token),
-        keys: Object.keys(remoteInstance || {}),
-      });
+        console.log('[CreateInstance] UazAPI response received:', {
+          hasInstance: !!remoteInstance?.instance,
+          hasToken: !!(remoteInstance?.instance?.token || remoteInstance?.token),
+          keys: Object.keys(remoteInstance || {}),
+        });
       }
     } catch (uazapiError: any) {
       console.error('[CreateInstance] UazAPI error:', {
@@ -2214,13 +2214,13 @@ export async function createInstance(req: AuthRequest, res: Response) {
     const instanceStatus = instanceInfo?.status || 'disconnected';
     
     if (verboseCreate) {
-    console.log('[CreateInstance] Extracted info:', {
-      instanceToken: instanceToken ? '***' + instanceToken.slice(-4) : 'MISSING',
-      instanceName,
-      instanceStatus,
-    });
+      console.log('[CreateInstance] Extracted info:', {
+        instanceToken: instanceToken ? '***' + instanceToken.slice(-4) : 'MISSING',
+        instanceName,
+        instanceStatus,
+      });
     }
-    
+
     if (!instanceToken) {
       logUazChat('error', {
         event_type: 'create_instance_no_token',
@@ -2281,9 +2281,9 @@ export async function createInstance(req: AuthRequest, res: Response) {
     );
 
       if (verboseCreate) {
-      console.log('[CreateInstance] Instance saved to database:', {
-        id: inserted.rows[0]?.id,
-        name: inserted.rows[0]?.name,
+        console.log('[CreateInstance] Instance saved to database:', {
+          id: inserted.rows[0]?.id,
+          name: inserted.rows[0]?.name,
         });
       }
 
@@ -2450,7 +2450,7 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
 
     const existingWebhook = instance.metadata?.webhook;
     const tokenChanged = instance.metadata?.tokenChanged || false;
-    
+
     if (tokenChanged) {
       logUazChat('info', {
         ...baseLog,
@@ -3123,7 +3123,7 @@ async function performSyncConversationsForInstance(
       ? `single_request_wa_isGroup_client grupos=${groupsFeat ? 'mantidos_se_classificados' : 'filtrados'}`
       : groupsFeat
         ? 'privados_wa_isGroup_false_mais_grupos_wa_isGroup_true_limitado'
-        : 'somente_nao_grupo (sem perna wa_isGroup:true; doc /chat/find)',
+      : 'somente_nao_grupo (sem perna wa_isGroup:true; doc /chat/find)',
   });
 
   let chatsArray: any[] = [];
@@ -5933,7 +5933,7 @@ export async function syncConversations(req: AuthRequest, res: Response) {
         detail:
           'sync_mode=none — nada sincronizado. Envie syncMode no body para forçar janela (ex.: full, days_30).',
       });
-    res.json({
+      res.json({
         total: 0,
         upserted: 0,
         skipped: true,
@@ -6607,7 +6607,7 @@ export async function getConversations(req: AuthRequest, res: Response) {
         raw.release();
       }
     }
-    
+
     console.log('[GetConversations] Query result', {
       userId,
       instanceId,
@@ -7630,7 +7630,7 @@ export async function getClientMessages(req: AuthRequest, res: Response) {
       ...row,
       message_contract: contractFromDbRow(row),
     }));
-    
+
     res.json({
       messages: rows,
       conversationId: firstConversationId,
@@ -9383,82 +9383,82 @@ export async function sendMessage(req: AuthRequest, res: Response) {
           );
         }
       } else {
-        // 1) Persistência local imediata (estado inicial)
-        {
-          const saveResult = await saveMessage(conversation.id, 'outgoing', {
-            externalMessageId: provisionalExternalId,
-            body: text,
-            media: [],
-            messageKind: 'text',
-            status: 'queued',
-            sentAt: new Date(),
-            clientMessageId: data.clientMessageId ?? null,
-            metadata: {
-              source: 'send/text',
-              track_id: localTrackId,
-              provisional: true,
-              ...(data.clientMessageId ? { client_message_id: data.clientMessageId } : {}),
+      // 1) Persistência local imediata (estado inicial)
+      {
+        const saveResult = await saveMessage(conversation.id, 'outgoing', {
+        externalMessageId: provisionalExternalId,
+        body: text,
+        media: [],
+        messageKind: 'text',
+        status: 'queued',
+        sentAt: new Date(),
+        clientMessageId: data.clientMessageId ?? null,
+        metadata: {
+          source: 'send/text',
+          track_id: localTrackId,
+          provisional: true,
+          ...(data.clientMessageId ? { client_message_id: data.clientMessageId } : {}),
               ...senderNamePrefixMeta,
-            },
-            ...(replyContext
-              ? {
-                  replyToMessageId: replyContext.replyToMessageId,
-                  replyToExternalMessageId: replyContext.replyToExternalMessageId,
-                  replyPreview: replyContext.replyPreview,
-                  replySenderName: replyContext.replySenderName,
-                  replyMessageType: replyContext.replyMessageType,
-                }
-              : {}),
-          });
-          savedRowId = saveResult.rowId;
-        }
-        queuedMessageRowId = savedRowId;
+        },
+        ...(replyContext
+          ? {
+              replyToMessageId: replyContext.replyToMessageId,
+              replyToExternalMessageId: replyContext.replyToExternalMessageId,
+              replyPreview: replyContext.replyPreview,
+              replySenderName: replyContext.replySenderName,
+              replyMessageType: replyContext.replyMessageType,
+            }
+          : {}),
+      });
+        savedRowId = saveResult.rowId;
+      }
+      queuedMessageRowId = savedRowId;
 
         messageResponse = (await uazapiService.sendTextMessage(
           (conversation as { instance_token: string }).instance_token,
           {
-            number: numberTo,
-            text,
-            ...(replyContext?.uazReplyId ? { replyid: replyContext.uazReplyId } : {}),
-            readchat: data.readChat,
-            readmessages: data.readMessages,
-            delay: data.delay,
-            track_source: 'painelcrm',
-            track_id: localTrackId,
+        number: numberTo,
+        text,
+        ...(replyContext?.uazReplyId ? { replyid: replyContext.uazReplyId } : {}),
+        readchat: data.readChat,
+        readmessages: data.readMessages,
+        delay: data.delay,
+        track_source: 'painelcrm',
+        track_id: localTrackId,
           }
         )) as AnyObject;
 
-        const extId = extractUazOutgoingMessageId(messageResponse);
+      const extId = extractUazOutgoingMessageId(messageResponse);
 
-        if (savedRowId) {
-          const nextStatus = pickBestOutgoingStatus('queued', 'provider_sent') ?? 'provider_sent';
-          await pool.query(
-            `
-            UPDATE chat_messages
-            SET
-              external_message_id = COALESCE($1, external_message_id),
-              status = $2,
-              metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
-              sent_at = COALESCE(sent_at, $4::timestamptz)
-            WHERE id = $5
-            `,
-            [
-              extId,
-              nextStatus,
+      if (savedRowId) {
+        const nextStatus = pickBestOutgoingStatus('queued', 'provider_sent') ?? 'provider_sent';
+        await pool.query(
+          `
+          UPDATE chat_messages
+          SET
+            external_message_id = COALESCE($1, external_message_id),
+            status = $2,
+            metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+            sent_at = COALESCE(sent_at, $4::timestamptz)
+          WHERE id = $5
+          `,
+          [
+            extId,
+            nextStatus,
               JSON.stringify({ ...messageResponse, track_id: localTrackId, ...senderNamePrefixMeta }),
-              new Date(),
-              savedRowId,
-            ]
-          );
+            new Date(),
+            savedRowId,
+          ]
+        );
         }
       }
     }
 
     if (!isOfficial) {
-      try {
-        const instRow = await fetchInstanceForOperate(userId, conversation.instance_id);
-        if (instRow) {
-          void fetchAndUpsertRemoteChatIdentity(instRow as ChatInstanceRow, conversation.external_chat_id).catch(
+    try {
+      const instRow = await fetchInstanceForOperate(userId, conversation.instance_id);
+      if (instRow) {
+        void fetchAndUpsertRemoteChatIdentity(instRow as ChatInstanceRow, conversation.external_chat_id).catch(
           (idErr: any) => console.warn('[SendMessage] identity refresh failed:', idErr?.message)
         );
       }
@@ -9581,7 +9581,7 @@ export async function sendMessage(req: AuthRequest, res: Response) {
             userId,
             {
               id: row.id,
-            conversation_id: conversation.id,
+              conversation_id: conversation.id,
               direction: row.direction,
               body: row.body,
               sent_at: row.sent_at || new Date(),
@@ -10337,19 +10337,19 @@ function extractMessageData(payload: any): {
   isGroup: boolean;
 } {
   // Tentar diferentes formatos de payload
-      const data = payload.data || payload.message || payload;
+  const data = payload.data || payload.message || payload;
   const message = mergeMessageEnvelope(data);
 
   // Extrair chatId de múltiplas fontes (envelope já unificado em `message`)
-      const chatId =
+  const chatId =
     message.wa_chatid ||
-        message.chatid ||
-        message.chatId ||
-        message.chat?.id ||
-        message.key?.remoteJid ||
+    message.chatid ||
+    message.chatId ||
+    message.chat?.id ||
+    message.key?.remoteJid ||
     message.remoteJid ||
-        message.number ||
-        null;
+    message.number ||
+    null;
 
   // Determinar direção
   const direction: 'incoming' | 'outgoing' =
@@ -11178,7 +11178,7 @@ function normalizeIncomingWebhookSecret(raw: unknown): string | undefined {
   if (Array.isArray(raw) && typeof raw[0] === 'string') {
     return normalizeString(raw[0]);
   }
-      return undefined;
+  return undefined;
 }
 
 const WEBHOOK_SECRET_MIN_LENGTH = 32;
@@ -12002,7 +12002,7 @@ async function runUazWebhookPayloadPipeline(
 
   if (opts.routeVersion === 'v1' && opts.v1LogExtras) {
     const x = opts.v1LogExtras;
-    if (webhookVerbose) {
+      if (webhookVerbose) {
       console.log(`[Webhook ${webhookId}] secret_validated`, {
         webhookId,
         instanceId: instance.id,
@@ -12013,37 +12013,37 @@ async function runUazWebhookPayloadPipeline(
         metadataSecretMask: maskSecretForLogs(x.metadataSecret),
       });
     }
-  }
+    }
 
-  if (webhookVerbose) {
-    console.log(`[Webhook ${webhookId}] received`, {
+    if (webhookVerbose) {
+      console.log(`[Webhook ${webhookId}] received`, {
       webhookRoute: opts.routeVersion,
-      method: req.method,
-      path: req.path,
-      ip: req.ip,
-      contentType: req.get('content-type'),
-      xUazapiInstance: req.headers['x-uazapi-instance'],
-      bodyKeys: req.body ? Object.keys(req.body) : [],
-    });
-  } else {
-    logUazChat('info', {
-      event_type: 'webhook_request',
-      phase: 'received',
+        method: req.method,
+        path: req.path,
+        ip: req.ip,
+        contentType: req.get('content-type'),
+        xUazapiInstance: req.headers['x-uazapi-instance'],
+        bodyKeys: req.body ? Object.keys(req.body) : [],
+      });
+    } else {
+      logUazChat('info', {
+        event_type: 'webhook_request',
+        phase: 'received',
       webhook_route: opts.routeVersion === 'v2' ? 'v2_path' : 'v1_legacy',
       instance_id: instance.id,
       tenant_id: tenantIdForLog,
-      detail: `${req.method} ${req.path} webhookId=${webhookId}`,
-    });
-  }
+        detail: `${req.method} ${req.path} webhookId=${webhookId}`,
+      });
+    }
 
-  if (!payload || Object.keys(payload).length === 0) {
-    console.warn(`[Webhook ${webhookId}] Empty payload`, {
-      ip: req.ip,
-      bodyType: typeof req.body,
-    });
-    res.status(400).json({ error: 'Empty payload' });
-    return;
-  }
+    if (!payload || Object.keys(payload).length === 0) {
+      console.warn(`[Webhook ${webhookId}] Empty payload`, {
+        ip: req.ip,
+        bodyType: typeof req.body,
+      });
+      res.status(400).json({ error: 'Empty payload' });
+      return;
+    }
 
   if (
     opts.routeVersion === 'v2' &&
@@ -12064,49 +12064,49 @@ async function runUazWebhookPayloadPipeline(
 
   const externalKey = externalKeyEarly || instance.external_instance_name || requestedInstanceId || instance.id;
 
-  if (webhookVerbose) {
-    console.log(`[Webhook ${webhookId}] Instance identification`, {
-      resolvedInstanceName: externalKey,
-      fromHeader: !!req.headers['x-uazapi-instance'],
+    if (webhookVerbose) {
+      console.log(`[Webhook ${webhookId}] Instance identification`, {
+        resolvedInstanceName: externalKey,
+        fromHeader: !!req.headers['x-uazapi-instance'],
       webhookRoute: opts.routeVersion,
     });
   }
 
-  const event = payload.event || req.query.event || payload.type || 'unknown';
+    const event = payload.event || req.query.event || payload.type || 'unknown';
 
-  logUazChat('info', {
-    event_type: 'webhook_instance_matched',
-    instance_id: instance.id,
-    external_instance_name: instance.external_instance_name,
+    logUazChat('info', {
+      event_type: 'webhook_instance_matched',
+      instance_id: instance.id,
+      external_instance_name: instance.external_instance_name,
     webhook_route_version: opts.routeVersion,
     tenant_id: tenantIdForLog,
-    phase: event,
-    detail: `receiveTimeMs=${Date.now() - startTime} payloadBytes=${JSON.stringify(payload).length}`,
-  });
-  if (webhookVerbose) {
-    console.log(`[Webhook ${webhookId}] instance matched`, {
-      instanceName: externalKey,
-      instanceId: instance.id,
-      event,
-      webhookRoute: opts.routeVersion,
+      phase: event,
+      detail: `receiveTimeMs=${Date.now() - startTime} payloadBytes=${JSON.stringify(payload).length}`,
     });
-  }
+    if (webhookVerbose) {
+      console.log(`[Webhook ${webhookId}] instance matched`, {
+        instanceName: externalKey,
+        instanceId: instance.id,
+        event,
+      webhookRoute: opts.routeVersion,
+      });
+    }
 
-  res.status(200).json({
-    received: true,
-    webhookId,
-    event,
-    instance: externalKey,
-    webhook_route: opts.routeVersion === 'v2' ? 'v2_path' : 'v1_legacy',
-  });
-
-  processProviderWebhook(DEFAULT_COMMUNICATION_PROVIDER, instance, payload, event).catch((error: any) => {
-    console.error(`[Webhook ${webhookId}] Async processing error:`, {
-      error: error.message,
-      stack: error.stack,
+    res.status(200).json({
+      received: true,
+      webhookId,
       event,
       instance: externalKey,
+    webhook_route: opts.routeVersion === 'v2' ? 'v2_path' : 'v1_legacy',
     });
+
+  processProviderWebhook(DEFAULT_COMMUNICATION_PROVIDER, instance, payload, event).catch((error: any) => {
+      console.error(`[Webhook ${webhookId}] Async processing error:`, {
+        error: error.message,
+        stack: error.stack,
+        event,
+        instance: externalKey,
+      });
   });
 }
 

@@ -1,11 +1,6 @@
-import { ActivationLaunchPanel } from './ActivationLaunchPanel';
-import { ActivationMobileHeader } from './ActivationMobileHeader';
-import { ActivationProfileCard } from './ActivationProfileCard';
-import { ActivationProgressVisualization } from './ActivationProgressVisualization';
-import { ActivationQuickStatus } from './ActivationQuickStatus';
-import { ActivationTrialBadge } from './ActivationTrialBadge';
-import { ActivationWelcomeSection } from './ActivationWelcomeSection';
-import { buildWelcomeOperationPillars, OperationStatusCard } from './OperationStatusCard';
+import { ContactLivePreview } from '../contact-setup/ContactLivePreview';
+import { ActivationEnvironmentReady } from './ActivationEnvironmentReady';
+import { ActivationMobileFooter } from './ActivationMobileFooter';
 
 type Props = {
   leadName: string;
@@ -25,54 +20,48 @@ export function ActivationWelcomeStep({
   leadPhone,
   trialDays,
   usersCount,
-  trialLabel,
   loading,
   onContinue,
   layout = 'page',
 }: Props) {
-  const trialDisplay =
-    trialLabel ??
-    (trialDays >= 1 ? `${trialDays} ${trialDays === 1 ? 'dia' : 'dias'} para explorar` : null);
-
   if (layout === 'mobile-footer') {
     return null;
   }
 
-  const pillars = buildWelcomeOperationPillars();
+  const preview = { name: leadName, email: leadEmail, phone: leadPhone };
 
   return (
     <div className="animate-in fade-in duration-400 fill-mode-both">
-      {/* —— Mobile —— */}
       <div className="flex flex-col gap-4 pb-4 lg:hidden">
-        <ActivationMobileHeader userName={leadName} />
-        <ActivationProfileCard name={leadName} email={leadEmail} phone={leadPhone} showBadges />
-        <ActivationProgressVisualization />
-        <OperationStatusCard pillars={pillars} variant="onboarding" />
-        <div className="flex justify-center pt-1">
-          <ActivationTrialBadge />
-        </div>
+        <ActivationEnvironmentReady
+          name={leadName}
+          email={leadEmail}
+          phone={leadPhone}
+          trialDays={trialDays}
+          usersCount={usersCount}
+          loading={loading}
+          onContinue={onContinue}
+          compact
+        />
+        <ContactLivePreview preview={preview} timelineStage="prepare_workspace" compact />
       </div>
 
-      {/* —— Desktop —— */}
-      <div className="hidden lg:block">
-        <ActivationWelcomeSection userName={leadName} />
-        <ActivationQuickStatus />
-
-        <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,380px)_1fr] lg:items-stretch lg:gap-6">
-          <div className="flex h-full min-h-0 flex-col gap-3">
-            <ActivationProfileCard name={leadName} email={leadEmail} phone={leadPhone} showBadges />
-            <OperationStatusCard pillars={pillars} stretch />
-          </div>
-
-          <ActivationLaunchPanel
-            trialLabel={trialDisplay}
+      <div className="hidden h-full min-h-0 lg:grid lg:grid-cols-[1fr_minmax(0,300px)] lg:gap-6">
+        <div className="flex min-h-0 flex-col justify-center overflow-y-auto pr-2">
+          <ActivationEnvironmentReady
+            name={leadName}
+            email={leadEmail}
+            phone={leadPhone}
             trialDays={trialDays}
             usersCount={usersCount}
             loading={loading}
             onContinue={onContinue}
-            className="h-full"
           />
         </div>
+
+        <aside className="flex min-h-0 flex-col" aria-label="Centro de ativação">
+          <ContactLivePreview preview={preview} timelineStage="prepare_workspace" />
+        </aside>
       </div>
     </div>
   );

@@ -33,11 +33,8 @@ import {
   isCheckoutAbandonedColumnName,
   runOpsCheckoutAbandonedAutomation,
 } from '../services/superadminOpsColumnAutomationService.js';
-import {
-  isOpsAcquisitionLeadCard,
-  resolveKanbanAutomationContext,
-} from '../services/kanbanAutomationContext.js';
-import { executeOpsLeadColumnAutomationFoundation } from '../services/kanbanOpsAutomationFoundation.js';
+import { isOpsAcquisitionLeadCard } from '../services/kanbanAutomationContext.js';
+import { moveOpsCardWithAutomations } from '../services/moveOpsCardWithAutomations.js';
 import { requireCorrelationId } from '../context/requestContext.js';
 import {
   cancelAllPendingScheduledMovesFromColumn,
@@ -1516,6 +1513,84 @@ export async function patchCard(req: AuthRequest, res: Response): Promise<void> 
       return;
     }
 
+    const opsLeadColumnMove =
+      leadOnlyCard &&
+      columnChanged &&
+      body.column_id &&
+      destColForRules &&
+      tenantId === SUPERADMIN_OPS_KANBAN_TENANT_ID;
+
+    if (opsLeadColumnMove) {
+      let correlationId: string;
+      try {
+        correlationId = requireCorrelationId();
+      } catch {
+        correlationId = `ops-kanban:${cardId}:${Date.now()}`;
+      }
+
+      const moveResult = await moveOpsCardWithAutomations({
+        tenantId,
+        actorUserId: userId,
+        cardId,
+        sourceBoardId: String(card.board_id),
+        sourceColumnId: String(card.column_id),
+        destinationBoardId: String(card.board_id),
+        destinationColumnId: String(body.column_id),
+        source: 'ops_kanban_patch',
+        correlationId,
+        moveReason:
+          typeof body.move_reason === 'string' && body.move_reason.trim()
+            ? body.move_reason.trim().slice(0, 2000)
+            : undefined,
+        moveConfirmed: body.move_confirmed,
+        metadataPatch:
+          body.metadata !== undefined && typeof body.metadata === 'object' && body.metadata !== null
+            ? (body.metadata as Record<string, unknown>)
+            : undefined,
+        position: body.position !== undefined ? Number(body.position) : undefined,
+      });
+
+      if (moveResult.status === 'card_not_found') {
+        res.status(404).json({ error: 'Card não encontrado' });
+        return;
+      }
+      if (moveResult.status === 'board_not_found' || moveResult.status === 'column_not_found') {
+        res.status(400).json({ error: 'Destino inválido' });
+        return;
+      }
+
+      if (body.archived_at !== undefined) {
+        await pool.query(
+          `UPDATE chat_kanban_cards
+           SET archived_at = $1, updated_by_user_id = $2, updated_at = now()
+           WHERE id = $3 AND tenant_id = $4`,
+          [body.archived_at ? new Date(body.archived_at) : null, userId, cardId, tenantId],
+        );
+      }
+
+      if (
+        isCheckoutAbandonedColumnName(String(destColForRules.name)) &&
+        card.acquisition_lead_id
+      ) {
+        void runOpsCheckoutAbandonedAutomation({
+          acquisitionLeadId: String(card.acquisition_lead_id),
+          correlationId,
+          cardId,
+          trigger: 'kanban_column_enter',
+        });
+      }
+
+      let payload: Record<string, unknown>;
+      try {
+        const enriched = await loadEnrichedKanbanCard(tenantId, cardId);
+        payload = (enriched ?? { id: cardId }) as Record<string, unknown>;
+      } catch {
+        payload = { id: cardId };
+      }
+      res.json(payload);
+      return;
+    }
+
     let kanbanAutoPending: KanbanAutoCreatedProposalPayload | null = null;
     let postColumnUpdateResult: KanbanDestColumnPostUpdateResult | null = null;
 
@@ -1640,53 +1715,6 @@ export async function patchCard(req: AuthRequest, res: Response): Promise<void> 
         conversationId: String(card.conversation_id),
         reasons: postColumnUpdateResult.deferredEntryAutomations,
       });
-    }
-
-    if (
-      columnChanged &&
-      destColForRules &&
-      leadOnlyCard &&
-      tenantId === SUPERADMIN_OPS_KANBAN_TENANT_ID
-    ) {
-      let correlationId: string;
-      try {
-        correlationId = requireCorrelationId();
-      } catch {
-        correlationId = `ops-kanban:${cardId}:${Date.now()}`;
-      }
-
-      void resolveKanbanAutomationContext({
-        tenantId,
-        actorUserId: userId,
-        card: card as Record<string, unknown>,
-        cardId,
-        destColumn: {
-          id: String(destColForRules.id),
-          name: String(destColForRules.name),
-          metadata: destColForRules.metadata,
-        },
-        boardId: String(board.id),
-        boardName: typeof board.name === 'string' ? board.name : null,
-        boardLinkedFunnelId: (board.linked_sales_funnel_id as string | null) ?? null,
-        correlationId,
-      }).then((automationCtx) => {
-        if (!automationCtx) return;
-        return executeOpsLeadColumnAutomationFoundation(automationCtx, {
-          boardLinkedFunnelId: (board.linked_sales_funnel_id as string | null) ?? null,
-        });
-      });
-
-      if (
-        isCheckoutAbandonedColumnName(String(destColForRules.name)) &&
-        card.acquisition_lead_id
-      ) {
-        void runOpsCheckoutAbandonedAutomation({
-          acquisitionLeadId: String(card.acquisition_lead_id),
-          correlationId,
-          cardId,
-          trigger: 'kanban_column_enter',
-        });
-      }
     }
 
     let kanbanAutoForResponse: KanbanAutoCreatedProposalPayload | undefined;

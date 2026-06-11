@@ -1,5 +1,13 @@
 export { ActivationBadge } from './ActivationBadge';
-export { ONBOARDING_CTA_LABELS, ONBOARDING_HEADLINES, ONBOARDING_KICKOFF_PATH, ONBOARDING_STEPS } from './constants';
+export {
+  ACQUISITION_CAPTURE_NAME_PLACEHOLDER,
+  ONBOARDING_CTA_ACCESS_REQUEST,
+  ONBOARDING_CTA_LABELS,
+  ONBOARDING_HEADLINES,
+  ONBOARDING_KICKOFF_PATH,
+  ONBOARDING_LEAD_ACCESS_HEADLINE,
+  ONBOARDING_STEPS,
+} from './constants';
 export { OnboardingConversionStep } from './OnboardingConversionStep';
 export { OnboardingLeadCapture } from './OnboardingLeadCapture';
 export { formatOnboardingActivationPrice, getOnboardingPlanPricing } from './onboardingPricing';

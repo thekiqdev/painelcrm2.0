@@ -30,6 +30,7 @@ import {
   FileCode2,
   LifeBuoy,
   GitBranch,
+  Sprout,
 } from "lucide-react";
 
 /** Item da sidebar do Super Admin — `to` deve coincidir com rotas em `App.tsx`. */
@@ -238,6 +239,23 @@ export const superAdminNavGroups: SuperAdminNavGroup[] = [
         label: "Tracking",
         to: "/superadmin/marketing/tracking",
         icon: RadioTower,
+      },
+    ],
+  },
+  {
+    id: "configuracoes",
+    label: "Configurações",
+    items: [
+      {
+        label: "Growth",
+        to: "/superadmin/configuracoes/growth",
+        icon: Sprout,
+        end: true,
+      },
+      {
+        label: "Estratégia de Cadastro",
+        to: "/superadmin/configuracoes/growth/signup-strategy",
+        icon: UserPlus,
       },
     ],
   },

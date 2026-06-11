@@ -457,6 +457,7 @@ const ChatKanbanPage = ({ service }: Props) => {
   );
 
   const boardDnd = useChatKanbanBoardDnd({
+    kanban,
     cards,
     setCards,
     sortedColumns: visibleSortedColumns,

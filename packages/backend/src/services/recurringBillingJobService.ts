@@ -21,7 +21,8 @@ import {
   findInvoiceBySubscriptionAndPeriod,
   type CreateInvoiceInput,
 } from './invoiceService.js';
-import { schedulePublishPlatformBillingChargeCreated } from './platformNotifications/platformBusinessNotifications.js';
+import { publishPlatformBillingChargeCreated } from './platformNotifications/platformBusinessNotifications.js';
+import { ensureBillingChargeNotificationExists } from './platformNotifications/platformBillingChargeNotification.js';
 import {
   createCustomerInvoice,
   createChildCustomerInvoice,
@@ -1675,6 +1676,7 @@ export async function processNextBatch(workerId: string): Promise<{ processed: n
               subscriptionId: job.subscription_id,
               result_invoice_id: existingInvoice.id,
             });
+            await ensureBillingChargeNotificationExists(existingInvoice.id);
             result.processed++;
             continue;
           }
@@ -1901,7 +1903,7 @@ async function processOneRenewalJob(
   }
 
   if (!zeroSettlement) {
-    schedulePublishPlatformBillingChargeCreated(billing.id);
+    await publishPlatformBillingChargeCreated(billing.id);
   }
 
   // lifecycle shadow observation (future — renewal route Sprint I+)

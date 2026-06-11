@@ -298,6 +298,24 @@ export async function provisionWorkspaceFromSession(
       correlationId,
       tenantStatus: status,
     });
+    if (status === 'trial') {
+      void promoteLifecycleCard({
+        eventType: 'trial.engagement.started',
+        context: {
+          tenantId,
+          acquisitionLeadId: lead.id,
+        },
+        correlationId,
+        source: 'trial_engagement_started',
+      }).then((result) => {
+        console.info('[trial_engagement_started]', {
+          tenantId,
+          leadId: lead.id,
+          event: 'trial.engagement.started',
+          result: result.status,
+        });
+      });
+    }
     void promoteLifecycleCard({
       eventType: 'onboarding.started',
       context: { acquisitionLeadId: lead.id, tenantId, correlationId },

@@ -11,9 +11,9 @@ import { cn } from '@/lib/utils';
 import { Logo } from '@/components/Logo';
 import { publicApiPost } from '@/integrations/api/client';
 import { Eye, EyeOff, Loader2, ArrowLeft, MessageCircle } from 'lucide-react';
+import { useSignupEntry } from '@/hooks/useSignupEntry';
 
 const legalLinksEnabled = import.meta.env.VITE_ENABLE_LEGAL_PAGES !== 'false';
-const registerRedirectsToCheckout = import.meta.env.VITE_REDIRECT_REGISTER_TO_CHECKOUT === 'true';
 
 function onlyDigits(s: string): string {
   return s.replace(/\D/g, '');
@@ -57,13 +57,6 @@ const AuthWhatsApp = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
-  const [regName, setRegName] = useState('');
-  const [regCompany, setRegCompany] = useState('');
-  const [regEmail, setRegEmail] = useState('');
-  const [regWaNational, setRegWaNational] = useState('');
-  const [regPassword, setRegPassword] = useState('');
-  const [showRegPassword, setShowRegPassword] = useState(false);
-
   const [waNational, setWaNational] = useState('');
   const [code, setCode] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -72,10 +65,11 @@ const AuthWhatsApp = () => {
   const [recoverLoading, setRecoverLoading] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
 
-  const { user, signIn, signUp } = useAuth();
+  const { user, signIn } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
+  const { signupPath, showSignupOnLogin, isExclusiveSignup } = useSignupEntry();
   const redirectParam = searchParams.get('redirect');
   const fromState = (location.state as LocationFrom | null)?.from;
 
@@ -99,6 +93,12 @@ const AuthWhatsApp = () => {
     }
     navigate(getPostAuthHomePath(user), { replace: true });
   }, [user, navigate, redirectParam, fromState, location.pathname, mainTab]);
+
+  useEffect(() => {
+    if (!showSignupOnLogin && mainTab === 'register') {
+      setMainTab('login');
+    }
+  }, [showSignupOnLogin, mainTab]);
 
   const startResendCooldown = useCallback(() => {
     setResendCooldown(60);
@@ -138,47 +138,8 @@ const AuthWhatsApp = () => {
     }
   };
 
-  const handleRegister = async (e: FormEvent) => {
-    e.preventDefault();
-    const name = regName.trim();
-    if (!name) {
-      toast.error('Informe seu nome');
-      return;
-    }
-    if (!regCompany.trim()) {
-      toast.error('Informe o nome da empresa');
-      return;
-    }
-    if (!regEmail.includes('@')) {
-      toast.error('Informe um e-mail válido');
-      return;
-    }
-    const wa = onlyDigits(regWaNational);
-    if (wa.length < MIN_WA_DIGITS) {
-      toast.error('Informe um WhatsApp válido (DDD + número)');
-      return;
-    }
-    if (regPassword.length < 6) {
-      toast.error('A senha deve ter pelo menos 6 caracteres');
-      return;
-    }
-    const parts = name.split(/\s+/).filter(Boolean);
-    const firstName = parts[0] ?? '';
-    const lastName = parts.slice(1).join(' ') || firstName;
-
-    setIsLoading(true);
-    try {
-      await signUp({
-        identifier: regEmail.trim().toLowerCase(),
-        password: regPassword,
-        firstName,
-        lastName,
-        companyName: regCompany.trim(),
-        whatsapp: wa,
-      });
-    } finally {
-      setIsLoading(false);
-    }
+  const goToSignup = () => {
+    navigate(signupPath);
   };
 
   const sendRecoverCode = async (isResend: boolean) => {
@@ -277,7 +238,7 @@ const AuthWhatsApp = () => {
       ? recoverPrimaryLabel
       : mainTab === 'login'
         ? 'Entrar no painel'
-        : 'Criar conta grátis';
+        : 'Continuar cadastro';
 
   const mobilePrimaryDisabled =
     panel === 'recover'
@@ -288,7 +249,11 @@ const AuthWhatsApp = () => {
       : isLoading;
 
   const mobileFormId =
-    panel === 'recover' ? `recover-form-${recoverStep}` : mainTab === 'login' ? 'login-form' : 'register-form';
+    panel === 'recover'
+      ? `recover-form-${recoverStep}`
+      : mainTab === 'login' || !showSignupOnLogin
+        ? 'login-form'
+        : null;
 
   return (
     <div className="relative flex w-full flex-1 flex-col">
@@ -297,7 +262,11 @@ const AuthWhatsApp = () => {
           <Logo size="md" variant="crm" />
         </div>
         <h1 className="font-display text-2xl font-bold tracking-tight text-foreground">PainelCRM</h1>
-        <p className="mt-1.5 text-sm text-muted-foreground">Acesse seu CRM de qualquer lugar.</p>
+        <p className="mt-1.5 text-sm text-muted-foreground">
+          {isExclusiveSignup
+            ? 'Acesso exclusivo para contas autorizadas.'
+            : 'Acesse seu CRM de qualquer lugar.'}
+        </p>
       </header>
 
       <div
@@ -414,7 +383,7 @@ const AuthWhatsApp = () => {
               </form>
             )}
           </div>
-        ) : (
+        ) : showSignupOnLogin ? (
           <Tabs
             value={mainTab}
             onValueChange={(v) => setMainTab(v as MainTab)}
@@ -425,7 +394,7 @@ const AuthWhatsApp = () => {
                 Entrar
               </TabsTrigger>
               <TabsTrigger value="register" className="rounded-lg text-sm font-semibold">
-                Criar conta
+                Cadastro
               </TabsTrigger>
             </TabsList>
 
@@ -485,106 +454,79 @@ const AuthWhatsApp = () => {
             </TabsContent>
 
             <TabsContent value="register" className="mt-6 space-y-5 outline-none">
-              {registerRedirectsToCheckout ? (
-                <div className="rounded-xl border border-border bg-muted/30 p-5 text-center">
-                  <p className="text-sm text-muted-foreground">
-                    O cadastro com escolha de plano é feito no checkout.
-                  </p>
-                  <Button className="mt-4 w-full" asChild>
-                    <Link to="/checkout">Continuar para o checkout</Link>
-                  </Button>
-                  <p className="mt-4 text-xs text-muted-foreground">
-                    Já tem conta?{' '}
-                    <button type="button" className="font-medium text-primary hover:underline" onClick={() => setMainTab('login')}>
-                      Entrar
-                    </button>
-                  </p>
-                </div>
-              ) : (
-                <form id="register-form" className="space-y-4" onSubmit={handleRegister}>
-                  <div className="space-y-2">
-                    <Label htmlFor="reg-name">Nome completo</Label>
-                    <Input
-                      id="reg-name"
-                      autoComplete="name"
-                      placeholder="Seu nome"
-                      value={regName}
-                      onChange={(e) => setRegName(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="reg-co">Empresa</Label>
-                    <Input
-                      id="reg-co"
-                      autoComplete="organization"
-                      placeholder="Nome da empresa"
-                      value={regCompany}
-                      onChange={(e) => setRegCompany(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="reg-em">E-mail</Label>
-                    <Input
-                      id="reg-em"
-                      type="email"
-                      autoComplete="email"
-                      placeholder="voce@empresa.com"
-                      value={regEmail}
-                      onChange={(e) => setRegEmail(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="reg-wa">WhatsApp</Label>
-                    <Input
-                      id="reg-wa"
-                      type="tel"
-                      autoComplete="tel-national"
-                      placeholder="(11) 99999-9999"
-                      value={formatBrazilMobileDisplay(regWaNational)}
-                      onChange={(e) => setRegWaNational(toNationalBrazilDigits(e.target.value))}
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="reg-pw">Senha</Label>
-                    <div className="relative">
-                      <Input
-                        id="reg-pw"
-                        type={showRegPassword ? 'text' : 'password'}
-                        autoComplete="new-password"
-                        placeholder="Mínimo 6 caracteres"
-                        value={regPassword}
-                        onChange={(e) => setRegPassword(e.target.value)}
-                        className="pr-10"
-                        required
-                        minLength={6}
-                      />
-                      <button
-                        type="button"
-                        className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-muted-foreground hover:bg-muted"
-                        onClick={() => setShowRegPassword(!showRegPassword)}
-                        aria-label={showRegPassword ? 'Ocultar senha' : 'Mostrar senha'}
-                      >
-                        {showRegPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </button>
-                    </div>
-                  </div>
-                  <Button type="submit" className="hidden h-12 w-full text-base font-semibold lg:flex" disabled={isLoading}>
-                    {isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Criar conta grátis'}
-                  </Button>
-                  <p className="text-center text-xs text-muted-foreground">
-                    Prefere escolher um plano antes?{' '}
-                    <Link to="/checkout" className="font-medium text-primary hover:underline">
-                      Ver checkout
-                    </Link>
-                  </p>
-                </form>
-              )}
+              <div className="rounded-xl border border-border bg-muted/30 p-5 text-center">
+                <p className="text-sm text-muted-foreground">
+                  Cadastre sua empresa e escolha o plano ideal para sua operação.
+                </p>
+                <Button className="mt-4 hidden h-12 w-full text-base font-semibold lg:flex" asChild>
+                  <Link to={signupPath}>Continuar cadastro</Link>
+                </Button>
+                <p className="mt-4 text-xs text-muted-foreground">
+                  Já tem conta?{' '}
+                  <button
+                    type="button"
+                    className="font-medium text-primary hover:underline"
+                    onClick={() => setMainTab('login')}
+                  >
+                    Entrar
+                  </button>
+                </p>
+              </div>
             </TabsContent>
           </Tabs>
+        ) : (
+          <div className="mt-6 w-full animate-in fade-in duration-300">
+            <form id="login-form" className="space-y-4" onSubmit={handleLogin}>
+              <div className="space-y-2">
+                <Label htmlFor="id-login-exclusive">{loginWithPhone ? 'Telefone' : 'E-mail'}</Label>
+                <Input
+                  id="id-login-exclusive"
+                  type={loginWithPhone ? 'tel' : 'email'}
+                  autoComplete={loginWithPhone ? 'tel' : 'email'}
+                  placeholder={loginWithPhone ? '5511999999999' : 'voce@empresa.com'}
+                  value={loginIdentifier}
+                  onChange={(e) => setLoginIdentifier(e.target.value)}
+                  required
+                />
+                <button
+                  type="button"
+                  className="text-xs font-medium text-primary hover:underline"
+                  onClick={() => {
+                    setLoginWithPhone(!loginWithPhone);
+                    setLoginIdentifier('');
+                  }}
+                >
+                  {loginWithPhone ? 'Entrar com e-mail' : 'Entrar com telefone'}
+                </button>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="pw-login-exclusive">Senha</Label>
+                <div className="relative">
+                  <Input
+                    id="pw-login-exclusive"
+                    type={showPassword ? 'text' : 'password'}
+                    autoComplete="current-password"
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="pr-10"
+                    required
+                  />
+                  <button
+                    type="button"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                    onClick={() => setShowPassword(!showPassword)}
+                    aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </div>
+              <Button type="submit" className="hidden h-12 w-full text-base font-semibold lg:flex" disabled={isLoading}>
+                {isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Entrar no painel'}
+              </Button>
+            </form>
+          </div>
         )}
       </div>
 
@@ -635,10 +577,18 @@ const AuthWhatsApp = () => {
                 {resendCooldown > 0 ? `${resendCooldown}s` : 'Reenviar'}
               </Button>
             </div>
+          ) : panel === 'main' && mainTab === 'register' && showSignupOnLogin ? (
+            <Button
+              type="button"
+              className="h-12 w-full text-base font-semibold shadow-lg shadow-primary/10"
+              onClick={goToSignup}
+            >
+              {mobilePrimaryLabel}
+            </Button>
           ) : (
             <Button
               type="submit"
-              form={mobileFormId}
+              form={mobileFormId ?? undefined}
               className="h-12 w-full text-base font-semibold shadow-lg shadow-primary/10"
               disabled={mobilePrimaryDisabled}
             >

@@ -127,6 +127,20 @@ export async function resolveKanbanAutomationContext(input: {
   return ctx;
 }
 
+/** Chave de execução Phase2 Ops — lead + coluna + correlationId (Sprint N5.1). */
+export function buildOpsLeadPhase2ExecutionKey(
+  leadId: string,
+  columnId: string,
+  correlationId: string,
+): string {
+  return `ops-lead-phase2:${leadId}:${columnId}:${correlationId}`;
+}
+
+/** @deprecated Use buildOpsLeadPhase2ExecutionKey — mantido para dedupe de mensagem legada. */
+export function buildOpsLeadPhase2IdempotencyKey(leadId: string, columnId: string): string {
+  return `ops-lead-phase2:${leadId}:${columnId}`;
+}
+
 export function toPhase2AutomationContext(
   ctx: KanbanAutomationContext,
   opts?: { boardLinkedFunnelId?: string | null },

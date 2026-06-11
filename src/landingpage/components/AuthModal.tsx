@@ -12,15 +12,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "@/components/ui/sonner";
+import { useSignupEntry } from "@/hooks/useSignupEntry";
 
 interface AuthModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
-/**
- * Modal público apenas para login. Cadastro de nova empresa paga = /checkout (Fase 1).
- */
+/** Modal público apenas para login. Cadastro segue a estratégia ativa (checkout ou /cadastro). */
 export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
   const [loginType, setLoginType] = useState<"email" | "phone">("email");
   const [identifier, setIdentifier] = useState("");
@@ -28,6 +27,7 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
   const [isLoading, setIsLoading] = useState(false);
   const { signIn } = useAuth();
   const navigate = useNavigate();
+  const { signupPath, showSignupOnLogin } = useSignupEntry();
 
   const resetForm = () => {
     setIdentifier("");
@@ -39,10 +39,10 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
     onOpenChange(next);
   };
 
-  const goToCheckout = () => {
+  const goToSignup = () => {
     resetForm();
     handleOpenChange(false);
-    navigate("/checkout");
+    navigate(signupPath);
   };
 
   const detectLoginType = (value: string): "email" | "phone" => {
@@ -130,14 +130,16 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
             {isLoading ? "Processando..." : "Entrar"}
           </Button>
         </form>
-        <div className="text-center pt-2 border-t border-border/50">
-          <span className="text-sm text-muted-foreground">
-            Ainda não tem conta?{" "}
-            <Button type="button" variant="link" className="p-0 h-auto text-sm" onClick={goToCheckout}>
-              Cadastrar / Contratar
-            </Button>
-          </span>
-        </div>
+        {showSignupOnLogin ? (
+          <div className="text-center pt-2 border-t border-border/50">
+            <span className="text-sm text-muted-foreground">
+              Ainda não tem conta?{" "}
+              <Button type="button" variant="link" className="p-0 h-auto text-sm" onClick={goToSignup}>
+                Cadastro
+              </Button>
+            </span>
+          </div>
+        ) : null}
       </DialogContent>
     </Dialog>
   );

@@ -46,8 +46,24 @@ import {
   postPublicSupportTicketMessage,
   postPublicTicketMessageByToken,
 } from '../controllers/publicSupportPortalController.js';
+import {
+  getPublicSignupFlow,
+  getPublicSignupHealth,
+} from '../controllers/signupFlowPublicController.js';
 
 const router = Router();
+
+const signupFlowPublicLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_PUBLIC_SIGNUP_FLOW_MAX || '120', 10),
+  message: { ok: false, error: 'Muitas consultas. Aguarde.', code: 'rate_limited' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'development',
+});
+
+router.get('/signup-flow', signupFlowPublicLimiter, getPublicSignupFlow);
+router.get('/signup-health', signupFlowPublicLimiter, getPublicSignupHealth);
 
 const legalPublicLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,

@@ -7,6 +7,7 @@ import {
   setSignupEntryRuntimeConfig,
   type SignupEntryMode,
 } from '../platform/platformRuntimeConfig.js';
+import { getSignupStrategy, setActiveSignupFlow } from '../platform/signupStrategyService.js';
 
 export async function getPublicSignupEntry(_req: Request, res: Response): Promise<void> {
   const payload = await getPublicSignupEntryPayload();
@@ -24,9 +25,10 @@ export async function getSuperadminSignupAcquisitionSettings(
   _req: AuthRequest,
   res: Response,
 ): Promise<void> {
-  const [config, publicPayload] = await Promise.all([
+  const [config, publicPayload, strategy] = await Promise.all([
     getSignupEntryRuntimeConfig(),
     getPublicSignupEntryPayload(),
+    getSignupStrategy(),
   ]);
   res.json({
     ok: true,
@@ -34,6 +36,8 @@ export async function getSuperadminSignupAcquisitionSettings(
     effective_entry_mode: publicPayload.entry_mode,
     paths: publicPayload.paths,
     acquisition_flags: publicPayload.acquisition_flags,
+    active_signup_flow: strategy.flow,
+    signup_strategy: strategy,
   });
 }
 
@@ -43,9 +47,14 @@ export async function patchSuperadminSignupAcquisitionSettings(
 ): Promise<void> {
   try {
     const body = patchSchema.parse(req.body ?? {});
+    if (body.mode) {
+      await setActiveSignupFlow(
+        body.mode === 'acquisition_flow' ? 'exclusive_signup' : 'checkout',
+        req.userId,
+      );
+    }
     const next = await setSignupEntryRuntimeConfig(
       {
-        mode: body.mode as SignupEntryMode | undefined,
         post_activation_path: body.post_activation_path,
         legacy_checkout_enabled: body.legacy_checkout_enabled,
         acquisition_flow_enabled: body.acquisition_flow_enabled,

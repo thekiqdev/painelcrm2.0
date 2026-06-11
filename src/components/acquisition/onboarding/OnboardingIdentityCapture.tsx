@@ -4,12 +4,12 @@ import { formatPhoneBrDigits } from '@/lib/brazilInputMasks';
 import { activationInputClass } from './activationAppStyles';
 
 type Props = {
-  name: string;
   phone: string;
-  onChange: (patch: { lead_name?: string; lead_phone?: string }) => void;
+  onChange: (patch: { lead_phone?: string }) => void;
 };
 
-export function OnboardingIdentityCapture({ name, phone, onChange }: Props) {
+/** Sprint E1 — etapa inicial: somente WhatsApp (teste fechado). */
+export function OnboardingIdentityCapture({ phone, onChange }: Props) {
   return (
     <div className="space-y-4">
       <div className="space-y-2">
@@ -24,20 +24,7 @@ export function OnboardingIdentityCapture({ name, phone, onChange }: Props) {
           placeholder="(00) 00000-0000"
           autoComplete="tel"
           inputMode="tel"
-        />
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="leadName" className="text-sm text-muted-foreground">
-          Seu nome
-        </Label>
-        <Input
-          id="leadName"
-          className={activationInputClass}
-          value={name}
-          onChange={(e) => onChange({ lead_name: e.target.value })}
-          placeholder="Como podemos te chamar?"
-          autoComplete="name"
+          autoFocus
         />
       </div>
     </div>

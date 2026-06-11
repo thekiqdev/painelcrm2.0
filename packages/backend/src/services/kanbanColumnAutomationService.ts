@@ -9,6 +9,7 @@ import { sendKanbanAutomationOutboundText } from '../controllers/chatController.
 import { sendWhatsappModelSequence } from './whatsappModelSequenceService.js';
 import { normalizeConversationPhone } from './conversationMatchingService.js';
 import { migrateTicketsLeadToClientInTransaction } from './leadConversionMigrationService.js';
+import { runKanbanPhase2AutomationsForLead } from './kanbanLeadPhase2AutomationService.js';
 
 type AutomationStatus = 'executed' | 'skipped' | 'failed';
 
@@ -2386,7 +2387,7 @@ export async function runKanbanPhase2Automations(
   const subjectKind = ctx.subjectKind ?? 'conversation';
 
   if (subjectKind === 'acquisition_lead') {
-    return runKanbanPhase2AutomationsFoundation(ctx);
+    return runKanbanPhase2AutomationsForLead(ctx);
   }
 
   const parsed = parseKanbanPhase2(ctx.columnMetadata);

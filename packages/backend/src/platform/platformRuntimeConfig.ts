@@ -1,6 +1,6 @@
 import { pool } from '../utils/db.js';
-import { isAcquisitionSignupFlowEnabled } from '../acquisition/acquisitionFlags.js';
 import { getAcquisitionPublicConfig } from '../acquisition/acquisitionFlags.js';
+import { getSignupStrategy, type SignupStrategy } from './signupStrategyService.js';
 
 export type SignupEntryMode = 'legacy_checkout' | 'acquisition_flow';
 
@@ -69,14 +69,10 @@ export async function setSignupEntryRuntimeConfig(
   return next;
 }
 
-/** Modo efetivo respeitando flags acquisition e toggles admin. */
+/** Modo efetivo — deriva de platform_growth_settings.active_signup_flow. */
 export async function resolveEffectiveSignupEntryMode(): Promise<SignupEntryMode> {
-  const cfg = await getSignupEntryRuntimeConfig();
-  if (cfg.mode !== 'acquisition_flow' || !cfg.acquisition_flow_enabled) {
-    return cfg.legacy_checkout_enabled ? 'legacy_checkout' : 'legacy_checkout';
-  }
-  const signupOn = await isAcquisitionSignupFlowEnabled();
-  return signupOn ? 'acquisition_flow' : 'legacy_checkout';
+  const strategy = await getSignupStrategy();
+  return strategy.flow === 'exclusive_signup' ? 'acquisition_flow' : 'legacy_checkout';
 }
 
 export async function getPublicSignupEntryPayload(): Promise<{
@@ -91,17 +87,17 @@ export async function getPublicSignupEntryPayload(): Promise<{
   };
   config: SignupEntryRuntimeConfig;
   acquisition_flags: Record<string, boolean>;
+  signup_strategy: SignupStrategy;
 }> {
   const cfg = await getSignupEntryRuntimeConfig();
-  const entry_mode = await resolveEffectiveSignupEntryMode();
+  const strategy = await getSignupStrategy();
+  const entry_mode = strategy.flow === 'exclusive_signup' ? 'acquisition_flow' : 'legacy_checkout';
   const acquisition_flags = await getAcquisitionPublicConfig();
-  const signup =
-    entry_mode === 'acquisition_flow' ? '/cadastro' : cfg.legacy_checkout_enabled ? '/checkout' : '/cadastro';
   return {
     ok: true,
     entry_mode,
     paths: {
-      signup,
+      signup: strategy.entry_url,
       legacy_checkout: '/checkout',
       acquisition_signup: '/cadastro',
       activation_checkout: '/ativacao/checkout',
@@ -109,5 +105,6 @@ export async function getPublicSignupEntryPayload(): Promise<{
     },
     config: cfg,
     acquisition_flags,
+    signup_strategy: strategy,
   };
 }

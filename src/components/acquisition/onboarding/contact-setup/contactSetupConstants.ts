@@ -1,29 +1,32 @@
-import { Bot, MessageCircle, Pencil, ShieldCheck, Sparkles, Zap } from 'lucide-react';
+import { Lock, MessageCircle, Settings } from 'lucide-react';
 
 export const CONTACT_CTA = {
   label: 'Preparar meu workspace',
   subtitle: 'Criamos seu acesso e guiamos a configuração da operação nas próximas etapas.',
 };
 
+export const CONTACT_ACCESS_CTA = {
+  label: 'Receber código de acesso',
+  subtitle: 'Enviaremos o código pelo WhatsApp informado. Vagas liberadas gradualmente.',
+};
+
+export const CONTACT_VERIFICATION_CTA = {
+  label: 'Continuar',
+  subtitle: 'O código foi enviado para o WhatsApp informado.',
+};
+
+/** Sprint E1.1 — três cards informativos (sem IA Assist). */
 export const CONTACT_TRUST_INDICATORS = [
   {
     icon: MessageCircle,
-    text: 'WhatsApp será usado para login e recovery da operação',
+    text: 'O código de acesso será enviado para o WhatsApp informado.',
   },
   {
-    icon: Bot,
-    text: 'IA Assist será configurada automaticamente no workspace',
+    icon: Lock,
+    text: 'Seu ambiente será preparado após a ativação.',
   },
   {
-    icon: Pencil,
-    text: 'Você pode alterar estes dados depois, quando quiser',
+    icon: Settings,
+    text: 'As configurações poderão ser ajustadas posteriormente.',
   },
-] as const;
-
-export const CONTACT_ENABLED_RESOURCES = [
-  { icon: MessageCircle, label: 'Canal WhatsApp operacional' },
-  { icon: Zap, label: 'Automações inteligentes' },
-  { icon: Bot, label: 'IA Assist Preview' },
-  { icon: Sparkles, label: 'CRM com visão unificada' },
-  { icon: ShieldCheck, label: 'Recovery e onboarding por WhatsApp' },
 ] as const;

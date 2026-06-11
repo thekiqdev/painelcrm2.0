@@ -87,6 +87,18 @@ export const SUPERADMIN_OPS_KANBAN_BOARD_SEEDS: OpsKanbanBoardSeed[] = [
       { name: 'Reativado', color: '#22c55e' },
     ],
   },
+  {
+    name: 'Engajamento Trial',
+    description: 'Engajamento durante o período de teste — progressão temporal (Sprint N2)',
+    sort_order: 55,
+    columns: [
+      { name: 'Trial iniciado', color: '#34d399' },
+      { name: 'Dia 2', color: '#38bdf8' },
+      { name: 'Dia 4', color: '#a78bfa' },
+      { name: 'Dia 6', color: '#fbbf24' },
+      { name: 'Trial finalizando', color: '#fb7185' },
+    ],
+  },
 ];
 
 export const ACQUISITION_BOARD_NAME = 'Aquisição';

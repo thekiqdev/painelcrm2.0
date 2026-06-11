@@ -6,6 +6,9 @@ import {
   getOnboardingSession,
   postActivateTrial,
   postContactCapture,
+  postPhoneResendCode,
+  postPhoneSendCode,
+  postPhoneVerifyCode,
   postContactResolve,
   postMarkAbandoned,
   postProvisionOnboarding,
@@ -29,6 +32,9 @@ const acquisitionLimiter = rateLimit({
 router.get('/config', acquisitionLimiter, getAcquisitionConfig);
 router.get('/slug/check', acquisitionLimiter, getAcquisitionSlugCheck);
 router.post('/contact/capture', acquisitionLimiter, postContactCapture);
+router.post('/phone/send-code', acquisitionLimiter, postPhoneSendCode);
+router.post('/phone/verify-code', acquisitionLimiter, postPhoneVerifyCode);
+router.post('/phone/resend-code', acquisitionLimiter, postPhoneResendCode);
 router.post('/contact/resolve', acquisitionLimiter, postContactResolve);
 router.post('/teste-gratis', acquisitionLimiter, postTesteGratis);
 router.post('/signup/step', acquisitionLimiter, postSignupStep);

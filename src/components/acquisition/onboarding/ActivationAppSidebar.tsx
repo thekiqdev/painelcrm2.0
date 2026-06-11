@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Bot, Check, Sparkles } from 'lucide-react';
+import { Check, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ActivationBadge } from './ActivationBadge';
 import { ONBOARDING_STEPS } from './constants';
@@ -146,10 +146,6 @@ export function ActivationAppSidebar({ activeStepIndex }: Props) {
             <span className="text-xs text-muted-foreground">Ativação em andamento</span>
           </div>
           <div className="flex flex-wrap gap-1.5">
-            <ActivationBadge variant="ai">
-              <Bot className="h-3 w-3" />
-              IA Assist
-            </ActivationBadge>
             <ActivationBadge variant="default">
               <Sparkles className="h-3 w-3" />
               {current.short}

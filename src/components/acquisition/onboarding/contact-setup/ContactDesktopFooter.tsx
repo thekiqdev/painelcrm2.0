@@ -6,9 +6,17 @@ type Props = {
   onContinue: () => void;
   loading?: boolean;
   disabled?: boolean;
+  label?: string;
+  subtitle?: string;
 };
 
-export function ContactDesktopFooter({ onContinue, loading, disabled }: Props) {
+export function ContactDesktopFooter({
+  onContinue,
+  loading,
+  disabled,
+  label = CONTACT_CTA.label,
+  subtitle = CONTACT_CTA.subtitle,
+}: Props) {
   return (
     <footer
       className={cn(
@@ -18,7 +26,7 @@ export function ContactDesktopFooter({ onContinue, loading, disabled }: Props) {
       )}
     >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="max-w-md text-xs leading-relaxed text-muted-foreground">{CONTACT_CTA.subtitle}</p>
+        <p className="max-w-md text-xs leading-relaxed text-muted-foreground">{subtitle}</p>
         <button
           type="button"
           disabled={disabled || loading}
@@ -32,7 +40,7 @@ export function ContactDesktopFooter({ onContinue, loading, disabled }: Props) {
           )}
         >
           {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : null}
-          {CONTACT_CTA.label}
+          {label}
           {!loading ? (
             <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-0.5" />
           ) : null}

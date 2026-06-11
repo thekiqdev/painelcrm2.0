@@ -8,7 +8,7 @@ type BootstrapBody = { backfill?: boolean; backfillLimit?: number };
 /**
  * POST /api/superadmin/ops/kanban/bootstrap
  *
- * Seed idempotente: 5 boards operacionais + colunas padrão + recuperação de leads.
+ * Seed idempotente: boards operacionais canônicos + colunas padrão + recuperação de leads.
  */
 export async function bootstrapSuperadminOpsKanban(req: AuthRequest, res: Response): Promise<void> {
   const userId = req.userId;

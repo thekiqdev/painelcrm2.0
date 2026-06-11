@@ -28,11 +28,16 @@ vi.mock('./lifecyclePromotionRepository.js', () => ({
   insertLifecycleTransition: vi.fn().mockResolvedValue('audit-1'),
 }));
 
+vi.mock('../services/moveOpsCardWithAutomations.js', () => ({
+  moveOpsCardWithAutomations: vi.fn(),
+}));
+
 import { pool } from '../utils/db.js';
 import { findCanonicalOpsBoardIdByNameFromPool } from '../services/superadminOpsKanbanFoundation.js';
 import { hasKanbanAcquisitionLeadColumn } from '../services/superadminOpsKanbanLeadService.js';
 import { isOpsLifecyclePromotionEnabled } from './lifecyclePromotionConfig.js';
 import { insertLifecycleTransition } from './lifecyclePromotionRepository.js';
+import { moveOpsCardWithAutomations } from '../services/moveOpsCardWithAutomations.js';
 import {
   findLifecycleCardForLead,
   promoteLifecycleCard,
@@ -83,9 +88,6 @@ function mockLeadResolve() {
     if (s.includes('COALESCE(MAX(position)')) {
       return { rows: [{ n: 1 }], rowCount: 1 } as never;
     }
-    if (s.includes('UPDATE chat_kanban_cards')) {
-      return { rows: [], rowCount: 1 } as never;
-    }
     return { rows: [], rowCount: 0 } as never;
   });
 }
@@ -107,10 +109,12 @@ describe('promoteLifecycleCard', () => {
   it('moves card when feature flag is on', async () => {
     vi.mocked(isOpsLifecyclePromotionEnabled).mockReturnValue(true);
     mockLeadResolve();
-
-    const clientQuery = vi.fn().mockResolvedValue({ rows: [], rowCount: 0 });
-    const client = { query: clientQuery, release: vi.fn() };
-    vi.mocked(pool.connect).mockResolvedValue(client as never);
+    vi.mocked(moveOpsCardWithAutomations).mockResolvedValue({
+      status: 'moved',
+      phase2Executed: true,
+      cardId: CARD_ID,
+      acquisitionLeadId: LEAD_ID,
+    });
 
     const result = await promoteLifecycleCard({
       eventType: 'subscription.activated',
@@ -123,10 +127,13 @@ describe('promoteLifecycleCard', () => {
     expect(result.fromBoard).toBe('Aquisição');
     expect(result.toBoard).toBe('Expansão');
     expect(result.toColumn).toBe('Novo Cliente');
-    expect(pool.connect).toHaveBeenCalled();
-    expect(clientQuery).toHaveBeenCalledWith(
-      expect.stringContaining('UPDATE chat_kanban_cards'),
-      expect.arrayContaining([DEST_BOARD_ID, DEST_COL_ID, CARD_ID]),
+    expect(moveOpsCardWithAutomations).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cardId: CARD_ID,
+        destinationBoardId: DEST_BOARD_ID,
+        destinationColumnId: DEST_COL_ID,
+        source: 'test',
+      }),
     );
     expect(insertLifecycleTransition).toHaveBeenCalledWith(
       expect.objectContaining({ result: 'moved', eventType: 'subscription.activated' }),

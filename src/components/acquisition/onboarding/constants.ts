@@ -60,14 +60,31 @@ export const ONBOARDING_HEADLINES: Record<
   },
 };
 
+/** Sprint E1 — primeira etapa: teste fechado (somente WhatsApp). */
+export const ONBOARDING_LEAD_ACCESS_HEADLINE = {
+  title: '🔒 TESTE FECHADO',
+  subtitle: 'As próximas vagas estão sendo liberadas gradualmente.',
+  kicker: 'Solicite seu acesso ao PainelCRM',
+};
+
+export const ONBOARDING_LEAD_VERIFICATION_HEADLINE = {
+  title: 'Confirmar acesso',
+  subtitle: 'Digite o código recebido para continuar.',
+};
+
 export const ONBOARDING_LEAD_CREDENTIALS_HEADLINE = {
   title: 'Seu acesso ao workspace',
-  subtitle: 'Use este e-mail e senha para entrar após iniciar a avaliação.',
+  subtitle: 'Informe seu nome, e-mail e senha para concluir a solicitação.',
 };
+
+export const ONBOARDING_CTA_ACCESS_REQUEST = 'Receber código de acesso';
 
 export const ONBOARDING_CTA_LABELS: Record<'lead' | 'plan', string> = {
   lead: 'Preparar meu workspace',
   plan: 'Continuar ativação',
 };
+
+/** Nome temporário no capture (API exige name); substituído na etapa de credenciais. */
+export const ACQUISITION_CAPTURE_NAME_PLACEHOLDER = 'Solicitante';
 
 export const ONBOARDING_KICKOFF_PATH = '/onboarding/kickoff';
