@@ -9,7 +9,7 @@ import {
   shouldShowResumeBanner,
   shouldSkipSignupStepOnResume,
   stepIndexFromUrlStep,
-} from '../../../src/lib/acquisitionSignupResume.js';
+} from '../../../src/lib/acquisitionSignupResume.ts';
 
 describe('acquisitionSignupResume P0-B.1', () => {
   it('caso 1: contact_captured → etapa plano', () => {

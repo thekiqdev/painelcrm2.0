@@ -35,12 +35,12 @@ import {
 import { Loader2 } from 'lucide-react';
 import {
   isCadastroResumePath,
-  isPendingSignupLeadEmail,
   planIdFromLeadAndParams,
   shouldShowResumeBanner,
 } from '@/lib/acquisitionSignupResume';
 import {
   cadastroWizardPath,
+  isPendingSignupLeadEmail,
   isPlaceholderLeadName,
   layoutStepIndexFromWizard,
   leadCaptureSubStepFromWizard,

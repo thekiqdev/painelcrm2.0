@@ -5,7 +5,7 @@
 
 import { hasPlanId } from './acquisitionSignupResume';
 
-function isPendingSignupLeadEmail(email: string | null | undefined): boolean {
+export function isPendingSignupLeadEmail(email: string | null | undefined): boolean {
   const t = email?.trim().toLowerCase() ?? '';
   if (!t) return true;
   return t.includes('pending+') || t.includes('@signup.painelcrm.local');
