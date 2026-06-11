@@ -10,7 +10,10 @@ import {
   upsertAcquisitionLeadContact,
 } from './acquisitionLeadRepository.js';
 import { isPendingSignupEmail } from './acquisitionPendingEmail.js';
-import { publishAcquisitionLeadCreated } from './acquisitionOutbox.js';
+import {
+  publishAcquisitionSignupStarted,
+  syncAcquisitionLeadOpsKanbanProfile,
+} from './acquisitionOutbox.js';
 import type { AcquisitionLeadRow } from './acquisitionTypes.js';
 import { resolveAcquisitionResume } from './acquisitionResumeService.js';
 import { reconcileAcquisitionLeadForResume } from './acquisitionLeadReconciliationService.js';
@@ -71,6 +74,20 @@ async function findTenantForContact(
     [em, whatsappDigits],
   );
   return r.rows[0] ?? null;
+}
+
+async function afterContactProfileResolved(
+  lead: AcquisitionLeadRow,
+  correlationId: string,
+  action: ContactResolveAction,
+): Promise<void> {
+  if (action === 'login_required' || action === 'trial_blocked') return;
+  void publishAcquisitionSignupStarted(lead, 'contact');
+  void syncAcquisitionLeadOpsKanbanProfile(lead, {
+    signupStep: 'contact',
+    timelineType: `contact_resolve_${action}`,
+  });
+  void correlationId;
 }
 
 function isTenantOperationallyActive(row: { status: string; trial_ends_at: string | null }): boolean {
@@ -178,6 +195,9 @@ export async function resolveAcquisitionContact(input: {
     const reconciled = await reconcileAcquisitionLeadForResume(lead);
     const leadForResume = reconciled.lead;
     const resume = await resolveAcquisitionResume(leadForResume);
+    const action: ContactResolveAction = extraEligible ? 'reactivation_eligible' : 'continue_lead';
+
+    await afterContactProfileResolved(leadForResume, input.correlationId, action);
 
     logResumeDetected({
       lead_id: leadForResume.id,
@@ -187,7 +207,7 @@ export async function resolveAcquisitionContact(input: {
     });
 
     return {
-      action: extraEligible ? 'reactivation_eligible' : 'continue_lead',
+      action,
       lead: leadForResume,
       message: extraEligible
         ? 'Conta anterior inativa. Você pode solicitar 7 dias adicionais de avaliação após escolher o plano.'
@@ -210,7 +230,7 @@ export async function resolveAcquisitionContact(input: {
       metadata: { operational_tags: ['novo'], email_confirmed_at: new Date().toISOString() },
     });
     if (!lead) throw new Error('lead_upsert_failed');
-    void publishAcquisitionLeadCreated(lead);
+    await afterContactProfileResolved(lead, input.correlationId, 'new_lead');
     return { action: 'new_lead', lead, message: 'Lead registrado.' };
   }
 
@@ -226,7 +246,7 @@ export async function resolveAcquisitionContact(input: {
 
   if (!lead) throw new Error('lead_insert_failed');
 
-  void publishAcquisitionLeadCreated(lead);
+  await afterContactProfileResolved(lead, input.correlationId, 'new_lead');
   return { action: 'new_lead', lead, message: 'Lead registrado.' };
 }
 

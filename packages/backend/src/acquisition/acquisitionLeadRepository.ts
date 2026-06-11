@@ -1,6 +1,11 @@
 import { pool } from '../utils/db.js';
 import type { AcquisitionLeadRow, AcquisitionLeadStage, ActivationScore } from './acquisitionTypes.js';
 import { normalizeEmailForUniqueness } from '../utils/userIdentity.js';
+import {
+  hasRealAcquisitionLeadName,
+  isAcquisitionCaptureNamePlaceholder,
+  normalizeCaptureNameForStorage,
+} from './acquisitionCapturePlaceholder.js';
 
 let tableExistsCache: boolean | undefined;
 
@@ -122,6 +127,20 @@ export async function insertAcquisitionLead(input: {
 }
 
 /** Reutiliza lead por e-mail — atualiza contato e último acesso. */
+function resolveUpsertLeadName(
+  existingName: string | null | undefined,
+  inputName?: string | null,
+): string | null {
+  const incoming = inputName?.trim() ?? null;
+  if (!incoming) {
+    return existingName?.trim() ? existingName.trim() : null;
+  }
+  if (isAcquisitionCaptureNamePlaceholder(incoming)) {
+    return hasRealAcquisitionLeadName(existingName) ? existingName!.trim() : null;
+  }
+  return incoming;
+}
+
 export async function upsertAcquisitionLeadContact(input: {
   name?: string | null;
   email: string;
@@ -135,6 +154,7 @@ export async function upsertAcquisitionLeadContact(input: {
   if (!existing) {
     return insertAcquisitionLead({
       ...input,
+      name: normalizeCaptureNameForStorage(input.name ?? '') ?? input.name ?? null,
       stage: input.stage ?? 'contact_captured',
     });
   }
@@ -145,6 +165,8 @@ export async function upsertAcquisitionLeadContact(input: {
     last_seen_at: new Date().toISOString(),
     resumed: true,
   };
+
+  const nameForUpdate = resolveUpsertLeadName(existing.name, input.name);
 
   const r = await pool.query(
     `UPDATE acquisition_leads
@@ -159,7 +181,7 @@ export async function upsertAcquisitionLeadContact(input: {
      RETURNING *`,
     [
       existing.id,
-      input.name ?? null,
+      nameForUpdate,
       input.phone ?? null,
       input.source ?? null,
       JSON.stringify(mergedMeta),

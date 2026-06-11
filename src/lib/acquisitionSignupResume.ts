@@ -4,9 +4,18 @@
 
 export type PublicAcquisitionLeadSnapshot = {
   id: string;
+  name?: string | null;
+  email?: string | null;
   selected_plan_id?: string | null;
   current_stage?: string | null;
 };
+
+/** E-mail provisório gerado no capture pós-verificação. */
+export function isPendingSignupLeadEmail(email: string | null | undefined): boolean {
+  const t = email?.trim().toLowerCase() ?? '';
+  if (!t) return true;
+  return t.includes('pending+') || t.includes('@signup.painelcrm.local');
+}
 
 /** Mapeia query `step` → índice do wizard. */
 export function stepIndexFromUrlStep(step: string | null | undefined): number {
@@ -50,7 +59,10 @@ export function normalizeResumeNavigation(
 ): ResumeNavigationTarget {
   const url = new URL(resumePath, 'http://resume.local');
   const step = url.searchParams.get('step');
-  const stepIndex = resolveWizardStepIndex(step, selectedPlanId);
+  const stepIndex = resolveWizardStepFromLead(step, {
+    id: url.searchParams.get('lead') ?? 'resume',
+    selected_plan_id: selectedPlanId,
+  });
 
   if (
     (step === 'conversion' || step === 'activate') &&
@@ -109,11 +121,17 @@ export function resolveWizardStepFromLead(
   urlStep: string | null | undefined,
   lead: PublicAcquisitionLeadSnapshot | null | undefined,
 ): number {
+  if (urlStep === 'identity' || urlStep === 'verification' || urlStep === 'credentials') {
+    return 0;
+  }
   if (urlStep) {
     return resolveWizardStepIndex(urlStep, lead?.selected_plan_id ?? null);
   }
   const stage = lead?.current_stage;
-  if (stage === 'contact_captured') return 1;
+  if (stage === 'contact_captured') {
+    if (isPendingSignupLeadEmail(lead?.email) || !lead?.name?.trim()) return 0;
+    return 1;
+  }
   if (
     stage === 'plan_selected' ||
     stage === 'activation_prepared' ||

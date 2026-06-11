@@ -1,6 +1,8 @@
 import { pool } from '../utils/db.js';
 import type { AcquisitionLeadRow, AcquisitionLeadStage } from './acquisitionTypes.js';
 import { onboardingSessionsTableExists } from './acquisitionOnboardingSessionService.js';
+import { hasRealAcquisitionLeadName } from './acquisitionCapturePlaceholder.js';
+import { isPendingSignupEmail } from './acquisitionPendingEmail.js';
 
 export type AcquisitionResumeResolution = {
   /** Caminho de navegação (sempre definido quando há retomada possível). */
@@ -11,10 +13,18 @@ export type AcquisitionResumeResolution = {
   message: string;
 };
 
-function cadastroPath(leadId: string, step?: 'plan' | 'conversion'): string {
+type CadastroWizardStep = 'verification' | 'credentials' | 'plan' | 'conversion';
+
+function leadNeedsCredentialsStep(lead: AcquisitionLeadRow): boolean {
+  return isPendingSignupEmail(lead.email) || !hasRealAcquisitionLeadName(lead.name);
+}
+
+function cadastroPath(leadId: string, step?: CadastroWizardStep): string {
+  if (step === 'verification') return `/cadastro?lead=${leadId}&step=verification`;
+  if (step === 'credentials') return `/cadastro?lead=${leadId}&step=credentials`;
   if (step === 'plan') return `/cadastro?lead=${leadId}&step=plan`;
   if (step === 'conversion') return `/cadastro?lead=${leadId}&step=conversion`;
-  return `/cadastro?lead=${leadId}`;
+  return `/cadastro?lead=${leadId}&step=credentials`;
 }
 
 export async function findAccessibleSessionForLead(leadId: string): Promise<{
@@ -90,9 +100,10 @@ export async function resolveAcquisitionResume(
   }
 
   if (stage === 'contact_captured') {
+    const needsCredentials = leadNeedsCredentialsStep(lead);
     return {
-      path: cadastroPath(lead.id, 'plan'),
-      step: 1,
+      path: cadastroPath(lead.id, needsCredentials ? 'credentials' : 'plan'),
+      step: needsCredentials ? 0 : 1,
       canContinueWhereLeftOff: true,
       message: 'Continuando de onde você parou.',
     };

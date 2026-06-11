@@ -102,6 +102,17 @@ export async function publishAcquisitionStageChanged(
   }
 }
 
+/** E2.1 — Atualiza cartão Ops após mudança de perfil (nome/e-mail) sem depender de idempotência de lead.created. */
+export async function syncAcquisitionLeadOpsKanbanProfile(
+  lead: AcquisitionLeadRow,
+  opts?: { signupStep?: 'contact' | 'plan' | 'checkout'; timelineType?: string },
+): Promise<void> {
+  await syncLeadToOpsKanbanFallback(lead, {
+    signupStep: opts?.signupStep ?? 'contact',
+    timelineType: opts?.timelineType ?? 'lead_profile_updated',
+  });
+}
+
 export async function publishAcquisitionCheckoutAbandoned(lead: AcquisitionLeadRow): Promise<void> {
   const result = await publishDomainEventDetached({
     eventKey: 'acquisition.checkout.abandoned',

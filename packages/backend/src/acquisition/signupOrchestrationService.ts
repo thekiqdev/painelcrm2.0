@@ -204,7 +204,7 @@ export async function orchestrateSignupStep(input: {
           : `/checkout${lead.selected_plan_id ? `?plan=${lead.selected_plan_id}&lead=${lead.id}` : `?lead=${lead.id}`}`
         : input.step === 'plan'
           ? `/cadastro?lead=${lead.id}&step=plan`
-          : `/cadastro?lead=${lead.id}`;
+          : `/cadastro?lead=${lead.id}&step=credentials`;
 
   return {
     ok: true,

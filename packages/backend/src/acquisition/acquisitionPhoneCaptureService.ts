@@ -7,9 +7,16 @@ import {
   updateAcquisitionLeadStage,
 } from './acquisitionLeadRepository.js';
 import { pendingSignupEmailFromPhoneDigits } from './acquisitionPendingEmail.js';
-import { publishAcquisitionLeadCreated } from './acquisitionOutbox.js';
+import {
+  publishAcquisitionLeadCreated,
+  syncAcquisitionLeadOpsKanbanProfile,
+} from './acquisitionOutbox.js';
 import { logAcquisition } from './acquisitionLogger.js';
 import type { AcquisitionLeadRow } from './acquisitionTypes.js';
+import {
+  normalizeCaptureNameForStorage,
+  resolveLeadNameAfterCapture,
+} from './acquisitionCapturePlaceholder.js';
 
 export async function captureAcquisitionPhoneContact(input: {
   name: string;
@@ -46,16 +53,17 @@ export async function captureAcquisitionPhoneContact(input: {
       updated ??
       lead;
 
-    await poolTouchNamePhone(lead.id, name, phoneDigits, input.correlationId);
+    await poolTouchNamePhone(lead.id, name, phoneDigits, input.correlationId, lead.name);
     lead = (await findAcquisitionLeadById(lead.id)) ?? lead;
 
-    void publishAcquisitionLeadCreated(lead);
+    void syncAcquisitionLeadOpsKanbanProfile(lead, { timelineType: 'phone_re_capture' });
     return { ok: true, lead };
   }
 
   const placeholderEmail = pendingSignupEmailFromPhoneDigits(phoneDigits);
+  const storedName = normalizeCaptureNameForStorage(name);
   lead = await insertAcquisitionLead({
-    name,
+    name: storedName,
     email: placeholderEmail,
     phone: phoneDigits,
     correlationId: input.correlationId,
@@ -85,15 +93,17 @@ async function poolTouchNamePhone(
   name: string,
   phoneDigits: string,
   correlationId: string,
+  existingName: string | null,
 ): Promise<void> {
+  const resolvedName = resolveLeadNameAfterCapture(existingName, name);
   const { pool } = await import('../utils/db.js');
   await pool.query(
     `UPDATE acquisition_leads
-     SET name = COALESCE(NULLIF($2, ''), name),
+     SET name = COALESCE($2, name),
          phone = COALESCE($3, phone),
          correlation_id = $4,
          updated_at = now()
      WHERE id = $1`,
-    [leadId, name, phoneDigits, correlationId],
+    [leadId, resolvedName, phoneDigits, correlationId],
   );
 }

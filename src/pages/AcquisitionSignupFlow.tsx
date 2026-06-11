@@ -24,7 +24,6 @@ import {
   ActivationMobileFooter,
   buildOperationPreview,
   clampUsersCount,
-  type AcquisitionOnboardingStepId,
   type AcquisitionSignupFormState,
   type PublicAcquisitionPlan,
 } from '@/components/acquisition/onboarding';
@@ -36,16 +35,21 @@ import {
 import { Loader2 } from 'lucide-react';
 import {
   isCadastroResumePath,
-  normalizeResumeNavigation,
+  isPendingSignupLeadEmail,
   planIdFromLeadAndParams,
-  resolveWizardStepFromLead,
   shouldShowResumeBanner,
-  shouldSkipSignupStepOnResume,
 } from '@/lib/acquisitionSignupResume';
+import {
+  cadastroWizardPath,
+  isPlaceholderLeadName,
+  layoutStepIndexFromWizard,
+  leadCaptureSubStepFromWizard,
+  resolveSignupWizardStep,
+  wizardStepBackTarget,
+  type SignupWizardLeadSnapshot,
+  type SignupWizardStep,
+} from '@/lib/acquisitionSignupWizard';
 import { saveSignupCredentialDraft } from '@/lib/acquisitionSignupCredentialDraft';
-import type { LeadCaptureSubStep } from '@/components/acquisition/onboarding/contact-setup/ContactSetupStep';
-
-const WIZARD_STEP_IDS: AcquisitionOnboardingStepId[] = ['lead', 'plan', 'conversion'];
 
 type PublicLeadPayload = {
   id: string;
@@ -62,9 +66,7 @@ export default function AcquisitionSignupFlowPage() {
   const [params] = useSearchParams();
   const [loading, setLoading] = useState(false);
   const [enabled, setEnabled] = useState<boolean | null>(null);
-  const [stepIndex, setStepIndex] = useState(() =>
-    resolveWizardStepFromLead(params.get('step'), null),
-  );
+  const [leadSnapshot, setLeadSnapshot] = useState<SignupWizardLeadSnapshot | null>(null);
   const [leadId, setLeadId] = useState(params.get('lead') ?? '');
   const [resumeHydrating, setResumeHydrating] = useState(() => Boolean(params.get('lead')));
   const [form, setForm] = useState<AcquisitionSignupFormState>(() => ({
@@ -78,7 +80,6 @@ export default function AcquisitionSignupFlowPage() {
   const [paymentResult, setPaymentResult] = useState<{ pix?: string; invoice?: string } | null>(null);
   const [extraTrialEligible, setExtraTrialEligible] = useState(false);
   const [contactBanner, setContactBanner] = useState<string | null>(null);
-  const [leadSubStep, setLeadSubStep] = useState<LeadCaptureSubStep>('identity');
   const [verificationCode, setVerificationCode] = useState('');
   const [phoneVerificationId, setPhoneVerificationId] = useState<string | null>(null);
   const [verificationUiState, setVerificationUiState] = useState<
@@ -89,8 +90,25 @@ export default function AcquisitionSignupFlowPage() {
   const [resendCooldownSec, setResendCooldownSec] = useState(0);
   const [resendLoading, setResendLoading] = useState(false);
 
-  const stepId = WIZARD_STEP_IDS[stepIndex] ?? 'lead';
-  const headline = ONBOARDING_HEADLINES[stepId];
+  const urlStep = params.get('step');
+  const urlPlanId = params.get('plan');
+  const urlLeadId = params.get('lead') ?? '';
+
+  const wizardStep = useMemo(
+    () =>
+      resolveSignupWizardStep(urlStep, leadSnapshot ?? (urlLeadId ? { id: urlLeadId } : null), urlPlanId),
+    [urlStep, leadSnapshot, urlLeadId, urlPlanId],
+  );
+
+  const layoutStepIndex = layoutStepIndexFromWizard(wizardStep);
+  const leadSubStep = leadCaptureSubStepFromWizard(wizardStep);
+  const isLeadPhase = leadSubStep !== null;
+
+  const headline = isLeadPhase
+    ? ONBOARDING_HEADLINES.lead
+    : wizardStep === 'plan'
+      ? ONBOARDING_HEADLINES.plan
+      : ONBOARDING_HEADLINES.conversion;
 
   const selectedPlan = useMemo(
     () => plans.find((p) => p.id === form.plan_id) ?? null,
@@ -99,6 +117,7 @@ export default function AcquisitionSignupFlowPage() {
 
   const trialDays = selectedPlan ? effectiveCheckoutTrialDays(selectedPlan) : 3;
   const hasTrial = selectedPlan ? planHasCheckoutTrial(selectedPlan) : true;
+  const isTrialActivation = wizardStep === 'conversion' && hasTrial;
 
   const operationPreview = useMemo(
     () =>
@@ -109,7 +128,20 @@ export default function AcquisitionSignupFlowPage() {
     [selectedPlan, form.users_count],
   );
 
-  const isTrialActivation = stepId === 'conversion' && hasTrial;
+  const navigateWizard = useCallback(
+    (step: SignupWizardStep, opts?: { leadId?: string; planId?: string; replace?: boolean }) => {
+      const id = (opts?.leadId ?? leadId ?? urlLeadId).trim();
+      navigate(
+        cadastroWizardPath({
+          leadId: id || undefined,
+          step,
+          planId: opts?.planId ?? form.plan_id ?? urlPlanId ?? undefined,
+        }),
+        { replace: opts?.replace !== false },
+      );
+    },
+    [navigate, leadId, urlLeadId, form.plan_id, urlPlanId],
+  );
 
   useEffect(() => {
     apiClient
@@ -152,12 +184,9 @@ export default function AcquisitionSignupFlowPage() {
 
   useEffect(() => {
     const leadParam = params.get('lead');
-    const stepParam = params.get('step');
-    const planParam = params.get('plan') ?? '';
-
     if (!leadParam) {
       setResumeHydrating(false);
-      setStepIndex(resolveWizardStepFromLead(stepParam, null));
+      setLeadSnapshot(null);
       return;
     }
 
@@ -175,6 +204,7 @@ export default function AcquisitionSignupFlowPage() {
         resume_verified?: boolean;
         resume_message?: string;
       }>(`/api/public/acquisition/leads/${encodeURIComponent(leadParam)}`);
+
       if (!cancelled && res.data?.ok && res.data.lead) {
         leadPayload = res.data.lead;
 
@@ -194,17 +224,24 @@ export default function AcquisitionSignupFlowPage() {
       const planId = planIdFromLeadAndParams(leadPayload, params);
       if (leadPayload) {
         setLeadId(leadPayload.id);
-        const emailReady =
-          Boolean(leadPayload.email?.trim()) &&
-          !leadPayload.email.toLowerCase().includes('pending+@signup.painelcrm.local');
-        if (emailReady) setLeadSubStep('credentials');
+        setLeadSnapshot({
+          id: leadPayload.id,
+          name: leadPayload.name,
+          email: leadPayload.email,
+          selected_plan_id: leadPayload.selected_plan_id,
+          current_stage: leadPayload.current_stage,
+        });
         setForm((f) => {
           const merged = mergeContactAutofill(
             f,
             fromParams,
             {
-              lead_name: leadPayload!.name ?? undefined,
-              lead_email: leadPayload!.email,
+              lead_name: isPlaceholderLeadName(leadPayload!.name)
+                ? undefined
+                : (leadPayload!.name ?? undefined),
+              lead_email: isPendingSignupLeadEmail(leadPayload!.email)
+                ? undefined
+                : leadPayload!.email,
               lead_phone: leadPayload!.phone ?? undefined,
             },
             contactAutofillFromUser(user ?? null),
@@ -213,12 +250,12 @@ export default function AcquisitionSignupFlowPage() {
         });
       } else {
         setLeadId(leadParam);
+        setLeadSnapshot({ id: leadParam });
         setForm((f) =>
           mergeContactAutofill(f, fromParams, contactAutofillFromUser(user ?? null)),
         );
       }
 
-      setStepIndex(resolveWizardStepFromLead(stepParam, leadPayload));
       if (
         res.data?.resume_message &&
         shouldShowResumeBanner(res.data.resume_verified, res.data.resume_message)
@@ -232,13 +269,6 @@ export default function AcquisitionSignupFlowPage() {
       cancelled = true;
     };
   }, [params, user, navigate]);
-
-  useEffect(() => {
-    if (params.get('lead')) return;
-    const stepParam = params.get('step');
-    const planId = form.plan_id || params.get('plan') || '';
-    setStepIndex(resolveWizardStepFromLead(stepParam, { selected_plan_id: planId || null }));
-  }, [params, form.plan_id]);
 
   useEffect(() => {
     if (!selectedPlan) return;
@@ -259,6 +289,15 @@ export default function AcquisitionSignupFlowPage() {
     }, 1000);
     return () => window.clearInterval(timer);
   }, [resendCooldownSec]);
+
+  function resetVerificationSession() {
+    setVerificationCode('');
+    setVerificationError(null);
+    setVerificationUiState('idle');
+    setPhoneVerificationId(null);
+    setPhoneVerified(false);
+    setResendCooldownSec(0);
+  }
 
   function validateLeadIdentityStep(): boolean {
     const ph = form.lead_phone.replace(/\D/g, '');
@@ -286,7 +325,6 @@ export default function AcquisitionSignupFlowPage() {
       const res = await apiClient.post<{
         ok: boolean;
         verification_id?: string;
-        resend_available_at?: string;
         error?: string;
         code?: string;
         resend_available_in_seconds?: number;
@@ -313,26 +351,30 @@ export default function AcquisitionSignupFlowPage() {
     }
   }
 
-  async function captureVerifiedPhoneContact(): Promise<boolean> {
+  async function captureVerifiedPhoneContact(): Promise<string | null> {
     if (!phoneVerificationId) {
       toast.error('Confirme seu WhatsApp antes de continuar.');
-      return false;
+      return null;
     }
     const captureRes = await apiClient.post<{ ok: boolean; lead_id?: string; error?: string }>(
       '/api/public/acquisition/contact/capture',
       {
         name: ACQUISITION_CAPTURE_NAME_PLACEHOLDER,
         phone: form.lead_phone.replace(/\D/g, ''),
-        lead_id: leadId || undefined,
+        lead_id: leadId || urlLeadId || undefined,
         phone_verification_id: phoneVerificationId,
       },
     );
     if (captureRes.error || !captureRes.data?.ok) {
       toast.error(captureRes.data?.error ?? captureRes.error ?? 'Não foi possível registrar seu contato.');
-      return false;
+      return null;
     }
-    if (captureRes.data.lead_id) setLeadId(captureRes.data.lead_id);
-    return true;
+    const id = captureRes.data.lead_id?.trim();
+    if (id) {
+      setLeadId(id);
+      setLeadSnapshot((prev) => ({ ...prev, id, current_stage: 'contact_captured' }));
+    }
+    return id ?? leadId ?? urlLeadId ?? null;
   }
 
   function validateLeadCredentialsStep(): boolean {
@@ -355,9 +397,8 @@ export default function AcquisitionSignupFlowPage() {
     return true;
   }
 
-  /** P0-E.1.1 — persiste senha antes de resolve/retomada/navigate (leadId conhecido ou após resolve). */
   function persistCredentialDraftForLead(resolvedLeadId?: string) {
-    const id = (resolvedLeadId ?? leadId).trim();
+    const id = (resolvedLeadId ?? leadId ?? urlLeadId).trim();
     if (!id || form.signup_password.length < 6) return;
     saveSignupCredentialDraft(id, form.signup_password);
   }
@@ -377,7 +418,7 @@ export default function AcquisitionSignupFlowPage() {
       next_path?: string;
       fallback_path?: string;
     }>('/api/public/acquisition/signup/step', {
-      lead_id: leadId || undefined,
+      lead_id: leadId || urlLeadId || undefined,
       name: form.lead_name.trim(),
       email: form.lead_email.trim(),
       phone: form.lead_phone.replace(/\D/g, ''),
@@ -429,57 +470,55 @@ export default function AcquisitionSignupFlowPage() {
   }
 
   async function handleNext() {
-    if (stepId === 'lead') {
-      if (leadSubStep === 'identity') {
-        if (!validateLeadIdentityStep()) return;
-        setLeadSubStep('verification');
-        setLoading(true);
-        try {
-          const sent = await sendPhoneAccessCode();
-          if (!sent) setLeadSubStep('identity');
-        } finally {
-          setLoading(false);
-        }
-        return;
+    if (wizardStep === 'identity') {
+      if (!validateLeadIdentityStep()) return;
+      setLoading(true);
+      try {
+        const sent = await sendPhoneAccessCode();
+        if (!sent) return;
+        navigateWizard('verification', { leadId: leadId || urlLeadId || undefined });
+      } finally {
+        setLoading(false);
       }
+      return;
+    }
 
-      if (leadSubStep === 'verification') {
-        if (!validateLeadVerificationStep() || !phoneVerificationId) return;
-        setLoading(true);
-        setVerificationError(null);
-        try {
-          const verifyRes = await apiClient.post<{
-            ok: boolean;
-            verification_id?: string;
-            error?: string;
-            code?: string;
-          }>('/api/public/acquisition/phone/verify-code', {
-            verification_id: phoneVerificationId,
-            phone: form.lead_phone.replace(/\D/g, ''),
-            code: verificationCode.replace(/\D/g, ''),
-          });
+    if (wizardStep === 'verification') {
+      if (!validateLeadVerificationStep() || !phoneVerificationId) return;
+      setLoading(true);
+      setVerificationError(null);
+      try {
+        const verifyRes = await apiClient.post<{
+          ok: boolean;
+          error?: string;
+        }>('/api/public/acquisition/phone/verify-code', {
+          verification_id: phoneVerificationId,
+          phone: form.lead_phone.replace(/\D/g, ''),
+          code: verificationCode.replace(/\D/g, ''),
+        });
 
-          if (verifyRes.error || !verifyRes.data?.ok) {
-            const msg = verifyRes.data?.error ?? verifyRes.error ?? 'Código incorreto.';
-            setVerificationError(msg);
-            return;
-          }
-
-          setPhoneVerified(true);
-          setVerificationUiState('verified');
-          await new Promise((r) => setTimeout(r, 700));
-
-          const captured = await captureVerifiedPhoneContact();
-          if (!captured) return;
-          setLeadSubStep('credentials');
-        } catch {
-          toast.error('Erro ao verificar código. Tente novamente.');
-        } finally {
-          setLoading(false);
+        if (verifyRes.error || !verifyRes.data?.ok) {
+          const msg = verifyRes.data?.error ?? verifyRes.error ?? 'Código incorreto.';
+          setVerificationError(msg);
+          return;
         }
-        return;
-      }
 
+        setPhoneVerified(true);
+        setVerificationUiState('verified');
+        await new Promise((r) => setTimeout(r, 700));
+
+        const capturedLeadId = await captureVerifiedPhoneContact();
+        if (!capturedLeadId) return;
+        navigateWizard('credentials', { leadId: capturedLeadId });
+      } catch {
+        toast.error('Erro ao verificar código. Tente novamente.');
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    if (wizardStep === 'credentials') {
       if (!validateLeadCredentialsStep()) return;
       persistCredentialDraftForLead();
       setLoading(true);
@@ -489,14 +528,12 @@ export default function AcquisitionSignupFlowPage() {
           action?: string;
           message?: string;
           lead_id?: string;
-          resume_path?: string;
-          resume_verified?: boolean;
           extra_trial_eligible?: boolean;
         }>('/api/public/acquisition/contact/resolve', {
           name: form.lead_name.trim(),
           email: form.lead_email.trim(),
           phone: form.lead_phone.replace(/\D/g, ''),
-          lead_id: leadId || undefined,
+          lead_id: leadId || urlLeadId || undefined,
         });
 
         if (resolveRes.data?.action === 'login_required') {
@@ -508,65 +545,32 @@ export default function AcquisitionSignupFlowPage() {
           toast.error(resolveRes.data.message ?? 'Trial indisponível.');
           return;
         }
-        if (resolveRes.data?.lead_id) {
-          setLeadId(resolveRes.data.lead_id);
-          persistCredentialDraftForLead(resolveRes.data.lead_id);
+
+        const resolvedLeadId = resolveRes.data?.lead_id ?? leadId ?? urlLeadId;
+        if (resolvedLeadId) {
+          setLeadId(resolvedLeadId);
+          persistCredentialDraftForLead(resolvedLeadId);
+          setLeadSnapshot({
+            id: resolvedLeadId,
+            name: form.lead_name.trim(),
+            email: form.lead_email.trim(),
+            current_stage: 'contact_captured',
+            selected_plan_id: leadSnapshot?.selected_plan_id,
+          });
         }
         if (resolveRes.data?.extra_trial_eligible) setExtraTrialEligible(true);
-        if (
-          resolveRes.data?.resume_path &&
-          shouldSkipSignupStepOnResume(resolveRes.data.action)
-        ) {
-          const resolvedLeadId = resolveRes.data.lead_id ?? leadId;
-          persistCredentialDraftForLead(resolvedLeadId);
-          let selectedPlanId: string | null = form.plan_id || null;
-          if (resolvedLeadId) {
-            const leadRes = await apiClient.get<{ ok: boolean; lead?: PublicLeadPayload }>(
-              `/api/public/acquisition/leads/${encodeURIComponent(resolvedLeadId)}`,
-            );
-            if (leadRes.data?.ok && leadRes.data.lead) {
-              selectedPlanId = leadRes.data.lead.selected_plan_id ?? selectedPlanId;
-              setForm((f) => {
-                const merged = mergeContactAutofill(f, {
-                  lead_name: leadRes.data!.lead!.name ?? undefined,
-                  lead_email: leadRes.data!.lead!.email,
-                  lead_phone: leadRes.data!.lead!.phone ?? undefined,
-                });
-                const pid = selectedPlanId?.trim();
-                return pid && merged.plan_id !== pid ? { ...merged, plan_id: pid } : merged;
-              });
-            }
-          }
-
-          const target = normalizeResumeNavigation(
-            resolveRes.data.resume_path,
-            selectedPlanId,
-          );
-
-          if (shouldShowResumeBanner(resolveRes.data.resume_verified, resolveRes.data.message)) {
-            setContactBanner(resolveRes.data.message ?? null);
-          } else {
-            setContactBanner(null);
-          }
-
-          if (!isCadastroResumePath(resolveRes.data.resume_path)) {
-            navigate(resolveRes.data.resume_path, { replace: true });
-            return;
-          }
-
-          setStepIndex(target.stepIndex);
-          navigate(`${target.pathname}${target.search}`, { replace: true });
-          return;
-        }
-
         if (shouldShowResumeBanner(undefined, resolveRes.data?.message)) {
           setContactBanner(resolveRes.data?.message ?? null);
+        } else {
+          setContactBanner(null);
         }
 
-        const body = await postSignupStep('contact');
-        if (!body) return;
-        persistCredentialDraftForLead(body.lead_id ?? leadId);
-        setStepIndex(1);
+        if (resolveRes.data?.action === 'new_lead') {
+          const body = await postSignupStep('contact');
+          if (!body) return;
+        }
+
+        navigateWizard('plan', { leadId: resolvedLeadId });
       } catch {
         toast.error('Erro ao registrar contato. Tente novamente.');
       } finally {
@@ -575,13 +579,13 @@ export default function AcquisitionSignupFlowPage() {
       return;
     }
 
-    if (stepId === 'plan') {
+    if (wizardStep === 'plan') {
       if (!validatePlanStep()) return;
       setLoading(true);
       try {
         const body = await postSignupStep('plan');
         if (!body) return;
-        setStepIndex(2);
+        navigateWizard('conversion', { leadId: leadId || urlLeadId, planId: form.plan_id });
       } catch {
         toast.error('Erro ao salvar plano.');
       } finally {
@@ -591,7 +595,7 @@ export default function AcquisitionSignupFlowPage() {
   }
 
   async function handleStartTrial() {
-    if (!validatePlanStep() || !leadId) return;
+    if (!validatePlanStep() || !(leadId || urlLeadId)) return;
     setLoading(true);
     try {
       await postSignupStep('checkout');
@@ -607,10 +611,8 @@ export default function AcquisitionSignupFlowPage() {
         session_token?: string;
         redirect_path?: string;
         error?: string;
-        code?: string;
-        details?: unknown;
       }>('/api/public/acquisition/activate/trial', {
-        lead_id: leadId,
+        lead_id: leadId || urlLeadId,
         users_count: form.users_count,
         grant_extra_trial: extraTrialEligible,
         ...(avatar_data_url ? { avatar_data_url } : {}),
@@ -635,7 +637,7 @@ export default function AcquisitionSignupFlowPage() {
   }
 
   async function handlePayment() {
-    if (!validatePlanStep() || !leadId || !selectedPlan) return;
+    if (!validatePlanStep() || !(leadId || urlLeadId) || !selectedPlan) return;
     setLoading(true);
     setPaymentResult(null);
     try {
@@ -644,7 +646,6 @@ export default function AcquisitionSignupFlowPage() {
       const res = await apiClient.post<{
         token?: string;
         tenant_id?: string;
-        billing_id?: string;
         invoice_url?: string;
         pix_copy_paste?: string;
         user?: {
@@ -664,7 +665,7 @@ export default function AcquisitionSignupFlowPage() {
         payment_method: paymentMethod,
         cpf_cnpj: cpfCnpj.replace(/\D/g, '') || undefined,
         marketing_attribution: {
-          acquisition_lead_id: leadId,
+          acquisition_lead_id: leadId || urlLeadId,
           flow: 'acquisition_premium_checkout',
         },
       });
@@ -707,25 +708,20 @@ export default function AcquisitionSignupFlowPage() {
   }
 
   function handleBack() {
-    if (stepId === 'lead' && leadSubStep === 'credentials') {
-      setLeadSubStep('verification');
-      return;
+    const prev = wizardStepBackTarget(wizardStep);
+    if (!prev) return;
+
+    if (prev === 'identity') {
+      resetVerificationSession();
     }
-    if (stepId === 'lead' && leadSubStep === 'verification') {
-      setLeadSubStep('identity');
-      setVerificationCode('');
-      setVerificationError(null);
-      setVerificationUiState('idle');
-      setPhoneVerificationId(null);
-      setPhoneVerified(false);
-      setResendCooldownSec(0);
-      return;
+    if (prev === 'verification') {
+      resetVerificationSession();
     }
-    if (stepIndex > 0) {
-      setStepIndex((i) => i - 1);
-      if (WIZARD_STEP_IDS[stepIndex - 1] === 'lead') setLeadSubStep('credentials');
-    }
+
+    navigateWizard(prev, { leadId: leadId || urlLeadId || undefined });
   }
+
+  const canGoBack = wizardStepBackTarget(wizardStep) !== null;
 
   if (enabled === null || resumeHydrating) {
     return (
@@ -757,29 +753,27 @@ export default function AcquisitionSignupFlowPage() {
   }
 
   const ctaLabel =
-    stepId === 'lead' && leadSubStep === 'identity'
+    wizardStep === 'identity'
       ? ONBOARDING_CTA_ACCESS_REQUEST
-      : stepId === 'lead' && leadSubStep === 'verification'
+      : wizardStep === 'verification'
         ? 'Continuar'
-        : ONBOARDING_CTA_LABELS[stepId as 'lead' | 'plan'] ?? 'Continuar';
+        : ONBOARDING_CTA_LABELS[wizardStep === 'plan' ? 'plan' : 'lead'] ?? 'Continuar';
 
   const leadStepNextDisabled =
-    stepId === 'lead' &&
-    (leadSubStep === 'verification'
-      ? verificationCode.replace(/\D/g, '').length !== 6 ||
-        verificationUiState === 'sending' ||
-        verificationUiState === 'verified' ||
-        !phoneVerificationId
-      : false);
+    wizardStep === 'verification' &&
+    (verificationCode.replace(/\D/g, '').length !== 6 ||
+      verificationUiState === 'sending' ||
+      verificationUiState === 'verified' ||
+      !phoneVerificationId);
 
   const mobileFooter =
-    stepId !== 'conversion' || isTrialActivation ? (
+    wizardStep !== 'conversion' || isTrialActivation ? (
       <>
-        {stepId === 'plan' && !plansLoading && form.plan_id ? (
+        {wizardStep === 'plan' && !plansLoading && form.plan_id ? (
           <OperationMobileBottomSheet preview={operationPreview}>
             <OnboardingCta
               layout="mobile-fixed"
-              onBack={stepIndex > 0 ? handleBack : undefined}
+              onBack={canGoBack ? handleBack : undefined}
               onNext={handleNext}
               loading={loading}
               nextLabel={ctaLabel}
@@ -794,12 +788,12 @@ export default function AcquisitionSignupFlowPage() {
         ) : (
           <OnboardingCta
             layout="mobile-fixed"
-            onBack={stepIndex > 0 ? handleBack : undefined}
+            onBack={canGoBack ? handleBack : undefined}
             onNext={handleNext}
             loading={loading}
             nextLabel={ctaLabel}
             nextDisabled={
-              leadStepNextDisabled || (stepId === 'plan' && (plansLoading || !form.plan_id))
+              leadStepNextDisabled || (wizardStep === 'plan' && (plansLoading || !form.plan_id))
             }
           />
         )}
@@ -808,11 +802,11 @@ export default function AcquisitionSignupFlowPage() {
 
   return (
     <OnboardingLayout
-      activeStepIndex={stepIndex}
+      activeStepIndex={layoutStepIndex}
       mobileFooter={mobileFooter}
-      wideContent={stepId === 'lead' || stepId === 'plan' || isTrialActivation}
-      operationStepMobile={stepId === 'lead' || stepId === 'plan' || isTrialActivation}
-      reserveBottomSpace={stepId === 'plan'}
+      wideContent={isLeadPhase || wizardStep === 'plan' || isTrialActivation}
+      operationStepMobile={isLeadPhase || wizardStep === 'plan' || isTrialActivation}
+      reserveBottomSpace={wizardStep === 'plan'}
     >
       {isTrialActivation ? (
         <ActivationWelcomeStep
@@ -825,7 +819,7 @@ export default function AcquisitionSignupFlowPage() {
           loading={loading}
           onContinue={() => void handleStartTrial()}
         />
-      ) : stepId === 'lead' ? (
+      ) : isLeadPhase && leadSubStep ? (
         <ContactSetupStep
           subStep={leadSubStep}
           name={form.lead_name}
@@ -835,11 +829,7 @@ export default function AcquisitionSignupFlowPage() {
           confirmPassword={form.signup_password_confirm}
           onChange={patchForm}
           onContinue={() => void handleNext()}
-          onBack={
-            leadSubStep === 'credentials' || leadSubStep === 'verification' || stepIndex > 0
-              ? handleBack
-              : undefined
-          }
+          onBack={canGoBack ? handleBack : undefined}
           loading={loading}
           contactBanner={contactBanner}
           verificationCode={verificationCode}
@@ -851,7 +841,7 @@ export default function AcquisitionSignupFlowPage() {
           onResendCode={() => void handleResendCode()}
           resendLoading={resendLoading}
         />
-      ) : stepId === 'plan' ? (
+      ) : wizardStep === 'plan' ? (
         <OperationSetupStep
           plans={plans}
           loading={plansLoading}
@@ -871,41 +861,41 @@ export default function AcquisitionSignupFlowPage() {
           }}
         />
       ) : (
-      <OnboardingCard title={headline.title} subtitle={headline.subtitle}>
-        {contactBanner ? (
-          <p className="mb-4 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-foreground">
-            {contactBanner}
-          </p>
-        ) : null}
-        {stepId === 'conversion' && selectedPlan && !hasTrial && (
-          <OnboardingConversionStep
-            mode="payment"
-            leadName={form.lead_name}
-            leadEmail={form.lead_email}
-            plan={selectedPlan}
-            usersCount={form.users_count}
-            loading={loading}
-            cpfCnpj={cpfCnpj}
-            paymentMethod={paymentMethod}
-            onCpfCnpjChange={setCpfCnpj}
-            onPaymentMethodChange={setPaymentMethod}
-            onSubmitPayment={() => void handlePayment()}
-            pixCopyPaste={paymentResult?.pix}
-            invoiceUrl={paymentResult?.invoice}
-          />
-        )}
+        <OnboardingCard title={headline.title} subtitle={headline.subtitle}>
+          {contactBanner ? (
+            <p className="mb-4 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-foreground">
+              {contactBanner}
+            </p>
+          ) : null}
+          {wizardStep === 'conversion' && selectedPlan && !hasTrial && (
+            <OnboardingConversionStep
+              mode="payment"
+              leadName={form.lead_name}
+              leadEmail={form.lead_email}
+              plan={selectedPlan}
+              usersCount={form.users_count}
+              loading={loading}
+              cpfCnpj={cpfCnpj}
+              paymentMethod={paymentMethod}
+              onCpfCnpjChange={setCpfCnpj}
+              onPaymentMethodChange={setPaymentMethod}
+              onSubmitPayment={() => void handlePayment()}
+              pixCopyPaste={paymentResult?.pix}
+              invoiceUrl={paymentResult?.invoice}
+            />
+          )}
 
-        {stepId !== 'conversion' ? (
-          <OnboardingCta
-            className="hidden lg:flex"
-            onBack={stepIndex > 0 ? handleBack : undefined}
-            onNext={handleNext}
-            loading={loading}
-            nextLabel={ctaLabel}
-            nextDisabled={stepId === 'plan' && (plansLoading || !form.plan_id)}
-          />
-        ) : null}
-      </OnboardingCard>
+          {wizardStep !== 'conversion' ? (
+            <OnboardingCta
+              className="hidden lg:flex"
+              onBack={canGoBack ? handleBack : undefined}
+              onNext={handleNext}
+              loading={loading}
+              nextLabel={ctaLabel}
+              nextDisabled={wizardStep === 'plan' && (plansLoading || !form.plan_id)}
+            />
+          ) : null}
+        </OnboardingCard>
       )}
     </OnboardingLayout>
   );
