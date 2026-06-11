@@ -40,6 +40,11 @@ vi.mock('../utils/db.js', () => ({
   pool: { query: vi.fn().mockResolvedValue({ rows: [{ id: 'plan-trial-1' }] }) },
 }));
 
+vi.mock('../platform/exclusiveSignupFlowGate.js', () => ({
+  isExclusiveSignupFlowActive: vi.fn(),
+  buildExclusiveSignupInactivePayload: vi.fn(),
+}));
+
 import {
   isAcquisitionPreSignupEnabled,
   isAcquisitionSignupFlowEnabled,
@@ -59,6 +64,7 @@ import { evaluateRecoveryEligibility, markAcquisitionAbandoned } from './acquisi
 import { computeActivationScore } from './activationScoreService.js';
 import { kickoffOnboarding } from './onboardingKickoffService.js';
 import { sendTransactionalMessage } from '../communication/channelProviderGateway/channelProviderGateway.js';
+import { isExclusiveSignupFlowActive } from '../platform/exclusiveSignupFlowGate.js';
 
 const sampleLead = {
   id: 'lead-1',
@@ -122,6 +128,7 @@ describe('trial orchestration', () => {
 
 describe('signup orchestration', () => {
   beforeEach(() => {
+    vi.mocked(isExclusiveSignupFlowActive).mockResolvedValue(true);
     vi.mocked(isAcquisitionSignupFlowEnabled).mockResolvedValue(true);
     vi.mocked(isAcquisitionPreSignupEnabled).mockResolvedValue(true);
     vi.mocked(insertAcquisitionLead).mockResolvedValue(sampleLead);

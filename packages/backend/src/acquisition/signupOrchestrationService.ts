@@ -19,6 +19,10 @@ import {
 import { logAcquisition, logSignup } from './acquisitionLogger.js';
 import type { AcquisitionLeadRow, CreateAcquisitionLeadInput } from './acquisitionTypes.js';
 import { resolveEffectiveSignupEntryMode } from '../platform/platformRuntimeConfig.js';
+import {
+  buildExclusiveSignupInactivePayload,
+  isExclusiveSignupFlowActive,
+} from '../platform/exclusiveSignupFlowGate.js';
 
 export async function createPreSignupLead(
   input: CreateAcquisitionLeadInput,
@@ -29,7 +33,7 @@ export async function createPreSignupLead(
     isAcquisitionTrialFlowEnabled(),
   ]);
   if (!preSignup && !signupFlow && !trialFlow) {
-    return { ok: false, reason: 'acquisition_leads_off' };
+    return { ok: false, reason: 'acquisition_leads_disabled' };
   }
 
   return runWithRequestContext({ correlationId: input.correlationId }, async () => {
@@ -84,9 +88,14 @@ export async function orchestrateSignupStep(input: {
   contact_action?: string;
   contact_message?: string;
 }> {
-  const enabled = await isAcquisitionSignupFlowEnabled();
-  if (!enabled) {
-    return { ok: false, reason: 'signup_flow_v1_off', nextPath: '/register' };
+  if (!(await isExclusiveSignupFlowActive())) {
+    const denial = buildExclusiveSignupInactivePayload();
+    return {
+      ok: false,
+      reason: denial.code,
+      nextPath: denial.fallback_path,
+      contact_message: denial.error,
+    };
   }
 
   let lead: AcquisitionLeadRow | null = null;

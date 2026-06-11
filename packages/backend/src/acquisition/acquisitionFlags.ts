@@ -1,5 +1,6 @@
 import { featureFlagRegistry } from '../platform/featureFlagRegistry.js';
 import { findPlatformFeatureFlagByKey } from '../platform/featureFlagRepository.js';
+import { isExclusiveSignupFlowActive } from '../platform/exclusiveSignupFlowGate.js';
 
 type FlagCtx = { tenantId?: string | null };
 
@@ -32,7 +33,16 @@ export async function isAcquisitionPreSignupEnabled(ctx: FlagCtx = {}): Promise<
   return isAcquisitionPublicSurfaceEnabled('acquisition.pre_signup_v1', ctx);
 }
 
-export async function isAcquisitionSignupFlowEnabled(ctx: FlagCtx = {}): Promise<boolean> {
+/**
+ * E3.2 — Gate operacional do /cadastro: platform_growth_settings.active_signup_flow.
+ * A feature flag acquisition.signup_flow_v1 não bloqueia mais este fluxo.
+ */
+export async function isAcquisitionSignupFlowEnabled(_ctx: FlagCtx = {}): Promise<boolean> {
+  return isExclusiveSignupFlowActive();
+}
+
+/** Compatibilidade interna / telemetria — não usar para bloquear o wizard. */
+export async function isAcquisitionSignupFlowFlagEnabled(ctx: FlagCtx = {}): Promise<boolean> {
   return isAcquisitionPublicSurfaceEnabled('acquisition.signup_flow_v1', ctx);
 }
 

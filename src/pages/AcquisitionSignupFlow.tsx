@@ -439,19 +439,38 @@ export default function AcquisitionSignupFlowPage() {
       fallback_path?: string;
       code?: string;
       contact_message?: string;
-    };
+    } | undefined;
+    const errCode =
+      res.code ??
+      (typeof res.details?.code === 'string' ? res.details.code : undefined) ??
+      body?.code;
+    const errMessage =
+      res.error ??
+      (typeof res.details?.error === 'string' ? res.details.error : undefined) ??
+      body?.contact_message;
+    const fallbackPath =
+      (typeof res.details?.fallback_path === 'string' ? res.details.fallback_path : undefined) ??
+      body?.fallback_path;
+
     if (res.error || !body?.ok) {
-      if (body?.code === 'login_required') {
-        toast.info(body.contact_message ?? 'Operação ativa encontrada. Faça login.');
+      if (errCode === 'login_required') {
+        toast.info(errMessage ?? 'Operação ativa encontrada. Faça login.');
         navigate('/login');
         return null;
       }
-      if (body?.code === 'trial_blocked') {
-        toast.error(body.contact_message ?? 'Trial adicional indisponível.');
+      if (errCode === 'trial_blocked') {
+        toast.error(errMessage ?? 'Trial adicional indisponível.');
+        return null;
+      }
+      if (errCode === 'exclusive_signup_inactive') {
+        toast.info(errMessage ?? 'Cadastro exclusivo indisponível. Utilize o checkout.');
+      }
+      if (fallbackPath) {
+        navigate(fallbackPath);
         return null;
       }
       const cfg = await loadSignupEntryConfig();
-      navigate(body?.fallback_path ?? cfg.paths.signup);
+      navigate(cfg.paths.signup);
       return null;
     }
     if (body.lead_id) setLeadId(body.lead_id);

@@ -20,6 +20,10 @@ import { loadSessionWithLead } from '../acquisition/acquisitionOnboardingSession
 import { provisionWorkspaceFromSession } from '../acquisition/acquisitionProvisioningService.js';
 import { getPublicSignupEntryPayload } from '../platform/platformRuntimeConfig.js';
 import { getSignupStrategy } from '../platform/signupStrategyService.js';
+import {
+  EXCLUSIVE_SIGNUP_INACTIVE_CODE,
+  requireExclusiveSignupFlow,
+} from '../platform/exclusiveSignupFlowGate.js';
 import { checkOperationalSlugAvailability } from '../acquisition/tenantSlugAvailabilityService.js';
 import {
   assertSignupPhoneVerified,
@@ -56,14 +60,19 @@ export async function getAcquisitionConfig(_req: Request, res: Response): Promis
   ]);
   res.json({
     ok: true,
-    flags: {
-      ...flags,
-      signup_flow_v1: strategy.flow === 'exclusive_signup',
-    },
+    flags,
     signup_strategy: strategy,
     entry_mode: entry.entry_mode,
     paths: entry.paths,
   });
+}
+
+function resolveSignupStepHttpStatus(reason?: string): number {
+  if (reason === 'login_required' || reason === 'trial_blocked') return 409;
+  if (reason === EXCLUSIVE_SIGNUP_INACTIVE_CODE || reason === 'acquisition_leads_disabled') {
+    return 409;
+  }
+  return 400;
 }
 
 const contactCaptureSchema = z.object({
@@ -111,6 +120,7 @@ const provisionSchema = z.object({
 
 export async function postContactCapture(req: Request, res: Response): Promise<void> {
   try {
+    if (!(await requireExclusiveSignupFlow(res))) return;
     const body = contactCaptureSchema.parse(req.body);
     const correlationId = getCorrelationId() ?? randomUUID();
     mergeRequestContext({ correlationId });
@@ -199,6 +209,7 @@ function mapVerifyCodeReason(
 
 export async function postPhoneSendCode(req: Request, res: Response): Promise<void> {
   try {
+    if (!(await requireExclusiveSignupFlow(res))) return;
     const body = phoneSendCodeSchema.parse(req.body);
     const result = await sendSignupPhoneVerificationCode(pool, body.phone.trim(), body.ddi);
     if (!result.ok) {
@@ -228,6 +239,7 @@ export async function postPhoneSendCode(req: Request, res: Response): Promise<vo
 
 export async function postPhoneVerifyCode(req: Request, res: Response): Promise<void> {
   try {
+    if (!(await requireExclusiveSignupFlow(res))) return;
     const body = phoneVerifyCodeSchema.parse(req.body);
     const result = await verifySignupPhoneCode(
       pool,
@@ -257,6 +269,7 @@ export async function postPhoneResendCode(req: Request, res: Response): Promise<
 
 export async function postContactResolve(req: Request, res: Response): Promise<void> {
   try {
+    if (!(await requireExclusiveSignupFlow(res))) return;
     const body = contactResolveSchema.parse(req.body);
     const correlationId = getCorrelationId() ?? randomUUID();
     mergeRequestContext({ correlationId });
@@ -295,6 +308,7 @@ export async function postContactResolve(req: Request, res: Response): Promise<v
 export async function postActivateTrial(req: Request, res: Response): Promise<void> {
   console.log('[ACTIVATE_TRIAL] body', req.body);
   try {
+    if (!(await requireExclusiveSignupFlow(res))) return;
     const body = activateTrialSchema.parse(req.body);
     const correlationId = getCorrelationId() ?? randomUUID();
     mergeRequestContext({ correlationId });
@@ -376,6 +390,7 @@ export async function getOnboardingSession(req: Request, res: Response): Promise
 
 export async function postProvisionOnboarding(req: Request, res: Response): Promise<void> {
   try {
+    if (!(await requireExclusiveSignupFlow(res))) return;
     const body = provisionSchema.parse(req.body);
     const correlationId = getCorrelationId() ?? randomUUID();
 
@@ -468,6 +483,7 @@ export async function postTesteGratis(req: Request, res: Response): Promise<void
 
 export async function postSignupStep(req: Request, res: Response): Promise<void> {
   try {
+    if (!(await requireExclusiveSignupFlow(res))) return;
     const body = signupStepSchema.parse(req.body);
     const correlationId = getCorrelationId() ?? newAcquisitionCorrelationId();
 
@@ -483,13 +499,15 @@ export async function postSignupStep(req: Request, res: Response): Promise<void>
     });
 
     if (!result.ok) {
-      const status =
-        result.reason === 'login_required' || result.reason === 'trial_blocked' ? 409 : result.reason?.includes('off') ? 503 : 400;
-      res.status(status).json({
+      res.status(resolveSignupStepHttpStatus(result.reason)).json({
         ok: false,
         code: result.reason,
+        error: result.contact_message,
         contact_message: result.contact_message,
-        fallback_path: result.nextPath ?? '/register',
+        fallback_path:
+          result.reason === EXCLUSIVE_SIGNUP_INACTIVE_CODE
+            ? '/checkout'
+            : (result.nextPath ?? '/checkout'),
       });
       return;
     }
@@ -514,6 +532,7 @@ export async function postSignupStep(req: Request, res: Response): Promise<void>
 }
 
 export async function getAcquisitionLead(req: Request, res: Response): Promise<void> {
+  if (!(await requireExclusiveSignupFlow(res))) return;
   const leadId = String(req.params.leadId ?? '');
   const raw = await findAcquisitionLeadById(leadId);
   if (!raw) {
