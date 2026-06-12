@@ -16,6 +16,10 @@ import {
   toPhase2AutomationContext,
 } from './kanbanAutomationContext.js';
 import { runKanbanPhase2Automations } from './kanbanColumnAutomationService.js';
+import {
+  cancelPendingScheduledMovesForCardColumn,
+  insertScheduledMoveIfColumnConfigured,
+} from './kanbanScheduledMoveService.js';
 
 export type MoveOpsCardInput = {
   tenantId: string;
@@ -31,6 +35,8 @@ export type MoveOpsCardInput = {
   moveConfirmed?: boolean;
   metadataPatch?: Record<string, unknown>;
   position?: number;
+  /** Preserva agendamento em execução ao cancelar pendentes da coluna de origem. */
+  preserveScheduledMoveId?: string;
 };
 
 export type MoveOpsCardStatus =
@@ -382,6 +388,46 @@ export async function moveOpsCardWithAutomations(
     destColumn,
     correlationId: input.correlationId,
   });
+
+  const schedClient = await pool.connect();
+  try {
+    await beginKanbanTxWithRls(schedClient, tenantId, input.actorUserId);
+    await cancelPendingScheduledMovesForCardColumn(
+      schedClient,
+      tenantId,
+      card.id,
+      input.sourceColumnId,
+      'card_left_source_column',
+      input.actorUserId,
+      input.preserveScheduledMoveId,
+    );
+    await insertScheduledMoveIfColumnConfigured(schedClient, {
+      tenantId,
+      boardId: input.destinationBoardId,
+      cardId: card.id,
+      conversationId: null,
+      acquisitionLeadId: card.acquisition_lead_id,
+      columnId: input.destinationColumnId,
+      columnMetadata: destColumn.metadata,
+      actorUserId: input.actorUserId,
+    });
+    await schedClient.query('COMMIT');
+  } catch (schedErr: unknown) {
+    try {
+      await schedClient.query('ROLLBACK');
+    } catch {
+      /* ignore */
+    }
+    console.error('[kanbanScheduledMove] ops schedule sync after move (cartão já gravado)', {
+      cardId: card.id,
+      acquisitionLeadId: card.acquisition_lead_id,
+      sourceColumnId: input.sourceColumnId,
+      destinationColumnId: input.destinationColumnId,
+      error: schedErr,
+    });
+  } finally {
+    schedClient.release();
+  }
 
   logOpsMoveEngine({
     cardId: card.id,

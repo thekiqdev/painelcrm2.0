@@ -15,7 +15,7 @@ export function CompanyOperationPreview({ name, logoDark, logoLight, compact = f
   return (
     <div className="space-y-1.5">
       <p className="text-sm text-muted-foreground">Preview</p>
-      <div className="grid grid-cols-2 gap-2.5">
+      <div className="grid w-full min-w-0 grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-2.5">
         <PreviewPanel
           name={displayName}
           initial={initial}

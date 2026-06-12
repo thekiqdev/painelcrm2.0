@@ -15,6 +15,11 @@ export const CONTACT_VERIFICATION_CTA = {
   subtitle: 'O código foi enviado para o WhatsApp informado.',
 };
 
+export const CONTACT_ADMIN_CTA = {
+  label: 'Continuar',
+  subtitle: 'Defina quem será o responsável inicial pela operação.',
+};
+
 /** Sprint E1.1 — três cards informativos (sem IA Assist). */
 export const CONTACT_TRUST_INDICATORS = [
   {

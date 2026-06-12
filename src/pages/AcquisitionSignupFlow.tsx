@@ -89,6 +89,7 @@ export default function AcquisitionSignupFlowPage() {
   const [phoneVerified, setPhoneVerified] = useState(false);
   const [resendCooldownSec, setResendCooldownSec] = useState(0);
   const [resendLoading, setResendLoading] = useState(false);
+  const [adminAvatarUrl, setAdminAvatarUrl] = useState<string | null>(() => getOnboardingSessionAvatar());
 
   const urlStep = params.get('step');
   const urlPlanId = params.get('plan');
@@ -118,6 +119,17 @@ export default function AcquisitionSignupFlowPage() {
   const trialDays = selectedPlan ? effectiveCheckoutTrialDays(selectedPlan) : 3;
   const hasTrial = selectedPlan ? planHasCheckoutTrial(selectedPlan) : true;
   const isTrialActivation = wizardStep === 'conversion' && hasTrial;
+
+  const adminFormComplete = useMemo(() => {
+    const email = form.lead_email.trim();
+    return (
+      form.lead_name.trim().length > 0 &&
+      email.includes('@') &&
+      !isPendingSignupLeadEmail(email) &&
+      form.signup_password.length >= 6 &&
+      form.signup_password === form.signup_password_confirm
+    );
+  }, [form.lead_name, form.lead_email, form.signup_password, form.signup_password_confirm]);
 
   const operationPreview = useMemo(
     () =>
@@ -377,7 +389,7 @@ export default function AcquisitionSignupFlowPage() {
     return id ?? leadId ?? urlLeadId ?? null;
   }
 
-  function validateLeadCredentialsStep(): boolean {
+  function validatePrincipalAdminStep(): boolean {
     if (!form.lead_name.trim()) {
       toast.error('Informe seu nome.');
       return false;
@@ -528,7 +540,7 @@ export default function AcquisitionSignupFlowPage() {
 
         const capturedLeadId = await captureVerifiedPhoneContact();
         if (!capturedLeadId) return;
-        navigateWizard('credentials', { leadId: capturedLeadId });
+        navigateWizard('admin', { leadId: capturedLeadId });
       } catch {
         toast.error('Erro ao verificar código. Tente novamente.');
       } finally {
@@ -537,8 +549,8 @@ export default function AcquisitionSignupFlowPage() {
       return;
     }
 
-    if (wizardStep === 'credentials') {
-      if (!validateLeadCredentialsStep()) return;
+    if (wizardStep === 'admin') {
+      if (!validatePrincipalAdminStep()) return;
       persistCredentialDraftForLead();
       setLoading(true);
       try {
@@ -774,7 +786,7 @@ export default function AcquisitionSignupFlowPage() {
   const ctaLabel =
     wizardStep === 'identity'
       ? ONBOARDING_CTA_ACCESS_REQUEST
-      : wizardStep === 'verification'
+      : wizardStep === 'verification' || wizardStep === 'admin'
         ? 'Continuar'
         : ONBOARDING_CTA_LABELS[wizardStep === 'plan' ? 'plan' : 'lead'] ?? 'Continuar';
 
@@ -807,6 +819,7 @@ export default function AcquisitionSignupFlowPage() {
         ) : (
           <OnboardingCta
             layout="mobile-fixed"
+            mobileStack={wizardStep === 'admin' ? 'full' : 'default'}
             onBack={canGoBack ? handleBack : undefined}
             onNext={handleNext}
             loading={loading}
@@ -825,7 +838,8 @@ export default function AcquisitionSignupFlowPage() {
       mobileFooter={mobileFooter}
       wideContent={isLeadPhase || wizardStep === 'plan' || isTrialActivation}
       operationStepMobile={isLeadPhase || wizardStep === 'plan' || isTrialActivation}
-      reserveBottomSpace={wizardStep === 'plan'}
+      reserveBottomSpace={wizardStep === 'plan' || wizardStep === 'admin'}
+      adminStepMobile={wizardStep === 'admin'}
     >
       {isTrialActivation ? (
         <ActivationWelcomeStep
@@ -837,6 +851,7 @@ export default function AcquisitionSignupFlowPage() {
           trialLabel={operationPreview.trialLabel}
           loading={loading}
           onContinue={() => void handleStartTrial()}
+          avatarPreview={adminAvatarUrl}
         />
       ) : isLeadPhase && leadSubStep ? (
         <ContactSetupStep
@@ -846,6 +861,12 @@ export default function AcquisitionSignupFlowPage() {
           phone={form.lead_phone}
           password={form.signup_password}
           confirmPassword={form.signup_password_confirm}
+          avatarUrl={adminAvatarUrl}
+          adminFormComplete={adminFormComplete}
+          onAvatarChange={(url) => {
+            setAdminAvatarUrl(url);
+            setOnboardingSessionAvatar(url);
+          }}
           onChange={patchForm}
           onContinue={() => void handleNext()}
           onBack={canGoBack ? handleBack : undefined}

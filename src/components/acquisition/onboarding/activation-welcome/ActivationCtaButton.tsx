@@ -26,7 +26,7 @@ export function ActivationCtaButton({
       onClick={onClick}
       className={cn(
         activationPrimaryButtonClass,
-        'relative inline-flex h-[52px] w-full items-center justify-center rounded-xl px-4 text-[15px] font-semibold',
+        'relative inline-flex h-16 w-full items-center justify-center rounded-xl px-4 text-[15px] font-semibold',
         className,
       )}
     >

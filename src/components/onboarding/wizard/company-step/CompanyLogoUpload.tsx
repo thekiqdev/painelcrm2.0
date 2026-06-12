@@ -21,10 +21,10 @@ export function CompanyLogoUpload({
   const isLight = surface === 'light';
 
   return (
-    <div className="space-y-1.5">
+    <div className="min-w-0 w-full space-y-1.5">
       <label
         className={cn(
-          'group relative flex h-[68px] w-full cursor-pointer items-center justify-center overflow-hidden rounded-xl border-2 border-dashed transition-all lg:h-[72px]',
+          'group relative flex h-[68px] w-full min-w-0 cursor-pointer items-center justify-center overflow-hidden rounded-xl border-2 border-dashed transition-all lg:h-[72px]',
           logoUrl
             ? isLight
               ? 'border-primary/30 bg-white'

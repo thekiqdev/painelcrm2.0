@@ -29,7 +29,7 @@ export function OperationWhatsappSection() {
       </div>
 
       {/* Desktop: 3 colunas compactas */}
-      <div className="hidden gap-2 lg:grid lg:grid-cols-3">
+      <div className="hidden gap-2 lg:grid lg:grid-cols-[repeat(auto-fit,minmax(140px,1fr))]">
         {WHATSAPP_SETUP_OPTIONS.map((opt) => {
           const Icon = opt.icon;
           const isPrimary = opt.id === 'included';

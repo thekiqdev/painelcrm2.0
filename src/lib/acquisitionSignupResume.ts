@@ -121,7 +121,12 @@ export function resolveWizardStepFromLead(
   urlStep: string | null | undefined,
   lead: PublicAcquisitionLeadSnapshot | null | undefined,
 ): number {
-  if (urlStep === 'identity' || urlStep === 'verification' || urlStep === 'credentials') {
+  if (
+    urlStep === 'identity' ||
+    urlStep === 'verification' ||
+    urlStep === 'admin' ||
+    urlStep === 'credentials'
+  ) {
     return 0;
   }
   if (urlStep) {

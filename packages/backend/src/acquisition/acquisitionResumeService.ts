@@ -13,7 +13,7 @@ export type AcquisitionResumeResolution = {
   message: string;
 };
 
-type CadastroWizardStep = 'verification' | 'credentials' | 'plan' | 'conversion';
+type CadastroWizardStep = 'verification' | 'admin' | 'plan' | 'conversion';
 
 function leadNeedsCredentialsStep(lead: AcquisitionLeadRow): boolean {
   return isPendingSignupEmail(lead.email) || !hasRealAcquisitionLeadName(lead.name);
@@ -21,10 +21,10 @@ function leadNeedsCredentialsStep(lead: AcquisitionLeadRow): boolean {
 
 function cadastroPath(leadId: string, step?: CadastroWizardStep): string {
   if (step === 'verification') return `/cadastro?lead=${leadId}&step=verification`;
-  if (step === 'credentials') return `/cadastro?lead=${leadId}&step=credentials`;
+  if (step === 'admin') return `/cadastro?lead=${leadId}&step=admin`;
   if (step === 'plan') return `/cadastro?lead=${leadId}&step=plan`;
   if (step === 'conversion') return `/cadastro?lead=${leadId}&step=conversion`;
-  return `/cadastro?lead=${leadId}&step=credentials`;
+  return `/cadastro?lead=${leadId}&step=admin`;
 }
 
 export async function findAccessibleSessionForLead(leadId: string): Promise<{
@@ -102,7 +102,7 @@ export async function resolveAcquisitionResume(
   if (stage === 'contact_captured') {
     const needsCredentials = leadNeedsCredentialsStep(lead);
     return {
-      path: cadastroPath(lead.id, needsCredentials ? 'credentials' : 'plan'),
+      path: cadastroPath(lead.id, needsCredentials ? 'admin' : 'plan'),
       step: needsCredentials ? 0 : 1,
       canContinueWhereLeftOff: true,
       message: 'Continuando de onde você parou.',

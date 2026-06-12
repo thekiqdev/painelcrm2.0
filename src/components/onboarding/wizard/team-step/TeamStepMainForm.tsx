@@ -72,11 +72,11 @@ export function TeamMembersLivePreview({ members }: { members: TeamMemberDraft[]
 
 export function TeamSeatCounter({ used, limit }: { used: number; limit: number }) {
   return (
-    <p className="text-center text-xs tabular-nums text-muted-foreground lg:text-left">
+    <p className="min-w-0 text-center text-xs tabular-nums text-muted-foreground lg:text-left">
       <span className="font-medium text-foreground">{used}</span>
       <span className="text-muted-foreground"> / </span>
       <span className="font-medium text-foreground">{limit}</span>
-      <span className="text-muted-foreground"> usuários utilizados</span>
+      <span className="text-muted-foreground max-sm:block max-sm:mt-0.5"> usuários utilizados</span>
     </p>
   );
 }
@@ -100,7 +100,7 @@ export function TeamStepMainForm({ members, seatsLimit, onChange, canAddMember }
   };
 
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 w-full space-y-4">
       <header className="space-y-1">
         <h1 className="font-display text-xl font-semibold tracking-tight text-foreground lg:text-[1.75rem]">
           Quem terá acesso ao CRM?
@@ -156,11 +156,11 @@ export function TeamStepMainForm({ members, seatsLimit, onChange, canAddMember }
                     onChange={(e) => updateMember(i, { full_name: e.target.value })}
                   />
                 </div>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 gap-2 min-[480px]:grid-cols-2">
                   <div className="space-y-1">
                     <Label className="text-[11px] text-muted-foreground">Cargo</Label>
                     <Select value={m.role} onValueChange={(v) => updateMember(i, { role: v })}>
-                      <SelectTrigger className="h-10 border-white/10 bg-transparent text-sm">
+                      <SelectTrigger className="h-10 w-full border-white/10 bg-transparent text-sm">
                         <SelectValue placeholder="Cargo" />
                       </SelectTrigger>
                       <SelectContent>
@@ -178,7 +178,7 @@ export function TeamStepMainForm({ members, seatsLimit, onChange, canAddMember }
                       placeholder="email@empresa.com"
                       type="email"
                       value={m.email}
-                      className="h-10 border-white/10 bg-transparent text-sm"
+                      className="h-10 w-full border-white/10 bg-transparent text-sm"
                       onChange={(e) => updateMember(i, { email: e.target.value })}
                     />
                   </div>

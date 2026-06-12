@@ -152,7 +152,7 @@ export function ActivationProfileCard({
     <div
       className={cn(
         'rounded-xl border border-white/[0.08] bg-white/[0.025]',
-        compact ? 'px-3 py-2.5' : 'px-4 py-4 lg:py-3.5',
+        compact ? 'w-full min-w-0 px-2.5 py-2' : 'px-4 py-4 lg:py-3.5',
         !compact && 'max-w-md max-lg:mx-auto max-lg:max-w-sm max-lg:border-none max-lg:bg-transparent max-lg:px-0',
         className,
       )}
@@ -200,18 +200,19 @@ export function ActivationProfileCard({
               )}
             >
               <dt className="shrink-0 text-muted-foreground/75 max-lg:text-xs">WhatsApp</dt>
-              <dd className="truncate font-medium tabular-nums text-foreground max-lg:text-sm">
+              <dd className="min-w-0 truncate font-medium tabular-nums text-foreground max-lg:text-sm">
                 {displayPhone}
               </dd>
             </div>
             <div
               className={cn(
-                'flex gap-2',
+                'flex min-w-0 gap-2',
                 isSocial && 'max-lg:flex-col max-lg:items-center max-lg:gap-0.5',
+                compact && 'min-w-0',
               )}
             >
               <dt className="shrink-0 text-muted-foreground/75 max-lg:text-xs">E-mail</dt>
-              <dd className="truncate font-medium text-foreground/90 max-lg:max-w-[260px] max-lg:text-sm">
+              <dd className="min-w-0 overflow-hidden truncate text-ellipsis whitespace-nowrap font-medium text-foreground/90 max-lg:text-sm">
                 {email}
               </dd>
             </div>

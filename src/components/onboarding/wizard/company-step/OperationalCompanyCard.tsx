@@ -31,7 +31,7 @@ export function OperationalCompanyCard({
       className={cn(
         'rounded-xl border bg-white/[0.025]',
         liveDraft ? 'border-dashed border-white/[0.1]' : 'border-white/[0.08]',
-        compact ? 'px-3 py-2.5' : 'px-3 py-3',
+        compact ? 'w-full min-w-0 px-2.5 py-2' : 'w-full min-w-0 px-2.5 py-2.5',
         className,
       )}
     >

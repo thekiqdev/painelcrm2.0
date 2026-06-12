@@ -1,6 +1,6 @@
+import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { CompanyOperationPreview } from './CompanyOperationPreview';
 import { CompanyLogoUpload } from './CompanyLogoUpload';
 import { CompanySlugField } from './CompanySlugField';
 import type { SlugCheckState } from '@/hooks/useOperationalSlugCheck';
@@ -37,7 +37,7 @@ export function CompanyStepMainForm({
   const isMobile = layout === 'mobile';
 
   return (
-    <div className={isMobile ? 'space-y-3.5' : 'space-y-4'}>
+    <div className={cn('min-w-0 w-full', isMobile ? 'space-y-3.5' : 'space-y-4')}>
       {!isMobile ? (
         <header className="space-y-0.5">
           <h1 className="font-display text-[1.625rem] font-semibold tracking-tight text-foreground">
@@ -56,7 +56,7 @@ export function CompanyStepMainForm({
           value={companyName}
           onChange={(e) => onCompanyNameChange(e.target.value)}
           placeholder="Ex.: Clínica Horizonte"
-          className="h-11 border-white/10 bg-white/[0.03] text-base lg:h-12"
+          className="h-11 w-full border-white/10 bg-white/[0.03] text-base lg:h-12"
         />
       </div>
 
@@ -68,7 +68,7 @@ export function CompanyStepMainForm({
       />
 
       <div className="space-y-1.5">
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <div className="grid w-full min-w-0 grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-3">
           <div className="space-y-1.5">
             <Label className="text-sm text-muted-foreground">Fundo escuro</Label>
             <CompanyLogoUpload
@@ -92,13 +92,6 @@ export function CompanyStepMainForm({
           </div>
         </div>
       </div>
-
-      <CompanyOperationPreview
-        name={companyName}
-        logoDark={logoDark}
-        logoLight={logoLight}
-        compact={isMobile}
-      />
     </div>
   );
 }

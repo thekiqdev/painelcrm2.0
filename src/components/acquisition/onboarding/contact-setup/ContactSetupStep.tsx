@@ -1,10 +1,10 @@
 import {
   ONBOARDING_LEAD_ACCESS_HEADLINE,
-  ONBOARDING_LEAD_CREDENTIALS_HEADLINE,
+  ONBOARDING_LEAD_ADMIN_HEADLINE,
   ONBOARDING_LEAD_VERIFICATION_HEADLINE,
 } from '../constants';
 import { OnboardingIdentityCapture } from '../OnboardingIdentityCapture';
-import { OnboardingCredentialsCapture } from '../OnboardingCredentialsCapture';
+import { OnboardingPrincipalAdminCapture } from '../OnboardingPrincipalAdminCapture';
 import {
   OnboardingPhoneVerification,
   type PhoneVerificationUiState,
@@ -12,9 +12,14 @@ import {
 import { ContactDesktopBackRow, ContactDesktopFooter } from './ContactDesktopFooter';
 import { ContactLivePreview } from './ContactLivePreview';
 import { ContactTrustIndicators } from './ContactTrustIndicators';
-import { CONTACT_ACCESS_CTA, CONTACT_CTA, CONTACT_VERIFICATION_CTA } from './contactSetupConstants';
+import {
+  CONTACT_ACCESS_CTA,
+  CONTACT_ADMIN_CTA,
+  CONTACT_VERIFICATION_CTA,
+} from './contactSetupConstants';
+import { cn } from '@/lib/utils';
 
-export type LeadCaptureSubStep = 'identity' | 'verification' | 'credentials';
+export type LeadCaptureSubStep = 'identity' | 'verification' | 'admin';
 
 type Props = {
   subStep: LeadCaptureSubStep;
@@ -23,6 +28,9 @@ type Props = {
   phone: string;
   password: string;
   confirmPassword: string;
+  avatarUrl: string | null;
+  adminFormComplete: boolean;
+  onAvatarChange: (url: string | null) => void;
   onChange: (patch: {
     lead_name?: string;
     lead_email?: string;
@@ -51,6 +59,9 @@ export function ContactSetupStep({
   phone,
   password,
   confirmPassword,
+  avatarUrl,
+  adminFormComplete,
+  onAvatarChange,
   onChange,
   onContinue,
   onBack,
@@ -67,17 +78,18 @@ export function ContactSetupStep({
 }: Props) {
   const isAccessRequest = subStep === 'identity';
   const isVerification = subStep === 'verification';
+  const isAdmin = subStep === 'admin';
   const headline = isAccessRequest
     ? ONBOARDING_LEAD_ACCESS_HEADLINE
     : isVerification
       ? ONBOARDING_LEAD_VERIFICATION_HEADLINE
-      : ONBOARDING_LEAD_CREDENTIALS_HEADLINE;
+      : ONBOARDING_LEAD_ADMIN_HEADLINE;
   const preview = { name, email, phone };
   const cta = isAccessRequest
     ? CONTACT_ACCESS_CTA
     : isVerification
       ? CONTACT_VERIFICATION_CTA
-      : CONTACT_CTA;
+      : CONTACT_ADMIN_CTA;
 
   const fields = isAccessRequest ? (
     <OnboardingIdentityCapture phone={phone} onChange={onChange} />
@@ -92,19 +104,26 @@ export function ContactSetupStep({
       resendLoading={resendLoading}
     />
   ) : (
-    <OnboardingCredentialsCapture
+    <OnboardingPrincipalAdminCapture
       name={name}
       email={email}
       password={password}
       confirmPassword={confirmPassword}
+      avatarUrl={avatarUrl}
+      onAvatarChange={onAvatarChange}
       onChange={onChange}
     />
   );
 
   return (
     <>
-      <div className="space-y-4 pb-2 lg:hidden">
-        <header className="space-y-2">
+      <div
+        className={cn(
+          'lg:hidden',
+          isAdmin ? 'flex flex-col gap-5 px-5 pb-2 pt-6' : 'space-y-4 pb-2',
+        )}
+      >
+        <header className={cn(isAdmin ? 'flex flex-col gap-2' : 'space-y-2')}>
           {isAccessRequest ? (
             <>
               <p className="text-xs font-medium uppercase tracking-[0.2em] text-primary/80">
@@ -130,17 +149,21 @@ export function ContactSetupStep({
 
         {fields}
         {isAccessRequest ? <ContactTrustIndicators compact /> : null}
-        <ContactLivePreview
-          preview={preview}
-          subStep={subStep}
-          timelineStage="contact"
-          phoneVerified={phoneVerified}
-          compact
-        />
+        {!isAdmin ? (
+          <ContactLivePreview
+            preview={preview}
+            subStep={subStep}
+            timelineStage="contact"
+            phoneVerified={phoneVerified}
+            avatarUrl={avatarUrl}
+            adminFormComplete={adminFormComplete}
+            compact
+          />
+        ) : null}
       </div>
 
       <div className="hidden min-h-0 flex-1 flex-col overflow-hidden lg:flex">
-        <header className="mb-4 shrink-0 space-y-2">
+        <header className={cn('shrink-0', isAdmin ? 'mb-3 space-y-1' : 'mb-4 space-y-2')}>
           {isAccessRequest ? (
             <>
               <p className="text-xs font-medium uppercase tracking-[0.22em] text-primary/80">
@@ -169,10 +192,20 @@ export function ContactSetupStep({
           </p>
         ) : null}
 
-        <div className="grid min-h-0 flex-1 grid-cols-[1.15fr_0.85fr] gap-6 overflow-hidden">
-          <div className="flex min-h-0 flex-col gap-3 overflow-hidden">
+        <div
+          className={cn(
+            'grid min-h-0 flex-1 overflow-hidden',
+            isAdmin ? 'grid-cols-[1.2fr_0.8fr] gap-5' : 'grid-cols-[1.15fr_0.85fr] gap-6',
+          )}
+        >
+          <div
+            className={cn(
+              'flex min-h-0 flex-col overflow-hidden',
+              isAdmin ? 'min-h-0' : 'gap-3',
+            )}
+          >
             <ContactDesktopBackRow onBack={onBack} />
-            <div className="shrink-0 space-y-4">
+            <div className={cn(isAdmin ? 'min-h-0 min-w-0 flex-1' : 'shrink-0 space-y-4')}>
               {fields}
               {isAccessRequest ? <ContactTrustIndicators /> : null}
             </div>
@@ -181,6 +214,7 @@ export function ContactSetupStep({
               loading={loading}
               label={cta.label}
               subtitle={cta.subtitle}
+              dense={isAdmin}
             />
           </div>
 
@@ -193,6 +227,8 @@ export function ContactSetupStep({
               subStep={subStep}
               timelineStage="contact"
               phoneVerified={phoneVerified}
+              avatarUrl={avatarUrl}
+              adminFormComplete={adminFormComplete}
             />
           </aside>
         </div>

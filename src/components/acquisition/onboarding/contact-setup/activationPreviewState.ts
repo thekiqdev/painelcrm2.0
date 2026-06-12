@@ -33,12 +33,18 @@ export function formatSignupPhoneE164(phone: string): string {
 /** Quantos itens já concluídos por etapa — nunca adiantar além do estágio atual. */
 function stageCompletedCount(
   stage: ActivationTimelineStage,
-  opts: { phoneDigits: string; phoneVerified?: boolean },
+  opts: {
+    phoneDigits: string;
+    phoneVerified?: boolean;
+    subStep?: LeadCaptureSubStep;
+    adminFormComplete?: boolean;
+  },
 ): number {
-  const phoneOk = opts.phoneDigits.length >= 10;
   switch (stage) {
     case 'contact':
-      return opts.phoneVerified ? 1 : 0;
+      if (opts.adminFormComplete) return 2;
+      if (opts.phoneVerified || opts.subStep === 'admin') return 1;
+      return 0;
     case 'operation':
       return 2;
     case 'prepare_workspace':
@@ -70,6 +76,7 @@ export function deriveLiveTimelineEntries(
     subStep?: LeadCaptureSubStep;
     name?: string;
     email?: string;
+    adminFormComplete?: boolean;
     /** Override futuro por item. */
     stateOverrides?: Partial<Record<ActivationTimelineItemId, ActivationLiveState>>;
   },
@@ -79,6 +86,8 @@ export function deriveLiveTimelineEntries(
   const completedCount = stageCompletedCount(stage, {
     phoneDigits,
     phoneVerified: opts?.phoneVerified,
+    subStep: opts?.subStep,
+    adminFormComplete: opts?.adminFormComplete,
   });
 
   return items.map((item, index) => {
@@ -110,7 +119,15 @@ export function deriveLiveTimelineEntries(
       return {
         id: item.id,
         state,
-        label: 'WhatsApp confirmado',
+        label: 'WhatsApp validado',
+      };
+    }
+
+    if (item.id === 'admin_defined' && state === 'completed') {
+      return {
+        id: item.id,
+        state,
+        label: 'Administrador principal definido',
       };
     }
 

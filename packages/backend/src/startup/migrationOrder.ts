@@ -405,5 +405,6 @@ export const MIGRATION_ORDER = [
   '270_ops_gateway_rollout.sql',
   '271_signup_phone_verifications.sql',
   '272_platform_growth_settings.sql',
+  '273_chat_kanban_scheduled_moves_acquisition_lead.sql',
   'create-admin-user.sql',
 ];

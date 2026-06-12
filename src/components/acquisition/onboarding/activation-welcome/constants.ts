@@ -27,8 +27,15 @@ export const ACTIVATION_QUICK_STATUS = [
 ] as const;
 
 export const ACTIVATION_CTA = {
-  label: 'Começar configuração',
+  label: 'Entrar no workspace',
 };
+
+/** Sprint O2.3 — premium workspace reveal */
+export const PREMIUM_WORKSPACE_REVEAL = {
+  heroSubtitle: 'Seu ambiente foi criado com sucesso e está pronto para começar.',
+  environmentTitle: 'Seu ambiente já está preparado',
+  bottomMessage: 'Tudo está pronto para iniciar sua operação.',
+} as const;
 
 export const ACTIVATION_CTA_SECTION = {
   title: 'Tudo pronto para começar',

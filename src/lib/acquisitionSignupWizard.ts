@@ -14,10 +14,19 @@ export function isPendingSignupLeadEmail(email: string | null | undefined): bool
 export const SIGNUP_WIZARD_STEPS = [
   'identity',
   'verification',
-  'credentials',
+  'admin',
   'plan',
   'conversion',
 ] as const;
+
+/** Legado E2 — URLs antigas com step=credentials. */
+export function normalizeSignupWizardStepParam(
+  value: string | null | undefined,
+): SignupWizardStep | null {
+  const normalized = value?.trim() ?? '';
+  if (normalized === 'credentials') return 'admin';
+  return isSignupWizardStep(normalized) ? normalized : null;
+}
 
 export type SignupWizardStep = (typeof SIGNUP_WIZARD_STEPS)[number];
 
@@ -49,8 +58,8 @@ export function layoutStepIndexFromWizard(wizardStep: SignupWizardStep): number 
 
 export function leadCaptureSubStepFromWizard(
   wizardStep: SignupWizardStep,
-): 'identity' | 'verification' | 'credentials' | null {
-  if (wizardStep === 'identity' || wizardStep === 'verification' || wizardStep === 'credentials') {
+): 'identity' | 'verification' | 'admin' | null {
+  if (wizardStep === 'identity' || wizardStep === 'verification' || wizardStep === 'admin') {
     return wizardStep;
   }
   return null;
@@ -84,7 +93,7 @@ export function cadastroWizardPath(input: {
   return `/cadastro${buildCadastroSearchParams(input)}`;
 }
 
-function leadNeedsCredentials(lead: SignupWizardLeadSnapshot): boolean {
+function leadNeedsPrincipalAdmin(lead: SignupWizardLeadSnapshot): boolean {
   const emailPending = isPendingSignupLeadEmail(lead.email);
   const namePending = isPlaceholderLeadName(lead.name);
   return emailPending || namePending;
@@ -106,11 +115,11 @@ function inferWizardStepFromLeadStage(
   }
 
   if (stage === 'contact_captured') {
-    return leadNeedsCredentials(lead) ? 'credentials' : 'plan';
+    return leadNeedsPrincipalAdmin(lead) ? 'admin' : 'plan';
   }
 
   if (lead.id) {
-    return leadNeedsCredentials(lead) ? 'credentials' : 'verification';
+    return leadNeedsPrincipalAdmin(lead) ? 'admin' : 'verification';
   }
 
   return 'identity';
@@ -124,17 +133,19 @@ export function resolveSignupWizardStep(
   lead: SignupWizardLeadSnapshot | null | undefined,
   planIdFromUrl?: string | null,
 ): SignupWizardStep {
-  const normalized = urlStep?.trim() ?? '';
+  const normalized = normalizeSignupWizardStepParam(urlStep);
 
-  if (isSignupWizardStep(normalized)) {
+  if (normalized) {
     if (normalized === 'conversion' && !hasPlanId(lead?.selected_plan_id ?? planIdFromUrl)) {
       return 'plan';
     }
     return normalized;
   }
 
-  if (normalized === 'plan') return 'plan';
-  if (normalized === 'conversion' || normalized === 'activate') {
+  const rawStep = urlStep?.trim() ?? '';
+
+  if (rawStep === 'plan') return 'plan';
+  if (rawStep === 'conversion' || rawStep === 'activate') {
     return hasPlanId(lead?.selected_plan_id ?? planIdFromUrl) ? 'conversion' : 'plan';
   }
 
@@ -149,10 +160,10 @@ export function wizardStepBackTarget(current: SignupWizardStep): SignupWizardSte
   switch (current) {
     case 'verification':
       return 'identity';
-    case 'credentials':
+    case 'admin':
       return 'verification';
     case 'plan':
-      return 'verification';
+      return 'admin';
     case 'conversion':
       return 'plan';
     default:

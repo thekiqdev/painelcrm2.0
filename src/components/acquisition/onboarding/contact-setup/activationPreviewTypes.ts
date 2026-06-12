@@ -32,7 +32,7 @@ export const ACTIVATION_TIMELINE_ITEMS: ActivationTimelineItem[] = [
   {
     id: 'admin_defined',
     labelFuture: 'Administrador principal',
-    labelInProgress: 'Definindo administrador principal',
+    labelInProgress: 'Configurando administrador principal',
     labelCompleted: 'Administrador principal definido',
   },
   {

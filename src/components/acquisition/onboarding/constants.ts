@@ -48,7 +48,7 @@ export const ONBOARDING_HEADLINES: Record<
 > = {
   lead: {
     title: 'Comece sua operação inteligente',
-    subtitle: 'Informe WhatsApp e nome — em seguida definimos e-mail e senha de acesso.',
+    subtitle: 'Informe seu WhatsApp — em seguida configuramos o administrador da operação.',
   },
   plan: {
     title: 'Monte sua operação',
@@ -72,10 +72,13 @@ export const ONBOARDING_LEAD_VERIFICATION_HEADLINE = {
   subtitle: 'Digite o código recebido para continuar.',
 };
 
-export const ONBOARDING_LEAD_CREDENTIALS_HEADLINE = {
-  title: 'Seu acesso ao workspace',
-  subtitle: 'Informe seu nome, e-mail e senha para concluir a solicitação.',
+export const ONBOARDING_LEAD_ADMIN_HEADLINE = {
+  title: 'Configure o administrador principal',
+  subtitle: 'Este será o responsável inicial pela operação.',
 };
+
+/** @deprecated E2.5 — use ONBOARDING_LEAD_ADMIN_HEADLINE */
+export const ONBOARDING_LEAD_CREDENTIALS_HEADLINE = ONBOARDING_LEAD_ADMIN_HEADLINE;
 
 export const ONBOARDING_CTA_ACCESS_REQUEST = 'Receber código de acesso';
 
@@ -84,7 +87,7 @@ export const ONBOARDING_CTA_LABELS: Record<'lead' | 'plan', string> = {
   plan: 'Continuar ativação',
 };
 
-/** Nome temporário no capture (API exige name); substituído na etapa de credenciais. */
+/** Nome temporário no capture (API exige name); substituído na etapa do administrador principal. */
 export const ACQUISITION_CAPTURE_NAME_PLACEHOLDER = 'Solicitante';
 
 export const ONBOARDING_KICKOFF_PATH = '/onboarding/kickoff';

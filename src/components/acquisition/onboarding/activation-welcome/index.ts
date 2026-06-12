@@ -1,7 +1,9 @@
 export { ActivationWelcomeStep } from './ActivationWelcomeStep';
 export { ActivationEnvironmentReady } from './ActivationEnvironmentReady';
+export { WorkspaceRevealSidebar } from './WorkspaceRevealSidebar';
 export { ActivationWelcomeCta } from './ActivationLaunchPanel';
 export { ActivationMobileFooter } from './ActivationMobileFooter';
+export { PremiumWelcomeBottomBar } from './PremiumWelcomeBottomBar';
 export { ActivationMobileHeader } from './ActivationMobileHeader';
 export { ActivationProgressVisualization } from './ActivationProgressVisualization';
 export { ActivationProfileCard } from './ActivationProfileCard';

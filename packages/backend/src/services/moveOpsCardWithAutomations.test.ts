@@ -29,6 +29,11 @@ vi.mock('./kanbanColumnAutomationService.js', () => ({
   runKanbanPhase2Automations: vi.fn(),
 }));
 
+vi.mock('./kanbanScheduledMoveService.js', () => ({
+  cancelPendingScheduledMovesForCardColumn: vi.fn().mockResolvedValue(undefined),
+  insertScheduledMoveIfColumnConfigured: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { pool } from '../utils/db.js';
 import { SUPERADMIN_OPS_KANBAN_TENANT_ID } from '../config/superadminOpsKanban.js';
 import { resolveKanbanAutomationContext } from './kanbanAutomationContext.js';

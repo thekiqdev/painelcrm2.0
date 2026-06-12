@@ -13,6 +13,8 @@ type Props = {
   className?: string;
   /** inline = desktop + fallback; mobile-fixed = rodapé app */
   layout?: 'inline' | 'mobile-fixed';
+  /** E2.5.2 — admin mobile: stack full-width Voltar + Continuar 56px */
+  mobileStack?: 'default' | 'full';
 };
 
 export function OnboardingCta({
@@ -24,14 +26,21 @@ export function OnboardingCta({
   nextDisabled,
   className,
   layout = 'inline',
+  mobileStack = 'default',
 }: Props) {
   if (layout === 'mobile-fixed') {
+    const stacked = mobileStack === 'full';
     return (
-      <div className={cn('space-y-2', className)}>
+      <div className={cn(stacked ? 'flex flex-col gap-2 px-5 pb-1 pt-2' : 'space-y-2', className)}>
         {onBack ? (
           <button
             type="button"
-            className="flex w-full items-center justify-center gap-1 py-1 text-sm text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+            className={cn(
+              'flex w-full items-center justify-center gap-1.5 text-sm transition-colors disabled:opacity-50',
+              stacked
+                ? 'h-11 rounded-xl border border-white/10 text-muted-foreground hover:border-white/20 hover:text-foreground'
+                : 'py-1 text-muted-foreground hover:text-foreground',
+            )}
             onClick={onBack}
             disabled={backDisabled || loading}
           >
@@ -41,7 +50,7 @@ export function OnboardingCta({
         ) : null}
         <Button
           type="button"
-          className={activationPrimaryButtonClass}
+          className={cn(activationPrimaryButtonClass, stacked && 'h-14 w-full')}
           onClick={onNext}
           disabled={nextDisabled || loading}
         >

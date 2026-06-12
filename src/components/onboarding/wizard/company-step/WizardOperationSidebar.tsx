@@ -40,7 +40,7 @@ export function WizardOperationSidebar({
   const showOperationCard = operationLiveDraft || companySaved;
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex w-full min-w-0 max-w-[300px] flex-col gap-2.5 max-lg:max-w-none">
       <ActivationProfileCard
         name={leadName}
         email={leadEmail}

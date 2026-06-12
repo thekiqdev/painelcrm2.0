@@ -11,6 +11,18 @@ import {
 } from './kanbanInternalCardColumnPipeline.js';
 import { emitKanbanAttendanceIfNeeded } from '../utils/kanbanColumnRules.js';
 import { runKanbanPhase2Automations, type KanbanPhase2AutomationContext } from './kanbanColumnAutomationService.js';
+import {
+  logKanbanScheduledMoveCancelled,
+  logKanbanScheduledMoveCrossBoard,
+  logKanbanScheduledMoveExecuted,
+  logKanbanScheduledMoveFailed,
+  logKanbanScheduledMoveScheduled,
+  logKanbanScheduledMoveSkipped,
+  normalizeSkipReasonForLog,
+  scheduledMoveCorrelationId,
+} from './kanbanScheduledMoveObservability.js';
+
+export { logKanbanScheduledMoveEvent } from './kanbanScheduledMoveObservability.js';
 
 const AUTO_MOVE_REASON = 'Movimento automático por tempo (Kanban)';
 
@@ -21,7 +33,8 @@ type ScheduledMoveRow = {
   tenant_id: string;
   board_id: string;
   card_id: string;
-  conversation_id: string;
+  conversation_id: string | null;
+  acquisition_lead_id: string | null;
   from_column_id: string;
   to_column_id: string;
   to_board_id: string | null;
@@ -31,6 +44,37 @@ type ScheduledMoveRow = {
   status: string;
   created_by_user_id: string | null;
 };
+
+function isOpsLeadScheduledMove(row: ScheduledMoveRow): boolean {
+  return row.acquisition_lead_id != null && String(row.acquisition_lead_id).trim() !== '';
+}
+
+function logScheduledMoveSkipFromRow(
+  row: ScheduledMoveRow,
+  internalReason: string,
+  context?: { destinationColumnMissing?: boolean },
+): void {
+  logKanbanScheduledMoveSkipped({
+    correlationId: scheduledMoveCorrelationId(row.id),
+    scheduledMoveId: row.id,
+    cardId: row.card_id,
+    acquisitionLeadId: row.acquisition_lead_id,
+    conversationId: row.conversation_id,
+    reason: normalizeSkipReasonForLog(internalReason, context),
+    internalReason,
+  });
+}
+
+function logScheduledMoveCancelledRow(row: ScheduledMoveRow, reason: string): void {
+  logKanbanScheduledMoveCancelled({
+    correlationId: scheduledMoveCorrelationId(row.id),
+    scheduledMoveId: row.id,
+    cardId: row.card_id,
+    reason,
+    acquisitionLeadId: row.acquisition_lead_id,
+    conversationId: row.conversation_id,
+  });
+}
 
 export async function logKanbanAutoMoveByTimeAudit(params: {
   conversationId: string;
@@ -92,25 +136,30 @@ export async function cancelPendingScheduledMovesForCardColumn(
   fromColumnId: string,
   reason: string,
   actorUserId: string | null,
+  exceptScheduledMoveId?: string | null,
 ): Promise<void> {
-  const sel = await client.query<ScheduledMoveRow & { conversation_id: string }>(
+  const sel = await client.query<ScheduledMoveRow & { conversation_id: string; conv_attendance: string | null }>(
     `SELECT sm.*, c.attendance_status AS conv_attendance
      FROM chat_kanban_scheduled_moves sm
-     INNER JOIN chat_conversations c ON c.id = sm.conversation_id
+     LEFT JOIN chat_conversations c ON c.id = sm.conversation_id
      WHERE sm.tenant_id = $1
        AND sm.card_id = $2
        AND sm.from_column_id = $3
-       AND sm.status = 'scheduled'`,
-    [tenantId, cardId, fromColumnId],
+       AND sm.status = 'scheduled'
+       AND ($4::uuid IS NULL OR sm.id <> $4::uuid)`,
+    [tenantId, cardId, fromColumnId, exceptScheduledMoveId ?? null],
   );
   if (sel.rows.length === 0) return;
   await client.query(
     `UPDATE chat_kanban_scheduled_moves
-     SET status = 'cancelled', cancelled_reason = $4, updated_at = now()
-     WHERE tenant_id = $1 AND card_id = $2 AND from_column_id = $3 AND status = 'scheduled'`,
-    [tenantId, cardId, fromColumnId, reason.slice(0, 500)],
+     SET status = 'cancelled', cancelled_reason = $5, updated_at = now()
+     WHERE tenant_id = $1 AND card_id = $2 AND from_column_id = $3 AND status = 'scheduled'
+       AND ($4::uuid IS NULL OR id <> $4::uuid)`,
+    [tenantId, cardId, fromColumnId, exceptScheduledMoveId ?? null, reason.slice(0, 500)],
   );
   for (const row of sel.rows) {
+    logScheduledMoveCancelledRow(row, reason);
+    if (!row.conversation_id) continue;
     await logKanbanAutoMoveByTimeAudit({
       conversationId: row.conversation_id,
       tenantId,
@@ -134,10 +183,10 @@ export async function cancelAllPendingScheduledMovesFromColumn(
   fromColumnId: string,
   reason: string,
 ): Promise<void> {
-  const sel = await client.query<ScheduledMoveRow & { conversation_id: string; conv_attendance: string | null }>(
+  const sel = await client.query<ScheduledMoveRow & { conv_attendance: string | null }>(
     `SELECT sm.*, c.attendance_status AS conv_attendance
      FROM chat_kanban_scheduled_moves sm
-     INNER JOIN chat_conversations c ON c.id = sm.conversation_id
+     LEFT JOIN chat_conversations c ON c.id = sm.conversation_id
      WHERE sm.tenant_id = $1 AND sm.from_column_id = $2 AND sm.status = 'scheduled'`,
     [tenantId, fromColumnId],
   );
@@ -149,6 +198,8 @@ export async function cancelAllPendingScheduledMovesFromColumn(
     [tenantId, fromColumnId, reason.slice(0, 500)],
   );
   for (const row of sel.rows) {
+    logScheduledMoveCancelledRow(row, reason);
+    if (!row.conversation_id) continue;
     await logKanbanAutoMoveByTimeAudit({
       conversationId: row.conversation_id,
       tenantId,
@@ -172,10 +223,10 @@ export async function cancelPendingScheduledMovesForEntireCard(
   cardId: string,
   reason: string,
 ): Promise<void> {
-  const sel = await client.query<ScheduledMoveRow & { conversation_id: string; conv_attendance: string | null }>(
+  const sel = await client.query<ScheduledMoveRow & { conv_attendance: string | null }>(
     `SELECT sm.*, c.attendance_status AS conv_attendance
      FROM chat_kanban_scheduled_moves sm
-     INNER JOIN chat_conversations c ON c.id = sm.conversation_id
+     LEFT JOIN chat_conversations c ON c.id = sm.conversation_id
      WHERE sm.tenant_id = $1 AND sm.card_id = $2 AND sm.status = 'scheduled'`,
     [tenantId, cardId],
   );
@@ -187,6 +238,8 @@ export async function cancelPendingScheduledMovesForEntireCard(
     [tenantId, cardId, reason.slice(0, 500)],
   );
   for (const row of sel.rows) {
+    logScheduledMoveCancelledRow(row, reason);
+    if (!row.conversation_id) continue;
     await logKanbanAutoMoveByTimeAudit({
       conversationId: row.conversation_id,
       tenantId,
@@ -213,10 +266,10 @@ export async function cancelPendingScheduledMovesForCardExcept(
   reason: string,
   actorUserId: string | null,
 ): Promise<void> {
-  const sel = await client.query<ScheduledMoveRow & { conversation_id: string; conv_attendance: string | null }>(
+  const sel = await client.query<ScheduledMoveRow & { conv_attendance: string | null }>(
     `SELECT sm.*, c.attendance_status AS conv_attendance
      FROM chat_kanban_scheduled_moves sm
-     INNER JOIN chat_conversations c ON c.id = sm.conversation_id
+     LEFT JOIN chat_conversations c ON c.id = sm.conversation_id
      WHERE sm.tenant_id = $1 AND sm.card_id = $2 AND sm.status = 'scheduled' AND sm.id <> $3::uuid`,
     [tenantId, cardId, exceptScheduledMoveId],
   );
@@ -228,6 +281,8 @@ export async function cancelPendingScheduledMovesForCardExcept(
     [tenantId, cardId, exceptScheduledMoveId, reason.slice(0, 500)],
   );
   for (const row of sel.rows) {
+    logScheduledMoveCancelledRow(row, reason);
+    if (!row.conversation_id) continue;
     await logKanbanAutoMoveByTimeAudit({
       conversationId: row.conversation_id,
       tenantId,
@@ -255,7 +310,8 @@ export async function insertScheduledMoveIfColumnConfigured(
     tenantId: string;
     boardId: string;
     cardId: string;
-    conversationId: string;
+    conversationId?: string | null;
+    acquisitionLeadId?: string | null;
     columnId: string;
     columnMetadata: unknown;
     actorUserId: string;
@@ -263,6 +319,21 @@ export async function insertScheduledMoveIfColumnConfigured(
 ): Promise<void> {
   const cfg = autoMoveConfigFromColumnMetadata(input.columnMetadata);
   if (!cfg.enabled || !cfg.to_column_id) return;
+
+  const conversationId =
+    input.conversationId != null && String(input.conversationId).trim() !== ''
+      ? String(input.conversationId).trim()
+      : null;
+  const acquisitionLeadId =
+    input.acquisitionLeadId != null && String(input.acquisitionLeadId).trim() !== ''
+      ? String(input.acquisitionLeadId).trim()
+      : null;
+  if (!conversationId && !acquisitionLeadId) {
+    throw new Error('insertScheduledMoveIfColumnConfigured: conversationId ou acquisitionLeadId obrigatório.');
+  }
+  if (conversationId && acquisitionLeadId) {
+    throw new Error('insertScheduledMoveIfColumnConfigured: informe apenas conversationId ou acquisitionLeadId.');
+  }
 
   await client.query(
     `DELETE FROM chat_kanban_scheduled_moves
@@ -273,15 +344,17 @@ export async function insertScheduledMoveIfColumnConfigured(
   const scheduledFor = computeScheduledForFromDelay(cfg.delay_value, cfg.delay_unit);
   const ins = await client.query<{ id: string }>(
     `INSERT INTO chat_kanban_scheduled_moves (
-       tenant_id, board_id, card_id, conversation_id, from_column_id, to_column_id, to_board_id,
+       tenant_id, board_id, card_id, conversation_id, acquisition_lead_id,
+       from_column_id, to_column_id, to_board_id,
        trigger_type, delay_value, delay_unit, scheduled_for, status, created_by_user_id
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,'time_delay',$8,$9,$10,'scheduled',$11)
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'time_delay',$9,$10,$11,'scheduled',$12)
      RETURNING id`,
     [
       input.tenantId,
       input.boardId,
       input.cardId,
-      input.conversationId,
+      conversationId,
+      acquisitionLeadId,
       input.columnId,
       cfg.to_column_id,
       cfg.to_board_id ?? null,
@@ -293,23 +366,40 @@ export async function insertScheduledMoveIfColumnConfigured(
   );
   const sid = ins.rows[0]?.id;
   if (!sid) throw new Error('Falha ao criar agendamento de movimento automático Kanban.');
-  const attRes = await client.query<{ attendance_status: string | null }>(
-    `SELECT attendance_status FROM chat_conversations WHERE id = $1 LIMIT 1`,
-    [input.conversationId],
-  );
-  await logKanbanAutoMoveByTimeAudit({
-    conversationId: input.conversationId,
-    tenantId: input.tenantId,
-    actorUserId: input.actorUserId,
-    attendanceSnapshot: attRes.rows[0]?.attendance_status ?? null,
-    status: 'scheduled',
-    boardId: input.boardId,
-    fromColumnId: input.columnId,
-    toColumnId: cfg.to_column_id,
-    cardId: input.cardId,
+  const destBoardId = cfg.to_board_id ?? input.boardId;
+  logKanbanScheduledMoveScheduled({
+    correlationId: scheduledMoveCorrelationId(sid),
     scheduledMoveId: sid,
-    scheduledFor: scheduledFor,
+    cardId: input.cardId,
+    acquisitionLeadId,
+    conversationId,
+    fromBoard: input.boardId,
+    fromColumn: input.columnId,
+    toBoard: destBoardId,
+    toColumn: cfg.to_column_id,
+    delayValue: cfg.delay_value,
+    delayUnit: cfg.delay_unit,
+    executeAt: scheduledFor,
   });
+  if (conversationId) {
+    const attRes = await client.query<{ attendance_status: string | null }>(
+      `SELECT attendance_status FROM chat_conversations WHERE id = $1 LIMIT 1`,
+      [conversationId],
+    );
+    await logKanbanAutoMoveByTimeAudit({
+      conversationId,
+      tenantId: input.tenantId,
+      actorUserId: input.actorUserId,
+      attendanceSnapshot: attRes.rows[0]?.attendance_status ?? null,
+      status: 'scheduled',
+      boardId: input.boardId,
+      fromColumnId: input.columnId,
+      toColumnId: cfg.to_column_id,
+      cardId: input.cardId,
+      scheduledMoveId: sid,
+      scheduledFor: scheduledFor,
+    });
+  }
 }
 
 async function loadCardLocked(client: PoolClient, tenantId: string, cardId: string) {
@@ -324,7 +414,8 @@ async function loadCardLocked(client: PoolClient, tenantId: string, cardId: stri
         id: string;
         board_id: string;
         column_id: string;
-        conversation_id: string;
+        conversation_id: string | null;
+        acquisition_lead_id: string | null;
         tenant_id: string;
       }
     | undefined;
@@ -393,7 +484,345 @@ export async function enrichPhase2AfterCommit(
   return next;
 }
 
+async function markScheduledMoveTerminal(
+  scheduledMoveId: string,
+  status: 'skipped' | 'failed' | 'executed',
+  extra?: { cancelled_reason?: string; error_message?: string },
+): Promise<void> {
+  if (status === 'executed') {
+    await pool.query(
+      `UPDATE chat_kanban_scheduled_moves SET status = 'executed', executed_at = now(), updated_at = now() WHERE id = $1`,
+      [scheduledMoveId],
+    );
+    return;
+  }
+  await pool.query(
+    `UPDATE chat_kanban_scheduled_moves
+     SET status = $2,
+         cancelled_reason = COALESCE($3, cancelled_reason),
+         error_message = COALESCE($4, error_message),
+         updated_at = now()
+     WHERE id = $1`,
+    [
+      scheduledMoveId,
+      status,
+      extra?.cancelled_reason?.slice(0, 500) ?? null,
+      extra?.error_message?.slice(0, 500) ?? null,
+    ],
+  );
+}
+
+/** Worker path Ops — executa via moveOpsCardWithAutomations (Sprint K8). */
+async function processOneScheduledMoveRowOpsLead(sm: ScheduledMoveRow): Promise<void> {
+  const client = await pool.connect();
+  let row: ScheduledMoveRow | null = null;
+  let effectiveDestBoardId: string | null = null;
+  let actorUserId: string | null = null;
+  let crossBoard = false;
+
+  try {
+    await client.query('BEGIN');
+    await client.query(`SET LOCAL app.bypass_rls = '1'`);
+
+    const lock = await client.query<ScheduledMoveRow>(
+      `SELECT * FROM chat_kanban_scheduled_moves
+       WHERE id = $1 AND status = 'scheduled'
+       FOR UPDATE`,
+      [sm.id],
+    );
+    if (lock.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return;
+    }
+    row = lock.rows[0];
+    const acquisitionLeadId = row.acquisition_lead_id ? String(row.acquisition_lead_id) : null;
+    if (!acquisitionLeadId) {
+      await client.query('ROLLBACK');
+      return;
+    }
+
+    const card = await loadCardLocked(client, row.tenant_id, row.card_id);
+    if (!card) {
+      await client.query(
+        `UPDATE chat_kanban_scheduled_moves SET status = 'skipped', cancelled_reason = $2, updated_at = now() WHERE id = $1`,
+        [row.id, 'card_missing_or_archived'],
+      );
+      await client.query('COMMIT');
+      logScheduledMoveSkipFromRow(row, 'card_missing_or_archived');
+      return;
+    }
+
+    if (String(card.column_id) !== String(row.from_column_id)) {
+      await client.query(
+        `UPDATE chat_kanban_scheduled_moves SET status = 'skipped', cancelled_reason = $2, updated_at = now() WHERE id = $1`,
+        [row.id, 'card_not_in_source_column'],
+      );
+      await client.query('COMMIT');
+      logScheduledMoveSkipFromRow(row, 'card_not_in_source_column');
+      return;
+    }
+
+    const fromCol = await client.query(`SELECT * FROM chat_kanban_columns WHERE id = $1 AND tenant_id = $2`, [
+      row.from_column_id,
+      row.tenant_id,
+    ]);
+    const toCol = await client.query(`SELECT * FROM chat_kanban_columns WHERE id = $1 AND tenant_id = $2`, [
+      row.to_column_id,
+      row.tenant_id,
+    ]);
+    if (fromCol.rows.length === 0 || toCol.rows.length === 0) {
+      await client.query(
+        `UPDATE chat_kanban_scheduled_moves SET status = 'skipped', cancelled_reason = $2, updated_at = now() WHERE id = $1`,
+        [row.id, 'column_missing'],
+      );
+      await client.query('COMMIT');
+      logScheduledMoveSkipFromRow(row, 'column_missing', {
+        destinationColumnMissing: toCol.rows.length === 0,
+      });
+      return;
+    }
+
+    const fromMeta = fromCol.rows[0].metadata;
+    const liveCfg = autoMoveConfigFromColumnMetadata(fromMeta);
+    const rowToBoard = row.to_board_id != null ? String(row.to_board_id) : null;
+    const liveToBoard = liveCfg.to_board_id != null ? String(liveCfg.to_board_id) : null;
+    if (
+      !liveCfg.enabled ||
+      !liveCfg.to_column_id ||
+      String(liveCfg.to_column_id) !== String(row.to_column_id) ||
+      rowToBoard !== liveToBoard ||
+      liveCfg.delay_value !== row.delay_value ||
+      String(liveCfg.delay_unit) !== String(row.delay_unit)
+    ) {
+      await client.query(
+        `UPDATE chat_kanban_scheduled_moves SET status = 'skipped', cancelled_reason = $2, updated_at = now() WHERE id = $1`,
+        [row.id, 'automation_config_changed_or_disabled'],
+      );
+      await client.query('COMMIT');
+      logScheduledMoveSkipFromRow(row, 'automation_config_changed_or_disabled');
+      return;
+    }
+
+    const toColRow = toCol.rows[0] as Record<string, unknown>;
+    const destColumnBoardId = String(toColRow.board_id);
+    const explicitDestBoard =
+      row.to_board_id != null && String(row.to_board_id).trim() !== '' ? String(row.to_board_id) : null;
+    effectiveDestBoardId = explicitDestBoard ?? destColumnBoardId;
+
+    if (String(destColumnBoardId) !== String(effectiveDestBoardId)) {
+      await client.query(
+        `UPDATE chat_kanban_scheduled_moves SET status = 'skipped', cancelled_reason = $2, updated_at = now() WHERE id = $1`,
+        [row.id, 'destination_column_board_mismatch'],
+      );
+      await client.query('COMMIT');
+      logScheduledMoveSkipFromRow(row, 'destination_column_board_mismatch');
+      return;
+    }
+
+    crossBoard = String(effectiveDestBoardId) !== String(card.board_id);
+    if (crossBoard) {
+      logKanbanScheduledMoveCrossBoard({
+        correlationId: scheduledMoveCorrelationId(row.id),
+        scheduledMoveId: row.id,
+        cardId: row.card_id,
+        acquisitionLeadId,
+        fromBoard: String(card.board_id),
+        toBoard: effectiveDestBoardId,
+        fromColumn: String(row.from_column_id),
+        toColumn: String(row.to_column_id),
+      });
+      const dup = await client.query(
+        `SELECT id FROM chat_kanban_cards
+         WHERE tenant_id = $1 AND board_id = $2 AND acquisition_lead_id = $3 AND archived_at IS NULL AND id <> $4::uuid
+         LIMIT 1`,
+        [row.tenant_id, effectiveDestBoardId, acquisitionLeadId, row.card_id],
+      );
+      if (dup.rows.length > 0) {
+        await client.query(
+          `UPDATE chat_kanban_scheduled_moves SET status = 'skipped', cancelled_reason = $2, updated_at = now() WHERE id = $1`,
+          [row.id, 'acquisition_lead_already_on_destination_board'],
+        );
+        await client.query('COMMIT');
+        logScheduledMoveSkipFromRow(row, 'acquisition_lead_already_on_destination_board');
+        return;
+      }
+    }
+
+    const boardRes = await client.query(`SELECT * FROM chat_kanban_boards WHERE id = $1 AND tenant_id = $2`, [
+      effectiveDestBoardId,
+      row.tenant_id,
+    ]);
+    if (boardRes.rows.length === 0) {
+      await client.query(
+        `UPDATE chat_kanban_scheduled_moves SET status = 'skipped', cancelled_reason = $2, updated_at = now() WHERE id = $1`,
+        [row.id, 'board_missing'],
+      );
+      await client.query('COMMIT');
+      logScheduledMoveSkipFromRow(row, 'board_missing');
+      return;
+    }
+
+    actorUserId = row.created_by_user_id || (await resolveTenantAnyUserId(client, row.tenant_id));
+    if (!actorUserId) {
+      await client.query(
+        `UPDATE chat_kanban_scheduled_moves SET status = 'failed', error_message = $2, updated_at = now() WHERE id = $1`,
+        [row.id, 'no_actor_user_for_automation'],
+      );
+      await client.query('COMMIT');
+      logKanbanScheduledMoveFailed({
+        correlationId: scheduledMoveCorrelationId(row.id),
+        scheduledMoveId: row.id,
+        cardId: row.card_id,
+        acquisitionLeadId,
+        error: 'no_actor_user_for_automation',
+      });
+      return;
+    }
+
+    if (crossBoard) {
+      await cancelPendingScheduledMovesForCardExcept(
+        client,
+        row.tenant_id,
+        row.card_id,
+        row.id,
+        'superseded_before_cross_board_auto_move',
+        actorUserId,
+      );
+    }
+
+    await client.query('COMMIT');
+  } catch (e: unknown) {
+    try {
+      await client.query('ROLLBACK');
+    } catch {
+      /* ignore */
+    }
+    console.error('[kanbanScheduledMove] ops lead validation fatal', { scheduledMoveId: sm.id, error: e });
+    logKanbanScheduledMoveFailed({
+      correlationId: scheduledMoveCorrelationId(sm.id),
+      scheduledMoveId: sm.id,
+      cardId: sm.card_id,
+      acquisitionLeadId: sm.acquisition_lead_id,
+      conversationId: sm.conversation_id,
+      error: e,
+    });
+    try {
+      await markScheduledMoveTerminal(sm.id, 'failed', {
+        error_message: String((e as Error)?.message || e).slice(0, 500),
+      });
+    } catch {
+      /* ignore */
+    }
+    return;
+  } finally {
+    client.release();
+  }
+
+  if (!row || !effectiveDestBoardId || !actorUserId) return;
+
+  const acquisitionLeadId = String(row.acquisition_lead_id);
+  const executedAt = new Date();
+
+  try {
+    const { moveOpsCardWithAutomations } = await import('./moveOpsCardWithAutomations.js');
+    const moveResult = await moveOpsCardWithAutomations({
+      tenantId: row.tenant_id,
+      actorUserId,
+      cardId: row.card_id,
+      sourceBoardId: String(row.board_id),
+      sourceColumnId: String(row.from_column_id),
+      destinationBoardId: effectiveDestBoardId,
+      destinationColumnId: String(row.to_column_id),
+      source: 'kanban_scheduled_auto_move',
+      correlationId: `scheduled-move:${row.id}`,
+      moveReason: AUTO_MOVE_REASON,
+      preserveScheduledMoveId: row.id,
+    });
+
+    if (moveResult.status === 'moved') {
+      await markScheduledMoveTerminal(row.id, 'executed');
+      logKanbanScheduledMoveExecuted({
+        correlationId: scheduledMoveCorrelationId(row.id),
+        scheduledMoveId: row.id,
+        cardId: row.card_id,
+        acquisitionLeadId,
+        fromBoard: String(row.board_id),
+        fromColumn: String(row.from_column_id),
+        toBoard: effectiveDestBoardId,
+        toColumn: String(row.to_column_id),
+        executedAt,
+      });
+      console.info(
+        JSON.stringify({
+          msg: 'kanban_scheduled_move_executed',
+          scheduled_move_id: row.id,
+          tenant_id: row.tenant_id,
+          card_id: row.card_id,
+          acquisition_lead_id: acquisitionLeadId,
+          from_column_id: row.from_column_id,
+          to_column_id: row.to_column_id,
+          to_board_id: effectiveDestBoardId,
+        }),
+      );
+      return;
+    }
+
+    if (moveResult.status === 'already_at_destination') {
+      await markScheduledMoveTerminal(row.id, 'executed');
+      logKanbanScheduledMoveExecuted({
+        correlationId: scheduledMoveCorrelationId(row.id),
+        scheduledMoveId: row.id,
+        cardId: row.card_id,
+        acquisitionLeadId,
+        fromBoard: String(row.board_id),
+        fromColumn: String(row.from_column_id),
+        toBoard: effectiveDestBoardId,
+        toColumn: String(row.to_column_id),
+        executedAt,
+        detail: 'already_at_destination',
+      });
+      return;
+    }
+
+    const detail = `move_ops_status=${moveResult.status}`;
+    await markScheduledMoveTerminal(row.id, 'failed', { error_message: detail });
+    logKanbanScheduledMoveFailed({
+      correlationId: scheduledMoveCorrelationId(row.id),
+      scheduledMoveId: row.id,
+      cardId: row.card_id,
+      acquisitionLeadId,
+      error: detail,
+    });
+  } catch (e: unknown) {
+    console.error('[kanbanScheduledMove] ops lead move failed', {
+      scheduledMoveId: row.id,
+      cardId: row.card_id,
+      acquisitionLeadId,
+      error: e,
+    });
+    try {
+      await markScheduledMoveTerminal(row.id, 'failed', {
+        error_message: String((e as Error)?.message || e).slice(0, 500),
+      });
+    } catch {
+      /* ignore */
+    }
+    logKanbanScheduledMoveFailed({
+      correlationId: scheduledMoveCorrelationId(row.id),
+      scheduledMoveId: row.id,
+      cardId: row.card_id,
+      acquisitionLeadId,
+      error: e,
+    });
+  }
+}
+
 async function processOneScheduledMoveRow(sm: ScheduledMoveRow): Promise<void> {
+  if (isOpsLeadScheduledMove(sm)) {
+    await processOneScheduledMoveRowOpsLead(sm);
+    return;
+  }
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -410,6 +839,22 @@ async function processOneScheduledMoveRow(sm: ScheduledMoveRow): Promise<void> {
       return;
     }
     const row = lock.rows[0];
+    if (!row.conversation_id) {
+      await client.query(
+        `UPDATE chat_kanban_scheduled_moves SET status = 'failed', error_message = $2, updated_at = now() WHERE id = $1`,
+        [row.id, 'missing_conversation_id'],
+      );
+      await client.query('COMMIT');
+      logKanbanScheduledMoveFailed({
+        correlationId: scheduledMoveCorrelationId(row.id),
+        scheduledMoveId: row.id,
+        cardId: row.card_id,
+        acquisitionLeadId: row.acquisition_lead_id,
+        error: 'missing_conversation_id',
+      });
+      return;
+    }
+    const conversationId = row.conversation_id;
 
     const card = await loadCardLocked(client, row.tenant_id, row.card_id);
     if (!card) {
@@ -418,8 +863,9 @@ async function processOneScheduledMoveRow(sm: ScheduledMoveRow): Promise<void> {
         [row.id, 'card_missing_or_archived'],
       );
       await client.query('COMMIT');
+      logScheduledMoveSkipFromRow(row, 'card_missing_or_archived');
       await logKanbanAutoMoveByTimeAudit({
-        conversationId: row.conversation_id,
+        conversationId,
         tenantId: row.tenant_id,
         actorUserId: row.created_by_user_id,
         attendanceSnapshot: null,
@@ -441,11 +887,12 @@ async function processOneScheduledMoveRow(sm: ScheduledMoveRow): Promise<void> {
         [row.id, 'card_not_in_source_column'],
       );
       await client.query('COMMIT');
+      logScheduledMoveSkipFromRow(row, 'card_not_in_source_column');
       const att = await pool.query(`SELECT attendance_status FROM chat_conversations WHERE id = $1`, [
-        row.conversation_id,
+        conversationId,
       ]);
       await logKanbanAutoMoveByTimeAudit({
-        conversationId: row.conversation_id,
+        conversationId,
         tenantId: row.tenant_id,
         actorUserId: row.created_by_user_id,
         attendanceSnapshot: att.rows[0]?.attendance_status ?? null,
@@ -475,6 +922,9 @@ async function processOneScheduledMoveRow(sm: ScheduledMoveRow): Promise<void> {
         [row.id, 'column_missing'],
       );
       await client.query('COMMIT');
+      logScheduledMoveSkipFromRow(row, 'column_missing', {
+        destinationColumnMissing: toCol.rows.length === 0,
+      });
       return;
     }
     const fromMeta = fromCol.rows[0].metadata;
@@ -494,11 +944,12 @@ async function processOneScheduledMoveRow(sm: ScheduledMoveRow): Promise<void> {
         [row.id, 'automation_config_changed_or_disabled'],
       );
       await client.query('COMMIT');
+      logScheduledMoveSkipFromRow(row, 'automation_config_changed_or_disabled');
       const att = await pool.query(`SELECT attendance_status FROM chat_conversations WHERE id = $1`, [
-        row.conversation_id,
+        conversationId,
       ]);
       await logKanbanAutoMoveByTimeAudit({
-        conversationId: row.conversation_id,
+        conversationId,
         tenantId: row.tenant_id,
         actorUserId: row.created_by_user_id,
         attendanceSnapshot: att.rows[0]?.attendance_status ?? null,
@@ -526,17 +977,28 @@ async function processOneScheduledMoveRow(sm: ScheduledMoveRow): Promise<void> {
         [row.id, 'destination_column_board_mismatch'],
       );
       await client.query('COMMIT');
+      logScheduledMoveSkipFromRow(row, 'destination_column_board_mismatch');
       return;
     }
 
     const crossBoard = String(effectiveDestBoardId) !== String(card.board_id);
 
     if (crossBoard) {
+      logKanbanScheduledMoveCrossBoard({
+        correlationId: scheduledMoveCorrelationId(row.id),
+        scheduledMoveId: row.id,
+        cardId: row.card_id,
+        conversationId,
+        fromBoard: String(card.board_id),
+        toBoard: effectiveDestBoardId,
+        fromColumn: String(row.from_column_id),
+        toColumn: String(row.to_column_id),
+      });
       const dup = await client.query(
         `SELECT id FROM chat_kanban_cards
          WHERE tenant_id = $1 AND board_id = $2 AND conversation_id = $3 AND archived_at IS NULL AND id <> $4::uuid
          LIMIT 1`,
-        [row.tenant_id, effectiveDestBoardId, row.conversation_id, row.card_id],
+        [row.tenant_id, effectiveDestBoardId, conversationId, row.card_id],
       );
       if (dup.rows.length > 0) {
         await client.query(
@@ -544,6 +1006,7 @@ async function processOneScheduledMoveRow(sm: ScheduledMoveRow): Promise<void> {
           [row.id, 'conversation_already_on_destination_board'],
         );
         await client.query('COMMIT');
+        logScheduledMoveSkipFromRow(row, 'conversation_already_on_destination_board');
         return;
       }
     }
@@ -558,6 +1021,7 @@ async function processOneScheduledMoveRow(sm: ScheduledMoveRow): Promise<void> {
         [row.id, 'board_missing'],
       );
       await client.query('COMMIT');
+      logScheduledMoveSkipFromRow(row, 'board_missing');
       return;
     }
     const board = boardRes.rows[0];
@@ -568,6 +1032,13 @@ async function processOneScheduledMoveRow(sm: ScheduledMoveRow): Promise<void> {
         [row.id, 'no_actor_user_for_automation'],
       );
       await client.query('COMMIT');
+      logKanbanScheduledMoveFailed({
+        correlationId: scheduledMoveCorrelationId(row.id),
+        scheduledMoveId: row.id,
+        cardId: row.card_id,
+        conversationId,
+        error: 'no_actor_user_for_automation',
+      });
       return;
     }
 
@@ -601,7 +1072,7 @@ async function processOneScheduledMoveRow(sm: ScheduledMoveRow): Promise<void> {
         destColumn: dest,
         destColumnId: String(dest.id),
         cardId: row.card_id,
-        conversationId: row.conversation_id,
+        conversationId,
         moveReason,
       });
     } catch (e: any) {
@@ -612,6 +1083,13 @@ async function processOneScheduledMoveRow(sm: ScheduledMoveRow): Promise<void> {
       await client.query('COMMIT');
       console.error('[kanbanScheduledMove] column enter side effects failed', {
         scheduledMoveId: row.id,
+        error: e,
+      });
+      logKanbanScheduledMoveFailed({
+        correlationId: scheduledMoveCorrelationId(row.id),
+        scheduledMoveId: row.id,
+        cardId: row.card_id,
+        conversationId,
         error: e,
       });
       return;
@@ -637,7 +1115,7 @@ async function processOneScheduledMoveRow(sm: ScheduledMoveRow): Promise<void> {
         boardLinkedFunnelId: (board.linked_sales_funnel_id as string | null) ?? null,
         destColumn: dest,
         cardId: row.card_id,
-        conversationId: row.conversation_id,
+        conversationId,
       });
     } catch (e: any) {
       await client.query('ROLLBACK');
@@ -647,6 +1125,13 @@ async function processOneScheduledMoveRow(sm: ScheduledMoveRow): Promise<void> {
         [row.id, msg],
       );
       console.error('[kanbanScheduledMove] post-update automations failed', { scheduledMoveId: row.id, error: e });
+      logKanbanScheduledMoveFailed({
+        correlationId: scheduledMoveCorrelationId(row.id),
+        scheduledMoveId: row.id,
+        cardId: row.card_id,
+        conversationId,
+        error: e,
+      });
       return;
     }
 
@@ -663,7 +1148,7 @@ async function processOneScheduledMoveRow(sm: ScheduledMoveRow): Promise<void> {
       tenantId: row.tenant_id,
       boardId: String(effectiveDestBoardId),
       cardId: row.card_id,
-      conversationId: row.conversation_id,
+      conversationId,
       columnId: String(dest.id),
       columnMetadata: dest.metadata,
       actorUserId,
@@ -681,7 +1166,7 @@ async function processOneScheduledMoveRow(sm: ScheduledMoveRow): Promise<void> {
           runDeferredKanbanEntryAutomationsAfterCommit({
             tenantId: row.tenant_id,
             actorUserId,
-            conversationId: row.conversation_id,
+            conversationId,
             reasons: postUpdateResult.deferredEntryAutomations!,
           }),
         )
@@ -697,29 +1182,29 @@ async function processOneScheduledMoveRow(sm: ScheduledMoveRow): Promise<void> {
          FROM chat_conversations c
          INNER JOIN users owner ON owner.id = c.user_id
          WHERE c.id = $1 LIMIT 1`,
-        [row.conversation_id],
+        [conversationId],
       );
       const rr = cr.rows[0];
       if (rr) {
-        emitKanbanAttendanceIfNeeded(rr.owner_tenant_id, rr.owner_user_id, { id: row.conversation_id });
+        emitKanbanAttendanceIfNeeded(rr.owner_tenant_id, rr.owner_user_id, { id: conversationId });
       }
     }
 
     let phase2Ctx: KanbanPhase2AutomationContext = side.phase2Ctx;
-    phase2Ctx = await enrichPhase2AfterCommit(row.tenant_id, row.card_id, row.conversation_id, phase2Ctx);
+    phase2Ctx = await enrichPhase2AfterCommit(row.tenant_id, row.card_id, conversationId, phase2Ctx);
     runKanbanPhase2Automations(phase2Ctx).catch((automationErr) => {
       console.error('[kanbanScheduledMove] phase2 automations failed', {
         cardId: row.card_id,
-        conversationId: row.conversation_id,
+        conversationId,
         error: automationErr,
       });
     });
 
     const att = await pool.query(`SELECT attendance_status FROM chat_conversations WHERE id = $1`, [
-      row.conversation_id,
+      conversationId,
     ]);
     await logKanbanAutoMoveByTimeAudit({
-      conversationId: row.conversation_id,
+      conversationId,
       tenantId: row.tenant_id,
       actorUserId,
       attendanceSnapshot: att.rows[0]?.attendance_status ?? null,
@@ -730,6 +1215,18 @@ async function processOneScheduledMoveRow(sm: ScheduledMoveRow): Promise<void> {
       cardId: row.card_id,
       scheduledMoveId: row.id,
       scheduledFor: new Date(row.scheduled_for),
+    });
+
+    logKanbanScheduledMoveExecuted({
+      correlationId: scheduledMoveCorrelationId(row.id),
+      scheduledMoveId: row.id,
+      cardId: row.card_id,
+      conversationId,
+      fromBoard: String(row.board_id),
+      fromColumn: String(row.from_column_id),
+      toBoard: effectiveDestBoardId,
+      toColumn: String(row.to_column_id),
+      executedAt: new Date(),
     });
 
     console.info(
@@ -749,6 +1246,14 @@ async function processOneScheduledMoveRow(sm: ScheduledMoveRow): Promise<void> {
       /* ignore */
     }
     console.error('[kanbanScheduledMove] process row fatal', { error: e });
+    logKanbanScheduledMoveFailed({
+      correlationId: scheduledMoveCorrelationId(sm.id),
+      scheduledMoveId: sm.id,
+      cardId: sm.card_id,
+      conversationId: sm.conversation_id,
+      acquisitionLeadId: sm.acquisition_lead_id,
+      error: e,
+    });
     try {
       await pool.query(
         `UPDATE chat_kanban_scheduled_moves SET status = 'failed', error_message = $2, updated_at = now()

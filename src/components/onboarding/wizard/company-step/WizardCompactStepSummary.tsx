@@ -25,7 +25,7 @@ export function WizardCompactStepSummary({
   const currentIndex = steps.findIndex((s) => s.id === currentStepId);
 
   return (
-    <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] px-3 py-2.5">
+    <div className="w-full min-w-0 rounded-xl border border-white/[0.08] bg-white/[0.02] px-2.5 py-2">
       <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
         Jornada
       </p>

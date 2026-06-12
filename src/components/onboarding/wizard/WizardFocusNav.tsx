@@ -26,7 +26,7 @@ export function WizardFocusNav({
   showSkip = false,
 }: Props) {
   return (
-    <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex min-w-0 w-full max-w-full flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex flex-wrap gap-2">
         {showBack && onBack ? (
           <Button
@@ -55,7 +55,7 @@ export function WizardFocusNav({
         <Button
           type="button"
           className={cn(
-            'h-12 w-full text-base sm:min-w-[200px] sm:w-auto',
+            'h-12 w-full max-w-full text-base sm:min-w-[200px] sm:w-auto',
             'shadow-[0_0_28px_-10px_hsl(var(--primary)/0.5)]',
           )}
           disabled={loading || continueDisabled}

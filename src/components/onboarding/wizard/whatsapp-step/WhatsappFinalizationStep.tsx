@@ -120,7 +120,7 @@ function WhatsappPrimaryCard({
   onEnterWithoutConnect: () => void;
 }) {
   return (
-    <div className="rounded-xl border border-primary/25 bg-white/[0.035] px-4 py-4 shadow-[0_0_48px_-20px_hsl(var(--primary)/0.35)] sm:px-5 sm:py-5">
+    <div className="min-w-0 w-full rounded-xl border border-primary/25 bg-white/[0.035] px-4 py-4 shadow-[0_0_48px_-20px_hsl(var(--primary)/0.35)] sm:px-5 sm:py-5">
       <div className="mb-3 flex items-center gap-2.5">
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-primary">
           <MessageCircle className="h-5 w-5" />
@@ -159,12 +159,12 @@ function WhatsappPrimaryCard({
               <p className="text-center text-[11px] text-muted-foreground">Finalizando ativação…</p>
             </div>
           ) : qrCode ? (
-            <div className="animate-in fade-in flex flex-col items-center gap-2 duration-300 data-[exiting=true]:animate-out data-[exiting=true]:fade-out">
-              <div className="rounded-xl bg-white p-2.5 shadow-[0_0_60px_-16px_hsl(var(--primary)/0.45)] ring-1 ring-white/20 sm:p-3">
+            <div className="animate-in fade-in flex w-full flex-col items-center gap-2 duration-300 data-[exiting=true]:animate-out data-[exiting=true]:fade-out">
+              <div className="mx-auto max-w-full rounded-xl bg-white p-2.5 shadow-[0_0_60px_-16px_hsl(var(--primary)/0.45)] ring-1 ring-white/20 sm:p-3">
                 <img
                   src={qrCode}
                   alt="QR Code WhatsApp"
-                  className="h-[min(48vw,180px)] w-[min(48vw,180px)] sm:h-[200px] sm:w-[200px]"
+                  className="mx-auto h-[min(48vw,180px)] w-[min(48vw,180px)] max-w-full object-contain sm:h-[200px] sm:w-[200px]"
                 />
               </div>
               <p className="text-center text-[11px] text-muted-foreground">
@@ -185,7 +185,7 @@ function WhatsappPrimaryCard({
             value={connectionName}
             onChange={(e) => onConnectionNameChange(e.target.value)}
             placeholder="Ex.: WhatsApp Comercial"
-            className="h-10 border-white/10 bg-white/[0.03] text-sm"
+            className="h-10 w-full border-white/10 bg-white/[0.03] text-sm"
           />
         </div>
       )}
@@ -223,7 +223,7 @@ function WhyConnectNow({ className }: { className?: string }) {
       <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
         Benefícios da conexão
       </p>
-      <ul className="grid grid-cols-2 gap-x-2 gap-y-1">
+      <ul className="grid grid-cols-1 gap-x-2 gap-y-1 min-[520px]:grid-cols-2">
         {CONNECT_BENEFITS.map((item) => (
           <li key={item} className="flex items-start gap-1 text-[10px] leading-tight text-muted-foreground">
             <Check className="mt-px h-2.5 w-2.5 shrink-0 text-primary" strokeWidth={2.5} />

@@ -10,6 +10,7 @@ type Props = {
   wideContent?: boolean;
   operationStepMobile?: boolean;
   reserveBottomSpace?: boolean;
+  adminStepMobile?: boolean;
 };
 
 /** App shell — 100vh fixo, sem scroll da página (scroll só no mobile quando necessário). */
@@ -20,6 +21,7 @@ export function OnboardingLayout({
   wideContent,
   operationStepMobile,
   reserveBottomSpace,
+  adminStepMobile = false,
 }: Props) {
   return (
     <div className="dark relative flex h-[100dvh] overflow-hidden bg-[hsl(228,32%,4%)] text-foreground">
@@ -35,6 +37,7 @@ export function OnboardingLayout({
           reserveBottomSpace={reserveBottomSpace ?? operationStepMobile}
           hideFooterStepDots={operationStepMobile}
           lockViewport={wideContent}
+          adminStepMobile={adminStepMobile}
         >
           <div
             className={

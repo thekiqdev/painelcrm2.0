@@ -8,6 +8,8 @@ type Props = {
   disabled?: boolean;
   label?: string;
   subtitle?: string;
+  dense?: boolean;
+  className?: string;
 };
 
 export function ContactDesktopFooter({
@@ -16,17 +18,33 @@ export function ContactDesktopFooter({
   disabled,
   label = CONTACT_CTA.label,
   subtitle = CONTACT_CTA.subtitle,
+  dense = false,
+  className,
 }: Props) {
   return (
     <footer
       className={cn(
-        'mt-1 w-full shrink-0 border-t border-white/[0.07]',
-        'bg-[hsl(228,30%,6%)]/80 px-1 py-4 backdrop-blur-xl',
+        'w-full shrink-0 border-t border-white/[0.07]',
+        'bg-[hsl(228,30%,6%)]/80 px-1 backdrop-blur-xl',
         'shadow-[0_-8px_32px_-12px_rgba(0,0,0,0.45)]',
+        dense ? 'mt-auto py-3' : 'mt-1 py-4',
+        className,
       )}
     >
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="max-w-md text-xs leading-relaxed text-muted-foreground">{subtitle}</p>
+      <div
+        className={cn(
+          'flex flex-col sm:flex-row sm:items-center sm:justify-between',
+          dense ? 'gap-2' : 'gap-3',
+        )}
+      >
+        <p
+          className={cn(
+            'max-w-md text-xs leading-relaxed text-muted-foreground',
+            dense && 'hidden xl:block',
+          )}
+        >
+          {subtitle}
+        </p>
         <button
           type="button"
           disabled={disabled || loading}

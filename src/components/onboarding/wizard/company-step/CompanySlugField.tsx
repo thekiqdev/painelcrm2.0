@@ -70,7 +70,7 @@ export function CompanySlugField({ slug, slugCheck, onSlugChange, onUseSuggestio
           autoComplete="off"
           spellCheck={false}
           className={cn(
-            'h-11 border-white/10 bg-white/[0.03] font-mono text-base lg:h-12',
+            'h-11 w-full border-white/10 bg-white/[0.03] font-mono text-base lg:h-12',
             hasSuffix && 'pr-[7.5rem]',
           )}
         />

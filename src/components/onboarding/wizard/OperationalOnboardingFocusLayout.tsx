@@ -2,6 +2,11 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 
+/** 300px sidebar + gap + 760px conteúdo principal */
+const DESKTOP_WITH_ASIDE_MAX_W = 'max-w-[1100px]';
+const MAIN_CONTENT_MAX_W = 'max-w-[760px]';
+const DESKTOP_GRID = 'lg:grid lg:grid-cols-[300px_minmax(0,1fr)] lg:items-start lg:gap-8';
+
 type Props = {
   children: ReactNode;
   header: ReactNode;
@@ -29,7 +34,7 @@ export function OperationalOnboardingFocusLayout({
   compactVertical = false,
 }: Props) {
   return (
-    <div className="dark relative flex h-[100dvh] flex-col overflow-hidden bg-[hsl(228,32%,4%)] text-foreground">
+    <div className="dark relative flex h-[100dvh] flex-col overflow-hidden overflow-x-hidden bg-[hsl(228,32%,4%)] text-foreground">
       <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
         <div className="absolute left-1/2 top-0 h-[min(65vh,480px)] w-[min(90vw,640px)] -translate-x-1/2 rounded-full bg-[hsl(221,65%,48%)]/[0.08] blur-[100px]" />
         <div className="absolute bottom-0 right-0 h-[35vh] w-[45vw] max-w-sm rounded-full bg-slate-500/[0.05] blur-[80px]" />
@@ -39,7 +44,7 @@ export function OperationalOnboardingFocusLayout({
         <div
           className={cn(
             'mx-auto flex items-center justify-between gap-4 px-4 py-4 sm:px-6',
-            aside ? 'max-w-5xl' : 'max-w-2xl',
+            aside ? DESKTOP_WITH_ASIDE_MAX_W : 'max-w-2xl',
           )}
         >
           <Link
@@ -49,7 +54,16 @@ export function OperationalOnboardingFocusLayout({
             PainelCRM
           </Link>
         </div>
-        <div className={cn('mx-auto px-4 pb-4 sm:px-6', aside ? 'max-w-5xl' : 'max-w-2xl')}>{header}</div>
+        <div className={cn('mx-auto px-4 pb-4 sm:px-6', aside ? DESKTOP_WITH_ASIDE_MAX_W : 'max-w-2xl')}>
+          {aside ? (
+            <div className={cn(DESKTOP_GRID, 'max-lg:block')}>
+              <div className="hidden min-w-0 lg:block" aria-hidden />
+              <div className={cn('min-w-0', MAIN_CONTENT_MAX_W)}>{header}</div>
+            </div>
+          ) : (
+            header
+          )}
+        </div>
       </header>
 
       <main
@@ -61,20 +75,29 @@ export function OperationalOnboardingFocusLayout({
       >
         <div
           className={cn(
-            'mx-auto flex w-full flex-1 flex-col px-4 sm:px-6',
+            'mx-auto flex w-full min-w-0 flex-1 flex-col px-4 sm:px-6',
             compactVertical ? 'py-4 sm:py-5' : 'py-6 sm:py-8',
-            aside ? (compactVertical ? 'max-w-5xl lg:py-6' : 'max-w-5xl lg:py-10') : 'max-w-lg justify-center sm:py-10',
+            aside
+              ? cn(compactVertical ? 'lg:py-6' : 'lg:py-10', DESKTOP_WITH_ASIDE_MAX_W)
+              : 'max-w-lg justify-center sm:py-10',
           )}
         >
           {aside ? (
-            <div className="flex min-h-0 flex-1 flex-col gap-5 lg:grid lg:grid-cols-[minmax(0,260px)_1fr] lg:items-start lg:gap-10">
-              <aside className="shrink-0 lg:sticky lg:top-6 lg:self-start">{aside}</aside>
-              <div className="min-w-0 flex-1 animate-in fade-in slide-in-from-bottom-3 duration-500 fill-mode-both lg:pt-0.5">
+            <div className={cn('flex min-h-0 min-w-0 flex-1 flex-col gap-5', DESKTOP_GRID)}>
+              <aside className="min-w-0 max-w-[300px] shrink-0 max-lg:max-w-none lg:sticky lg:top-6 lg:w-[300px] lg:self-start">
+                {aside}
+              </aside>
+              <div
+                className={cn(
+                  'min-w-0 w-full animate-in fade-in slide-in-from-bottom-3 duration-500 fill-mode-both lg:pt-0.5',
+                  MAIN_CONTENT_MAX_W,
+                )}
+              >
                 {children}
               </div>
             </div>
           ) : (
-            <div className="animate-in fade-in slide-in-from-bottom-3 duration-500 fill-mode-both">{children}</div>
+            <div className="min-w-0 animate-in fade-in slide-in-from-bottom-3 duration-500 fill-mode-both">{children}</div>
           )}
         </div>
       </main>
@@ -89,12 +112,19 @@ export function OperationalOnboardingFocusLayout({
         >
           <div
             className={cn(
-              'mx-auto sm:px-6',
+              'mx-auto min-w-0 sm:px-6',
               mobileFixedFooter ? 'max-lg:px-0 max-lg:py-0' : 'px-4 py-4',
-              aside ? 'max-w-5xl' : 'max-w-lg',
+              aside ? DESKTOP_WITH_ASIDE_MAX_W : 'max-w-lg',
             )}
           >
-            {footer}
+            {aside ? (
+              <div className={cn(DESKTOP_GRID, 'max-lg:block')}>
+                <div className="hidden min-w-0 lg:block" aria-hidden />
+                <div className={cn('min-w-0 w-full', MAIN_CONTENT_MAX_W)}>{footer}</div>
+              </div>
+            ) : (
+              footer
+            )}
           </div>
         </footer>
       ) : null}
