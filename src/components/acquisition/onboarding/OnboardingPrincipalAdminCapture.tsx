@@ -151,7 +151,7 @@ function AdminAccessConfigSection({
           <Input
             id="admin-password"
             type="password"
-            className={cn(activationInputClass, 'w-full')}
+            className={cn(activationInputClass, 'w-full max-lg:scroll-mb-52')}
             value={password}
             onChange={(e) => onChange({ signup_password: e.target.value })}
             placeholder="Mínimo 6 caracteres"
@@ -166,7 +166,7 @@ function AdminAccessConfigSection({
           <Input
             id="admin-password-confirm"
             type="password"
-            className={cn(activationInputClass, 'w-full')}
+            className={cn(activationInputClass, 'w-full max-lg:scroll-mb-52')}
             value={confirmPassword}
             onChange={(e) => onChange({ signup_password_confirm: e.target.value })}
             placeholder="Repita a senha"

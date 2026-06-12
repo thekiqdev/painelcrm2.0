@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { ActivationAppBackground } from './ActivationAppBackground';
 import { ActivationAppSidebar } from './ActivationAppSidebar';
 import { OnboardingMobileShell } from './OnboardingMobileShell';
+import { cn } from '@/lib/utils';
 
 type Props = {
   children: ReactNode;
@@ -42,14 +43,20 @@ export function OnboardingLayout({
           <div
             className={
               wideContent
-                ? 'flex h-full w-full justify-center max-lg:px-0 px-8 py-4 xl:px-10'
+                ? cn(
+                    'flex w-full justify-center max-lg:px-0 px-8 py-4 xl:px-10',
+                    adminStepMobile ? 'max-lg:h-auto max-lg:min-h-0 lg:h-full' : 'h-full',
+                  )
                 : 'flex min-h-full flex-1 items-center justify-center px-10 py-10 xl:px-16'
             }
           >
             <div
               className={
                 wideContent
-                  ? 'flex h-full w-full max-w-[1500px] flex-col max-lg:max-w-none'
+                  ? cn(
+                      'flex w-full max-w-[1500px] flex-col max-lg:max-w-none',
+                      adminStepMobile ? 'max-lg:h-auto max-lg:min-h-0 lg:h-full' : 'h-full',
+                    )
                   : 'w-full max-w-[720px]'
               }
             >

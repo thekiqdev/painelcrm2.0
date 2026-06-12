@@ -83,6 +83,10 @@ export const ONBOARDING_LEAD_ADMIN_ACCESS_SECTION = {
     'Configure uma senha para o primeiro acesso do administrador. Em breve, também será possível entrar utilizando um código enviado pelo WhatsApp.',
 };
 
+/** E2.6.1 — folga rolável acima do footer fixo (admin mobile: Voltar + Continuar + safe area). */
+export const ONBOARDING_ADMIN_MOBILE_FOOTER_CLEARANCE =
+  'calc(13rem + env(safe-area-inset-bottom, 0px))';
+
 /** @deprecated E2.5 — use ONBOARDING_LEAD_ADMIN_HEADLINE */
 export const ONBOARDING_LEAD_CREDENTIALS_HEADLINE = ONBOARDING_LEAD_ADMIN_HEADLINE;
 

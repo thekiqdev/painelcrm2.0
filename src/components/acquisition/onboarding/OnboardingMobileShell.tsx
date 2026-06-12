@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { cn } from '@/lib/utils';
-import { ONBOARDING_STEPS } from './constants';
+import { ONBOARDING_ADMIN_MOBILE_FOOTER_CLEARANCE, ONBOARDING_STEPS } from './constants';
 
 type Props = {
   activeStepIndex: number;
@@ -89,16 +89,21 @@ export function OnboardingMobileShell({
         className={cn(
           'min-h-0 flex-1 overflow-x-hidden',
           adminStepMobile
-            ? 'overflow-y-auto overscroll-contain touch-pan-y'
+            ? 'overflow-y-auto overscroll-contain touch-pan-y [-webkit-overflow-scrolling:touch]'
             : lockViewport
               ? 'overflow-hidden lg:overflow-hidden'
               : 'overflow-y-auto overscroll-contain',
           adminStepMobile ? 'px-0 py-0 lg:px-0 lg:py-0' : 'px-4 py-3 lg:overflow-hidden lg:px-0 lg:py-0',
-          reserveBottomSpace &&
-            (adminStepMobile
-              ? 'pb-[calc(10.5rem+env(safe-area-inset-bottom))]'
-              : 'pb-[min(42vh,220px)]'),
+          reserveBottomSpace && !adminStepMobile && 'pb-[min(42vh,220px)]',
         )}
+        style={
+          adminStepMobile && reserveBottomSpace
+            ? {
+                paddingBottom: ONBOARDING_ADMIN_MOBILE_FOOTER_CLEARANCE,
+                scrollPaddingBottom: ONBOARDING_ADMIN_MOBILE_FOOTER_CLEARANCE,
+              }
+            : undefined
+        }
       >
         {children}
       </div>
