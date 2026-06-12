@@ -21,7 +21,6 @@ import {
 import { observeOpsKanbanAcquisitionSync } from '../lifecycle/lifecycleDebugService.js';
 import { moveOpsCardWithAutomations } from './moveOpsCardWithAutomations.js';
 import {
-  acquireOpsLeadCardTransactionLock,
   healDuplicateActiveOpsCardsForLead,
   logOpsSingleCard,
   withOpsLeadCardSessionLock,
@@ -232,7 +231,9 @@ export async function syncAcquisitionLeadToOpsKanban(input: {
 
   const meta = buildLeadCardMetadata(lead);
 
-  return withOpsLeadCardSessionLock(lead.id, async () => {
+  return withOpsLeadCardSessionLock(
+    lead.id,
+    async () => {
     await healDuplicateActiveOpsCardsForLead({
       acquisitionLeadId: lead.id,
       actorUserId: actor,
@@ -299,7 +300,6 @@ export async function syncAcquisitionLeadToOpsKanban(input: {
     const client = await pool.connect();
     try {
       await beginKanbanTxWithRls(client, SUPERADMIN_OPS_KANBAN_TENANT_ID, actor);
-      await acquireOpsLeadCardTransactionLock(client, lead.id);
 
       const recheck = await findOpsKanbanCardForLead(lead.id);
       if (recheck) {
@@ -441,7 +441,9 @@ export async function syncAcquisitionLeadToOpsKanban(input: {
     } finally {
       client.release();
     }
-  });
+  },
+    { correlationId: input.correlationId },
+  );
 }
 
 export async function findOpsKanbanCardForLeadOnBoard(

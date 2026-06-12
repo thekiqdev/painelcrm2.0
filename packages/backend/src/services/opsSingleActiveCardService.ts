@@ -11,7 +11,14 @@ export type OpsSingleCardLogAction =
   | 'duplicate_detected'
   | 'duplicate_archived'
   | 'race_prevented'
-  | 'global_card_reused';
+  | 'global_card_reused'
+  | 'lock_acquired'
+  | 'lock_released'
+  | 'lock_wait_timeout';
+
+/** Tempo máximo aguardando lock de sessão por lead (evita hang indefinido). */
+export const OPS_LEAD_CARD_LOCK_WAIT_MS = 30_000;
+const OPS_LEAD_CARD_LOCK_POLL_MS = 50;
 
 export function logOpsSingleCard(payload: {
   action: OpsSingleCardLogAction;
@@ -41,34 +48,72 @@ function advisoryLockKey(acquisitionLeadId: string): string {
   return `ops-lead-card:${acquisitionLeadId.trim()}`;
 }
 
-/** Lock de sessão por lead — cobre lookup + INSERT/move entre conexões. */
+export type OpsLeadCardSessionLockOptions = {
+  correlationId?: string | null;
+  lockWaitMs?: number;
+};
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Lock de sessão por lead — serializa heal + lookup + INSERT/move entre conexões.
+ * K8.3: usa pg_try_advisory_lock com timeout; não combinar com xact lock na mesma chave.
+ */
 export async function withOpsLeadCardSessionLock<T>(
   acquisitionLeadId: string,
   fn: () => Promise<T>,
+  options?: OpsLeadCardSessionLockOptions,
 ): Promise<T> {
   const client = await pool.connect();
   const key = advisoryLockKey(acquisitionLeadId);
+  const lockWaitMs = options?.lockWaitMs ?? OPS_LEAD_CARD_LOCK_WAIT_MS;
+  const startedAt = Date.now();
+  let acquired = false;
   try {
-    await client.query(`SELECT pg_advisory_lock(hashtextextended($1::text, 0))`, [key]);
+    while (Date.now() - startedAt < lockWaitMs) {
+      const r = await client.query<{ ok: boolean }>(
+        `SELECT pg_try_advisory_lock(hashtextextended($1::text, 0)) AS ok`,
+        [key],
+      );
+      if (r.rows[0]?.ok) {
+        acquired = true;
+        logOpsSingleCard({
+          action: 'lock_acquired',
+          acquisitionLeadId,
+          correlationId: options?.correlationId,
+          detail: `wait_ms=${Date.now() - startedAt}`,
+        });
+        break;
+      }
+      await sleep(OPS_LEAD_CARD_LOCK_POLL_MS);
+    }
+    if (!acquired) {
+      logOpsSingleCard({
+        action: 'lock_wait_timeout',
+        acquisitionLeadId,
+        correlationId: options?.correlationId,
+        detail: `timeout_ms=${lockWaitMs}`,
+      });
+      throw new Error(`ops_lead_card_lock_timeout:${acquisitionLeadId}`);
+    }
     return await fn();
   } finally {
-    try {
-      await client.query(`SELECT pg_advisory_unlock(hashtextextended($1::text, 0))`, [key]);
-    } catch {
-      /* ignore */
+    if (acquired) {
+      try {
+        await client.query(`SELECT pg_advisory_unlock(hashtextextended($1::text, 0))`, [key]);
+        logOpsSingleCard({
+          action: 'lock_released',
+          acquisitionLeadId,
+          correlationId: options?.correlationId,
+        });
+      } catch {
+        /* ignore */
+      }
     }
     client.release();
   }
-}
-
-/** Lock transacional (mesma conexão) para INSERT atômico. */
-export async function acquireOpsLeadCardTransactionLock(
-  client: PoolClient,
-  acquisitionLeadId: string,
-): Promise<void> {
-  await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))`, [
-    advisoryLockKey(acquisitionLeadId),
-  ]);
 }
 
 export async function listActiveOpsCardsForLead(

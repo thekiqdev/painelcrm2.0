@@ -1,8 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   pickWinnerOpsCard,
+  withOpsLeadCardSessionLock,
   type ActiveOpsCardRow,
 } from './opsSingleActiveCardService.js';
+
+const poolConnectMock = vi.hoisted(() => vi.fn());
+const poolQueryMock = vi.hoisted(() => vi.fn());
+
+vi.mock('../utils/db.js', () => ({
+  pool: {
+    connect: poolConnectMock,
+    query: vi.fn(),
+  },
+}));
 
 function card(
   id: string,
@@ -23,6 +34,8 @@ function card(
 describe('opsSingleActiveCardService', () => {
   beforeEach(() => {
     vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    poolConnectMock.mockReset();
+    poolQueryMock.mockReset();
   });
 
   describe('pickWinnerOpsCard', () => {
@@ -47,6 +60,56 @@ describe('opsSingleActiveCardService', () => {
 
     it('retorna null para lista vazia', () => {
       expect(pickWinnerOpsCard([])).toBeNull();
+    });
+  });
+
+  describe('withOpsLeadCardSessionLock', () => {
+    it('adquire lock, executa fn e libera com logs', async () => {
+      const release = vi.fn();
+      const clientQuery = vi
+        .fn()
+        .mockResolvedValueOnce({ rows: [{ ok: true }] })
+        .mockResolvedValueOnce({ rows: [] });
+      poolConnectMock.mockResolvedValue({ query: clientQuery, release });
+
+      const result = await withOpsLeadCardSessionLock(
+        'lead-1',
+        async () => 'done',
+        { correlationId: 'corr-1' },
+      );
+
+      expect(result).toBe('done');
+      expect(clientQuery).toHaveBeenCalledTimes(2);
+      expect(release).toHaveBeenCalled();
+      const logs = vi.mocked(console.info).mock.calls.map((c) => c[1]);
+      expect(logs).toContainEqual(
+        expect.objectContaining({ action: 'lock_acquired', acquisitionLeadId: 'lead-1' }),
+      );
+      expect(logs).toContainEqual(
+        expect.objectContaining({ action: 'lock_released', acquisitionLeadId: 'lead-1' }),
+      );
+    });
+
+    it('falha com timeout quando lock não é adquirido', async () => {
+      vi.useFakeTimers();
+      const release = vi.fn();
+      const clientQuery = vi.fn().mockResolvedValue({ rows: [{ ok: false }] });
+      poolConnectMock.mockResolvedValue({ query: clientQuery, release });
+
+      const promise = withOpsLeadCardSessionLock(
+        'lead-2',
+        async () => 'done',
+        { lockWaitMs: 100 },
+      );
+      const expectation = expect(promise).rejects.toThrow('ops_lead_card_lock_timeout:lead-2');
+      await vi.advanceTimersByTimeAsync(150);
+      await expectation;
+      expect(release).toHaveBeenCalled();
+      const logs = vi.mocked(console.info).mock.calls.map((c) => c[1]);
+      expect(logs).toContainEqual(
+        expect.objectContaining({ action: 'lock_wait_timeout', acquisitionLeadId: 'lead-2' }),
+      );
+      vi.useRealTimers();
     });
   });
 });
