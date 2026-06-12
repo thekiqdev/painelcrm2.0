@@ -20,6 +20,12 @@ import {
 } from './superadminOpsLeadTimelineService.js';
 import { observeOpsKanbanAcquisitionSync } from '../lifecycle/lifecycleDebugService.js';
 import { moveOpsCardWithAutomations } from './moveOpsCardWithAutomations.js';
+import {
+  acquireOpsLeadCardTransactionLock,
+  healDuplicateActiveOpsCardsForLead,
+  logOpsSingleCard,
+  withOpsLeadCardSessionLock,
+} from './opsSingleActiveCardService.js';
 
 export { ACQUISITION_BOARD_NAME };
 
@@ -225,155 +231,217 @@ export async function syncAcquisitionLeadToOpsKanban(input: {
   }
 
   const meta = buildLeadCardMetadata(lead);
-  const existingOnBoard = await findOpsKanbanCardForLeadOnBoard(lead.id, boardId);
-  const existingCard = existingOnBoard ?? (await findOpsKanbanCardForLead(lead.id));
-  const timelineType = input.timelineType ?? (existingCard ? 'kanban_moved' : 'kanban_card_created');
 
-  if (existingCard) {
-    const moveResult = await moveOpsCardWithAutomations({
-      tenantId: SUPERADMIN_OPS_KANBAN_TENANT_ID,
+  return withOpsLeadCardSessionLock(lead.id, async () => {
+    await healDuplicateActiveOpsCardsForLead({
+      acquisitionLeadId: lead.id,
       actorUserId: actor,
-      cardId: existingCard.cardId,
-      sourceBoardId: existingCard.boardId,
-      sourceColumnId: existingCard.columnId,
-      destinationBoardId: boardId,
-      destinationColumnId: columnId,
-      source: 'syncAcquisitionLeadToOpsKanban',
       correlationId: input.correlationId,
-      metadataPatch: meta,
     });
 
-    const moved =
-      moveResult.status === 'moved' &&
-      (existingCard.columnId !== columnId || existingCard.boardId !== boardId);
+    const existingCard = await findOpsKanbanCardForLead(lead.id);
+    const timelineType = input.timelineType ?? (existingCard ? 'kanban_moved' : 'kanban_card_created');
 
-    observeOpsKanbanAcquisitionSync({
-      acquisitionLeadId: lead.id,
-      tenantId: lead.tenant_id,
-      correlationId: input.correlationId,
-      currentStage: lead.current_stage,
-      signupStep: input.signupStep,
-      columnName,
-      cardCreated: false,
-    });
+    if (existingCard) {
+      logOpsSingleCard({
+        action: 'global_card_reused',
+        acquisitionLeadId: lead.id,
+        winnerCardId: existingCard.cardId,
+        correlationId: input.correlationId,
+        detail: `target_board=${boardId}`,
+      });
 
-    if (
-      moveResult.status === 'card_not_found' ||
-      moveResult.status === 'board_not_found' ||
-      moveResult.status === 'column_not_found'
-    ) {
-      return { ok: false, reason: moveResult.status };
+      const moveResult = await moveOpsCardWithAutomations({
+        tenantId: SUPERADMIN_OPS_KANBAN_TENANT_ID,
+        actorUserId: actor,
+        cardId: existingCard.cardId,
+        sourceBoardId: existingCard.boardId,
+        sourceColumnId: existingCard.columnId,
+        destinationBoardId: boardId,
+        destinationColumnId: columnId,
+        source: 'syncAcquisitionLeadToOpsKanban',
+        correlationId: input.correlationId,
+        metadataPatch: meta,
+      });
+
+      const moved =
+        moveResult.status === 'moved' &&
+        (existingCard.columnId !== columnId || existingCard.boardId !== boardId);
+
+      observeOpsKanbanAcquisitionSync({
+        acquisitionLeadId: lead.id,
+        tenantId: lead.tenant_id,
+        correlationId: input.correlationId,
+        currentStage: lead.current_stage,
+        signupStep: input.signupStep,
+        columnName,
+        cardCreated: false,
+      });
+
+      if (
+        moveResult.status === 'card_not_found' ||
+        moveResult.status === 'board_not_found' ||
+        moveResult.status === 'column_not_found'
+      ) {
+        return { ok: false, reason: moveResult.status };
+      }
+
+      return {
+        ok: true,
+        cardId: moveResult.cardId ?? existingCard.cardId,
+        boardId,
+        columnId,
+        created: false,
+        moved: moved || moveResult.status === 'moved',
+      };
     }
 
-    return {
-      ok: true,
-      cardId: moveResult.cardId ?? existingCard.cardId,
-      boardId,
-      columnId,
-      created: false,
-      moved: moved || moveResult.status === 'moved',
-    };
-  }
-
-  const client = await pool.connect();
-  try {
-    await beginKanbanTxWithRls(client, SUPERADMIN_OPS_KANBAN_TENANT_ID, actor);
-
-    const position = await nextKanbanCardPosition(client, columnId);
-    const ins = await client.query<{ id: string }>(
-      `INSERT INTO chat_kanban_cards (
-         board_id, column_id, tenant_id, conversation_id, acquisition_lead_id,
-         position, metadata, created_by_user_id
-       ) VALUES ($1, $2, $3, NULL, $4, $5, $6::jsonb, $7)
-       RETURNING id::text`,
-      [boardId, columnId, SUPERADMIN_OPS_KANBAN_TENANT_ID, lead.id, position, JSON.stringify(meta), actor],
-    );
-    const cardId = ins.rows[0]?.id;
-    if (cardId) {
-      await appendOperationalTimelineByCardId(client, cardId, {
-        type: 'lead_created',
-        label: TIMELINE_LABELS.lead_created,
-        correlation_id: input.correlationId,
-      });
-      await appendOperationalTimelineByCardId(client, cardId, {
-        type: timelineType,
-        label: TIMELINE_LABELS.kanban_card_created,
-        column: columnName,
-        current_stage: lead.current_stage,
-        correlation_id: input.correlationId,
-      });
-    }
-
-    await client.query('COMMIT');
-    console.info('[opsKanban] syncAcquisitionLead ok', {
-      acquisition_lead_id: lead.id,
-      card_id: cardId,
-      board_id: boardId,
-      column_id: columnId,
-      column_name: columnName,
-      created: true,
-      correlation_id: input.correlationId,
-    });
-    observeOpsKanbanAcquisitionSync({
-      acquisitionLeadId: lead.id,
-      tenantId: lead.tenant_id,
-      correlationId: input.correlationId,
-      currentStage: lead.current_stage,
-      signupStep: input.signupStep,
-      columnName,
-      cardCreated: true,
-    });
-    return {
-      ok: true,
-      cardId,
-      boardId,
-      columnId,
-      created: true,
-      moved: false,
-    };
-  } catch (e) {
+    const client = await pool.connect();
     try {
-      await client.query('ROLLBACK');
-    } catch {
-      /* ignore */
-    }
-    const pgCode = typeof e === 'object' && e !== null && 'code' in e ? String((e as { code: string }).code) : '';
-    if (pgCode === '23505') {
-      const racedCard = await findOpsKanbanCardForLead(input.acquisitionLeadId);
-      if (racedCard && columnId) {
+      await beginKanbanTxWithRls(client, SUPERADMIN_OPS_KANBAN_TENANT_ID, actor);
+      await acquireOpsLeadCardTransactionLock(client, lead.id);
+
+      const recheck = await findOpsKanbanCardForLead(lead.id);
+      if (recheck) {
+        await client.query('ROLLBACK');
+        logOpsSingleCard({
+          action: 'race_prevented',
+          acquisitionLeadId: lead.id,
+          winnerCardId: recheck.cardId,
+          correlationId: input.correlationId,
+          detail: 'insert_aborted_card_found_under_lock',
+        });
         const moveResult = await moveOpsCardWithAutomations({
           tenantId: SUPERADMIN_OPS_KANBAN_TENANT_ID,
           actorUserId: actor,
-          cardId: racedCard.cardId,
-          sourceBoardId: racedCard.boardId,
-          sourceColumnId: racedCard.columnId,
+          cardId: recheck.cardId,
+          sourceBoardId: recheck.boardId,
+          sourceColumnId: recheck.columnId,
           destinationBoardId: boardId,
           destinationColumnId: columnId,
           source: 'syncAcquisitionLeadToOpsKanban',
           correlationId: input.correlationId,
           metadataPatch: meta,
         });
-        console.info('[opsKanban] syncAcquisitionLead idempotent', {
-          acquisition_lead_id: input.acquisitionLeadId,
-          card_id: racedCard.cardId,
-          reason: 'concurrent_create',
-          moveStatus: moveResult.status,
-        });
         return {
           ok: moveResult.status !== 'card_not_found',
-          cardId: racedCard.cardId,
+          cardId: recheck.cardId,
           boardId,
           columnId,
           created: false,
           moved: moveResult.status === 'moved',
         };
       }
+
+      const position = await nextKanbanCardPosition(client, columnId);
+      const ins = await client.query<{ id: string }>(
+        `INSERT INTO chat_kanban_cards (
+           board_id, column_id, tenant_id, conversation_id, acquisition_lead_id,
+           position, metadata, created_by_user_id
+         ) VALUES ($1, $2, $3, NULL, $4, $5, $6::jsonb, $7)
+         RETURNING id::text`,
+        [boardId, columnId, SUPERADMIN_OPS_KANBAN_TENANT_ID, lead.id, position, JSON.stringify(meta), actor],
+      );
+      const cardId = ins.rows[0]?.id;
+      if (cardId) {
+        await appendOperationalTimelineByCardId(client, cardId, {
+          type: 'lead_created',
+          label: TIMELINE_LABELS.lead_created,
+          correlation_id: input.correlationId,
+        });
+        await appendOperationalTimelineByCardId(client, cardId, {
+          type: timelineType,
+          label: TIMELINE_LABELS.kanban_card_created,
+          column: columnName,
+          current_stage: lead.current_stage,
+          correlation_id: input.correlationId,
+        });
+      }
+
+      await client.query('COMMIT');
+      console.info('[opsKanban] syncAcquisitionLead ok', {
+        acquisition_lead_id: lead.id,
+        card_id: cardId,
+        board_id: boardId,
+        column_id: columnId,
+        column_name: columnName,
+        created: true,
+        correlation_id: input.correlationId,
+      });
+      observeOpsKanbanAcquisitionSync({
+        acquisitionLeadId: lead.id,
+        tenantId: lead.tenant_id,
+        correlationId: input.correlationId,
+        currentStage: lead.current_stage,
+        signupStep: input.signupStep,
+        columnName,
+        cardCreated: true,
+      });
+      return {
+        ok: true,
+        cardId,
+        boardId,
+        columnId,
+        created: true,
+        moved: false,
+      };
+    } catch (e) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        /* ignore */
+      }
+      const pgCode =
+        typeof e === 'object' && e !== null && 'code' in e ? String((e as { code: string }).code) : '';
+      if (pgCode === '23505') {
+        await healDuplicateActiveOpsCardsForLead({
+          acquisitionLeadId: lead.id,
+          actorUserId: actor,
+          correlationId: input.correlationId,
+        });
+        const racedCard = await findOpsKanbanCardForLead(input.acquisitionLeadId);
+        if (racedCard && columnId) {
+          logOpsSingleCard({
+            action: 'race_prevented',
+            acquisitionLeadId: lead.id,
+            winnerCardId: racedCard.cardId,
+            correlationId: input.correlationId,
+            detail: 'unique_violation_reused_winner',
+          });
+          const moveResult = await moveOpsCardWithAutomations({
+            tenantId: SUPERADMIN_OPS_KANBAN_TENANT_ID,
+            actorUserId: actor,
+            cardId: racedCard.cardId,
+            sourceBoardId: racedCard.boardId,
+            sourceColumnId: racedCard.columnId,
+            destinationBoardId: boardId,
+            destinationColumnId: columnId,
+            source: 'syncAcquisitionLeadToOpsKanban',
+            correlationId: input.correlationId,
+            metadataPatch: meta,
+          });
+          console.info('[opsKanban] syncAcquisitionLead idempotent', {
+            acquisition_lead_id: input.acquisitionLeadId,
+            card_id: racedCard.cardId,
+            reason: 'concurrent_create',
+            moveStatus: moveResult.status,
+          });
+          return {
+            ok: moveResult.status !== 'card_not_found',
+            cardId: racedCard.cardId,
+            boardId,
+            columnId,
+            created: false,
+            moved: moveResult.status === 'moved',
+          };
+        }
+      }
+      console.error('[opsKanban] syncAcquisitionLead failed', e);
+      return { ok: false, reason: e instanceof Error ? e.message : 'sync_failed' };
+    } finally {
+      client.release();
     }
-    console.error('[opsKanban] syncAcquisitionLead failed', e);
-    return { ok: false, reason: e instanceof Error ? e.message : 'sync_failed' };
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function findOpsKanbanCardForLeadOnBoard(

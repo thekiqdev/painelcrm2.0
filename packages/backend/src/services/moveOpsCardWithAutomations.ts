@@ -20,6 +20,7 @@ import {
   cancelPendingScheduledMovesForCardColumn,
   insertScheduledMoveIfColumnConfigured,
 } from './kanbanScheduledMoveService.js';
+import { archiveConflictingLeadCardsGlobally } from './opsSingleActiveCardService.js';
 
 export type MoveOpsCardInput = {
   tenantId: string;
@@ -125,32 +126,6 @@ async function loadColumnName(tenantId: string, columnId: string): Promise<strin
     [columnId, tenantId],
   );
   return r.rows[0]?.name ?? null;
-}
-
-/**
- * Evita violação de uq_chat_kanban_cards_board_acquisition_lead_active ao mover entre boards.
- */
-async function archiveConflictingLeadCardsOnBoard(
-  client: PoolClient,
-  tenantId: string,
-  boardId: string,
-  acquisitionLeadId: string,
-  keepCardId: string,
-  actorUserId: string,
-): Promise<number> {
-  const r = await client.query(
-    `UPDATE chat_kanban_cards
-     SET archived_at = now(),
-         updated_at = now(),
-         updated_by_user_id = $1::uuid
-     WHERE tenant_id = $2::uuid
-       AND board_id = $3::uuid
-       AND acquisition_lead_id = $4::uuid
-       AND archived_at IS NULL
-       AND id <> $5::uuid`,
-    [actorUserId, tenantId, boardId, acquisitionLeadId, keepCardId],
-  );
-  return r.rowCount ?? 0;
 }
 
 function mergeMetadata(
@@ -271,16 +246,14 @@ export async function moveOpsCardWithAutomations(
   try {
     await beginKanbanTxWithRls(client, tenantId, input.actorUserId);
 
-    if (input.destinationBoardId !== card.board_id) {
-      await archiveConflictingLeadCardsOnBoard(
-        client,
-        tenantId,
-        input.destinationBoardId,
-        card.acquisition_lead_id,
-        card.id,
-        input.actorUserId,
-      );
-    }
+    await archiveConflictingLeadCardsGlobally(
+      client,
+      tenantId,
+      card.acquisition_lead_id,
+      card.id,
+      input.actorUserId,
+      input.correlationId,
+    );
 
     const position =
       typeof input.position === 'number' && Number.isFinite(input.position)

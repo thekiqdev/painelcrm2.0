@@ -32,12 +32,18 @@ vi.mock('./kanbanColumnAutomationService.js', () => ({
 vi.mock('./kanbanScheduledMoveService.js', () => ({
   cancelPendingScheduledMovesForCardColumn: vi.fn().mockResolvedValue(undefined),
   insertScheduledMoveIfColumnConfigured: vi.fn().mockResolvedValue(undefined),
+  cancelPendingScheduledMovesForEntireCard: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('./opsSingleActiveCardService.js', () => ({
+  archiveConflictingLeadCardsGlobally: vi.fn().mockResolvedValue(0),
 }));
 
 import { pool } from '../utils/db.js';
 import { SUPERADMIN_OPS_KANBAN_TENANT_ID } from '../config/superadminOpsKanban.js';
 import { resolveKanbanAutomationContext } from './kanbanAutomationContext.js';
 import { runKanbanPhase2Automations } from './kanbanColumnAutomationService.js';
+import { archiveConflictingLeadCardsGlobally } from './opsSingleActiveCardService.js';
 import { moveOpsCardWithAutomations } from './moveOpsCardWithAutomations.js';
 
 const CARD_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
@@ -267,15 +273,10 @@ describe('moveOpsCardWithAutomations', () => {
     expect(pool.connect).not.toHaveBeenCalled();
   });
 
-  it('arquiva card conflitante no board destino antes de mover entre boards', async () => {
+  it('deduplica cards ativos globalmente antes de mover', async () => {
     mockMoveQueries();
     await moveOpsCardWithAutomations(baseInput('subscription.activated'));
 
-    const client = await pool.connect();
-    const clientQuery = vi.mocked(client.query);
-    const archiveCall = clientQuery.mock.calls.find(([sql]) =>
-      String(sql).includes('archived_at = now()') && String(sql).includes('acquisition_lead_id'),
-    );
-    expect(archiveCall).toBeDefined();
+    expect(archiveConflictingLeadCardsGlobally).toHaveBeenCalled();
   });
 });
