@@ -88,11 +88,15 @@ export function OnboardingMobileShell({
       <div
         className={cn(
           'min-h-0 flex-1 overflow-x-hidden',
-          lockViewport ? 'overflow-hidden lg:overflow-hidden' : 'overflow-y-auto overscroll-contain',
+          adminStepMobile
+            ? 'overflow-y-auto overscroll-contain touch-pan-y'
+            : lockViewport
+              ? 'overflow-hidden lg:overflow-hidden'
+              : 'overflow-y-auto overscroll-contain',
           adminStepMobile ? 'px-0 py-0 lg:px-0 lg:py-0' : 'px-4 py-3 lg:overflow-hidden lg:px-0 lg:py-0',
           reserveBottomSpace &&
             (adminStepMobile
-              ? 'pb-[calc(9.5rem+env(safe-area-inset-bottom))]'
+              ? 'pb-[calc(10.5rem+env(safe-area-inset-bottom))]'
               : 'pb-[min(42vh,220px)]'),
         )}
       >

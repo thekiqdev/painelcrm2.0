@@ -17,7 +17,7 @@ export const CONTACT_VERIFICATION_CTA = {
 
 export const CONTACT_ADMIN_CTA = {
   label: 'Continuar',
-  subtitle: 'Defina quem será o responsável inicial pela operação.',
+  subtitle: 'Defina como o administrador principal acessará a plataforma.',
 };
 
 /** Sprint E1.1 — três cards informativos (sem IA Assist). */

@@ -120,7 +120,7 @@ export function ContactSetupStep({
       <div
         className={cn(
           'lg:hidden',
-          isAdmin ? 'flex flex-col gap-5 px-5 pb-2 pt-6' : 'space-y-4 pb-2',
+          isAdmin ? 'flex min-h-0 flex-col gap-5 px-5 pb-4 pt-6' : 'space-y-4 pb-2',
         )}
       >
         <header className={cn(isAdmin ? 'flex flex-col gap-2' : 'space-y-2')}>

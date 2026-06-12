@@ -73,8 +73,14 @@ export const ONBOARDING_LEAD_VERIFICATION_HEADLINE = {
 };
 
 export const ONBOARDING_LEAD_ADMIN_HEADLINE = {
-  title: 'Configure o administrador principal',
-  subtitle: 'Este será o responsável inicial pela operação.',
+  title: 'Configure o acesso do administrador',
+  subtitle: 'Defina como o administrador principal acessará a plataforma.',
+};
+
+export const ONBOARDING_LEAD_ADMIN_ACCESS_SECTION = {
+  title: 'Senha de acesso',
+  description:
+    'Configure uma senha para o primeiro acesso do administrador. Em breve, também será possível entrar utilizando um código enviado pelo WhatsApp.',
 };
 
 /** @deprecated E2.5 — use ONBOARDING_LEAD_ADMIN_HEADLINE */

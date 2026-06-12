@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from '@/components/ui/sonner';
 import { prepareOnboardingAvatarDataUrl } from '@/lib/onboardingAvatarImage';
+import { ONBOARDING_LEAD_ADMIN_ACCESS_SECTION } from './constants';
 import { activationInputClass } from './activationAppStyles';
 
 const ACCEPTED = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
@@ -76,18 +77,14 @@ function AdminAvatarPicker({
   );
 }
 
-function AdminFields({
+function AdminIdentityFields({
   name,
   email,
-  password,
-  confirmPassword,
   onChange,
   autoFocus,
 }: {
   name: string;
   email: string;
-  password: string;
-  confirmPassword: string;
   onChange: Props['onChange'];
   autoFocus?: boolean;
 }) {
@@ -122,36 +119,88 @@ function AdminFields({
           autoComplete="email"
         />
       </div>
+    </div>
+  );
+}
 
-      <div className="space-y-1">
-        <Label htmlFor="admin-password" className="text-sm text-muted-foreground">
-          Senha
-        </Label>
-        <Input
-          id="admin-password"
-          type="password"
-          className={cn(activationInputClass, 'w-full')}
-          value={password}
-          onChange={(e) => onChange({ signup_password: e.target.value })}
-          placeholder="Mínimo 6 caracteres"
-          autoComplete="new-password"
-        />
+function AdminAccessConfigSection({
+  password,
+  confirmPassword,
+  onChange,
+}: {
+  password: string;
+  confirmPassword: string;
+  onChange: Props['onChange'];
+}) {
+  return (
+    <section className="space-y-4 border-t border-white/[0.08] pt-5">
+      <div className="space-y-1.5">
+        <h3 className="text-sm font-semibold text-foreground">
+          {ONBOARDING_LEAD_ADMIN_ACCESS_SECTION.title}
+        </h3>
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          {ONBOARDING_LEAD_ADMIN_ACCESS_SECTION.description}
+        </p>
       </div>
 
-      <div className="space-y-1">
-        <Label htmlFor="admin-password-confirm" className="text-sm text-muted-foreground">
-          Confirmar senha
-        </Label>
-        <Input
-          id="admin-password-confirm"
-          type="password"
-          className={cn(activationInputClass, 'w-full')}
-          value={confirmPassword}
-          onChange={(e) => onChange({ signup_password_confirm: e.target.value })}
-          placeholder="Repita a senha"
-          autoComplete="new-password"
-        />
+      <div className="space-y-4 rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
+        <div className="space-y-1">
+          <Label htmlFor="admin-password" className="text-sm text-muted-foreground">
+            Senha
+          </Label>
+          <Input
+            id="admin-password"
+            type="password"
+            className={cn(activationInputClass, 'w-full')}
+            value={password}
+            onChange={(e) => onChange({ signup_password: e.target.value })}
+            placeholder="Mínimo 6 caracteres"
+            autoComplete="new-password"
+          />
+        </div>
+
+        <div className="space-y-1">
+          <Label htmlFor="admin-password-confirm" className="text-sm text-muted-foreground">
+            Confirmar senha
+          </Label>
+          <Input
+            id="admin-password-confirm"
+            type="password"
+            className={cn(activationInputClass, 'w-full')}
+            value={confirmPassword}
+            onChange={(e) => onChange({ signup_password_confirm: e.target.value })}
+            placeholder="Repita a senha"
+            autoComplete="new-password"
+          />
+        </div>
       </div>
+    </section>
+  );
+}
+
+function AdminFields({
+  name,
+  email,
+  password,
+  confirmPassword,
+  onChange,
+  autoFocus,
+}: {
+  name: string;
+  email: string;
+  password: string;
+  confirmPassword: string;
+  onChange: Props['onChange'];
+  autoFocus?: boolean;
+}) {
+  return (
+    <div className="flex min-w-0 flex-col gap-5">
+      <AdminIdentityFields name={name} email={email} onChange={onChange} autoFocus={autoFocus} />
+      <AdminAccessConfigSection
+        password={password}
+        confirmPassword={confirmPassword}
+        onChange={onChange}
+      />
     </div>
   );
 }
