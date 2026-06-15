@@ -43,7 +43,7 @@ export async function reconcileAcquisitionLeadForResume(
   const stage = lead.current_stage;
 
   if (STAGES_NEEDING_PLAN.includes(stage) && !lead.selected_plan_id) {
-    const corrected: AcquisitionLeadStage = 'contact_captured';
+    const corrected: AcquisitionLeadStage = 'qualified';
     if (stage === corrected) {
       return { lead, reconciled: false };
     }
@@ -71,7 +71,7 @@ export async function reconcileAcquisitionLeadForResume(
     if (!hasSession) {
       const corrected: AcquisitionLeadStage = lead.selected_plan_id
         ? 'activation_prepared'
-        : 'contact_captured';
+        : 'qualified';
       if (stage === corrected) {
         return { lead, reconciled: false };
       }

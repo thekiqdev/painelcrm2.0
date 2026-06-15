@@ -114,7 +114,7 @@ function inferWizardStepFromLeadStage(
     return hasPlanId(planId) ? 'conversion' : 'plan';
   }
 
-  if (stage === 'contact_captured') {
+  if (stage === 'contact_captured' || stage === 'qualified') {
     return leadNeedsPrincipalAdmin(lead) ? 'admin' : 'plan';
   }
 

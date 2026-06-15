@@ -16,6 +16,8 @@ export function inferLifecycleEventFromAcquisitionSync(input: {
     case 'pre_signup':
     case 'contact_captured':
       return input.cardCreated ? 'lead.created' : 'lead.created';
+    case 'qualified':
+      return 'lead.qualified';
     case 'plan_selected':
       return 'lead.qualified';
     case 'trial_started':

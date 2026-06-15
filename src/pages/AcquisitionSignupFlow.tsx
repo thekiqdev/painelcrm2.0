@@ -384,7 +384,7 @@ export default function AcquisitionSignupFlowPage() {
     const id = captureRes.data.lead_id?.trim();
     if (id) {
       setLeadId(id);
-      setLeadSnapshot((prev) => ({ ...prev, id, current_stage: 'contact_captured' }));
+      setLeadSnapshot((prev) => ({ ...prev, id, current_stage: 'qualified' }));
     }
     return id ?? leadId ?? urlLeadId ?? null;
   }
@@ -585,7 +585,7 @@ export default function AcquisitionSignupFlowPage() {
             id: resolvedLeadId,
             name: form.lead_name.trim(),
             email: form.lead_email.trim(),
-            current_stage: 'contact_captured',
+            current_stage: 'qualified',
             selected_plan_id: leadSnapshot?.selected_plan_id,
           });
         }

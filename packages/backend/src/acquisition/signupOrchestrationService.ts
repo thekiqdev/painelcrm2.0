@@ -161,7 +161,9 @@ export async function orchestrateSignupStep(input: {
       ? 'plan_selected'
       : input.step === 'checkout'
         ? 'checkout_started'
-        : 'contact_captured';
+        : input.step === 'contact' && lead.current_stage === 'qualified'
+          ? 'qualified'
+          : 'contact_captured';
 
   lead =
     (await updateAcquisitionLeadStage(lead.id, stage, {

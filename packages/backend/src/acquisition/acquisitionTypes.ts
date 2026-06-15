@@ -1,6 +1,7 @@
 export type AcquisitionLeadStage =
   | 'pre_signup'
   | 'contact_captured'
+  | 'qualified'
   | 'plan_selected'
   | 'checkout_started'
   | 'checkout_abandoned'

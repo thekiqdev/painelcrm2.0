@@ -1,7 +1,7 @@
 import { normalizeWhatsappDigits } from '../services/userIdentityValidationService.js';
 import {
   findAcquisitionLeadById,
-  findAcquisitionLeadByPhone,
+  findAcquisitionLeadByPhoneVariants,
   insertAcquisitionLead,
   mergeAcquisitionLeadMetadata,
   updateAcquisitionLeadStage,
@@ -9,6 +9,7 @@ import {
 import { pendingSignupEmailFromPhoneDigits } from './acquisitionPendingEmail.js';
 import {
   publishAcquisitionLeadCreated,
+  publishAcquisitionStageChanged,
   syncAcquisitionLeadOpsKanbanProfile,
 } from './acquisitionOutbox.js';
 import { logAcquisition } from './acquisitionLogger.js';
@@ -17,6 +18,8 @@ import {
   normalizeCaptureNameForStorage,
   resolveLeadNameAfterCapture,
 } from './acquisitionCapturePlaceholder.js';
+
+const QUALIFIED_STAGE = 'qualified' as const;
 
 export async function captureAcquisitionPhoneContact(input: {
   name: string;
@@ -38,20 +41,26 @@ export async function captureAcquisitionPhoneContact(input: {
     lead = await findAcquisitionLeadById(input.leadId);
   }
   if (!lead) {
-    lead = await findAcquisitionLeadByPhone(phoneDigits);
+    lead = await findAcquisitionLeadByPhoneVariants(phoneDigits);
   }
 
   if (lead) {
+    const previousStage = lead.current_stage;
     const updated = await mergeAcquisitionLeadMetadata(lead.id, {
       last_seen_at: new Date().toISOString(),
       phone_capture_at: new Date().toISOString(),
+      phone_verified_at: new Date().toISOString(),
     });
     lead =
-      (await updateAcquisitionLeadStage(lead.id, 'contact_captured', {
+      (await updateAcquisitionLeadStage(lead.id, QUALIFIED_STAGE, {
         metadata: { last_step: 'phone_capture' },
       })) ??
       updated ??
       lead;
+
+    if (previousStage !== QUALIFIED_STAGE) {
+      void publishAcquisitionStageChanged(lead, previousStage);
+    }
 
     await poolTouchNamePhone(lead.id, name, phoneDigits, input.correlationId, lead.name);
     lead = (await findAcquisitionLeadById(lead.id)) ?? lead;
@@ -68,10 +77,11 @@ export async function captureAcquisitionPhoneContact(input: {
     phone: phoneDigits,
     correlationId: input.correlationId,
     source: input.source ?? 'web',
-    stage: 'contact_captured',
+    stage: QUALIFIED_STAGE,
     metadata: {
       operational_tags: ['novo'],
       phone_capture_at: new Date().toISOString(),
+      phone_verified_at: new Date().toISOString(),
       email_pending: true,
     },
   });
@@ -82,6 +92,7 @@ export async function captureAcquisitionPhoneContact(input: {
     acquisition_lead_id: lead.id,
     phone_digits: phoneDigits,
     correlation_id: input.correlationId,
+    stage: QUALIFIED_STAGE,
   });
 
   void publishAcquisitionLeadCreated(lead);

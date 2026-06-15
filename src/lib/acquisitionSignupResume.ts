@@ -133,7 +133,7 @@ export function resolveWizardStepFromLead(
     return resolveWizardStepIndex(urlStep, lead?.selected_plan_id ?? null);
   }
   const stage = lead?.current_stage;
-  if (stage === 'contact_captured') {
+  if (stage === 'contact_captured' || stage === 'qualified') {
     if (isPendingSignupLeadEmail(lead?.email) || !lead?.name?.trim()) return 0;
     return 1;
   }

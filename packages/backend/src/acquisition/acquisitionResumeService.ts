@@ -99,7 +99,7 @@ export async function resolveAcquisitionResume(
     };
   }
 
-  if (stage === 'contact_captured') {
+  if (stage === 'contact_captured' || stage === 'qualified') {
     const needsCredentials = leadNeedsCredentialsStep(lead);
     return {
       path: cadastroPath(lead.id, needsCredentials ? 'admin' : 'plan'),

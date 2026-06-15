@@ -407,5 +407,6 @@ export const MIGRATION_ORDER = [
   '272_platform_growth_settings.sql',
   '273_chat_kanban_scheduled_moves_acquisition_lead.sql',
   '274_chat_kanban_single_active_lead_card.sql',
+  '275_acquisition_lead_stage_qualified.sql',
   'create-admin-user.sql',
 ];

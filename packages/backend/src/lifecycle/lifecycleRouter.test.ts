@@ -87,6 +87,12 @@ describe('inferLifecycleEventFromAcquisitionSync', () => {
     ).toBe('lead.qualified');
     expect(
       inferLifecycleEventFromAcquisitionSync({
+        currentStage: 'qualified',
+        cardCreated: true,
+      }),
+    ).toBe('lead.qualified');
+    expect(
+      inferLifecycleEventFromAcquisitionSync({
         currentStage: 'trial_started',
         cardCreated: false,
       }),

@@ -153,6 +153,27 @@ describe('recovery', () => {
     expect(eligibility.eligible).toBe(true);
   });
 
+  it('exclui pre_signup e contact_captured da recuperação', () => {
+    expect(
+      evaluateRecoveryEligibility({ ...sampleLead, current_stage: 'pre_signup', abandoned_at: new Date().toISOString() })
+        .eligible,
+    ).toBe(false);
+    expect(
+      evaluateRecoveryEligibility({
+        ...sampleLead,
+        current_stage: 'contact_captured',
+        abandoned_at: new Date().toISOString(),
+      }).eligible,
+    ).toBe(false);
+    expect(
+      evaluateRecoveryEligibility({
+        ...sampleLead,
+        current_stage: 'qualified',
+        abandoned_at: new Date().toISOString(),
+      }).eligible,
+    ).toBe(true);
+  });
+
   it('marks abandoned when recovery flag on', async () => {
     vi.mocked(isAcquisitionRecoveryEnabled).mockResolvedValue(true);
     vi.mocked(findAcquisitionLeadById).mockResolvedValue(sampleLead);

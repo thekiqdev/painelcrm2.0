@@ -4,9 +4,10 @@ import { normalizeWhatsappDigits } from '../services/userIdentityValidationServi
 import {
   findAcquisitionLeadByEmail,
   findAcquisitionLeadById,
-  findAcquisitionLeadByPhone,
+  findAcquisitionLeadByPhoneVariants,
   finalizeAcquisitionLeadEmail,
   mergeAcquisitionLeadMetadata,
+  updateAcquisitionLeadContactForLead,
   upsertAcquisitionLeadContact,
 } from './acquisitionLeadRepository.js';
 import { isPendingSignupEmail } from './acquisitionPendingEmail.js';
@@ -99,6 +100,114 @@ function isTenantOperationallyActive(row: { status: string; trial_ends_at: strin
   return false;
 }
 
+/** E2.7 — lead_id → telefone (variantes) → e-mail. */
+async function resolveExistingAcquisitionLead(input: {
+  leadId?: string;
+  phone?: string | null;
+  email: string;
+}): Promise<AcquisitionLeadRow | null> {
+  if (input.leadId) {
+    const byId = await findAcquisitionLeadById(input.leadId);
+    if (byId) return byId;
+  }
+
+  const whatsappDigits = normalizeWhatsappDigits(input.phone ?? null);
+  if (whatsappDigits) {
+    const byPhone = await findAcquisitionLeadByPhoneVariants(whatsappDigits);
+    if (byPhone) return byPhone;
+  }
+
+  if (input.email && !isPendingSignupEmail(input.email)) {
+    return findAcquisitionLeadByEmail(input.email);
+  }
+
+  return null;
+}
+
+async function tryFinalizePendingEmail(
+  lead: AcquisitionLeadRow,
+  email: string,
+  correlationId: string,
+): Promise<AcquisitionLeadRow> {
+  if (!isPendingSignupEmail(lead.email) || isPendingSignupEmail(email)) {
+    return lead;
+  }
+  return (await finalizeAcquisitionLeadEmail(lead.id, email, correlationId)) ?? lead;
+}
+
+async function continueWithResolvedLead(
+  resolvedLead: AcquisitionLeadRow,
+  input: {
+    name?: string;
+    email: string;
+    phone?: string;
+    correlationId: string;
+    source?: string;
+  },
+  tenantRow: Awaited<ReturnType<typeof findTenantForContact>>,
+): Promise<ContactResolveResult> {
+  const reactivations = trialReactivationCount(resolvedLead);
+  const extraUsed = extraTrialConsumed(resolvedLead);
+  const tags = Array.isArray(resolvedLead.metadata_json.operational_tags)
+    ? [...(resolvedLead.metadata_json.operational_tags as string[])]
+    : [];
+
+  if (reactivations > EXTRA_TRIAL_MAX_REACTIVATIONS || (extraUsed && tags.includes('trial_2x'))) {
+    return {
+      action: 'trial_blocked',
+      lead: resolvedLead,
+      message: 'Período de avaliação adicional já utilizado para este contato.',
+      operational_tags: [...tags, 'trial_2x'],
+    };
+  }
+
+  const inactiveTenant = tenantRow != null && !isTenantOperationallyActive(tenantRow);
+  const extraEligible = inactiveTenant && reactivations < EXTRA_TRIAL_MAX_REACTIVATIONS && !extraUsed;
+
+  const lead = await updateAcquisitionLeadContactForLead(resolvedLead.id, {
+    name: input.name,
+    email: input.email,
+    phone: input.phone,
+    correlationId: input.correlationId,
+    source: input.source ?? resolvedLead.source ?? 'web',
+    metadata: {
+      operational_tags: extraEligible
+        ? [...tags.filter((t) => t !== 'extra_trial_elegivel'), 'reativacao', 'extra_trial_elegivel', 'retomado']
+        : [...tags, 'retomado'],
+      email_confirmed_at: new Date().toISOString(),
+    },
+  });
+
+  if (!lead) throw new Error('lead_update_failed');
+
+  const reconciled = await reconcileAcquisitionLeadForResume(lead);
+  const leadForResume = reconciled.lead;
+  const resume = await resolveAcquisitionResume(leadForResume);
+  const action: ContactResolveAction = extraEligible ? 'reactivation_eligible' : 'continue_lead';
+
+  await afterContactProfileResolved(leadForResume, input.correlationId, action);
+
+  logResumeDetected({
+    lead_id: leadForResume.id,
+    current_stage: leadForResume.current_stage,
+    resume_path: resume.path,
+    resume_verified: resume.canContinueWhereLeftOff,
+  });
+
+  return {
+    action,
+    lead: leadForResume,
+    message: extraEligible
+      ? 'Conta anterior inativa. Você pode solicitar 7 dias adicionais de avaliação após escolher o plano.'
+      : resume.message,
+    resume_step: resume.step,
+    resume_path: resume.path,
+    resume_verified: resume.canContinueWhereLeftOff,
+    extra_trial_eligible: extraEligible,
+    operational_tags: (lead.metadata_json.operational_tags as string[]) ?? [],
+  };
+}
+
 export async function resolveAcquisitionContact(input: {
   name?: string;
   email: string;
@@ -110,26 +219,21 @@ export async function resolveAcquisitionContact(input: {
   const email = input.email.trim();
   const whatsappDigits = normalizeWhatsappDigits(input.phone ?? null);
 
-  let contextLead: AcquisitionLeadRow | null = null;
-  if (input.leadId) {
-    contextLead = await findAcquisitionLeadById(input.leadId);
-  }
-  if (!contextLead && whatsappDigits) {
-    contextLead = await findAcquisitionLeadByPhone(whatsappDigits);
-  }
+  let resolvedLead = await resolveExistingAcquisitionLead({
+    leadId: input.leadId,
+    phone: input.phone,
+    email,
+  });
 
-  if (contextLead && isPendingSignupEmail(contextLead.email)) {
-    const emailOwner = await findAcquisitionLeadByEmail(email);
-    if (!emailOwner || emailOwner.id === contextLead.id) {
-      contextLead =
-        (await finalizeAcquisitionLeadEmail(contextLead.id, email, input.correlationId)) ?? contextLead;
-    }
+  if (resolvedLead) {
+    resolvedLead = await tryFinalizePendingEmail(resolvedLead, email, input.correlationId);
   }
 
   const tenantRow = await findTenantForContact(email, whatsappDigits);
 
   if (tenantRow && isTenantOperationallyActive(tenantRow)) {
     const lead =
+      resolvedLead ??
       (await findAcquisitionLeadByEmail(email)) ??
       (await upsertAcquisitionLeadContact({
         name: input.name,
@@ -154,84 +258,8 @@ export async function resolveAcquisitionContact(input: {
     };
   }
 
-  const existingLead =
-    (await findAcquisitionLeadByEmail(email)) ??
-    (contextLead && !isPendingSignupEmail(contextLead.email) ? contextLead : null);
-
-  if (existingLead) {
-    const reactivations = trialReactivationCount(existingLead);
-    const extraUsed = extraTrialConsumed(existingLead);
-    const tags = Array.isArray(existingLead.metadata_json.operational_tags)
-      ? [...(existingLead.metadata_json.operational_tags as string[])]
-      : [];
-
-    if (reactivations > EXTRA_TRIAL_MAX_REACTIVATIONS || (extraUsed && tags.includes('trial_2x'))) {
-      return {
-        action: 'trial_blocked',
-        lead: existingLead,
-        message: 'Período de avaliação adicional já utilizado para este contato.',
-        operational_tags: [...tags, 'trial_2x'],
-      };
-    }
-
-    const inactiveTenant = tenantRow != null && !isTenantOperationallyActive(tenantRow);
-    const extraEligible = inactiveTenant && reactivations < EXTRA_TRIAL_MAX_REACTIVATIONS && !extraUsed;
-
-    const lead = await upsertAcquisitionLeadContact({
-      name: input.name,
-      email,
-      phone: input.phone,
-      correlationId: input.correlationId,
-      source: input.source ?? existingLead.source ?? 'web',
-      metadata: {
-        operational_tags: extraEligible
-          ? [...tags.filter((t) => t !== 'extra_trial_elegivel'), 'reativacao', 'extra_trial_elegivel', 'retomado']
-          : [...tags, 'retomado'],
-      },
-    });
-
-    if (!lead) throw new Error('lead_upsert_failed');
-
-    const reconciled = await reconcileAcquisitionLeadForResume(lead);
-    const leadForResume = reconciled.lead;
-    const resume = await resolveAcquisitionResume(leadForResume);
-    const action: ContactResolveAction = extraEligible ? 'reactivation_eligible' : 'continue_lead';
-
-    await afterContactProfileResolved(leadForResume, input.correlationId, action);
-
-    logResumeDetected({
-      lead_id: leadForResume.id,
-      current_stage: leadForResume.current_stage,
-      resume_path: resume.path,
-      resume_verified: resume.canContinueWhereLeftOff,
-    });
-
-    return {
-      action,
-      lead: leadForResume,
-      message: extraEligible
-        ? 'Conta anterior inativa. Você pode solicitar 7 dias adicionais de avaliação após escolher o plano.'
-        : resume.message,
-      resume_step: resume.step,
-      resume_path: resume.path,
-      resume_verified: resume.canContinueWhereLeftOff,
-      extra_trial_eligible: extraEligible,
-      operational_tags: (lead.metadata_json.operational_tags as string[]) ?? [],
-    };
-  }
-
-  if (contextLead && !isPendingSignupEmail(contextLead.email)) {
-    const lead = await upsertAcquisitionLeadContact({
-      name: input.name,
-      email,
-      phone: input.phone,
-      correlationId: input.correlationId,
-      source: input.source ?? contextLead.source ?? 'web',
-      metadata: { operational_tags: ['novo'], email_confirmed_at: new Date().toISOString() },
-    });
-    if (!lead) throw new Error('lead_upsert_failed');
-    await afterContactProfileResolved(lead, input.correlationId, 'new_lead');
-    return { action: 'new_lead', lead, message: 'Lead registrado.' };
+  if (resolvedLead) {
+    return continueWithResolvedLead(resolvedLead, input, tenantRow);
   }
 
   const lead = await upsertAcquisitionLeadContact({
@@ -240,7 +268,7 @@ export async function resolveAcquisitionContact(input: {
     phone: input.phone,
     correlationId: input.correlationId,
     source: input.source ?? 'web',
-    stage: 'contact_captured',
+    stage: 'qualified',
     metadata: { operational_tags: ['novo'] },
   });
 

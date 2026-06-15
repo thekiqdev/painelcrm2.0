@@ -37,7 +37,12 @@ export function evaluateRecoveryEligibility(lead: AcquisitionLeadRow): RecoveryE
     }
   }
 
-  const eligibleStages = ['checkout_abandoned', 'contact_captured', 'plan_selected', 'checkout_started'];
+  const ineligibleStages = ['pre_signup', 'contact_captured'];
+  if (ineligibleStages.includes(lead.current_stage)) {
+    return { eligible: false, reason: 'stage_not_eligible', suppressed: false };
+  }
+
+  const eligibleStages = ['checkout_abandoned', 'qualified', 'plan_selected', 'checkout_started', 'trial_started'];
   if (!eligibleStages.includes(lead.current_stage)) {
     return { eligible: false, reason: 'stage_not_eligible', suppressed: false };
   }

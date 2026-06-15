@@ -1,11 +1,12 @@
 import { pool } from '../utils/db.js';
 import type { AcquisitionLeadRow, AcquisitionLeadStage, ActivationScore } from './acquisitionTypes.js';
-import { normalizeEmailForUniqueness } from '../utils/userIdentity.js';
+import { buildWhatsappLookupDigitVariants, normalizeEmailForUniqueness } from '../utils/userIdentity.js';
 import {
   hasRealAcquisitionLeadName,
   isAcquisitionCaptureNamePlaceholder,
   normalizeCaptureNameForStorage,
 } from './acquisitionCapturePlaceholder.js';
+import { isPendingSignupEmail } from './acquisitionPendingEmail.js';
 
 let tableExistsCache: boolean | undefined;
 
@@ -60,6 +61,23 @@ export async function findAcquisitionLeadByPhone(phoneDigits: string): Promise<A
      ORDER BY updated_at DESC
      LIMIT 1`,
     [digits],
+  );
+  return r.rows[0] ? mapRow(r.rows[0]) : null;
+}
+
+/** E2.7 — busca por telefone com variantes DDI (55 / sem 55 / +55). */
+export async function findAcquisitionLeadByPhoneVariants(
+  phoneDigits: string,
+): Promise<AcquisitionLeadRow | null> {
+  if (!(await acquisitionLeadsTableExists())) return null;
+  const variants = buildWhatsappLookupDigitVariants(phoneDigits);
+  if (variants.length === 0) return null;
+  const r = await pool.query(
+    `SELECT * FROM acquisition_leads
+     WHERE regexp_replace(COALESCE(phone, ''), '\\D', '', 'g') = ANY($1::text[])
+     ORDER BY updated_at DESC
+     LIMIT 1`,
+    [variants],
   );
   return r.rows[0] ? mapRow(r.rows[0]) : null;
 }
@@ -139,6 +157,61 @@ function resolveUpsertLeadName(
     return hasRealAcquisitionLeadName(existingName) ? existingName!.trim() : null;
   }
   return incoming;
+}
+
+/** Atualiza contato em lead existente por ID — nunca INSERT. */
+export async function updateAcquisitionLeadContactForLead(
+  leadId: string,
+  input: {
+    name?: string | null;
+    email?: string;
+    phone?: string | null;
+    source?: string | null;
+    correlationId: string;
+    metadata?: Record<string, unknown>;
+    stage?: AcquisitionLeadStage;
+  },
+): Promise<AcquisitionLeadRow | null> {
+  const existing = await findAcquisitionLeadById(leadId);
+  if (!existing) return null;
+
+  const mergedMeta = {
+    ...existing.metadata_json,
+    ...input.metadata,
+    last_seen_at: new Date().toISOString(),
+    resumed: true,
+  };
+
+  const nameForUpdate = resolveUpsertLeadName(existing.name, input.name);
+  const emailForUpdate =
+    input.email && !isPendingSignupEmail(input.email)
+      ? normalizeEmailForUniqueness(input.email)
+      : null;
+
+  const r = await pool.query(
+    `UPDATE acquisition_leads
+     SET name = COALESCE($2, name),
+         email = COALESCE($3, email),
+         phone = COALESCE($4, phone),
+         source = COALESCE($5, source),
+         metadata_json = metadata_json || $6::jsonb,
+         current_stage = COALESCE($7::acquisition_lead_stage, current_stage),
+         correlation_id = $8,
+         updated_at = now()
+     WHERE id = $1
+     RETURNING *`,
+    [
+      leadId,
+      nameForUpdate,
+      emailForUpdate,
+      input.phone ?? null,
+      input.source ?? null,
+      JSON.stringify(mergedMeta),
+      input.stage ?? null,
+      input.correlationId,
+    ],
+  );
+  return r.rows[0] ? mapRow(r.rows[0]) : existing;
 }
 
 export async function upsertAcquisitionLeadContact(input: {
