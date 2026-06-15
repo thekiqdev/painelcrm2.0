@@ -717,6 +717,7 @@ export function publishInvoiceCreatedNotification(params: {
   tenantId: string;
   invoiceId: string;
   preferredSenderUserId: string | null;
+  idempotencyKey?: string;
 }): void {
   enqueue('invoice.created', async () => {
     const r = await params.pool.query<{
@@ -748,13 +749,15 @@ export function publishInvoiceCreatedNotification(params: {
     const num = row.invoice_number?.trim() || params.invoiceId;
     const clientName = row.client_name?.trim() || 'Cliente';
     const payUrl = buildCustomerInvoicePayAbsoluteUrl(row.payment_token);
+    const idempotencyKey =
+      params.idempotencyKey?.trim() || `invoice.created:${params.invoiceId}`;
     await gateAndPublish(params.pool, {
       eventKey: 'invoice.created',
       tenantId: params.tenantId,
       preferredSenderUserId: params.preferredSenderUserId,
       entityType: 'customer_invoice',
       entityId: params.invoiceId,
-      idempotencyKey: `invoice.created:${params.invoiceId}`,
+      idempotencyKey,
       recipientPhone: phone,
       recipientType: 'customer',
       mergeContext: {

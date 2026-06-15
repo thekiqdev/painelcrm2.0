@@ -35,6 +35,7 @@ import { readKanbanTagIdsFromConversationMetadata } from '../services/chatKanban
 import { DEFAULT_KANBAN_TAG_COLOR_UI } from '../services/chatKanbanTagStore.js';
 import { resolveTenantIdForUser } from '../utils/resolveTenantIdForUser.js';
 import { deleteChatInstanceComplete } from '../services/whatsappInstanceDeletionService.js';
+import { markChatInstanceDisconnectedForInvalidToken } from '../services/chatInstanceInvalidTokenSelfHeal.js';
 import { isWhatsappPhoneKeyInheritEnabled } from '../config/whatsappInheritEnv.js';
 import { useLegacyQueryWebhookUrlRegistration } from '../config/uazapiWebhookRouting.js';
 import {
@@ -5355,6 +5356,19 @@ export async function getInstanceStatus(req: AuthRequest, res: Response) {
         /token inválido/i.test(msg)
       ) {
         const tid = await resolveTenantIdForUser(userId);
+        try {
+          await markChatInstanceDisconnectedForInvalidToken(pool, {
+            instanceId: instance.id,
+            userId,
+            tenantId: tid,
+            externalInstanceName: instance.external_instance_name ?? null,
+            reason: msg,
+            source: 'get_instance_status',
+          });
+        } catch (healErr: unknown) {
+          const healMsg = healErr instanceof Error ? healErr.message : String(healErr);
+          console.error('[chat_instance_health]', JSON.stringify({ action: 'self_heal_failed', error: healMsg }));
+        }
         logUazChat('warn', {
           event_type: 'instance_status_uaz_token_invalid',
           tenant_id: tid,

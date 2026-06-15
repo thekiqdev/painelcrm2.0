@@ -296,6 +296,28 @@ export interface ConfirmCustomerInvoiceManualPaymentResult {
   financial_transaction: { id: string } | null;
 }
 
+export interface CustomerInvoiceNotificationDeliveryAttempt {
+  attempt_number: number;
+  status: string;
+  error_message: string | null;
+  created_at: string;
+}
+
+export interface CustomerInvoiceNotificationDelivery {
+  id: string;
+  status: string;
+  channel: string;
+  error_message: string | null;
+  created_at: string;
+  sent_at: string | null;
+  provider_message_id: string | null;
+  attempts: CustomerInvoiceNotificationDeliveryAttempt[];
+}
+
+export interface CustomerInvoiceNotificationDeliveriesResponse {
+  deliveries: CustomerInvoiceNotificationDelivery[];
+}
+
 export interface ListCustomerInvoicesParams {
   client_id?: string | null;
   project_id?: string | null;
@@ -509,5 +531,19 @@ export const customerInvoicesService = {
       throw new Error('Resposta inválida ao gerar cobrança Mercado Pago');
     }
     return response.data;
+  },
+
+  async replayNotification(id: string): Promise<{ success: boolean }> {
+    const response = await apiClient.post<{ success: boolean }>(`${BASE}/${id}/replay-notification`, {});
+    if (response.error) throw new Error(response.error);
+    return response.data ?? { success: true };
+  },
+
+  async getNotificationDeliveries(id: string): Promise<CustomerInvoiceNotificationDeliveriesResponse> {
+    const response = await apiClient.get<CustomerInvoiceNotificationDeliveriesResponse>(
+      `${BASE}/${id}/notification-deliveries`,
+    );
+    if (response.error) throw new Error(response.error);
+    return response.data ?? { deliveries: [] };
   },
 };

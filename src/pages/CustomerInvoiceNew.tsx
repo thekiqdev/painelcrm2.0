@@ -158,13 +158,53 @@ const defaultLine = (): InvoiceLineRow => ({
   scheduled_due_date: "",
 });
 
+function coerceInvoiceMoneyNumber(value: unknown, fallback = 0): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
+  }
+  return fallback;
+}
+
+function formatInvoiceQuantityDisplay(value: unknown): string {
+  const n = coerceInvoiceMoneyNumber(value, 1);
+  if (Number.isInteger(n)) return String(n);
+  return String(n).replace(".", ",");
+}
+
+function resolveInvoiceItemUnitPriceCents(it: CustomerInvoiceItem): number {
+  const raw = it as CustomerInvoiceItem & {
+    unitPriceCents?: unknown;
+    unit_price?: unknown;
+  };
+  let unitCents = Math.max(0, Math.round(coerceInvoiceMoneyNumber(raw.unit_price_cents, 0)));
+  if (unitCents <= 0 && raw.unitPriceCents != null) {
+    unitCents = Math.max(0, Math.round(coerceInvoiceMoneyNumber(raw.unitPriceCents, 0)));
+  }
+  if (unitCents <= 0 && raw.unit_price != null) {
+    unitCents = Math.max(0, Math.round(coerceInvoiceMoneyNumber(raw.unit_price, 0) * 100));
+  }
+  if (unitCents <= 0) {
+    const quantity = Math.max(0, coerceInvoiceMoneyNumber(it.quantity, 0));
+    const totalCents = Math.max(0, Math.round(coerceInvoiceMoneyNumber(it.total_cents, 0)));
+    const discountCents = Math.max(0, Math.round(coerceInvoiceMoneyNumber(it.discount_cents, 0)));
+    if (totalCents > 0 && quantity > 0) {
+      unitCents = Math.max(0, Math.round((totalCents + discountCents) / quantity));
+    }
+  }
+  return unitCents;
+}
+
 function invoiceItemToLine(it: CustomerInvoiceItem): InvoiceLineRow {
+  const unitCents = resolveInvoiceItemUnitPriceCents(it);
+  const discountCents = Math.max(0, Math.round(coerceInvoiceMoneyNumber(it.discount_cents, 0)));
   return {
     id: it.id,
     description: it.description,
-    quantity: String(it.quantity),
-    unit_price: formatBrlDisplay(it.unit_price_cents / 100),
-    discount: formatBrlDisplay(it.discount_cents / 100),
+    quantity: formatInvoiceQuantityDisplay(it.quantity),
+    unit_price: unitCents > 0 ? formatBrlDisplay(unitCents / 100) : "",
+    discount: formatBrlDisplay(discountCents / 100),
     discount_kind: "fixed",
     product_id: it.product_id,
     show_advanced: Boolean(it.scheduled_due_date || it.recurring_interval),
@@ -172,6 +212,27 @@ function invoiceItemToLine(it: CustomerInvoiceItem): InvoiceLineRow {
     recurring_interval: (it.recurring_interval as InvoiceLineRow["recurring_interval"]) ?? "monthly",
     scheduled_due_date: it.scheduled_due_date?.slice(0, 10) ?? "",
   };
+}
+
+/** Linhas do formulário de edição: itens da API ou valor único legado (amount_cents sem linhas). */
+function buildEditLinesFromInvoice(inv: CustomerInvoice): InvoiceLineRow[] {
+  const rawItems = Array.isArray(inv.items) ? inv.items : [];
+  if (rawItems.length > 0) {
+    return rawItems.map(invoiceItemToLine);
+  }
+  const amountCents = Math.round(coerceInvoiceMoneyNumber(inv.amount_cents, 0));
+  if (amountCents > 0) {
+    return [
+      {
+        ...defaultLine(),
+        id: crypto.randomUUID(),
+        description: (inv.description ?? "").trim() || "Item",
+        quantity: "1",
+        unit_price: formatBrlDisplay(amountCents / 100),
+      },
+    ];
+  }
+  return [defaultLine()];
 }
 
 /** Subtotal da linha em centavos (q × unitário). */
@@ -375,14 +436,24 @@ const CustomerInvoiceNew = ({
         if (Array.isArray(meta?.allowed_payment_methods) && meta.allowed_payment_methods.length > 0) {
           setAllowedPaymentMethods(meta.allowed_payment_methods);
         }
-        if (inv.items && inv.items.length > 0) {
-          setLines(inv.items.map(invoiceItemToLine));
-        } else {
-          setLines([defaultLine()]);
-          setForm((f) => ({
-            ...f,
-            amount: formatBrlDisplay(inv.amount_cents / 100),
-          }));
+        setLines(buildEditLinesFromInvoice(inv));
+        if (inv.origin === "subscription" && inv.subscription_id) {
+          try {
+            const insight = await customerInvoicesService.getRecurrenceInsight(editInvoiceId);
+            if (!cancelled && insight.subscription?.billing_interval) {
+              const interval = insight.subscription.billing_interval as typeof billingInterval;
+              if (
+                interval === "monthly" ||
+                interval === "quarterly" ||
+                interval === "semi_annual" ||
+                interval === "yearly"
+              ) {
+                setBillingInterval(interval);
+              }
+            }
+          } catch {
+            /* mantém intervalo padrão se insight indisponível */
+          }
         }
         setStep("form");
         setEditReady(true);

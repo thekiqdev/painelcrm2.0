@@ -405,6 +405,29 @@ export async function getLatestDeliveryPerEventKey(
   return r.rows;
 }
 
+export async function listDeliveriesForCustomerInvoice(
+  client: Pool | PoolClient,
+  tenantId: string,
+  invoiceId: string,
+  eventKey = 'invoice.created',
+): Promise<DeliveryRow[]> {
+  const r = await client.query<DeliveryRow>(
+    `SELECT id, tenant_id, event_key, entity_type, entity_id, status, rendered_body, rendered_subject,
+            error_message, provider_message_id, idempotency_key, created_at, channel,
+            recipient_type, recipient_address,
+            retry_count, next_retry_at, dispatch_sender_user_id, sent_at
+     FROM notification_outbound_deliveries
+     WHERE tenant_id = $1::uuid
+       AND entity_type = 'customer_invoice'
+       AND entity_id = $2::uuid
+       AND event_key = $3
+     ORDER BY created_at DESC
+     LIMIT 50`,
+    [tenantId, invoiceId, eventKey],
+  );
+  return r.rows;
+}
+
 export async function listDeliveryAttemptsForTenantDelivery(
   client: Pool | PoolClient,
   tenantId: string,

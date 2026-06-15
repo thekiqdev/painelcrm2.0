@@ -32,6 +32,13 @@ import { getCustomerInvoiceRecurrenceInsight } from '../services/customerInvoice
 import { patchCustomerSubscriptionNextBillingFromPaidInvoice } from '../services/customerInvoiceRecurrenceNextBillingService.js';
 import { ensureTenantOverdueStatusesFresh } from '../services/billingOverdueStatusService.js';
 import { createMercadoPagoCheckoutPreferenceForInvoice } from '../services/mercadoPagoCustomerInvoicePaymentService.js';
+import { replayInvoiceCreatedOutbound } from '../services/invoiceNotificationsService.js';
+import { flushBillingNotificationSideEffects } from '../services/notificationsEngine/billingNotificationFlush.js';
+import {
+  listDeliveriesForCustomerInvoice,
+  listDeliveryAttemptsForTenantDelivery,
+} from '../services/notificationsEngine/notificationEngineRepository.js';
+import { pool } from '../utils/db.js';
 import { assertPermissionKey, ModulePermissionError } from '../permissions/index.js';
 import type { PermissionCatalogKey } from '../permissions/permissionCatalog.js';
 
@@ -638,6 +645,90 @@ export async function postCustomerInvoiceMercadoPagoCreatePayment(req: AuthReque
     }
     console.error('[customerInvoicesController] postCustomerInvoiceMercadoPagoCreatePayment error:', err);
     res.status(500).json({ error: 'Erro ao gerar cobrança Mercado Pago' });
+  }
+}
+
+/** POST /api/customer-invoices/:id/replay-notification — reenvio manual WhatsApp (sem sino). */
+export async function replayCustomerInvoiceNotificationHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Empresa não identificada' });
+      return;
+    }
+    if (!(await requirePermKey(req, 'billing.send_invoice', res))) return;
+
+    const { id } = req.params;
+    const invoice = await getInvoiceById(tenantId, id);
+    if (!invoice) {
+      res.status(404).json({ error: 'Fatura não encontrada' });
+      return;
+    }
+
+    replayInvoiceCreatedOutbound({ tenantId, invoiceId: id });
+    await flushBillingNotificationSideEffects();
+
+    res.json({ success: true });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[customerInvoicesController] replayCustomerInvoiceNotification error:', err);
+    res.status(500).json({
+      error: 'Não foi possível reenviar a notificação.',
+      ...(process.env.NODE_ENV !== 'production' ? { detail: msg } : {}),
+    });
+  }
+}
+
+/** GET /api/customer-invoices/:id/notification-deliveries — histórico outbound invoice.created. */
+export async function getCustomerInvoiceNotificationDeliveriesHandler(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Empresa não identificada' });
+      return;
+    }
+    if (!(await requirePermKey(req, 'billing.view_invoices', res))) return;
+
+    const { id } = req.params;
+    const invoice = await getInvoiceById(tenantId, id);
+    if (!invoice) {
+      res.status(404).json({ error: 'Fatura não encontrada' });
+      return;
+    }
+
+    const deliveries = await listDeliveriesForCustomerInvoice(pool, tenantId, id, 'invoice.created');
+    const withAttempts = await Promise.all(
+      deliveries.map(async (d) => {
+        const attempts = await listDeliveryAttemptsForTenantDelivery(pool, tenantId, d.id);
+        return {
+          id: d.id,
+          status: d.status,
+          channel: d.channel,
+          error_message: d.error_message,
+          created_at: d.created_at,
+          sent_at: d.sent_at,
+          provider_message_id: d.provider_message_id,
+          attempts: attempts.map((a) => ({
+            attempt_number: a.attempt_number,
+            status: a.status,
+            error_message: a.error_message,
+            created_at: a.created_at,
+          })),
+        };
+      }),
+    );
+
+    res.json({ deliveries: withAttempts });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[customerInvoicesController] getCustomerInvoiceNotificationDeliveries error:', err);
+    res.status(500).json({
+      error: 'Erro ao carregar histórico de notificações',
+      ...(process.env.NODE_ENV !== 'production' ? { detail: msg } : {}),
+    });
   }
 }
 

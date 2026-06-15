@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { pool, runDetachedFromRequestDb } from '../utils/db.js';
 import { createNotification, type NotificationType } from './notifications.js';
 import {
@@ -163,6 +164,21 @@ async function notifyInvoiceInApp(
       console.warn('[invoiceNotifications] in-app failed', event, userId, e);
     }
   }
+}
+
+/** Reenvio manual WhatsApp — sem sino in-app; nova delivery por idempotency key única. */
+export function replayInvoiceCreatedOutbound(params: {
+  tenantId: string;
+  invoiceId: string;
+  preferredSenderUserId?: string | null;
+}): void {
+  publishInvoiceCreatedNotification({
+    pool,
+    tenantId: params.tenantId,
+    invoiceId: params.invoiceId,
+    preferredSenderUserId: params.preferredSenderUserId ?? null,
+    idempotencyKey: `invoice.created:${params.invoiceId}:manual:${randomUUID()}`,
+  });
 }
 
 export function notifyInvoiceCreated(params: {

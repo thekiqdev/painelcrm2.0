@@ -13,6 +13,8 @@ import {
   deleteCustomerInvoice,
   postCustomerInvoiceMercadoPagoCreatePayment,
   confirmCustomerInvoiceManualPaymentHandler,
+  replayCustomerInvoiceNotificationHandler,
+  getCustomerInvoiceNotificationDeliveriesHandler,
 } from '../controllers/customerInvoicesController.js';
 import { tenantAuthCrm } from '../middleware/auth.js';
 import { mercadoPagoFeatureGuard } from '../middleware/mercadoPagoFeatureGuard.js';
@@ -32,6 +34,8 @@ router.post(
   postCustomerInvoiceMercadoPagoCreatePayment,
 );
 router.post('/:id/confirm-manual-payment', confirmCustomerInvoiceManualPaymentHandler);
+router.post('/:id/replay-notification', replayCustomerInvoiceNotificationHandler);
+router.get('/:id/notification-deliveries', getCustomerInvoiceNotificationDeliveriesHandler);
 router.get('/:id', getCustomerInvoiceById);
 router.post('/', createCustomerInvoice);
 router.patch('/:id/recurrence/next-billing', patchCustomerInvoiceRecurrenceNextBilling);

@@ -35,6 +35,7 @@ import { apiClient } from "@/integrations/api/client";
 import type {
   CustomerInvoice,
   CustomerInvoiceRecurrenceInsight,
+  CustomerInvoiceNotificationDelivery,
   UpdateCustomerInvoiceBody,
 } from "@/services/customerInvoices";
 import { clientsService } from "@/services/clients";
@@ -57,6 +58,7 @@ import {
   Trash2,
   ExternalLink,
   CalendarClock,
+  Send,
 } from "lucide-react";
 import { formatInvoiceDueDatePtBr } from "@/lib/formatInvoiceDates";
 import { CustomerInvoiceStatusBadge, getCustomerInvoiceStatusLabel } from "@/lib/customerInvoiceStatusUi";
@@ -138,6 +140,14 @@ function storedAllowedFromInvoice(inv: CustomerInvoice): InvoicePaymentMethodUi[
   return null;
 }
 
+function formatNotificationDeliveryStatusLabel(delivery: CustomerInvoiceNotificationDelivery): string {
+  if (delivery.status === "sent") return "✅ Enviado";
+  if (delivery.status === "failed") return "❌ Falhou";
+  if (delivery.status === "queued" || delivery.status === "processing") return "⏳ Em processamento";
+  if (delivery.status === "skipped") return "Ignorado";
+  return delivery.status;
+}
+
 const CustomerInvoiceDetail = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -190,6 +200,21 @@ const CustomerInvoiceDetail = () => {
   const [mpConnected, setMpConnected] = useState(false);
   const [mpIntegrationLoading, setMpIntegrationLoading] = useState(true);
   const [mpGenerating, setMpGenerating] = useState(false);
+  const [replayNotificationLoading, setReplayNotificationLoading] = useState(false);
+  const [notificationDeliveries, setNotificationDeliveries] = useState<CustomerInvoiceNotificationDelivery[]>([]);
+  const [notificationDeliveriesLoading, setNotificationDeliveriesLoading] = useState(false);
+
+  const loadNotificationDeliveries = React.useCallback(async (invoiceId: string) => {
+    try {
+      setNotificationDeliveriesLoading(true);
+      const data = await customerInvoicesService.getNotificationDeliveries(invoiceId);
+      setNotificationDeliveries(data.deliveries ?? []);
+    } catch {
+      setNotificationDeliveries([]);
+    } finally {
+      setNotificationDeliveriesLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!id) return;
@@ -218,6 +243,9 @@ const CustomerInvoiceDetail = () => {
             if (!cancelled) setClient(null);
           }
         }
+        if (inv?.id) {
+          void loadNotificationDeliveries(inv.id);
+        }
       } catch (err) {
         if (!cancelled) {
           console.error("Erro ao carregar fatura:", err);
@@ -229,7 +257,7 @@ const CustomerInvoiceDetail = () => {
       }
     })();
     return () => { cancelled = true; };
-  }, [id, navigate]);
+  }, [id, navigate, loadNotificationDeliveries]);
 
   useEffect(() => {
     if (!id || !invoice?.subscription_id) {
@@ -398,6 +426,20 @@ const CustomerInvoiceDetail = () => {
     }
   };
 
+  const handleReplayNotification = async () => {
+    if (!id) return;
+    setReplayNotificationLoading(true);
+    try {
+      await customerInvoicesService.replayNotification(id);
+      toast.success("Notificação reenviada com sucesso.");
+      await loadNotificationDeliveries(id);
+    } catch {
+      toast.error("Não foi possível reenviar a notificação.");
+    } finally {
+      setReplayNotificationLoading(false);
+    }
+  };
+
   const handleMercadoPagoGenerate = async (regenerate: boolean) => {
     if (!id) return;
     setMpGenerating(true);
@@ -468,6 +510,7 @@ const CustomerInvoiceDetail = () => {
     (Boolean(existingMpUrl) || (actionable && canSendInvoice));
   const manualPaymentAllowed =
     canEditInvoice && invoice.status !== "paid" && invoice.status !== "cancelled" && invoice.status !== "refunded";
+  const latestNotificationDelivery = notificationDeliveries[0] ?? null;
 
   return (
     <div className="space-y-6">
@@ -826,6 +869,100 @@ const CustomerInvoiceDetail = () => {
               </div>
             )}
           </dl>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Send className="h-4 w-4 text-primary" />
+            Notificação ao cliente (WhatsApp)
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            Reenvia a mensagem de fatura criada pelo WhatsApp. Não duplica o alerta no sino interno.
+          </p>
+          {canSendInvoice && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={replayNotificationLoading}
+              onClick={() => void handleReplayNotification()}
+            >
+              <Send className="mr-2 h-4 w-4" />
+              {replayNotificationLoading ? "Reenviando…" : "Reenviar notificação"}
+            </Button>
+          )}
+          {notificationDeliveriesLoading ? (
+            <p className="text-sm text-muted-foreground">Carregando histórico…</p>
+          ) : latestNotificationDelivery ? (
+            <div className="space-y-3 rounded-lg border bg-muted/15 p-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <p className="text-sm font-medium">{formatNotificationDeliveryStatusLabel(latestNotificationDelivery)}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Criada em{" "}
+                    {format(new Date(latestNotificationDelivery.created_at), "dd/MM/yyyy HH:mm", { locale: ptBR })}
+                    {latestNotificationDelivery.sent_at
+                      ? ` · Enviada em ${format(new Date(latestNotificationDelivery.sent_at), "dd/MM/yyyy HH:mm", { locale: ptBR })}`
+                      : null}
+                  </p>
+                </div>
+                <span className="text-xs uppercase text-muted-foreground">{latestNotificationDelivery.channel}</span>
+              </div>
+              {latestNotificationDelivery.status === "failed" && latestNotificationDelivery.error_message ? (
+                <p className="text-sm text-destructive">
+                  Motivo: {latestNotificationDelivery.error_message}
+                </p>
+              ) : null}
+              {latestNotificationDelivery.attempts.length > 0 ? (
+                <div className="space-y-2 border-t border-border/60 pt-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tentativas</p>
+                  <ul className="space-y-2 text-xs">
+                    {latestNotificationDelivery.attempts.map((attempt) => (
+                      <li key={`${latestNotificationDelivery.id}-${attempt.attempt_number}`} className="rounded border bg-background px-2 py-1.5">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="font-medium">Tentativa {attempt.attempt_number}</span>
+                          <span className="text-muted-foreground">{attempt.status}</span>
+                        </div>
+                        {attempt.error_message ? (
+                          <p className="mt-1 text-destructive">{attempt.error_message}</p>
+                        ) : null}
+                        <p className="mt-1 text-muted-foreground">
+                          {format(new Date(attempt.created_at), "dd/MM/yyyy HH:mm", { locale: ptBR })}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">Nenhum envio WhatsApp registado para esta fatura.</p>
+          )}
+          {notificationDeliveries.length > 1 ? (
+            <Collapsible>
+              <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 rounded-md border bg-background px-3 py-2 text-left text-xs font-medium">
+                Ver envios anteriores ({notificationDeliveries.length - 1})
+                <ChevronDown className="h-4 w-4 shrink-0 opacity-70" aria-hidden />
+              </CollapsibleTrigger>
+              <CollapsibleContent className="space-y-2 pt-2">
+                {notificationDeliveries.slice(1).map((delivery) => (
+                  <div key={delivery.id} className="rounded-lg border p-3 text-xs">
+                    <p className="font-medium">{formatNotificationDeliveryStatusLabel(delivery)}</p>
+                    <p className="mt-1 text-muted-foreground">
+                      {format(new Date(delivery.created_at), "dd/MM/yyyy HH:mm", { locale: ptBR })}
+                    </p>
+                    {delivery.error_message ? (
+                      <p className="mt-1 text-destructive">{delivery.error_message}</p>
+                    ) : null}
+                  </div>
+                ))}
+              </CollapsibleContent>
+            </Collapsible>
+          ) : null}
         </CardContent>
       </Card>
 

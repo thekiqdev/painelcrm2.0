@@ -1,6 +1,11 @@
 import type { Pool } from 'pg';
 import { randomUUID } from 'crypto';
 import { uazapiService } from '../uazapi.js';
+import {
+  extractUazapiErrorStatus,
+  isUazapiInvalidTokenSignal,
+  markChatInstanceDisconnectedForInvalidToken,
+} from '../chatInstanceInvalidTokenSelfHeal.js';
 
 /**
  * Normalização final de texto WhatsApp (motor transacional + overrides).
@@ -45,8 +50,13 @@ export async function dispatchWhatsAppText(params: {
     return { ok: false, error: 'Remetente não pertence à empresa.' };
   }
 
-  const instanceResult = await params.pool.query<{ instance_token: string }>(
-    `SELECT i.instance_token
+  const instanceResult = await params.pool.query<{
+    id: string;
+    instance_token: string;
+    user_id: string;
+    external_instance_name: string | null;
+  }>(
+    `SELECT i.id, i.instance_token, i.user_id, i.external_instance_name
      FROM chat_instances i
      WHERE i.user_id = $1 AND i.status = 'connected'
      LIMIT 1`,
@@ -57,7 +67,8 @@ export async function dispatchWhatsAppText(params: {
     return { ok: false, error: 'Nenhuma instância WhatsApp ativa encontrada para o utilizador.' };
   }
 
-  const token = instanceResult.rows[0]!.instance_token;
+  const instanceRow = instanceResult.rows[0]!;
+  const token = instanceRow.instance_token;
 
   const outboundText = normalizeWhatsAppOutboundPlainText(params.text);
 
@@ -80,6 +91,22 @@ export async function dispatchWhatsAppText(params: {
     return { ok: true, providerMessageId: String(providerMessageId) };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
+    const httpStatus = extractUazapiErrorStatus(e);
+    if (isUazapiInvalidTokenSignal(msg, httpStatus)) {
+      try {
+        await markChatInstanceDisconnectedForInvalidToken(params.pool, {
+          instanceId: instanceRow.id,
+          userId: instanceRow.user_id,
+          tenantId: params.tenantId,
+          externalInstanceName: instanceRow.external_instance_name,
+          reason: msg,
+          source: 'dispatch_whatsapp_text',
+        });
+      } catch (healErr: unknown) {
+        const healMsg = healErr instanceof Error ? healErr.message : String(healErr);
+        console.error('[chat_instance_health]', JSON.stringify({ action: 'self_heal_failed', error: healMsg }));
+      }
+    }
     return { ok: false, error: msg.slice(0, 500) };
   }
 }
