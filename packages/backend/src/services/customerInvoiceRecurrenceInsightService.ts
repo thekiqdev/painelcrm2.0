@@ -123,6 +123,7 @@ export interface CustomerInvoiceRecurrenceInsight {
 
 function billingIntervalLabelPt(interval: string): string {
   const m: Record<string, string> = {
+    weekly: 'Semanal',
     monthly: 'Mensal',
     quarterly: 'Trimestral',
     semi_annual: 'Semestral',

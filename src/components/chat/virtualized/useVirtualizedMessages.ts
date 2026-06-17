@@ -80,6 +80,10 @@ export function useVirtualizedMessages<T extends MessageWithId>(
     [enabled, messages.length, scrollRef, virtualizer],
   );
 
+  /** Evita reexecutar efeitos de scroll quando só a identidade do callback muda. */
+  const scrollToBottomRef = useRef(scrollToBottom);
+  scrollToBottomRef.current = scrollToBottom;
+
   const scrollToMessageId = useCallback(
     (id: string): boolean => {
       if (!enabled) return false;
@@ -91,14 +95,23 @@ export function useVirtualizedMessages<T extends MessageWithId>(
     [enabled, messages, virtualizer],
   );
 
+  const prevConversationKeyRef = useRef(conversationKey);
+
   useLayoutEffect(() => {
     if (!enabled) return;
+    if (prevConversationKeyRef.current === conversationKey) return;
+    prevConversationKeyRef.current = conversationKey;
     isNearBottomRef.current = true;
     prevCountRef.current = 0;
     prevFirstIdRef.current = null;
     prevLastIdRef.current = null;
-    scrollToBottom('auto');
-  }, [conversationKey, enabled, scrollToBottom]);
+    scrollToBottomRef.current('auto');
+  }, [conversationKey, enabled]);
+
+  useLayoutEffect(() => {
+    if (!enabled) return;
+    isNearBottomRef.current = isNearBottom();
+  }, [enabled, isNearBottom]);
 
   useLayoutEffect(() => {
     if (!enabled || messages.length === 0) return;
@@ -116,15 +129,15 @@ export function useVirtualizedMessages<T extends MessageWithId>(
       const added = count - prevCount;
       virtualizer.scrollToIndex(added, { align: 'start', behavior: 'auto' });
     } else if (appended && isNearBottomRef.current) {
-      scrollToBottom('auto');
+      scrollToBottomRef.current('auto');
     } else if (prevCount === 0) {
-      scrollToBottom('auto');
+      scrollToBottomRef.current('auto');
     }
 
     prevCountRef.current = count;
     prevFirstIdRef.current = firstId;
     prevLastIdRef.current = lastId;
-  }, [messages, enabled, scrollToBottom, virtualizer]);
+  }, [messages, enabled, virtualizer]);
 
   useEffect(() => {
     if (!import.meta.env.DEV || !enabled) return;

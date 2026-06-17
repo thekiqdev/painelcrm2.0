@@ -34,6 +34,15 @@ describe('computeFinalNextBillingForCompletedCycle', () => {
     expect(r.finalNextYmd).toBe('2027-04-24');
   });
 
+  it('semanal: avança 7 dias', () => {
+    const r = computeFinalNextBillingForCompletedCycle({
+      cycleDateYmd: '2026-06-01',
+      billingInterval: 'weekly',
+      oldNextBillingRaw: '2026-06-01',
+    });
+    expect(r.finalNextYmd).toBe('2026-06-08');
+  });
+
   it('proteção anti-regressão: next já à frente do computado mantém', () => {
     const r = computeFinalNextBillingForCompletedCycle({
       cycleDateYmd: '2026-04-24',

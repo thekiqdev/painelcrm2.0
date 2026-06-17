@@ -154,11 +154,70 @@ export interface CrmSubscriptionDetailPayload {
   meta: { periodicity_label_pt: string };
 }
 
+export type CrmSubscriptionsAnalyticsPayload = {
+  period: { from: string; to: string; preset?: string };
+  mrr_cents: number;
+  arr_cents: number;
+  active_count: number;
+  new_count: number;
+  cancelled_count: number;
+  net_growth: number;
+  average_ticket_cents: number;
+  upcoming_7d_cents: number;
+  last_payment: {
+    client_id: string | null;
+    client_name: string;
+    amount_cents: number;
+    paid_at: string;
+  } | null;
+  annual_projection_cents: number;
+  by_interval: Array<{
+    billing_interval: string;
+    label_pt: string;
+    count: number;
+    mrr_cents: number;
+  }>;
+  top_clients: Array<{
+    client_id: string | null;
+    client_name: string;
+    mrr_cents: number;
+  }>;
+  growth_by_month: Array<{
+    month: string;
+    new_count: number;
+    cancelled_count: number;
+  }>;
+  projection_12m: {
+    by_month: Array<{
+      month: string;
+      subscription_revenue_realized: number;
+      subscription_revenue_pending: number;
+      subscription_revenue_projected: number;
+    }>;
+  };
+};
+
 export const crmSubscriptionsService = {
   async list(): Promise<CrmSubscriptionListItem[]> {
     const res = await apiClient.get<{ subscriptions: CrmSubscriptionListItem[] }>('/api/crm-subscriptions');
     if (res.error) throw new Error(res.error);
     return res.data?.subscriptions ?? [];
+  },
+
+  async getAnalytics(params?: {
+    preset?: string;
+    from?: string;
+    to?: string;
+  }): Promise<CrmSubscriptionsAnalyticsPayload> {
+    const q = new URLSearchParams();
+    if (params?.preset) q.set('preset', params.preset);
+    if (params?.from) q.set('from', params.from);
+    if (params?.to) q.set('to', params.to);
+    const qs = q.toString() ? `?${q.toString()}` : '';
+    const res = await apiClient.get<CrmSubscriptionsAnalyticsPayload>(`/api/crm-subscriptions/analytics${qs}`);
+    if (res.error) throw new Error(res.error);
+    if (!res.data) throw new Error('Analytics indisponível');
+    return res.data;
   },
 
   async getById(id: string): Promise<CrmSubscriptionDetailPayload> {

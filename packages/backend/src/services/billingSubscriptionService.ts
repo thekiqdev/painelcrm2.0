@@ -7,7 +7,7 @@ import { yyyyMmDdFromDbDateValue } from '../utils/calendarDateBr.js';
 import type { TenantBillingRow } from './invoiceService.js';
 
 export type SubscriptionType = 'saas' | 'customer';
-export type BillingInterval = 'monthly' | 'quarterly' | 'semi_annual' | 'yearly';
+export type BillingInterval = 'weekly' | 'monthly' | 'quarterly' | 'semi_annual' | 'yearly';
 
 type SubscriptionRowDb = Omit<SubscriptionRow, 'cycles_unlimited' | 'max_cycles'> & {
   cycles_unlimited?: boolean;
@@ -205,6 +205,9 @@ export async function patchActiveSaasSubscriptionIncompletePeriods(params: {
 function subtractIntervalFromPeriodEnd(endYmd: string, interval: string): string {
   const d = new Date(`${endYmd}T12:00:00.000Z`);
   switch (interval as BillingInterval) {
+    case 'weekly':
+      d.setUTCDate(d.getUTCDate() - 7);
+      break;
     case 'monthly':
       d.setUTCMonth(d.getUTCMonth() - 1);
       break;
@@ -218,7 +221,7 @@ function subtractIntervalFromPeriodEnd(endYmd: string, interval: string): string
       d.setUTCFullYear(d.getUTCFullYear() - 1);
       break;
     default:
-      d.setUTCMonth(d.getUTCMonth() - 1);
+      throw new Error(`Unsupported billing interval: ${String(interval)}`);
   }
   const yy = d.getUTCFullYear();
   const mm = String(d.getUTCMonth() + 1).padStart(2, '0');

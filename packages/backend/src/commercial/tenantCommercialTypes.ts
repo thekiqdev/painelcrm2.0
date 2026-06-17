@@ -1,4 +1,9 @@
-export type TenantCommercialBillingInterval = 'monthly' | 'quarterly' | 'semi_annual' | 'yearly';
+export type TenantCommercialBillingInterval =
+  | 'weekly'
+  | 'monthly'
+  | 'quarterly'
+  | 'semi_annual'
+  | 'yearly';
 
 export const TENANT_COMMERCIAL_OVERRIDE_TYPES = [
   'fixed_price',

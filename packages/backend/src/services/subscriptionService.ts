@@ -102,13 +102,16 @@ export function resolveTenantBillingDueDateIso10(billingRow: TenantBillingRow): 
 }
 
 /**
- * Adiciona intervalo à data (monthly, quarterly, semi_annual, yearly).
+ * Adiciona intervalo à data (weekly, monthly, quarterly, semi_annual, yearly).
  * Usado para calcular plan_period_end no backend (fonte de verdade).
  * Atenção: em datas como 31/01, setMonth(+1) pode gerar 03/03 (rollover JS); para próximo ciclo de cobrança use calculateNextBillingDate.
  */
 export function addInterval(date: Date, interval: BillingInterval): Date {
   const result = new Date(date);
   switch (interval) {
+    case 'weekly':
+      result.setUTCDate(result.getUTCDate() + 7);
+      break;
     case 'monthly':
       result.setMonth(result.getMonth() + 1);
       break;
@@ -122,7 +125,7 @@ export function addInterval(date: Date, interval: BillingInterval): Date {
       result.setFullYear(result.getFullYear() + 1);
       break;
     default:
-      result.setMonth(result.getMonth() + 1);
+      throw new Error(`Unsupported billing interval: ${String(interval)}`);
   }
   return result;
 }
@@ -138,39 +141,51 @@ export function calculateNextBillingDate(
   billingAnchorDay: number | null
 ): string {
   const d = new Date(periodStart + 'T12:00:00Z');
-  let y = d.getUTCFullYear();
-  let m = d.getUTCMonth();
-  const dayOfPeriod = d.getUTCDate();
-  const anchor = billingAnchorDay ?? dayOfPeriod;
 
   switch (billingInterval) {
+    case 'weekly': {
+      d.setUTCDate(d.getUTCDate() + 7);
+      return d.toISOString().slice(0, 10);
+    }
     case 'monthly':
-      m += 1;
-      break;
     case 'quarterly':
-      m += 3;
-      break;
     case 'semi_annual':
-      m += 6;
-      break;
-    case 'yearly':
-      y += 1;
-      break;
-    default:
-      m += 1;
-  }
-  if (m > 11) {
-    y += Math.floor(m / 12);
-    m = m % 12;
-  }
+    case 'yearly': {
+      let y = d.getUTCFullYear();
+      let m = d.getUTCMonth();
+      const dayOfPeriod = d.getUTCDate();
+      const anchor = billingAnchorDay ?? dayOfPeriod;
 
-  const lastDay = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
-  const day = Math.min(anchor, lastDay);
-  const next = new Date(Date.UTC(y, m, day));
-  const yy = next.getUTCFullYear();
-  const mm = String(next.getUTCMonth() + 1).padStart(2, '0');
-  const dd = String(next.getUTCDate()).padStart(2, '0');
-  return `${yy}-${mm}-${dd}`;
+      switch (billingInterval) {
+        case 'monthly':
+          m += 1;
+          break;
+        case 'quarterly':
+          m += 3;
+          break;
+        case 'semi_annual':
+          m += 6;
+          break;
+        case 'yearly':
+          y += 1;
+          break;
+      }
+      if (m > 11) {
+        y += Math.floor(m / 12);
+        m = m % 12;
+      }
+
+      const lastDay = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+      const day = Math.min(anchor, lastDay);
+      const next = new Date(Date.UTC(y, m, day));
+      const yy = next.getUTCFullYear();
+      const mm = String(next.getUTCMonth() + 1).padStart(2, '0');
+      const dd = String(next.getUTCDate()).padStart(2, '0');
+      return `${yy}-${mm}-${dd}`;
+    }
+    default:
+      throw new Error(`Unsupported billing interval: ${String(billingInterval)}`);
+  }
 }
 
 /**

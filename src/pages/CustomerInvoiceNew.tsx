@@ -319,7 +319,7 @@ const CustomerInvoiceNew = ({
   const [products, setProducts] = useState<Product[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [creationKind, setCreationKind] = useState<CreationKind | null>(null);
-  const [billingInterval, setBillingInterval] = useState<"monthly" | "quarterly" | "semi_annual" | "yearly">("monthly");
+  const [billingInterval, setBillingInterval] = useState<"weekly" | "monthly" | "quarterly" | "semi_annual" | "yearly">("monthly");
   const [subscriptionCyclesUnlimited, setSubscriptionCyclesUnlimited] = useState(true);
   const [subscriptionMaxCycles, setSubscriptionMaxCycles] = useState("12");
   const [invoiceByLink, setInvoiceByLink] = useState(false);
@@ -1923,6 +1923,7 @@ const CustomerInvoiceNew = ({
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent className={radixOverlayAboveMobileShellClassName}>
+                          <SelectItem value="weekly">Semanal</SelectItem>
                           <SelectItem value="monthly">Mensal</SelectItem>
                           <SelectItem value="quarterly">Trimestral</SelectItem>
                           <SelectItem value="semi_annual">Semestral</SelectItem>

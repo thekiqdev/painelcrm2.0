@@ -53,7 +53,7 @@ export interface CreateCustomerInvoiceItemBody {
   scheduled_due_date?: string | null;
 }
 
-export type BillingIntervalRecurring = 'monthly' | 'quarterly' | 'semi_annual' | 'yearly';
+export type BillingIntervalRecurring = 'weekly' | 'monthly' | 'quarterly' | 'semi_annual' | 'yearly';
 
 export interface CreateCustomerInvoiceBody {
   client_id?: string | null;

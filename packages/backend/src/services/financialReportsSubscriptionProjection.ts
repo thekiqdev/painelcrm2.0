@@ -28,12 +28,40 @@ function cmpYmd(a: string, b: string): number {
 
 function billingIntervalLabelPt(interval: string): string {
   const m: Record<string, string> = {
+    weekly: 'Semanal',
     monthly: 'Mensal',
     quarterly: 'Trimestral',
     semi_annual: 'Semestral',
     yearly: 'Anual',
   };
   return m[interval] ?? interval;
+}
+
+/** MRR equivalente para assinaturas CRM (normalização por intervalo de cobrança). */
+export function normalizeCrmSubscriptionAmountToMonthlyCents(
+  amountCents: number,
+  billingInterval: string,
+): number {
+  const amount = Math.max(0, Math.round(amountCents));
+  switch (billingInterval) {
+    case 'weekly':
+      return Math.floor((amount * 52) / 12);
+    case 'monthly':
+      return amount;
+    case 'quarterly':
+      return Math.floor(amount / 3);
+    case 'semi_annual':
+      return Math.floor(amount / 6);
+    case 'yearly':
+      return Math.floor(amount / 12);
+    default:
+      return amount;
+  }
+}
+
+/** ARR equivalente a partir do MRR CRM normalizado. */
+export function crmSubscriptionArrFromMonthlyCents(monthlyCents: number): number {
+  return Math.floor(monthlyCents * 12);
 }
 
 function subscriptionStatusLabelPt(row: {
@@ -328,7 +356,9 @@ export async function buildSubscriptionsProjection(
         subscription_id: sub.id,
         client_id: sub.customer_id,
         client_name: sub.client_name?.trim() || 'Cliente',
-        amount_recurring: centsToReais(sub.amount_cents),
+        amount_recurring: centsToReais(
+          normalizeCrmSubscriptionAmountToMonthlyCents(sub.amount_cents, sub.billing_interval)
+        ),
         billing_interval: sub.billing_interval,
         periodicity_label_pt: billingIntervalLabelPt(sub.billing_interval),
         next_billing_date: '',
@@ -368,7 +398,9 @@ export async function buildSubscriptionsProjection(
       subscription_id: sub.id,
       client_id: sub.customer_id,
       client_name: sub.client_name?.trim() || 'Cliente',
-      amount_recurring: centsToReais(sub.amount_cents),
+      amount_recurring: centsToReais(
+        normalizeCrmSubscriptionAmountToMonthlyCents(sub.amount_cents, sub.billing_interval)
+      ),
       billing_interval: sub.billing_interval,
       periodicity_label_pt: billingIntervalLabelPt(sub.billing_interval),
       next_billing_date: sub.next_billing_date.slice(0, 10),

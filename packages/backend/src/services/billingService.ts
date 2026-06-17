@@ -12,7 +12,7 @@ export type CalculateInvoiceAmountOptions = {
   context?: TenantCommercialPriceContext;
 };
 
-export type BillingInterval = 'monthly' | 'quarterly' | 'semi_annual' | 'yearly';
+export type BillingInterval = 'weekly' | 'monthly' | 'quarterly' | 'semi_annual' | 'yearly';
 
 /** Converte DATE do PG (string YYYY-MM-DD ou Date) para YYYY-MM-DD. */
 function periodBoundaryToYmd(value: unknown): string {

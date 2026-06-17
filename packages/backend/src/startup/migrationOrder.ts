@@ -408,5 +408,7 @@ export const MIGRATION_ORDER = [
   '273_chat_kanban_scheduled_moves_acquisition_lead.sql',
   '274_chat_kanban_single_active_lead_card.sql',
   '275_acquisition_lead_stage_qualified.sql',
+  /** Sprint S1: assinaturas CRM semanais (subscriptions.billing_interval) */
+  '276_subscriptions_billing_interval_weekly_crm.sql',
   'create-admin-user.sql',
 ];

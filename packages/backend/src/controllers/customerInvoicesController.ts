@@ -66,7 +66,7 @@ const createItemSchema = z.object({
   scheduled_due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
 });
 
-const billingIntervalSchema = z.enum(['monthly', 'quarterly', 'semi_annual', 'yearly']);
+const billingIntervalSchema = z.enum(['weekly', 'monthly', 'quarterly', 'semi_annual', 'yearly']);
 const paymentMethodSchema = z.enum(['PIX', 'BOLETO', 'CREDIT_CARD']);
 
 const createBodySchema = z.object({
@@ -92,7 +92,7 @@ const createBodySchema = z.object({
     path: ['amount_cents'],
   })
   .refine((data) => !data.recurring || (data.billing_interval != null), {
-    message: 'Para fatura recorrente informe billing_interval (monthly, quarterly, semi_annual, yearly)',
+    message: 'Para fatura recorrente informe billing_interval (weekly, monthly, quarterly, semi_annual, yearly)',
     path: ['billing_interval'],
   })
   .superRefine((data, ctx) => {

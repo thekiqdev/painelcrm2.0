@@ -9,6 +9,10 @@ import {
   patchCrmSubscriptionCyclesConfig,
   crmSubscriptionMeta,
 } from '../services/crmSubscriptionsService.js';
+import {
+  getCrmSubscriptionsAnalytics,
+  resolveCrmSubscriptionsAnalyticsRange,
+} from '../services/crmSubscriptionsAnalyticsService.js';
 import { assertPermissionKey, ModulePermissionError } from '../permissions/index.js';
 import type { PermissionCatalogKey } from '../permissions/permissionCatalog.js';
 
@@ -38,6 +42,23 @@ export async function listCrmSubscriptions(req: AuthRequest, res: Response): Pro
   } catch (e) {
     console.error('[crmSubscriptionsController] list', e);
     res.status(500).json({ error: 'Erro ao listar assinaturas' });
+  }
+}
+
+export async function getCrmSubscriptionsAnalyticsHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Empresa não identificada' });
+      return;
+    }
+    if (!(await requirePermKey(req, 'billing.view_subscriptions', res))) return;
+    const range = resolveCrmSubscriptionsAnalyticsRange(req.query as Record<string, unknown>);
+    const analytics = await getCrmSubscriptionsAnalytics(tenantId, range);
+    res.json(analytics);
+  } catch (e) {
+    console.error('[crmSubscriptionsController] analytics', e);
+    res.status(500).json({ error: 'Erro ao carregar analytics de assinaturas' });
   }
 }
 

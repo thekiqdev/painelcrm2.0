@@ -131,6 +131,7 @@ job_rows AS (
     COALESCE(
       ci.period_end,
       ((j.cycle_key::date + CASE s.billing_interval
+        WHEN 'weekly' THEN INTERVAL '7 days'
         WHEN 'monthly' THEN INTERVAL '1 month'
         WHEN 'quarterly' THEN INTERVAL '3 months'
         WHEN 'semi_annual' THEN INTERVAL '6 months'
@@ -261,6 +262,7 @@ SELECT
   s.next_billing_date,
   s.next_billing_date,
   ((s.next_billing_date + CASE s.billing_interval
+    WHEN 'weekly' THEN INTERVAL '7 days'
     WHEN 'monthly' THEN INTERVAL '1 month'
     WHEN 'quarterly' THEN INTERVAL '3 months'
     WHEN 'semi_annual' THEN INTERVAL '6 months'

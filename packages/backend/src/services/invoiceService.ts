@@ -9,7 +9,7 @@ import { yyyyMmDdFromDbDateValue } from '../utils/calendarDateBr.js';
 import { billingLog } from './billingLogger.js';
 import type { GatewayPaymentData } from '../modules/payments/paymentGatewayTypes.js';
 
-export type BillingInterval = 'monthly' | 'quarterly' | 'semi_annual' | 'yearly';
+export type BillingInterval = 'weekly' | 'monthly' | 'quarterly' | 'semi_annual' | 'yearly';
 export type BillingSource = 'superadmin' | 'self_service' | 'api';
 export type BillingReason =
   | 'plan_purchase'

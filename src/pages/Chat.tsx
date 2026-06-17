@@ -2187,6 +2187,9 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     enabled: messageVirtualEnabled,
   });
 
+  /** Última conversa para a qual já aplicámos scroll inicial (modo não virtualizado). */
+  const scrollMessagesConversationKeyRef = useRef<string | null>(null);
+
   /** Mantém o viewport no fim do histórico (mensagem mais recente visível). */
   const scrollMessagesToBottom = useCallback(() => {
     if (messageVirtual.enabled) {
@@ -2217,14 +2220,28 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     });
   }, [messageVirtual]);
 
-  // Scroll para o fim: mensagens novas, troca de conversa, fim do carregamento, ou volta ao painel da conversa
-  // (ex.: criar fatura desmonta a lista — sem mudar `messages`, o efeito antigo não corria e o scroll ia ao topo)
+  // Scroll para o fim: troca de conversa, carga inicial, ou novas mensagens enquanto o utilizador está no fim.
+  // Não forçar scroll quando o utilizador subiu no histórico (ex.: socket / reload silencioso).
   useLayoutEffect(() => {
     if (messageVirtual.enabled) return;
     if (messages.length === 0 || loadingMessages) return;
     if (viewMode !== 'conversation') return;
-    scrollMessagesToBottom();
-  }, [messages, selectedConversationId, loadingMessages, viewMode, scrollMessagesToBottom, messageVirtual.enabled]);
+
+    const conversationChanged = scrollMessagesConversationKeyRef.current !== selectedConversationId;
+    scrollMessagesConversationKeyRef.current = selectedConversationId;
+
+    if (conversationChanged || messageVirtual.isNearBottom()) {
+      scrollMessagesToBottom();
+    }
+  }, [
+    messages,
+    selectedConversationId,
+    loadingMessages,
+    viewMode,
+    scrollMessagesToBottom,
+    messageVirtual.enabled,
+    messageVirtual.isNearBottom,
+  ]);
 
   const searchFilteredConversations = useMemo(() => {
     if (!searchTerm.trim()) return conversations;
@@ -4004,9 +4021,11 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
           // Se esta é a conversa selecionada, recarregar mensagens
           if (selectedConversationId === result.conversationId) {
             await loadMessages(result.conversationId, { silent: true });
-            // Reforço: novo conteúdo + Radix às vezes só estabiliza scrollHeight no frame seguinte
-            queueMicrotask(() => scrollMessagesToBottom());
-            setTimeout(() => scrollMessagesToBottom(), 50);
+            if (messageVirtual.isNearBottom()) {
+              // Reforço: novo conteúdo + Radix às vezes só estabiliza scrollHeight no frame seguinte
+              queueMicrotask(() => scrollMessagesToBottom());
+              setTimeout(() => scrollMessagesToBottom(), 50);
+            }
           } else {
             bumpConversationListRow(result.conversationId, {
               lastMessagePreview: '[Notificação]',
