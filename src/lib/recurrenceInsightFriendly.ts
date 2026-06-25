@@ -17,6 +17,8 @@ export const FRIENDLY_RENEWAL_BLOCK_REASON: Record<RenewalEnqueueBlockReasonCode
   active_job_exists: "A cobrança está aguardando processamento automático.",
   completed_cycle_guard: "Este ciclo já possui uma fatura vinculada.",
   eligible_no_row_yet: "O sistema está a registar o processamento deste ciclo. Aguarde alguns instantes.",
+  customer_unresolvable:
+    "A assinatura ainda não tem cliente vinculado. Conclua o cadastro do cliente ou vincule-o à assinatura para habilitar a renovação automática.",
 };
 
 export function friendlyRenewalBlockReason(code: RenewalEnqueueBlockReasonCode): string {

@@ -136,7 +136,8 @@ export type RenewalEnqueueBlockReasonCode =
   | 'outside_local_window'
   | 'active_job_exists'
   | 'completed_cycle_guard'
-  | 'eligible_no_row_yet';
+  | 'eligible_no_row_yet'
+  | 'customer_unresolvable';
 
 /** GET /api/customer-invoices/:id/recurrence-insight */
 export interface CustomerInvoiceRecurrenceInsight {

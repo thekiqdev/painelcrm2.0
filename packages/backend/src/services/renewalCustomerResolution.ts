@@ -42,7 +42,9 @@ async function findUniqueClientIdFromInvoices(
 async function clientExists(db: DbQueryable, tenantId: string, clientId: string): Promise<boolean> {
   const r = await db.query(
     `SELECT EXISTS(
-       SELECT 1 FROM clients WHERE id = $1::uuid AND tenant_id = $2::uuid
+       SELECT 1 FROM clients c
+       INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $2::uuid
+       WHERE c.id = $1::uuid
      ) AS ok`,
     [clientId, tenantId]
   );
