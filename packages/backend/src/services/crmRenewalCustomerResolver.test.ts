@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { resolveCrmRenewalPreviousInvoice } from './crmRenewalCustomerResolver.js';
+import { resolveCrmRenewalPreviousInvoice, buildSyntheticRenewalItemsFromSubscription } from './crmRenewalCustomerResolver.js';
 import * as customerInvoiceService from './customerInvoiceService.js';
 
 describe('crmRenewalCustomerResolver', () => {
@@ -35,17 +35,23 @@ describe('crmRenewalCustomerResolver', () => {
     });
   });
 
-  it('falha quando current_period_start ausente', async () => {
-    const db = { query: vi.fn() };
+  it('usa cyclePeriodStartYmd quando current_period_start ausente', async () => {
+    const db = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+    vi.spyOn(customerInvoiceService, 'findCustomerInvoiceBySubscriptionAndPeriod').mockResolvedValue({
+      id: 'inv-exact',
+      period_start: '2026-06-24',
+      due_date: '2026-06-24',
+    } as Awaited<ReturnType<typeof customerInvoiceService.findCustomerInvoiceBySubscriptionAndPeriod>>);
+
     const r = await resolveCrmRenewalPreviousInvoice(db, {
       subscriptionId: 'sub-1',
       cyclePeriodStartYmd: '2026-06-24',
       subscriptionCurrentPeriodStart: null,
       billingInterval: 'weekly',
     });
-    expect(r.ok).toBe(false);
-    if (r.ok) return;
-    expect(r.reason).toBe('missing_current_period_start');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.resolved_via).toBe('current_period_start_exact');
   });
 
   it('fallback: última fatura antes do ciclo', async () => {
@@ -72,5 +78,38 @@ describe('crmRenewalCustomerResolver', () => {
     if (!r.ok) return;
     expect(r.resolved_via).toBe('latest_before_cycle');
     expect(r.lookup_period_start).toBe('2026-05-24');
+  });
+
+  it('subscription_contract_items quando sem faturas', async () => {
+    const db = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+    vi.spyOn(customerInvoiceService, 'findCustomerInvoiceBySubscriptionAndPeriod').mockResolvedValue(null);
+
+    const r = await resolveCrmRenewalPreviousInvoice(db, {
+      subscriptionId: 'sub-1',
+      cyclePeriodStartYmd: '2026-06-24',
+      subscriptionCurrentPeriodStart: '2026-06-24',
+      billingInterval: 'weekly',
+      subscriptionMetadata: {
+        crm_contract: {
+          amount_cents: 5000,
+          billing_interval: 'weekly',
+          description: 'Plano semanal',
+        },
+      },
+      subscriptionAmountCents: 5000,
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.resolved_via).toBe('subscription_contract_items');
+    expect(r.synthetic_items?.length).toBe(1);
+  });
+
+  it('buildSyntheticRenewalItemsFromSubscription usa amount da subscription', () => {
+    const items = buildSyntheticRenewalItemsFromSubscription(null, {
+      amount_cents: 9900,
+      billing_interval: 'monthly',
+    }, '2026-06-24');
+    expect(items?.[0]?.total_cents).toBe(9900);
+    expect(items?.[0]?.is_recurring).toBe(true);
   });
 });

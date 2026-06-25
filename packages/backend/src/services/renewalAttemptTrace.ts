@@ -41,6 +41,16 @@ export type RenewalAttemptTraceFields = {
   final_status?: string;
   prev_invoice_resolution?: string;
   lookup_period_start?: string;
+  /** B0.1 — rastreio expandido */
+  correlation_id?: string;
+  validation_stage?: string;
+  customer_resolution?: string;
+  date_validation?: Record<string, unknown>;
+  invoice_resolution?: string;
+  error_category?: string;
+  resolved_via?: string;
+  subscription_snapshot?: Record<string, unknown>;
+  auto_repairs?: string[];
 };
 
 export function logRenewalAttemptTrace(fields: RenewalAttemptTraceFields): void {
