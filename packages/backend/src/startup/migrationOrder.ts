@@ -410,5 +410,9 @@ export const MIGRATION_ORDER = [
   '275_acquisition_lead_stage_qualified.sql',
   /** Sprint S1: assinaturas CRM semanais (subscriptions.billing_interval) */
   '276_subscriptions_billing_interval_weekly_crm.sql',
+  /** Sprint S2.1: contrato da assinatura CRM (subscription_change_events) */
+  '277_subscription_change_events.sql',
+  /** Sprint S2.4: pause/resume/reactivate em subscription_change_events */
+  '278_subscription_change_events_lifecycle.sql',
   'create-admin-user.sql',
 ];

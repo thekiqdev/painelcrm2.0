@@ -7,6 +7,10 @@ import {
   clampRecurringInvoiceGenerateDaysBeforeDue,
   computeRecurringInvoiceGenerationDateYmd,
 } from '../utils/billingGenerationDate.js';
+import {
+  effectiveRecurringGenerateDaysBeforeDue,
+  isGenerateDaysBeforeCappedForInterval,
+} from '../utils/billingIntervalGenerationCap.js';
 import { resolveTenantBillingPreferences } from './tenantBillingPreferencesService.js';
 
 export type BillingWindowReason =
@@ -31,6 +35,11 @@ export interface BillingWindowDiagnostic {
   generation_date_ymd: string;
   /** Valor efetivo de dias de antecipação (0–60). */
   recurring_generate_days_before_due: number;
+  /** Valor bruto do tenant (antes do cap por periodicidade). */
+  recurring_generate_days_before_due_tenant: number;
+  /** `true` quando o tenant pede mais dias do que a periodicidade permite. */
+  generate_days_capped_for_interval: boolean;
+  billing_interval_effective: string;
   would_be_eligible_by_window: boolean;
   reason: BillingWindowReason;
   phase: 'window_runtime_phase2';
@@ -70,6 +79,8 @@ export function buildBillingWindowDiagnostic(params: {
   nextBillingDate: string;
   /** Dias antes do vencimento para permitir enfileiramento (tenant). Default 0. */
   recurringInvoiceGenerateDaysBeforeDue?: number | null;
+  /** Periodicidade da assinatura — aplica cap de antecipação por ciclo. */
+  billingInterval?: string | null;
   now?: Date;
 }): BillingWindowDiagnostic {
   const tzRaw = params.tenantTimezoneRaw?.trim() || null;
@@ -90,8 +101,17 @@ export function buildBillingWindowDiagnostic(params: {
   const fallback_applied = resolved.timezone_source === 'fallback_default';
 
   const cycleYmd = params.nextBillingDate.trim().slice(0, 10);
-  const recurring_generate_days_before_due = clampRecurringInvoiceGenerateDaysBeforeDue(
+  const billing_interval_effective = (params.billingInterval ?? 'monthly').trim() || 'monthly';
+  const recurring_generate_days_before_due_tenant = clampRecurringInvoiceGenerateDaysBeforeDue(
     params.recurringInvoiceGenerateDaysBeforeDue
+  );
+  const recurring_generate_days_before_due = effectiveRecurringGenerateDaysBeforeDue(
+    params.recurringInvoiceGenerateDaysBeforeDue,
+    billing_interval_effective
+  );
+  const generate_days_capped_for_interval = isGenerateDaysBeforeCappedForInterval(
+    params.recurringInvoiceGenerateDaysBeforeDue,
+    billing_interval_effective
   );
   const generation_date_ymd = computeRecurringInvoiceGenerationDateYmd(cycleYmd, recurring_generate_days_before_due);
 
@@ -125,6 +145,9 @@ export function buildBillingWindowDiagnostic(params: {
     next_billing_date: cycleYmd,
     generation_date_ymd,
     recurring_generate_days_before_due,
+    recurring_generate_days_before_due_tenant,
+    generate_days_capped_for_interval,
+    billing_interval_effective,
     would_be_eligible_by_window,
     reason,
     phase: 'window_runtime_phase2',

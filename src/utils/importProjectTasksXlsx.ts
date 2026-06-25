@@ -1,4 +1,3 @@
-import * as XLSX from "xlsx";
 import type { Member } from "@/services/members";
 import { parsePtDateToIso } from "@/utils/importProjectsCsv";
 
@@ -331,10 +330,11 @@ export function prepareTasksFromProjectTasksCsv(
  * Planilha exportada de tarefas (ex.: primeira folha com linha de título opcional,
  * cabeçalhos #, Nome, Status, Data de Início, Data de Vencimento, Atribuído ao, Tags, Prioridade).
  */
-export function prepareTasksFromProjectTasksXlsx(
+export async function prepareTasksFromProjectTasksXlsx(
   arrayBuffer: ArrayBuffer,
   members: Member[],
-): { prepared: PreparedProjectTaskImportRow[]; skipped: ProjectTaskImportSkip[] } {
+): Promise<{ prepared: PreparedProjectTaskImportRow[]; skipped: ProjectTaskImportSkip[] }> {
+  const XLSX = await import("xlsx");
   const wb = XLSX.read(arrayBuffer, { type: "array", cellDates: true });
   const sheetName = wb.SheetNames[0];
   if (!sheetName) {

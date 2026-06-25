@@ -16,6 +16,8 @@ BEGIN
   END IF;
 END $$;
 
+ALTER TABLE public.subscriptions DROP CONSTRAINT IF EXISTS subscriptions_billing_interval_check;
+
 ALTER TABLE public.subscriptions
   ADD CONSTRAINT subscriptions_billing_interval_check
   CHECK (billing_interval IN ('weekly', 'monthly', 'quarterly', 'semi_annual', 'yearly'));

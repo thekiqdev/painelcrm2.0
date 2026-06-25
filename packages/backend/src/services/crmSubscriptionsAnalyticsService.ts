@@ -10,6 +10,7 @@ import {
   normalizeCrmSubscriptionAmountToMonthlyCents,
   type SubscriptionsProjectionBlock,
 } from './financialReportsSubscriptionProjection.js';
+import { computeMrrWithPendingChanges } from './crmSubscriptionsPendingMrr.js';
 
 export type CrmSubscriptionsAnalyticsRange = { from: string; to: string; preset?: string };
 
@@ -42,8 +43,15 @@ export type CrmSubscriptionsGrowthMonth = {
 export type CrmSubscriptionsAnalytics = {
   period: CrmSubscriptionsAnalyticsRange;
   mrr_cents: number;
+  /** MRR projetado após aplicar `metadata.pending_crm_contract` nas assinaturas ativas. */
+  mrr_after_pending_cents: number;
+  /** Diferença entre MRR após pendências e MRR atual. */
+  mrr_pending_delta_cents: number;
   arr_cents: number;
   active_count: number;
+  paused_count: number;
+  paused_mrr_cents: number;
+  paused_arr_cents: number;
   new_count: number;
   cancelled_count: number;
   net_growth: number;
@@ -163,6 +171,7 @@ export async function getCrmSubscriptionsAnalytics(
 
   const [
     activeSubsR,
+    pausedSubsR,
     newCountR,
     cancelledCountR,
     upcoming7dR,
@@ -172,10 +181,16 @@ export async function getCrmSubscriptionsAnalytics(
     subscriptions_projection,
     projection_12m,
   ] = await Promise.all([
+    pool.query<{ amount_cents: string; billing_interval: string; metadata: unknown }>(
+      `SELECT amount_cents::text, billing_interval::text, metadata
+       FROM subscriptions
+       WHERE tenant_id = $1 AND type = 'customer' AND status = 'active'`,
+      [tenantId]
+    ),
     pool.query<{ amount_cents: string; billing_interval: string }>(
       `SELECT amount_cents::text, billing_interval::text
        FROM subscriptions
-       WHERE tenant_id = $1 AND type = 'customer' AND status = 'active'`,
+       WHERE tenant_id = $1 AND type = 'customer' AND status = 'paused'`,
       [tenantId]
     ),
     pool.query<{ c: string }>(
@@ -256,15 +271,26 @@ export async function getCrmSubscriptionsAnalytics(
     buildSubscriptionsProjection(tenantId, { from: today, to: projection12To }, projection12MonthKeys),
   ]);
 
-  let mrr_cents = 0;
-  for (const row of activeSubsR.rows) {
-    mrr_cents += normalizeCrmSubscriptionAmountToMonthlyCents(
-      parseInt(row.amount_cents, 10) || 0,
-      row.billing_interval
-    );
-  }
+  const mrrInputs = activeSubsR.rows.map((row) => ({
+    amount_cents: parseInt(row.amount_cents, 10) || 0,
+    billing_interval: row.billing_interval,
+    metadata: row.metadata,
+  }));
+  const mrrPending = computeMrrWithPendingChanges(mrrInputs);
+  const mrr_cents = mrrPending.mrr_cents;
+  const mrr_after_pending_cents = mrrPending.mrr_after_pending_cents;
+  const mrr_pending_delta_cents = mrrPending.mrr_pending_delta_cents;
 
   const active_count = activeSubsR.rows.length;
+  const paused_count = pausedSubsR.rows.length;
+  let paused_mrr_cents = 0;
+  for (const row of pausedSubsR.rows) {
+    paused_mrr_cents += normalizeCrmSubscriptionAmountToMonthlyCents(
+      parseInt(row.amount_cents, 10) || 0,
+      row.billing_interval || 'monthly'
+    );
+  }
+  const paused_arr_cents = crmSubscriptionArrFromMonthlyCents(paused_mrr_cents);
   const arr_cents = crmSubscriptionArrFromMonthlyCents(mrr_cents);
   const new_count = parseInt(newCountR.rows[0]?.c ?? '0', 10);
   const cancelled_count = parseInt(cancelledCountR.rows[0]?.c ?? '0', 10);
@@ -339,8 +365,13 @@ export async function getCrmSubscriptionsAnalytics(
   return {
     period: range,
     mrr_cents,
+    mrr_after_pending_cents,
+    mrr_pending_delta_cents,
     arr_cents,
     active_count,
+    paused_count,
+    paused_mrr_cents,
+    paused_arr_cents,
     new_count,
     cancelled_count,
     net_growth,

@@ -44,7 +44,11 @@ export function SubscriptionListCard({ row, onOpen }: Props) {
         </div>
         <Badge
           variant={st.variant}
-          className={cn("shrink-0 text-[10px]", st.variant === "default" && "bg-crm-primary/12 text-crm-primary border-crm-primary/25")}
+          className={cn(
+            "shrink-0 text-[10px]",
+            st.variant === "default" && "bg-crm-primary/12 text-crm-primary border-crm-primary/25",
+            row.status === "paused" && "bg-amber-500/12 text-amber-800 border-amber-500/30 dark:text-amber-300"
+          )}
         >
           {st.label}
         </Badge>

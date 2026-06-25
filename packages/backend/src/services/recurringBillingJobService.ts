@@ -58,6 +58,10 @@ import {
   computeRecurringInvoiceGenerationDateYmd,
 } from '../utils/billingGenerationDate.js';
 import {
+  effectiveRecurringGenerateDaysBeforeDue,
+  isGenerateDaysBeforeCappedForInterval,
+} from '../utils/billingIntervalGenerationCap.js';
+import {
   getBillingStaleProcessingReclaimMinutes,
   getChildBillingBatchLimit,
   isBillingSchedulerVerbose,
@@ -67,6 +71,9 @@ import {
 } from '../config/billingEnv.js';
 import { getCustomerInvoiceSchema } from './customerInvoiceSchema.js';
 import { resolveMainRenewalItemDue } from './recurringCustomerRenewalItemDueAnchor.js';
+import { overlayCrmContractOnRenewalItems } from './crmSubscriptionContractRenewalOverlay.js';
+import { resolveCrmRenewalPreviousInvoice } from './crmRenewalCustomerResolver.js';
+import { logRenewalAttemptTrace } from './renewalAttemptTrace.js';
 import {
   buildBillingWindowDiagnostic,
   type BillingWindowDiagnostic,
@@ -312,6 +319,7 @@ export type RenewalEnqueueTenantJoinRow = {
   id: string;
   tenant_id: string;
   next_billing_date: string;
+  billing_interval: string;
   tenant_timezone: string | null;
   recurring_generate_time_local: string | null;
   invoice_notify_same_as_generation: boolean | null;
@@ -320,25 +328,51 @@ export type RenewalEnqueueTenantJoinRow = {
   recurring_invoice_generate_days_before_due: number;
 };
 
+/** SQL: dias efetivos de antecipação (tenant limitado pela periodicidade da assinatura). */
+export const BILLING_EFFECTIVE_GENERATE_DAYS_BEFORE_SQL = `LEAST(
+  COALESCE(t.recurring_invoice_generate_days_before_due, 0),
+  CASE s.billing_interval::text
+    WHEN 'weekly' THEN 6
+    WHEN 'monthly' THEN 30
+    WHEN 'quarterly' THEN 92
+    WHEN 'semi_annual' THEN 185
+    WHEN 'yearly' THEN 365
+    ELSE 30
+  END
+)`;
+
 function schedulerCycleSchedulingMeta(
   row: RenewalEnqueueTenantJoinRow,
   cycleYmd: string
 ): Record<string, unknown> {
-  const generate_days_before_due = clampRecurringInvoiceGenerateDaysBeforeDue(
+  const generate_days_before_due_tenant = clampRecurringInvoiceGenerateDaysBeforeDue(
     row.recurring_invoice_generate_days_before_due
+  );
+  const generate_days_before_due = effectiveRecurringGenerateDaysBeforeDue(
+    row.recurring_invoice_generate_days_before_due,
+    row.billing_interval
   );
   return {
     cycle_due_date: cycleYmd,
+    billing_interval: row.billing_interval,
+    generate_days_before_due_tenant,
     generate_days_before_due,
+    generate_days_capped: isGenerateDaysBeforeCappedForInterval(
+      row.recurring_invoice_generate_days_before_due,
+      row.billing_interval
+    ),
     generation_date: computeRecurringInvoiceGenerationDateYmd(cycleYmd, generate_days_before_due),
   };
 }
 
-/** Data civil em que o scheduler pode enfileirar (vencimento − antecipação). */
+/** Data civil em que o scheduler pode enfileirar (vencimento − antecipação efetiva). */
 function renewalJobGenerationDateYmd(row: RenewalEnqueueTenantJoinRow, cycleDueYmd: string): string {
   return computeRecurringInvoiceGenerationDateYmd(
     cycleDueYmd,
-    row.recurring_invoice_generate_days_before_due
+    effectiveRecurringGenerateDaysBeforeDue(
+      row.recurring_invoice_generate_days_before_due,
+      row.billing_interval
+    )
   );
 }
 
@@ -826,7 +860,8 @@ export async function describeRenewalEnqueueWithDb(
       type: string;
     }
   >(
-    `SELECT s.id, s.tenant_id, s.next_billing_date::text, s.status, s.type,
+    `SELECT s.id, s.tenant_id, s.next_billing_date::text, s.billing_interval::text,
+            s.status, s.type,
             t.timezone::text AS tenant_timezone,
             t.recurring_generate_time_local::text,
             t.invoice_notify_same_as_generation,
@@ -853,7 +888,7 @@ export async function describeRenewalEnqueueWithDb(
 
   const eligibleR = await db.query<{ ok: boolean }>(
     `SELECT (
-       (s.next_billing_date - COALESCE(t.recurring_invoice_generate_days_before_due, 0)) <= CURRENT_DATE
+       (s.next_billing_date - ${BILLING_EFFECTIVE_GENERATE_DAYS_BEFORE_SQL}) <= CURRENT_DATE
      ) AS ok
      FROM subscriptions s
      LEFT JOIN tenants t ON t.id = s.tenant_id
@@ -877,12 +912,14 @@ export async function describeRenewalEnqueueWithDb(
     invoiceNotifyTimeLocalRaw: row.invoice_notify_time_local ?? null,
     nextBillingDate: canonicalYmd,
     recurringInvoiceGenerateDaysBeforeDue: row.recurring_invoice_generate_days_before_due,
+    billingInterval: row.billing_interval,
   });
 
   const joinRow: RenewalEnqueueTenantJoinRow = {
     id: row.id,
     tenant_id: row.tenant_id,
     next_billing_date: canonicalYmd,
+    billing_interval: row.billing_interval || 'monthly',
     tenant_timezone: row.tenant_timezone,
     recurring_generate_time_local: row.recurring_generate_time_local,
     invoice_notify_same_as_generation: row.invoice_notify_same_as_generation,
@@ -952,6 +989,16 @@ export async function tryEnqueueRenewalJobForSubscriptionId(
   subscriptionId: string
 ): Promise<TryEnqueueRenewalJobForSubscriptionResult> {
   return withBillingWorkerRlsBypass(async () => {
+    try {
+      const { applyPendingCrmSubscriptionContractIfDue } = await import('./crmSubscriptionsContractService.js');
+      await applyPendingCrmSubscriptionContractIfDue(subscriptionId);
+    } catch (e) {
+      billingLog('scheduler', 'apply_pending_crm_contract_error', {
+        subscription_id: subscriptionId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+
     const desc = await describeRenewalEnqueueWithDb(pool, subscriptionId);
     if (desc.block_reason) {
       const wr = desc.window_diagnostic?.reason;
@@ -993,13 +1040,15 @@ export async function enqueueRenewalJobs(): Promise<{ enqueued: number; skipped:
       id: string;
       tenant_id: string;
       next_billing_date: string;
+      billing_interval: string;
       tenant_timezone: string | null;
       recurring_generate_time_local: string | null;
       invoice_notify_same_as_generation: boolean | null;
       invoice_notify_time_local: string | null;
       recurring_invoice_generate_days_before_due: number;
     }>(
-      `SELECT s.id, s.tenant_id, s.next_billing_date, t.timezone::text AS tenant_timezone,
+      `SELECT s.id, s.tenant_id, s.next_billing_date, s.billing_interval::text AS billing_interval,
+              t.timezone::text AS tenant_timezone,
               t.recurring_generate_time_local::text,
               t.invoice_notify_same_as_generation,
               t.invoice_notify_time_local::text,
@@ -1007,7 +1056,7 @@ export async function enqueueRenewalJobs(): Promise<{ enqueued: number; skipped:
        FROM subscriptions s
        LEFT JOIN tenants t ON t.id = s.tenant_id
        WHERE s.status = 'active'
-         AND (s.next_billing_date - COALESCE(t.recurring_invoice_generate_days_before_due, 0)) <= CURRENT_DATE
+         AND (s.next_billing_date - ${BILLING_EFFECTIVE_GENERATE_DAYS_BEFORE_SQL}) <= CURRENT_DATE
        ORDER BY s.next_billing_date
        LIMIT $1`,
       [SCHEDULER_LIMIT]
@@ -1032,6 +1081,7 @@ export async function enqueueRenewalJobs(): Promise<{ enqueued: number; skipped:
         invoiceNotifyTimeLocalRaw: row.invoice_notify_time_local ?? null,
         nextBillingDate: cycleKey,
         recurringInvoiceGenerateDaysBeforeDue: row.recurring_invoice_generate_days_before_due,
+        billingInterval: row.billing_interval,
       });
       if (diag.would_be_eligible_by_window) diagnosticEligible++;
       if (diag.reason === 'too_early_local_time') diagnosticTooEarly++;
@@ -1088,6 +1138,7 @@ export async function enqueueRenewalJobs(): Promise<{ enqueued: number; skipped:
         id: row.id,
         tenant_id: row.tenant_id,
         next_billing_date: cycleKey,
+        billing_interval: row.billing_interval || 'monthly',
         tenant_timezone: row.tenant_timezone,
         recurring_generate_time_local: row.recurring_generate_time_local,
         invoice_notify_same_as_generation: row.invoice_notify_same_as_generation,
@@ -1436,7 +1487,19 @@ export async function processNextBatch(workerId: string): Promise<{ processed: n
         attempts: job.attempts,
         worker_id: workerId,
       });
+      logRenewalAttemptTrace({
+        phase: 'worker_pickup',
+        subscription_id: job.subscription_id,
+        tenant_id: job.tenant_id,
+        job_id: job.id,
+        worker_id: workerId,
+        cycle_key: jobCycleCanonical,
+        attempt: job.attempts + 1,
+        max_attempts: job.max_attempts,
+        retry_at: job.retry_at,
+      });
 
+      const jobStartedAt = Date.now();
       try {
         const subscription = await getSubscriptionById(job.subscription_id);
         if (!subscription) {
@@ -1543,6 +1606,7 @@ export async function processNextBatch(workerId: string): Promise<{ processed: n
           invoiceNotifyTimeLocalRaw: tcfg?.invoice_notify_time_local ?? null,
           nextBillingDate: cycleDueYmd,
           recurringInvoiceGenerateDaysBeforeDue: tcfg?.recurring_invoice_generate_days_before_due ?? 0,
+          billingInterval: subscription.billing_interval,
         });
         const twVerbose = isBillingTimeWindowVerbose();
         billingLog('job', 'time_window_worker_check', {
@@ -1587,6 +1651,24 @@ export async function processNextBatch(workerId: string): Promise<{ processed: n
           await requeueBillingRecurringJobForWindow(client, {
             jobId: job.id,
             retryAt,
+          });
+          logRenewalAttemptTrace({
+            phase: 'worker_window_requeue',
+            subscription_id: subscription.id,
+            tenant_id: job.tenant_id,
+            job_id: job.id,
+            worker_id: workerId,
+            cycle_key: jobCycleCanonical,
+            period_start: jobCycleCanonical,
+            due_date: cycleDueYmd,
+            generation_date_ymd: diag.generation_date_ymd,
+            generate_days_before_due_tenant: diag.recurring_generate_days_before_due_tenant,
+            generate_days_before_due_effective: diag.recurring_generate_days_before_due,
+            generate_days_capped: diag.generate_days_capped_for_interval,
+            contract_interval: subscription.billing_interval,
+            retry_at: retryAt.toISOString(),
+            result: diag.reason,
+            duration_ms: Date.now() - jobStartedAt,
           });
           billingLog('job', 'time_window_worker_requeued_outside_window', {
             workerId,
@@ -1741,6 +1823,19 @@ export async function processNextBatch(workerId: string): Promise<{ processed: n
           error: errMsg.slice(0, 2000),
           attempts,
           final_failure: attempts >= job.max_attempts,
+        });
+        logRenewalAttemptTrace({
+          phase: 'worker_error',
+          subscription_id: job.subscription_id,
+          tenant_id: job.tenant_id,
+          job_id: job.id,
+          worker_id: workerId,
+          cycle_key: normalizeBillingCycleKeyYmd(job.cycle_key),
+          attempt: attempts,
+          max_attempts: job.max_attempts,
+          exception: errMsg.slice(0, 2000),
+          result: attempts >= job.max_attempts ? 'failed_max_attempts' : 'retry_scheduled',
+          duration_ms: Date.now() - jobStartedAt,
         });
         const retryAt = new Date();
         if (attempts === 1) retryAt.setHours(retryAt.getHours() + 1);
@@ -1974,6 +2069,47 @@ async function processOneCustomerRenewalJob(
   subscription: SubscriptionRow,
   periodStartYmd: string
 ): Promise<void> {
+  try {
+    const { applyPendingCrmSubscriptionContractIfDue } = await import(
+      './crmSubscriptionsContractService.js'
+    );
+    await applyPendingCrmSubscriptionContractIfDue(subscription.id);
+  } catch (e) {
+    billingLog('job', 'apply_pending_crm_contract_before_renewal_error', {
+      subscription_id: subscription.id,
+      job_id: job.id,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+  const refreshed = await getSubscriptionById(subscription.id);
+  if (refreshed) {
+    subscription = refreshed;
+  }
+
+  if (subscription.status === 'paused' || subscription.status === 'cancelled') {
+    billingLog('job', 'customer_renewal_skipped_inactive_subscription', {
+      jobId: job.id,
+      subscriptionId: subscription.id,
+      status: subscription.status,
+    });
+    await cancelBillingRecurringJob(
+      client,
+      job.id,
+      BILLING_RECURRING_JOB_OUTCOME.CANCELLED_SUBSCRIPTION_NOT_ACTIVE,
+      JSON.stringify({ subscription_status: subscription.status, skipped_at: 'customer_renewal_pre_check' })
+    );
+    logRenewalAttemptTrace({
+      phase: 'worker_cancel',
+      subscription_id: subscription.id,
+      tenant_id: subscription.tenant_id,
+      job_id: job.id,
+      cycle_key: periodStartYmd,
+      result: 'cancelled_inactive_subscription',
+      final_status: subscription.status,
+    });
+    return;
+  }
+
   const clientId = subscription.customer_id;
   if (!clientId) {
     throw new Error('Subscription customer sem customer_id (client_id)');
@@ -1989,15 +2125,42 @@ async function processOneCustomerRenewalJob(
   // Fase 5 (base estrutural): gerar customer_invoice_items recorrentes por item.
   // Para manter o modelo simples (sem nova tabela de template), usamos a fatura anterior
   // do mesmo subscription_id como fonte dos itens.
-  const prevPeriodStart = subscription.current_period_start;
-  if (!prevPeriodStart) {
-    throw new Error('Subscription current_period_start ausente para recorrência por item');
+  const prevResolution = await resolveCrmRenewalPreviousInvoice(client, {
+    subscriptionId: subscription.id,
+    cyclePeriodStartYmd: periodStart,
+    subscriptionCurrentPeriodStart: subscription.current_period_start,
+    billingInterval: interval,
+  });
+  if (!prevResolution.ok) {
+    const detail =
+      prevResolution.reason === 'missing_current_period_start'
+        ? 'Subscription current_period_start ausente para recorrência por item'
+        : `Fatura anterior (para copiar itens) não encontrada no subscription (tentativas: ${prevResolution.lookup_attempts.join(', ') || 'nenhuma'})`;
+    logRenewalAttemptTrace({
+      phase: 'worker_error',
+      subscription_id: subscription.id,
+      tenant_id: subscription.tenant_id,
+      job_id: job.id,
+      cycle_key: periodStart,
+      period_start: periodStart,
+      period_end: periodEnd,
+      due_date: periodStart,
+      contract_interval: interval,
+      exception: detail,
+      result: prevResolution.reason,
+    });
+    throw new Error(detail);
   }
-
-  const prevInvoice = await findCustomerInvoiceBySubscriptionAndPeriod(subscription.id, prevPeriodStart);
-  if (!prevInvoice) {
-    throw new Error('Fatura anterior (para copiar itens) não encontrada no subscription');
-  }
+  const prevInvoice = prevResolution.invoice;
+  billingLog('job', 'crm_renewal_prev_invoice_resolved', {
+    jobId: job.id,
+    subscriptionId: subscription.id,
+    resolved_via: prevResolution.resolved_via,
+    lookup_period_start: prevResolution.lookup_period_start,
+    prev_invoice_id: prevInvoice.id,
+    cycle_period_start: periodStart,
+    subscription_current_period_start: subscription.current_period_start,
+  });
 
   const prevItems = await getCustomerInvoiceItems(prevInvoice.id, prevInvoice.tenant_id);
 
@@ -2028,6 +2191,14 @@ async function processOneCustomerRenewalJob(
 
     includedItems.push({ ...it, next_due_date: nextDue });
   }
+
+  const metaR = await pool.query<{ metadata: unknown }>(
+    `SELECT metadata FROM subscriptions WHERE id = $1 LIMIT 1`,
+    [subscription.id]
+  );
+  const overlaidItems = overlayCrmContractOnRenewalItems(metaR.rows[0]?.metadata, includedItems);
+  includedItems.length = 0;
+  includedItems.push(...(overlaidItems as Array<CustomerInvoiceItemRow & { next_due_date: string }>));
 
   if (includedItems.length === 0) {
     // Não cria fatura vazia; apenas avança o ciclo.
@@ -2294,6 +2465,23 @@ async function processOneCustomerRenewalJob(
     payment_token_present: Boolean(inv.payment_token),
     origin: inv.origin,
     invoice_type: inv.invoice_type,
+  });
+  logRenewalAttemptTrace({
+    phase: 'worker_complete',
+    subscription_id: subscription.id,
+    tenant_id: subscription.tenant_id,
+    job_id: job.id,
+    cycle_key: periodStart,
+    period_start: periodStart,
+    period_end: periodEnd,
+    due_date: periodStart,
+    invoice_creation_date: new Date().toISOString().slice(0, 10),
+    invoice_id: inv.id,
+    contract_interval: interval,
+    prev_invoice_resolution: prevResolution.resolved_via,
+    gateway: gatewayKey,
+    result: BILLING_RECURRING_JOB_OUTCOME.COMPLETED_INVOICE_CUSTOMER,
+    final_status: 'completed',
   });
 }
 

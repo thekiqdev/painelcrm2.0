@@ -29,10 +29,8 @@ export type TimelineJobInput = {
   completion_outcome: string | null;
   updated_at: string;
 };
-import {
-  clampRecurringInvoiceGenerateDaysBeforeDue,
-  computeRecurringInvoiceGenerationDateYmd,
-} from '../utils/billingGenerationDate.js';
+import { computeRecurringInvoiceGenerationDateYmd } from '../utils/billingGenerationDate.js';
+import { effectiveRecurringGenerateDaysBeforeDue } from '../utils/billingIntervalGenerationCap.js';
 
 export type SubscriptionTimelineOperationalState =
   | 'scheduled'
@@ -45,7 +43,8 @@ export type SubscriptionTimelineOperationalState =
   | 'skipped'
   | 'cancelled'
   | 'gateway_failed'
-  | 'manual_invoice';
+  | 'manual_invoice'
+  | 'lifecycle_event';
 
 export interface CrmSubscriptionTimelineRowUx {
   /** Legado: igual a `cycle_subtitle` (evita MM/yyyy ambíguo na UI nova). */
@@ -77,7 +76,11 @@ export interface CrmSubscriptionTimelineRowUx {
   invoice_status: string | null;
   gateway_status: string | null;
   gateway_reference_id: string | null;
-  merge_source: 'cycle' | 'invoice_only';
+  merge_source: 'cycle' | 'invoice_only' | 'lifecycle';
+  lifecycle_event?: 'pause' | 'resume' | 'reactivate' | null;
+  lifecycle_reason?: string | null;
+  lifecycle_actor_name?: string | null;
+  lifecycle_next_billing_date?: string | null;
 }
 
 export interface CrmSubscriptionAutomationSummary {
@@ -320,6 +323,60 @@ function resolveOperationalState(params: {
   };
 }
 
+export type SubscriptionLifecycleTimelineInput = {
+  id: string;
+  created_at: string;
+  change_type: 'pause' | 'resume' | 'reactivate';
+  reason: string | null;
+  next_billing_date: string | null;
+  actor_name: string | null;
+};
+
+function buildLifecycleTimelineRow(ev: SubscriptionLifecycleTimelineInput): CrmSubscriptionTimelineRowUx {
+  const labels: Record<SubscriptionLifecycleTimelineInput['change_type'], string> = {
+    pause: 'Assinatura pausada',
+    resume: 'Assinatura retomada',
+    reactivate: 'Assinatura reativada',
+  };
+  const dateYmd = ymdHead(ev.created_at) ?? ev.created_at.slice(0, 10);
+  const label = labels[ev.change_type];
+  return {
+    month_ref: formatYmdPt(dateYmd),
+    cycle_label: label,
+    cycle_subtitle: formatYmdPt(dateYmd),
+    cycle_date: dateYmd,
+    period_label: ev.actor_name?.trim() ? `Por ${ev.actor_name.trim()}` : '—',
+    period_start: dateYmd,
+    period_end: null,
+    due_date: ymdHead(ev.next_billing_date),
+    status_pt: label,
+    operational_state: 'lifecycle_event',
+    operational_state_pt: label,
+    amount_cents: null,
+    invoice_id: null,
+    invoice_created_at: null,
+    generation_note: ev.reason?.trim() ?? null,
+    cycle_status: null,
+    cycle_id: null,
+    job_id: null,
+    job_status: null,
+    job_attempts: null,
+    job_max_attempts: null,
+    job_retry_at: null,
+    job_error_snippet: null,
+    has_auto_retry: false,
+    processed_at: ev.created_at,
+    invoice_status: null,
+    gateway_status: null,
+    gateway_reference_id: null,
+    merge_source: 'lifecycle',
+    lifecycle_event: ev.change_type,
+    lifecycle_reason: ev.reason,
+    lifecycle_actor_name: ev.actor_name,
+    lifecycle_next_billing_date: ymdHead(ev.next_billing_date),
+  };
+}
+
 function hasAutoRetry(job: TimelineJobInput | null): boolean {
   if (!job?.retry_at) return false;
   return new Date(job.retry_at).getTime() > Date.now();
@@ -386,7 +443,8 @@ export function buildSubscriptionTimeline(
   invoices: TimelineInvoiceInput[],
   subscriptionAmountCents: number,
   cyclesReadEnabled: boolean,
-  recentJobs: TimelineJobInput[] = []
+  recentJobs: TimelineJobInput[] = [],
+  lifecycleEvents: SubscriptionLifecycleTimelineInput[] = []
 ): CrmSubscriptionTimelineRowUx[] {
   const invById = new Map(invoices.map((i) => [i.id, i]));
   const rows: CrmSubscriptionTimelineRowUx[] = [];
@@ -439,6 +497,10 @@ export function buildSubscriptionTimeline(
     );
   }
 
+  for (const ev of lifecycleEvents) {
+    rows.push(buildLifecycleTimelineRow(ev));
+  }
+
   rows.sort((a, b) => {
     const da = a.period_start ?? a.due_date ?? a.cycle_date ?? '';
     const db = b.period_start ?? b.due_date ?? b.cycle_date ?? '';
@@ -451,14 +513,16 @@ export function buildSubscriptionTimeline(
 export function buildSubscriptionAutomationSummary(params: {
   subscriptionStatus: string;
   nextBillingDate: string | null | undefined;
+  billingInterval?: string | null;
   lastJobAt: string | null | undefined;
   recurringInvoiceGenerateDaysBeforeDue: number | null | undefined;
   recentJobs: TimelineJobInput[];
   timeline: CrmSubscriptionTimelineRowUx[];
 }): CrmSubscriptionAutomationSummary {
   const nextCharge = ymdHead(params.nextBillingDate);
-  const daysBefore = clampRecurringInvoiceGenerateDaysBeforeDue(
-    params.recurringInvoiceGenerateDaysBeforeDue
+  const daysBefore = effectiveRecurringGenerateDaysBeforeDue(
+    params.recurringInvoiceGenerateDaysBeforeDue,
+    params.billingInterval ?? 'monthly'
   );
   const nextGeneration =
     nextCharge && nextCharge.length === 10

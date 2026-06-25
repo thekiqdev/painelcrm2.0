@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, lazy, Suspense } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useLocation, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -16,8 +16,6 @@ import { ProjectsListView } from "@/components/projects/ProjectsListView";
 import { BoardView } from "@/components/projects/BoardView";
 import { TaskListView } from "@/components/projects/TaskListView";
 import { CalendarView } from "@/components/projects/CalendarView";
-import { TaskDetailDialog } from "@/components/projects/TaskDetailDialog";
-import { TaskFormDialog } from "@/components/tasks";
 import { NewListDialog } from "@/components/projects/NewListDialog";
 import { EditListDialog } from "@/components/projects/EditListDialog";
 
@@ -30,16 +28,10 @@ import { teamsService, type Team } from "@/services/teams";
 
 // Add import for ProjectFinance
 import { ProjectFinance } from "@/components/projects/ProjectFinance";
-import { ProjectSettingsDialog } from "@/components/projects/ProjectSettingsDialog";
-import { SaveAsTemplateDialog } from "@/components/projects/SaveAsTemplateDialog";
 import { ProjectAreasSection, AreaProgress } from "@/components/projects/ProjectAreasSection";
-import { ProjectVersionDialog } from "@/components/projects/ProjectVersionDialog";
 import { MoveProjectTaskDialog } from "@/components/projects/MoveProjectTaskDialog";
 import { CopyProjectTaskDialog } from "@/components/projects/CopyProjectTaskDialog";
-import { ProjectPublishVersionDialog } from "@/components/projects/ProjectPublishVersionDialog";
-import { ProjectDuplicateVersionDialog } from "@/components/projects/ProjectDuplicateVersionDialog";
 import { ProjectHeader } from "@/components/projects/ProjectHeader";
-import { ProjectVersionControlPanel } from "@/components/projects/ProjectVersionControlPanel";
 import { ProjectDriveWorkspace } from "@/components/projects/ProjectDriveWorkspace";
 import { hasAreas, hasVersions } from "@/lib/projectFeatures";
 import {
@@ -51,7 +43,6 @@ import {
   versionSelectionKey,
   type ProjectVersionSelection,
 } from "@/lib/projectVersionSelection";
-import { TaskSidePanel } from "@/components/tasks";
 import type { UnifiedTask } from "@/lib/taskUnified";
 import { projectUITaskToUnified } from "@/lib/taskUnified";
 import { useAuth } from "@/contexts/AuthContext";
@@ -77,6 +68,40 @@ import {
   prepareTasksFromProjectTasksXlsx,
 } from "@/utils/importProjectTasksXlsx";
 import { getProjectUrl } from "@/lib/projectRoutes";
+
+const TaskFormDialog = lazy(() =>
+  import("@/components/tasks").then((m) => ({ default: m.TaskFormDialog })),
+);
+const TaskSidePanel = lazy(() =>
+  import("@/components/tasks").then((m) => ({ default: m.TaskSidePanel })),
+);
+const TaskDetailDialog = lazy(() =>
+  import("@/components/projects/TaskDetailDialog").then((m) => ({ default: m.TaskDetailDialog })),
+);
+const ProjectSettingsDialog = lazy(() =>
+  import("@/components/projects/ProjectSettingsDialog").then((m) => ({ default: m.ProjectSettingsDialog })),
+);
+const ProjectVersionControlPanel = lazy(() =>
+  import("@/components/projects/ProjectVersionControlPanel").then((m) => ({
+    default: m.ProjectVersionControlPanel,
+  })),
+);
+const SaveAsTemplateDialog = lazy(() =>
+  import("@/components/projects/SaveAsTemplateDialog").then((m) => ({ default: m.SaveAsTemplateDialog })),
+);
+const ProjectVersionDialog = lazy(() =>
+  import("@/components/projects/ProjectVersionDialog").then((m) => ({ default: m.ProjectVersionDialog })),
+);
+const ProjectPublishVersionDialog = lazy(() =>
+  import("@/components/projects/ProjectPublishVersionDialog").then((m) => ({
+    default: m.ProjectPublishVersionDialog,
+  })),
+);
+const ProjectDuplicateVersionDialog = lazy(() =>
+  import("@/components/projects/ProjectDuplicateVersionDialog").then((m) => ({
+    default: m.ProjectDuplicateVersionDialog,
+  })),
+);
 
 // Padrão de página única para toda a funcionalidade de projetos
 const MODULE_PROJECTS = "projects";
@@ -405,7 +430,7 @@ const Projects = () => {
       const isCsv = lower.endsWith(".csv") || lower.endsWith(".txt");
       const { prepared, skipped } = isCsv
         ? prepareTasksFromProjectTasksCsv(await file.text(), memberRows)
-        : prepareTasksFromProjectTasksXlsx(await file.arrayBuffer(), memberRows);
+        : await prepareTasksFromProjectTasksXlsx(await file.arrayBuffer(), memberRows);
       const failed: { line: number; message: string }[] = skipped.map((s) => ({
         line: s.line,
         message: s.reason,
@@ -2014,32 +2039,34 @@ const Projects = () => {
           ) : null}
 
           {hasVersions(selectedProject.project_type) ? (
-            <ProjectVersionControlPanel
-              projectId={selectedProject.id}
-              tenantId={user?.tenant_id ?? null}
-              versions={projectVersions}
-              selection={versionSelection}
-              selectedVersion={selectedVersion}
-              onSelectionChange={(selection) =>
-                setVersionSelection(normalizeVersionSelection(selection, projectVersions))
-              }
-              onCreateVersion={() => {
-                setEditingVersion(null);
-                setVersionDialogOpen(true);
-              }}
-              onEditVersion={(version) => {
-                setEditingVersion(version);
-                setVersionDialogOpen(true);
-              }}
-              onPublish={() => setPublishVersionOpen(true)}
-              onDuplicate={() => setDuplicateVersionOpen(true)}
-              onUnfreeze={async () => {
-                if (!selectedVersion) return;
-                await projectsService.updateProjectVersion(selectedProject.id, selectedVersion.id, { frozen: false });
-                toast.success("Versão descongelada");
-                await reloadProjectVersions();
-              }}
-            />
+            <Suspense fallback={null}>
+              <ProjectVersionControlPanel
+                projectId={selectedProject.id}
+                tenantId={user?.tenant_id ?? null}
+                versions={projectVersions}
+                selection={versionSelection}
+                selectedVersion={selectedVersion}
+                onSelectionChange={(selection) =>
+                  setVersionSelection(normalizeVersionSelection(selection, projectVersions))
+                }
+                onCreateVersion={() => {
+                  setEditingVersion(null);
+                  setVersionDialogOpen(true);
+                }}
+                onEditVersion={(version) => {
+                  setEditingVersion(version);
+                  setVersionDialogOpen(true);
+                }}
+                onPublish={() => setPublishVersionOpen(true)}
+                onDuplicate={() => setDuplicateVersionOpen(true)}
+                onUnfreeze={async () => {
+                  if (!selectedVersion) return;
+                  await projectsService.updateProjectVersion(selectedProject.id, selectedVersion.id, { frozen: false });
+                  toast.success("Versão descongelada");
+                  await reloadProjectVersions();
+                }}
+              />
+            </Suspense>
           ) : null}
         
           {!hasAreas(selectedProject.project_type) && (
@@ -2511,149 +2538,171 @@ const Projects = () => {
         onSave={handleEditList}
       />
       
-      {selectedProject && selectedListId ? (
-        <TaskFormDialog
-          key={selectedListId}
-          open={newTaskDialogOpen}
-          onOpenChange={setNewTaskDialogOpen}
-          canSubmit={canCreateProject(MODULE_TASKS) && !currentSelectedVersionFrozen}
-          context={{
-            origin: "project",
-            projectId: selectedProject.id,
-            listId: selectedListId,
-            areaId: null,
-            versionId: hasVersions(selectedProject.project_type)
-              ? versionIdForTaskCreate(versionSelection, projectVersions)
-              : undefined,
-            projectName: selectedProject.name,
-            teams: teams.map((t) => ({ id: t.id, name: t.name })),
-          }}
-          onSuccess={(r) => {
-            if (r.origin === "project") applyNewProjectTask(r.apiTask, r.listId);
-          }}
-        />
+      {selectedProject && selectedListId && newTaskDialogOpen ? (
+        <Suspense fallback={null}>
+          <TaskFormDialog
+            key={selectedListId}
+            open={newTaskDialogOpen}
+            onOpenChange={setNewTaskDialogOpen}
+            canSubmit={canCreateProject(MODULE_TASKS) && !currentSelectedVersionFrozen}
+            context={{
+              origin: "project",
+              projectId: selectedProject.id,
+              listId: selectedListId,
+              areaId: null,
+              versionId: hasVersions(selectedProject.project_type)
+                ? versionIdForTaskCreate(versionSelection, projectVersions)
+                : undefined,
+              projectName: selectedProject.name,
+              teams: teams.map((t) => ({ id: t.id, name: t.name })),
+            }}
+            onSuccess={(r) => {
+              if (r.origin === "project") applyNewProjectTask(r.apiTask, r.listId);
+            }}
+          />
+        </Suspense>
       ) : null}
       
-      <TaskDetailDialog
-        open={taskDetailOpen}
-        onOpenChange={setTaskDetailOpen}
-        task={selectedTask?.task || null}
-        listId={selectedTask?.listId || null}
-        lists={selectedProject?.lists || []}
-        onToggleTaskStatus={toggleTaskStatus}
-        onToggleChecklistItem={toggleChecklistItem}
-        onAddChecklistItem={addChecklistItem}
-        onDeleteChecklistItem={deleteChecklistItem}
-        newChecklistItemText={newChecklistItemText}
-        setNewChecklistItemText={setNewChecklistItemText}
-        editMode={editingTask}
-        setEditMode={setEditingTask}
-        onUpdateTask={updateTask}
-      />
+      {taskDetailOpen ? (
+        <Suspense fallback={null}>
+          <TaskDetailDialog
+            open={taskDetailOpen}
+            onOpenChange={setTaskDetailOpen}
+            task={selectedTask?.task || null}
+            listId={selectedTask?.listId || null}
+            lists={selectedProject?.lists || []}
+            onToggleTaskStatus={toggleTaskStatus}
+            onToggleChecklistItem={toggleChecklistItem}
+            onAddChecklistItem={addChecklistItem}
+            onDeleteChecklistItem={deleteChecklistItem}
+            newChecklistItemText={newChecklistItemText}
+            setNewChecklistItemText={setNewChecklistItemText}
+            editMode={editingTask}
+            setEditMode={setEditingTask}
+            onUpdateTask={updateTask}
+          />
+        </Suspense>
+      ) : null}
 
-      <TaskSidePanel
-        task={fullViewTask}
-        open={!!fullViewTask}
-        onOpenChange={(open) => !open && setFullViewTask(null)}
-        listName={
-          fullViewTask && selectedProject
-            ? selectedProject.lists.find((l) => l.id === fullViewTask.listId)
-                ?.name ?? null
-            : null
-        }
-        lists={
-          selectedProject?.lists?.map((l) => ({ id: l.id, name: l.name })) ?? []
-        }
-        members={members.map((m) => ({ id: m.id, name: m.name }))}
-        onUpdate={currentSelectedVersionFrozen ? undefined : handleFullViewUpdate}
-        onDelete={
-          fullViewTask && !currentSelectedVersionFrozen
-            ? (taskId) =>
-                deleteTask(fullViewTask.listId, taskId).then(() =>
-                  setFullViewTask(null)
-                )
-            : undefined
-        }
-        onToggleStatus={
-          fullViewTask && !currentSelectedVersionFrozen
-            ? (taskId) => {
-                toggleTaskStatus(fullViewTask.listId, taskId);
-                setFullViewTask((prev) =>
-                  prev
-                    ? {
-                        ...prev,
-                        status:
-                          prev.status === "completed" ? "todo" : "completed",
-                      }
-                    : null
-                );
-              }
-            : undefined
-        }
-        onMoveToVersion={
-          fullViewTask &&
-          selectedProject &&
-          hasVersions(selectedProject.project_type) &&
-          !currentSelectedVersionFrozen
-            ? () => {
-                setTaskToMove({
-                  taskId: fullViewTask.id,
-                  listId: fullViewTask.listId ?? "",
-                  areaId: fullViewTask.areaId ?? null,
-                  versionId: null,
-                });
-                setMoveTaskDialogOpen(true);
-              }
-            : undefined
-        }
-        onCopyToVersion={
-          fullViewTask &&
-          selectedProject &&
-          hasVersions(selectedProject.project_type) &&
-          !currentSelectedVersionFrozen
-            ? () => {
-                setTaskToCopy({
-                  taskId: fullViewTask.id,
-                  listId: fullViewTask.listId ?? "",
-                  areaId: fullViewTask.areaId ?? null,
-                  versionId: versionSelection.versionId ?? null,
-                });
-                setCopyTaskDialogOpen(true);
-              }
-            : undefined
-        }
-      />
+      {fullViewTask ? (
+        <Suspense fallback={null}>
+          <TaskSidePanel
+            task={fullViewTask}
+            open={!!fullViewTask}
+            onOpenChange={(open) => !open && setFullViewTask(null)}
+            listName={
+              fullViewTask && selectedProject
+                ? selectedProject.lists.find((l) => l.id === fullViewTask.listId)
+                    ?.name ?? null
+                : null
+            }
+            lists={
+              selectedProject?.lists?.map((l) => ({ id: l.id, name: l.name })) ?? []
+            }
+            members={members.map((m) => ({ id: m.id, name: m.name }))}
+            onUpdate={currentSelectedVersionFrozen ? undefined : handleFullViewUpdate}
+            onDelete={
+              fullViewTask && !currentSelectedVersionFrozen
+                ? (taskId) =>
+                    deleteTask(fullViewTask.listId, taskId).then(() =>
+                      setFullViewTask(null)
+                    )
+                : undefined
+            }
+            onToggleStatus={
+              fullViewTask && !currentSelectedVersionFrozen
+                ? (taskId) => {
+                    toggleTaskStatus(fullViewTask.listId, taskId);
+                    setFullViewTask((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            status:
+                              prev.status === "completed" ? "todo" : "completed",
+                          }
+                        : null
+                    );
+                  }
+                : undefined
+            }
+            onMoveToVersion={
+              fullViewTask &&
+              selectedProject &&
+              hasVersions(selectedProject.project_type) &&
+              !currentSelectedVersionFrozen
+                ? () => {
+                    setTaskToMove({
+                      taskId: fullViewTask.id,
+                      listId: fullViewTask.listId ?? "",
+                      areaId: fullViewTask.areaId ?? null,
+                      versionId: null,
+                    });
+                    setMoveTaskDialogOpen(true);
+                  }
+                : undefined
+            }
+            onCopyToVersion={
+              fullViewTask &&
+              selectedProject &&
+              hasVersions(selectedProject.project_type) &&
+              !currentSelectedVersionFrozen
+                ? () => {
+                    setTaskToCopy({
+                      taskId: fullViewTask.id,
+                      listId: fullViewTask.listId ?? "",
+                      areaId: fullViewTask.areaId ?? null,
+                      versionId: versionSelection.versionId ?? null,
+                    });
+                    setCopyTaskDialogOpen(true);
+                  }
+                : undefined
+            }
+          />
+        </Suspense>
+      ) : null}
 
       {selectedProject && hasVersions(selectedProject.project_type) ? (
         <>
-          <ProjectVersionDialog
-            open={versionDialogOpen}
-            onOpenChange={setVersionDialogOpen}
-            version={editingVersion}
-            saving={versionSaving}
-            onSave={handleSaveProjectVersion}
-            onArchive={
-              editingVersion && !editingVersion.archived_at ? handleArchiveProjectVersion : undefined
-            }
-            onUnarchive={
-              editingVersion?.archived_at ? handleUnarchiveProjectVersion : undefined
-            }
-          />
-          <ProjectPublishVersionDialog
-            open={publishVersionOpen}
-            onOpenChange={setPublishVersionOpen}
-            version={currentSelectedVersion}
-            versions={projectVersions}
-            saving={versionActionSaving}
-            onPublish={handlePublishProjectVersion}
-          />
-          <ProjectDuplicateVersionDialog
-            open={duplicateVersionOpen}
-            onOpenChange={setDuplicateVersionOpen}
-            version={currentSelectedVersion}
-            saving={versionActionSaving}
-            onDuplicate={handleDuplicateProjectVersion}
-          />
+          {versionDialogOpen ? (
+            <Suspense fallback={null}>
+              <ProjectVersionDialog
+                open={versionDialogOpen}
+                onOpenChange={setVersionDialogOpen}
+                version={editingVersion}
+                saving={versionSaving}
+                onSave={handleSaveProjectVersion}
+                onArchive={
+                  editingVersion && !editingVersion.archived_at ? handleArchiveProjectVersion : undefined
+                }
+                onUnarchive={
+                  editingVersion?.archived_at ? handleUnarchiveProjectVersion : undefined
+                }
+              />
+            </Suspense>
+          ) : null}
+          {publishVersionOpen ? (
+            <Suspense fallback={null}>
+              <ProjectPublishVersionDialog
+                open={publishVersionOpen}
+                onOpenChange={setPublishVersionOpen}
+                version={currentSelectedVersion}
+                versions={projectVersions}
+                saving={versionActionSaving}
+                onPublish={handlePublishProjectVersion}
+              />
+            </Suspense>
+          ) : null}
+          {duplicateVersionOpen ? (
+            <Suspense fallback={null}>
+              <ProjectDuplicateVersionDialog
+                open={duplicateVersionOpen}
+                onOpenChange={setDuplicateVersionOpen}
+                version={currentSelectedVersion}
+                saving={versionActionSaving}
+                onDuplicate={handleDuplicateProjectVersion}
+              />
+            </Suspense>
+          ) : null}
           <MoveProjectTaskDialog
             open={moveTaskDialogOpen}
             onOpenChange={setMoveTaskDialogOpen}
@@ -2681,8 +2730,8 @@ const Projects = () => {
         </>
       ) : null}
       
-      {selectedProject && (
-        <>
+      {selectedProject && projectSettingsOpen ? (
+        <Suspense fallback={null}>
           <ProjectSettingsDialog
             open={projectSettingsOpen}
             onOpenChange={setProjectSettingsOpen}
@@ -2738,14 +2787,18 @@ const Projects = () => {
               }
             }}
           />
-          
+        </Suspense>
+      ) : null}
+
+      {selectedProject && saveAsTemplateOpen ? (
+        <Suspense fallback={null}>
           <SaveAsTemplateDialog
             open={saveAsTemplateOpen}
             onOpenChange={setSaveAsTemplateOpen}
             project={selectedProject}
           />
-        </>
-      )}
+        </Suspense>
+      ) : null}
 
       <Dialog open={projectsCsvImportDialogOpen} onOpenChange={setProjectsCsvImportDialogOpen}>
         <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">

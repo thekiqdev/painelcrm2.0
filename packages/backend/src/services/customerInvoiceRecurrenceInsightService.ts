@@ -15,6 +15,7 @@ import {
   clampRecurringInvoiceGenerateDaysBeforeDue,
   computeRecurringInvoiceGenerationDateYmd,
 } from '../utils/billingGenerationDate.js';
+import { effectiveRecurringGenerateDaysBeforeDue } from '../utils/billingIntervalGenerationCap.js';
 import type { BillingWindowReason } from './billingTimeWindowObservability.js';
 import { billingRecurringJobsHasCompletionColumns } from './billingRecurringJobsOpsService.js';
 import { isSubscriptionCyclesReadEnabled } from './subscriptionCyclesReadFlagService.js';
@@ -281,8 +282,9 @@ export async function getCustomerInvoiceRecurrenceInsight(
   const tenantPrefRow = tenantPrefsR.rows[0] ?? null;
   const cycleDueYmd =
     normalizeBillingCycleKeyYmd(sub.next_billing_date) || String(sub.next_billing_date ?? '').trim().slice(0, 10);
-  const daysBefore = clampRecurringInvoiceGenerateDaysBeforeDue(
-    tenantPrefRow?.recurring_invoice_generate_days_before_due ?? 0
+  const daysBefore = effectiveRecurringGenerateDaysBeforeDue(
+    tenantPrefRow?.recurring_invoice_generate_days_before_due ?? 0,
+    sub.billing_interval || 'monthly'
   );
   const genTime =
     tenantPrefRow?.recurring_generate_time_local != null

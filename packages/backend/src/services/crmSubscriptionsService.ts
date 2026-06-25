@@ -25,6 +25,11 @@ import {
   type CrmSubscriptionAutomationSummary,
   type CrmSubscriptionTimelineRowUx,
 } from './subscriptionTimelineUx.js';
+import {
+  getPendingCrmSubscriptionContract,
+  type CrmPendingContractMetadata,
+} from './crmSubscriptionsContractService.js';
+import { getSubscriptionLifecycleEventsForTimeline } from './crmSubscriptionsLifecycleService.js';
 
 export interface CrmSubscriptionListRow {
   id: string;
@@ -107,6 +112,7 @@ export interface CrmSubscriptionDetail {
   cycles_read_enabled: boolean;
   tenant_billing: CrmSubscriptionTenantBillingPrefs;
   recent_jobs: CrmSubscriptionJobRow[];
+  pending_contract: CrmPendingContractMetadata | null;
 }
 
 function billingIntervalLabelPt(interval: string): string {
@@ -340,12 +346,15 @@ export async function getCrmSubscriptionDetail(
   const latestPaid = paidInv.find((i) => i.status === 'paid') ?? null;
 
   const recent_jobs = await listRecentJobsForSubscription(tenantId, subscriptionId);
+  const pending_contract = await getPendingCrmSubscriptionContract(subscriptionId);
+  const lifecycle_events = await getSubscriptionLifecycleEventsForTimeline(tenantId, subscriptionId);
   const timeline = buildSubscriptionTimeline(
     cycles,
     invRows,
     sub.amount_cents,
     cyclesRead,
-    recent_jobs
+    recent_jobs,
+    lifecycle_events
   );
   const tenant_billing = tenantRow.rows[0] ?? {
     timezone: null,
@@ -357,6 +366,7 @@ export async function getCrmSubscriptionDetail(
   const automation_summary = buildSubscriptionAutomationSummary({
     subscriptionStatus: sub.status,
     nextBillingDate: sub.next_billing_date,
+    billingInterval: sub.billing_interval,
     lastJobAt: sub.last_job_at,
     recurringInvoiceGenerateDaysBeforeDue: tenant_billing.recurring_invoice_generate_days_before_due,
     recentJobs: recent_jobs,
@@ -377,6 +387,7 @@ export async function getCrmSubscriptionDetail(
     cycles_read_enabled: cyclesRead,
     tenant_billing,
     recent_jobs,
+    pending_contract,
   };
 }
 

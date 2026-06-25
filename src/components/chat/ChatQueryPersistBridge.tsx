@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { persistQueryClient } from '@tanstack/react-query-persist-client';
 import { useAuth } from '@/contexts/AuthContext';
 import { registerChatCacheSession, queryClient } from '@/lib/queryClient';
@@ -11,12 +11,9 @@ import {
   shouldPersistChatQueryKey,
 } from '@/lib/chatPersistentCache';
 import { chatRouteMarkIndexedDbRestoreDone } from '@/lib/chatRouteTiming';
+import { scheduleIdleTask } from '@/lib/scheduleIdleTask';
 
-/**
- * Hidrata/persiste cache React Query do chat (IndexedDB) por tenant+user.
- * Não bloqueia render — restore em background (CACHE → REVALIDATE).
- */
-export function ChatQueryPersistBridge() {
+function ChatQueryPersistActive() {
   const { user } = useAuth();
 
   useEffect(() => {
@@ -60,4 +57,19 @@ export function ChatQueryPersistBridge() {
   }, [user?.tenant_id, user?.id]);
 
   return null;
+}
+
+/**
+ * Hidrata/persiste cache React Query do chat (IndexedDB) por tenant+user.
+ * Adiado para idle para não competir com o primeiro paint do shell.
+ */
+export function ChatQueryPersistBridge() {
+  const [active, setActive] = useState(false);
+
+  useEffect(() => {
+    return scheduleIdleTask(() => setActive(true), { timeout: 5000, fallbackDelay: 1500 });
+  }, []);
+
+  if (!active) return null;
+  return <ChatQueryPersistActive />;
 }

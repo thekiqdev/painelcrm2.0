@@ -13,6 +13,7 @@ const stateClass: Record<SubscriptionTimelineOperationalState, string> = {
   cancelled: 'bg-muted-foreground/40',
   gateway_failed: 'bg-amber-500',
   manual_invoice: 'bg-slate-400',
+  lifecycle_event: 'bg-orange-500',
 };
 
 type Props = {

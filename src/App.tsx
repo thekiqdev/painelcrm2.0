@@ -1,4 +1,4 @@
-import { Suspense } from "react";
+import { Suspense, useEffect } from "react";
 import { lazyWithReload } from "@/lib/lazyWithReload";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -13,6 +13,8 @@ import AppLayout from "./layouts/AppLayout.lazy";
 import SuperAdminLayout from "./layouts/SuperAdminLayout.lazy";
 import SettingsLayout from "./layouts/SettingsLayout.lazy";
 import { RouteLoadingFallback as LoadingFallback } from "@/components/RouteLoadingFallback";
+import { PageContentSkeleton } from "@/components/PageContentSkeleton";
+import { markAppBootstrapStart } from "@/lib/devPerfMarks";
 import HomeOrRedirect from "./components/HomeOrRedirect";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
@@ -204,8 +206,16 @@ const SuperAdminPlatformSupportTicketDetail = lazyWithReload(
 
 const LandingPage = lazyWithReload(() => import("./landingpage").then(m => ({ default: m.LandingPage })));
 
+function DevMountLogger({ label }: { label: string }) {
+  useEffect(() => {
+    if (label === "App") markAppBootstrapStart();
+  }, [label]);
+  return null;
+}
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
+    <DevMountLogger label="App" />
     <TooltipProvider>
       <BrowserRouter>
         <ThemeProvider>
@@ -329,7 +339,7 @@ const App = () => (
               element={
                 <AuthGuard requireAuth={true} redirectTo="/login?redirect=%2Fsuporte">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <PlatformSupport />
                     </Suspense>
                   </AppLayout>
@@ -381,7 +391,7 @@ const App = () => (
             <Route path="/dashboard" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <Dashboard />
                     </Suspense>
                   </AppLayout>
@@ -390,7 +400,7 @@ const App = () => (
             <Route path="/updates" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <UpdatesPage />
                     </Suspense>
                   </AppLayout>
@@ -399,7 +409,7 @@ const App = () => (
             <Route path="/updates/:id" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <UpdateDetailPage />
                     </Suspense>
                   </AppLayout>
@@ -409,7 +419,7 @@ const App = () => (
             <Route path="/clients" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <Clients />
                     </Suspense>
                   </AppLayout>
@@ -418,7 +428,7 @@ const App = () => (
               <Route path="/clients/:id" element={
                 <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <ClientProfile />
                     </Suspense>
                   </AppLayout>
@@ -427,7 +437,7 @@ const App = () => (
               <Route path="/clients/:id/:tab" element={
                 <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <ClientProfile />
                     </Suspense>
                   </AppLayout>
@@ -436,7 +446,7 @@ const App = () => (
             <Route path="/leads" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <Leads />
                     </Suspense>
                   </AppLayout>
@@ -445,7 +455,7 @@ const App = () => (
             <Route path="/funnel" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <Funnel />
                     </Suspense>
                   </AppLayout>
@@ -454,7 +464,7 @@ const App = () => (
             <Route path="/funnel/:funnelId" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <FunnelDetails />
                     </Suspense>
                   </AppLayout>
@@ -463,7 +473,7 @@ const App = () => (
             <Route path="/funnel/:funnelId/stage/:stageId/proposal/:proposalId" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <ProposalDetails />
                     </Suspense>
                   </AppLayout>
@@ -472,7 +482,7 @@ const App = () => (
             <Route path="/projects" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <Projects />
                     </Suspense>
                   </AppLayout>
@@ -481,7 +491,7 @@ const App = () => (
             <Route path="/projetos/:projectId" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <Projects />
                     </Suspense>
                   </AppLayout>
@@ -490,7 +500,7 @@ const App = () => (
             <Route path="/projects/new" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <ProjectWizardPage />
                     </Suspense>
                   </AppLayout>
@@ -499,7 +509,7 @@ const App = () => (
             <Route path="/projects/:projectId/area/:areaId" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <ProjectAreaPage />
                     </Suspense>
                   </AppLayout>
@@ -508,7 +518,7 @@ const App = () => (
             <Route path="/projetos/:projectId/area/:areaId" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <ProjectAreaPage />
                     </Suspense>
                   </AppLayout>
@@ -517,7 +527,7 @@ const App = () => (
             <Route path="/tasks" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <Tasks />
                     </Suspense>
                   </AppLayout>
@@ -526,7 +536,7 @@ const App = () => (
             <Route path="/agenda" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <Agenda />
                     </Suspense>
                   </AppLayout>
@@ -535,7 +545,7 @@ const App = () => (
             <Route path="/project-templates" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <ProjectTemplates />
                     </Suspense>
                   </AppLayout>
@@ -545,7 +555,7 @@ const App = () => (
             <Route path="/admin/products" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <Products />
                     </Suspense>
                   </AppLayout>
@@ -554,7 +564,7 @@ const App = () => (
             <Route path="/admin/products/new" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <ProductForm />
                     </Suspense>
                   </AppLayout>
@@ -563,7 +573,7 @@ const App = () => (
             <Route path="/admin/products/:id/edit" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <ProductForm />
                     </Suspense>
                   </AppLayout>
@@ -572,7 +582,7 @@ const App = () => (
             <Route path="/admin/loja" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <StoreSettings />
                     </Suspense>
                   </AppLayout>
@@ -583,7 +593,7 @@ const App = () => (
             <Route path="/products" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <Products />
                     </Suspense>
                   </AppLayout>
@@ -592,7 +602,7 @@ const App = () => (
             <Route path="/products/new" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <ProductForm />
                     </Suspense>
                   </AppLayout>
@@ -601,7 +611,7 @@ const App = () => (
             <Route path="/products/edit/:id" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <ProductForm />
                     </Suspense>
                   </AppLayout>
@@ -610,7 +620,7 @@ const App = () => (
             <Route path="/orders" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <Orders />
                     </Suspense>
                   </AppLayout>
@@ -619,7 +629,7 @@ const App = () => (
             <Route path="/proposals" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <Proposals />
                     </Suspense>
                   </AppLayout>
@@ -628,7 +638,7 @@ const App = () => (
             <Route path="/proposals/new" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <NewProposal />
                     </Suspense>
                   </AppLayout>
@@ -637,7 +647,7 @@ const App = () => (
             <Route path="/proposals/:proposalId/edit" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <EditProposal />
                     </Suspense>
                   </AppLayout>
@@ -646,7 +656,7 @@ const App = () => (
             <Route path="/proposals/templates" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <ProposalTemplates />
                     </Suspense>
                   </AppLayout>
@@ -655,7 +665,7 @@ const App = () => (
             <Route path="/proposals/templates/new" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <ProposalTemplateFormPage />
                     </Suspense>
                   </AppLayout>
@@ -664,7 +674,7 @@ const App = () => (
             <Route path="/proposals/templates/:templateId/edit" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <ProposalTemplateFormPage />
                     </Suspense>
                   </AppLayout>
@@ -673,7 +683,7 @@ const App = () => (
             <Route path="/proposals/:proposalId" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <ProposalDetails />
                     </Suspense>
                   </AppLayout>
@@ -682,7 +692,7 @@ const App = () => (
             <Route path="/contracts" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <Contracts />
                     </Suspense>
                   </AppLayout>
@@ -691,7 +701,7 @@ const App = () => (
             <Route path="/contracts/new" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <NewContract />
                     </Suspense>
                   </AppLayout>
@@ -700,7 +710,7 @@ const App = () => (
             <Route path="/contracts/templates" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <ContractTemplates />
                     </Suspense>
                   </AppLayout>
@@ -709,7 +719,7 @@ const App = () => (
             <Route path="/contracts/templates/new" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <ContractTemplateFormPage />
                     </Suspense>
                   </AppLayout>
@@ -718,7 +728,7 @@ const App = () => (
             <Route path="/contracts/templates/:templateId/edit" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <ContractTemplateFormPage />
                     </Suspense>
                   </AppLayout>
@@ -727,7 +737,7 @@ const App = () => (
               <Route path="/contracts/:id/edit" element={
                 <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <NewContract />
                     </Suspense>
                   </AppLayout>
@@ -736,7 +746,7 @@ const App = () => (
             <Route path="/contracts/:id" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <ContractDetails />
                     </Suspense>
                   </AppLayout>
@@ -750,7 +760,7 @@ const App = () => (
             <Route path="/customer-invoices" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <CustomerInvoices />
                     </Suspense>
                   </AppLayout>
@@ -759,7 +769,7 @@ const App = () => (
             <Route path="/customer-invoices/new" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <CustomerInvoiceNew />
                     </Suspense>
                   </AppLayout>
@@ -768,7 +778,7 @@ const App = () => (
             <Route path="/customer-invoices/:id/edit" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <CustomerInvoiceNew />
                     </Suspense>
                   </AppLayout>
@@ -777,7 +787,7 @@ const App = () => (
             <Route path="/customer-invoices/:id" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <CustomerInvoiceDetail />
                     </Suspense>
                   </AppLayout>
@@ -786,7 +796,7 @@ const App = () => (
             <Route path="/crm-subscriptions" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <SubscriptionsList />
                     </Suspense>
                   </AppLayout>
@@ -795,7 +805,7 @@ const App = () => (
             <Route path="/crm-subscriptions/:id" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <SubscriptionDetail />
                     </Suspense>
                   </AppLayout>
@@ -804,7 +814,7 @@ const App = () => (
             <Route path="/customer-charges" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <CustomerCharges />
                     </Suspense>
                   </AppLayout>
@@ -813,7 +823,7 @@ const App = () => (
             <Route path="/customer-charges/:id" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <CustomerChargeDetail />
                     </Suspense>
                   </AppLayout>
@@ -822,7 +832,7 @@ const App = () => (
             <Route path="/finance" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <FinanceLayout />
                     </Suspense>
                   </AppLayout>
@@ -854,7 +864,7 @@ const App = () => (
             <Route path="/chat/kanbam" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <ChatKanbanPage />
                     </Suspense>
                   </AppLayout>
@@ -914,7 +924,7 @@ const App = () => (
             <Route path="/profile" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <Profile />
                     </Suspense>
                   </AppLayout>
@@ -923,7 +933,7 @@ const App = () => (
             <Route path="/meu-plano" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <MeuPlano />
                     </Suspense>
                   </AppLayout>
@@ -932,7 +942,7 @@ const App = () => (
             <Route path="/saas-billing/:billingId/pay" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <InternalBillingCheckout />
                     </Suspense>
                   </AppLayout>
@@ -941,7 +951,7 @@ const App = () => (
             <Route path="/support/tickets/new" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <NewTicket />
                     </Suspense>
                   </AppLayout>
@@ -950,7 +960,7 @@ const App = () => (
             <Route path="/support/tickets/kanban" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <TicketsKanban />
                     </Suspense>
                   </AppLayout>
@@ -959,7 +969,7 @@ const App = () => (
             <Route path="/support/tickets/:id" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <TicketDetail />
                     </Suspense>
                   </AppLayout>
@@ -968,7 +978,7 @@ const App = () => (
             <Route path="/support/tickets" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>
-                    <Suspense fallback={<LoadingFallback />}>
+                    <Suspense fallback={<PageContentSkeleton />}>
                       <Tickets />
                     </Suspense>
                   </AppLayout>

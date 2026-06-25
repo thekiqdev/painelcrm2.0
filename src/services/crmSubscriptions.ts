@@ -27,7 +27,8 @@ export type SubscriptionTimelineOperationalState =
   | 'skipped'
   | 'cancelled'
   | 'gateway_failed'
-  | 'manual_invoice';
+  | 'manual_invoice'
+  | 'lifecycle_event';
 
 export interface CrmSubscriptionTimelineRow {
   month_ref: string;
@@ -58,7 +59,11 @@ export interface CrmSubscriptionTimelineRow {
   invoice_status?: string | null;
   gateway_status?: string | null;
   gateway_reference_id?: string | null;
-  merge_source?: 'cycle' | 'invoice_only';
+  merge_source?: 'cycle' | 'invoice_only' | 'lifecycle';
+  lifecycle_event?: 'pause' | 'resume' | 'reactivate' | null;
+  lifecycle_reason?: string | null;
+  lifecycle_actor_name?: string | null;
+  lifecycle_next_billing_date?: string | null;
 }
 
 export interface CrmSubscriptionAutomationSummary {
@@ -152,13 +157,73 @@ export interface CrmSubscriptionDetailPayload {
   tenant_billing: CrmSubscriptionTenantBillingPrefs;
   recent_jobs: CrmSubscriptionJobRow[];
   meta: { periodicity_label_pt: string };
+  pending_contract?: {
+    amount_cents: number;
+    billing_interval: string;
+    description: string;
+    effective_at: 'next_cycle';
+    reason?: string | null;
+    requested_at: string;
+  } | null;
 }
+
+export type CrmSubscriptionBillingInterval =
+  | 'weekly'
+  | 'monthly'
+  | 'quarterly'
+  | 'semi_annual'
+  | 'yearly';
+
+export type PatchCrmSubscriptionContractBody = {
+  amount_cents: number;
+  billing_interval: CrmSubscriptionBillingInterval;
+  description: string;
+  effective_at: 'immediate' | 'next_cycle';
+  reason?: string;
+};
+
+export type CrmSubscriptionHistoryChangeType =
+  | 'upgrade'
+  | 'downgrade'
+  | 'interval_change'
+  | 'description_change'
+  | 'contract_update'
+  | 'pause'
+  | 'resume'
+  | 'reactivate';
+
+export type CrmSubscriptionContractHistoryRow = {
+  id: string;
+  created_at: string;
+  actor_user_id: string | null;
+  actor_name: string | null;
+  change_type: CrmSubscriptionHistoryChangeType;
+  effective_at: 'immediate' | 'next_cycle' | null;
+  reason: string | null;
+  status: 'pending' | 'applied' | 'cancelled';
+  previous_payload: {
+    amount_cents: number;
+    billing_interval: string;
+    description: string;
+  } | null;
+  new_payload: {
+    amount_cents: number;
+    billing_interval: string;
+    description: string;
+  } | null;
+  next_billing_date?: string | null;
+};
 
 export type CrmSubscriptionsAnalyticsPayload = {
   period: { from: string; to: string; preset?: string };
   mrr_cents: number;
+  mrr_after_pending_cents: number;
+  mrr_pending_delta_cents: number;
   arr_cents: number;
   active_count: number;
+  paused_count: number;
+  paused_mrr_cents: number;
+  paused_arr_cents: number;
   new_count: number;
   cancelled_count: number;
   net_growth: number;
@@ -244,6 +309,63 @@ export const crmSubscriptionsService = {
   ): Promise<CrmSubscriptionDetailPayload['subscription']> {
     const res = await apiClient.patch<{ subscription: CrmSubscriptionDetailPayload['subscription'] }>(
       `/api/crm-subscriptions/${encodeURIComponent(id)}/cycles-config`,
+      body
+    );
+    if (res.error) throw new Error(res.error);
+    if (!res.data?.subscription) throw new Error('Resposta inválida');
+    return res.data.subscription;
+  },
+
+  async patchContract(
+    id: string,
+    body: PatchCrmSubscriptionContractBody
+  ): Promise<{ subscription: CrmSubscriptionDetailPayload['subscription']; pending: boolean }> {
+    const res = await apiClient.patch<{
+      subscription: CrmSubscriptionDetailPayload['subscription'];
+      pending: boolean;
+    }>(`/api/crm-subscriptions/${encodeURIComponent(id)}/contract`, body);
+    if (res.error) throw new Error(res.error);
+    if (!res.data?.subscription) throw new Error('Resposta inválida');
+    return { subscription: res.data.subscription, pending: Boolean(res.data.pending) };
+  },
+
+  async getContractHistory(id: string): Promise<CrmSubscriptionContractHistoryRow[]> {
+    const res = await apiClient.get<{ history: CrmSubscriptionContractHistoryRow[] }>(
+      `/api/crm-subscriptions/${encodeURIComponent(id)}/contract-history`
+    );
+    if (res.error) throw new Error(res.error);
+    return res.data?.history ?? [];
+  },
+
+  async pause(id: string, reason: string): Promise<CrmSubscriptionDetailPayload['subscription']> {
+    const res = await apiClient.post<{ subscription: CrmSubscriptionDetailPayload['subscription'] }>(
+      `/api/crm-subscriptions/${encodeURIComponent(id)}/pause`,
+      { reason }
+    );
+    if (res.error) throw new Error(res.error);
+    if (!res.data?.subscription) throw new Error('Resposta inválida');
+    return res.data.subscription;
+  },
+
+  async resume(
+    id: string,
+    body: { next_billing_date: string; reason?: string }
+  ): Promise<CrmSubscriptionDetailPayload['subscription']> {
+    const res = await apiClient.post<{ subscription: CrmSubscriptionDetailPayload['subscription'] }>(
+      `/api/crm-subscriptions/${encodeURIComponent(id)}/resume`,
+      body
+    );
+    if (res.error) throw new Error(res.error);
+    if (!res.data?.subscription) throw new Error('Resposta inválida');
+    return res.data.subscription;
+  },
+
+  async reactivate(
+    id: string,
+    body: { next_billing_date: string; reason?: string }
+  ): Promise<CrmSubscriptionDetailPayload['subscription']> {
+    const res = await apiClient.post<{ subscription: CrmSubscriptionDetailPayload['subscription'] }>(
+      `/api/crm-subscriptions/${encodeURIComponent(id)}/reactivate`,
       body
     );
     if (res.error) throw new Error(res.error);

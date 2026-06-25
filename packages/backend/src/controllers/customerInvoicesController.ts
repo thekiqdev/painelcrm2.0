@@ -385,6 +385,24 @@ export async function createCustomerInvoice(req: AuthRequest, res: Response): Pr
       res.status(400).json({ error: err.message });
       return;
     }
+    const pgCode =
+      typeof err === 'object' && err !== null && 'code' in err ? String((err as { code: unknown }).code) : '';
+    const pgConstraint =
+      typeof err === 'object' && err !== null && 'constraint' in err
+        ? String((err as { constraint: unknown }).constraint)
+        : '';
+    if (
+      pgCode === '23514' &&
+      (pgConstraint === 'subscriptions_billing_interval_check' ||
+        (err instanceof Error && err.message.includes('subscriptions_billing_interval_check')))
+    ) {
+      res.status(503).json({
+        error:
+          'Periodicidade semanal ainda não está disponível neste ambiente. Reinicie o backend após a migração ou contacte o suporte.',
+        code: 'subscriptions_weekly_interval_unavailable',
+      });
+      return;
+    }
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[customerInvoicesController] createCustomerInvoice error:', msg, err);
     res.status(500).json({ error: 'Erro ao criar fatura', ...(process.env.NODE_ENV !== 'production' ? { detail: msg } : {}) });

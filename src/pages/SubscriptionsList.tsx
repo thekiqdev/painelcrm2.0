@@ -63,9 +63,11 @@ import {
   intervalLabel,
   isSubscriptionEnded,
   matchesSubscriptionSearch,
+  matchesSubscriptionStatusFilter,
   monthLabel,
   readStoredHideEnded,
   subscriptionStatusUi,
+  type SubscriptionStatusFilter,
 } from "@/components/subscriptions/subscriptionsListUtils";
 
 function SectionHeader({ title, description }: { title: string; description?: string }) {
@@ -123,6 +125,7 @@ const SubscriptionsList = () => {
   const [loading, setLoading] = useState(true);
   const [analyticsLoading, setAnalyticsLoading] = useState(true);
   const [hideEnded, setHideEnded] = useState<boolean>(readStoredHideEnded);
+  const [statusFilter, setStatusFilter] = useState<SubscriptionStatusFilter>("all");
   const [search, setSearch] = useState("");
 
   const [preset, setPreset] = useState("current_month");
@@ -141,9 +144,15 @@ const SubscriptionsList = () => {
   }, [hideEnded]);
 
   const baseRows = useMemo(() => {
-    if (!hideEnded) return rows;
-    return rows.filter((r) => !isSubscriptionEnded(r));
-  }, [rows, hideEnded]);
+    let list = rows;
+    if (hideEnded) {
+      list = list.filter((r) => !isSubscriptionEnded(r));
+    }
+    if (statusFilter !== "all") {
+      list = list.filter((r) => matchesSubscriptionStatusFilter(r, statusFilter));
+    }
+    return list;
+  }, [rows, hideEnded, statusFilter]);
 
   const displayedRows = useMemo(() => {
     const q = search.trim();
@@ -271,8 +280,32 @@ const SubscriptionsList = () => {
   );
 
   const listToolbar = (
-    <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
-      <Filter className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden />
+    <div className="flex flex-col gap-2 w-full md:w-auto">
+      <div className="flex flex-wrap items-center gap-2 w-full">
+        <Filter className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden />
+        <div className="flex flex-wrap gap-1.5">
+          {(
+            [
+              { key: "all", label: "Todos" },
+              { key: "active", label: "Ativas" },
+              { key: "paused", label: "Pausadas" },
+              { key: "cancelled", label: "Canceladas" },
+            ] as const
+          ).map((opt) => (
+            <Button
+              key={opt.key}
+              type="button"
+              size="sm"
+              variant={statusFilter === opt.key ? "secondary" : "outline"}
+              className="h-8 text-xs"
+              onClick={() => setStatusFilter(opt.key)}
+            >
+              {opt.label}
+            </Button>
+          ))}
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 w-full">
       <div className="relative flex-1 min-w-[140px] md:min-w-[200px] md:max-w-[280px]">
         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" aria-hidden />
         <Input
@@ -310,6 +343,7 @@ const SubscriptionsList = () => {
           {endedCount} encerrada{endedCount !== 1 ? "s" : ""} oculta{endedCount !== 1 ? "s" : ""}
         </span>
       )}
+      </div>
     </div>
   );
 
@@ -423,7 +457,10 @@ const SubscriptionsList = () => {
                   <TableCell>
                     <Badge
                       variant={st.variant}
-                      className={cn(st.variant === "default" && "bg-crm-primary/12 text-crm-primary border-crm-primary/25")}
+                      className={cn(
+                        st.variant === "default" && "bg-crm-primary/12 text-crm-primary border-crm-primary/25",
+                        row.status === "paused" && "bg-amber-500/12 text-amber-800 border-amber-500/30 dark:text-amber-300"
+                      )}
                     >
                       {st.label}
                     </Badge>
@@ -504,22 +541,64 @@ const SubscriptionsList = () => {
         <SectionHeader title="Resumo atual" description="Snapshot da base ativa — não varia com o período." />
         <div className="grid grid-cols-2 gap-2 md:gap-3 lg:grid-cols-4">
           <KpiCard
-            title="MRR"
+            title="MRR atual"
             loading={analyticsLoading}
             value={formatAmountPerMonth(analytics?.mrr_cents ?? 0)}
             className="border-violet-500/25 bg-gradient-to-br from-card to-violet-500/5"
           />
           <KpiCard
+            title="MRR após mudanças agendadas"
+            loading={analyticsLoading}
+            value={formatAmountPerMonth(analytics?.mrr_after_pending_cents ?? analytics?.mrr_cents ?? 0)}
+            className="border-indigo-500/25 bg-gradient-to-br from-card to-indigo-500/5"
+          />
+          <KpiCard
+            title="Variação prevista"
+            loading={analyticsLoading}
+            value={
+              <>
+                {(analytics?.mrr_pending_delta_cents ?? 0) >= 0 ? "+" : ""}
+                {formatAmountPerMonth(Math.abs(analytics?.mrr_pending_delta_cents ?? 0))}
+              </>
+            }
+            valueClassName={
+              (analytics?.mrr_pending_delta_cents ?? 0) >= 0
+                ? "text-emerald-700 dark:text-emerald-400"
+                : "text-amber-700 dark:text-amber-400"
+            }
+            icon={
+              (analytics?.mrr_pending_delta_cents ?? 0) >= 0 ? (
+                <TrendingUp className="h-3.5 w-3.5 text-emerald-600" />
+              ) : (
+                <TrendingDown className="h-3.5 w-3.5 text-amber-600" />
+              )
+            }
+          />
+          <KpiCard
             title="ARR"
             loading={analyticsLoading}
             value={formatAmountPerYear(analytics?.arr_cents ?? 0)}
-            className="border-indigo-500/25 bg-gradient-to-br from-card to-indigo-500/5"
+            className="border-sky-500/20 bg-gradient-to-br from-card to-sky-500/5"
           />
+        </div>
+        <div className="grid grid-cols-2 gap-2 md:gap-3 lg:grid-cols-4">
           <KpiCard
             title="Assinaturas ativas"
             loading={analyticsLoading}
             value={analytics?.active_count ?? 0}
             className="border-emerald-500/20 bg-gradient-to-br from-card to-emerald-500/5"
+          />
+          <KpiCard
+            title="Assinaturas pausadas"
+            loading={analyticsLoading}
+            value={analytics?.paused_count ?? 0}
+            className="border-amber-500/20 bg-gradient-to-br from-card to-amber-500/5"
+          />
+          <KpiCard
+            title="MRR pausado"
+            loading={analyticsLoading}
+            value={formatAmountPerMonth(analytics?.paused_mrr_cents ?? 0)}
+            className="border-amber-500/15 bg-gradient-to-br from-card to-amber-500/5"
           />
           <KpiCard
             title="Ticket médio (MRR)"

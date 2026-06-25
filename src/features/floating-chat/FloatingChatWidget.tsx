@@ -5,7 +5,7 @@ import { Filter, MoreHorizontal } from 'lucide-react';
 import { useFeatureFlag } from '@/hooks/useFeatureFlag';
 import { useModulePermissions } from '@/contexts/ModulePermissionsContext';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
-import { useChatNavUnreadCount } from '@/hooks/useChatNavUnreadCount';
+import { useSharedChatNavUnreadCount } from '@/hooks/chatNavUnreadContext';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -67,7 +67,7 @@ function FloatingChatChrome() {
   }, []);
 
   /** Mesmo agregado operacional do menu Chat (campo `unread` de attendance-counts), não o sininho. */
-  const bubbleUnread = useChatNavUnreadCount(true);
+  const bubbleUnread = useSharedChatNavUnreadCount();
 
   const { data: bubbleRecentRaw = [] } = useQuery({
     queryKey: floatingChatBubbleQueryKey(instanceIds, inboxScope),

@@ -57,14 +57,37 @@ export function intervalLabel(interval: string): string {
   return m[interval] ?? interval;
 }
 
+export type SubscriptionStatusFilter = "all" | "active" | "paused" | "cancelled";
+
 export function subscriptionStatusUi(row: CrmSubscriptionListItem): {
   label: string;
   variant: "default" | "secondary" | "destructive" | "outline";
+  filterKey: SubscriptionStatusFilter;
 } {
-  if (row.status === "cancelled") return { label: "Encerrada", variant: "secondary" };
-  if (row.status !== "active") return { label: row.status, variant: "outline" };
-  if (row.cancel_at_period_end) return { label: "Encerra ao fim do período", variant: "outline" };
-  return { label: "Ativa", variant: "default" };
+  if (row.status === "cancelled") {
+    return { label: "Cancelada", variant: "secondary", filterKey: "cancelled" };
+  }
+  if (row.status === "paused") {
+    return { label: "Pausada", variant: "outline", filterKey: "paused" };
+  }
+  if (row.status !== "active") {
+    return { label: row.status, variant: "outline", filterKey: "all" };
+  }
+  if (row.cancel_at_period_end) {
+    return { label: "Encerra ao fim do período", variant: "outline", filterKey: "active" };
+  }
+  return { label: "Ativa", variant: "default", filterKey: "active" };
+}
+
+export function matchesSubscriptionStatusFilter(
+  row: CrmSubscriptionListItem,
+  filter: SubscriptionStatusFilter
+): boolean {
+  if (filter === "all") return true;
+  if (filter === "active") return row.status === "active";
+  if (filter === "paused") return row.status === "paused";
+  if (filter === "cancelled") return row.status === "cancelled";
+  return true;
 }
 
 export function formatYmdBr(ymd: string | null | undefined): string {

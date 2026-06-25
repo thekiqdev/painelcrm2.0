@@ -13,6 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
@@ -39,20 +40,29 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { crmSubscriptionsService, type CrmSubscriptionDetailPayload } from "@/services/crmSubscriptions";
+import { crmSubscriptionsService, type CrmSubscriptionBillingInterval, type CrmSubscriptionDetailPayload } from "@/services/crmSubscriptions";
 import { toast } from "@/components/ui/sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
   ArrowLeft,
+  ArrowDown,
+  ArrowUp,
   CalendarSync,
   ChevronDown,
   FileText,
   MoreHorizontal,
+  Pause,
   Pencil,
+  Play,
+  RotateCcw,
   Wrench,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { SubscriptionContractEditDialog, type SubscriptionContractModalPreset } from "@/components/subscriptions/SubscriptionContractEditDialog";
+import { SubscriptionPendingContractBanner } from "@/components/subscriptions/SubscriptionPendingContractBanner";
+import { SubscriptionOperationalTimelinePanel } from "@/components/subscriptions/SubscriptionOperationalTimelinePanel";
+import { Textarea } from "@/components/ui/textarea";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 import { ClientEntityLink } from "@/components/entities";
 import { isInvoiceActionable } from "@/lib/customerInvoiceActions";
@@ -61,6 +71,7 @@ import {
   clampRecurringGenerateDaysBeforeDue,
   computeRecurringGenerationDateYmd,
 } from "@/lib/recurringGenerationPreview";
+import { SubscriptionContractHistoryPanel } from "@/components/subscriptions/SubscriptionContractHistoryPanel";
 import { SubscriptionOperationalHealthCard } from "@/components/subscriptions/SubscriptionOperationalHealthCard";
 import { SubscriptionRecurringStatusBadge } from "@/components/subscriptions/SubscriptionRecurringStatusBadge";
 import { SubscriptionTimelineStateDot } from "@/components/subscriptions/SubscriptionTimelineStateDot";
@@ -69,6 +80,7 @@ import {
   resolveTimelineInvoiceColumn,
   resolveTimelineRecurringDisplay,
 } from "@/lib/subscriptionRecurringDisplay";
+import { cn } from "@/lib/utils";
 
 function formatAmount(cents: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
@@ -76,7 +88,8 @@ function formatAmount(cents: number): string {
 
 function subscriptionHeadlineStatus(d: CrmSubscriptionDetailPayload): { label: string; variant: "default" | "secondary" | "outline" } {
   const { subscription: s } = d;
-  if (s.status === "cancelled") return { label: "Encerrada", variant: "secondary" };
+  if (s.status === "cancelled") return { label: "Cancelada", variant: "secondary" };
+  if (s.status === "paused") return { label: "Pausada", variant: "outline" };
   if (s.status !== "active") return { label: s.status, variant: "outline" };
   if (s.cancel_at_period_end) return { label: "Encerra ao fim do período", variant: "outline" };
   return { label: "Ativa", variant: "default" };
@@ -102,6 +115,14 @@ function formatYmdBr(ymd: string | null | undefined): string {
   return format(new Date(`${head}T12:00:00`), "dd/MM/yyyy", { locale: ptBR });
 }
 
+const BILLING_INTERVAL_OPTIONS: Array<{ value: CrmSubscriptionBillingInterval; label: string }> = [
+  { value: "weekly", label: "Semanal" },
+  { value: "monthly", label: "Mensal" },
+  { value: "quarterly", label: "Trimestral" },
+  { value: "semi_annual", label: "Semestral" },
+  { value: "yearly", label: "Anual" },
+];
+
 const SubscriptionDetail = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -110,6 +131,7 @@ const SubscriptionDetail = () => {
   const canEditInvoice = hasPermissionKey("billing.edit_invoice");
   const canEditSubscription = hasPermissionKey("billing.edit_subscription");
   const canCancelSubscription = hasPermissionKey("billing.cancel_subscription");
+  const isMobile = useIsMobile();
   const [detail, setDetail] = useState<CrmSubscriptionDetailPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [techOpen, setTechOpen] = useState(false);
@@ -121,6 +143,21 @@ const SubscriptionDetail = () => {
   const [cyclesUnlimitedEdit, setCyclesUnlimitedEdit] = useState(true);
   const [maxCyclesEdit, setMaxCyclesEdit] = useState("12");
   const [cyclesSaving, setCyclesSaving] = useState(false);
+  const [contractOpen, setContractOpen] = useState(false);
+  const [contractPreset, setContractPreset] = useState<SubscriptionContractModalPreset>("edit");
+  const [contractSaving, setContractSaving] = useState(false);
+  const [contractHistoryRefreshKey, setContractHistoryRefreshKey] = useState(0);
+  const [pauseOpen, setPauseOpen] = useState(false);
+  const [pauseReason, setPauseReason] = useState("");
+  const [pausing, setPausing] = useState(false);
+  const [resumeOpen, setResumeOpen] = useState(false);
+  const [resumeDate, setResumeDate] = useState("");
+  const [resumeReason, setResumeReason] = useState("");
+  const [resuming, setResuming] = useState(false);
+  const [reactivateOpen, setReactivateOpen] = useState(false);
+  const [reactivateDate, setReactivateDate] = useState("");
+  const [reactivateReason, setReactivateReason] = useState("");
+  const [reactivating, setReactivating] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -203,6 +240,38 @@ const SubscriptionDetail = () => {
     }
   };
 
+  const openContractEditor = (preset: SubscriptionContractModalPreset = "edit") => {
+    if (!detail) return;
+    setContractPreset(preset);
+    setContractOpen(true);
+  };
+
+  const saveContract = async (body: {
+    amount_cents: number;
+    billing_interval: CrmSubscriptionBillingInterval;
+    description: string;
+    effective_at: "immediate" | "next_cycle";
+    reason?: string;
+  }) => {
+    if (!id) return;
+    try {
+      setContractSaving(true);
+      const result = await crmSubscriptionsService.patchContract(id, body);
+      toast.success(
+        result.pending
+          ? "Alteração agendada para o próximo ciclo"
+          : "Contrato da assinatura atualizado"
+      );
+      setContractOpen(false);
+      setContractHistoryRefreshKey((k) => k + 1);
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao salvar");
+    } finally {
+      setContractSaving(false);
+    }
+  };
+
   const runCancel = async () => {
     if (!id || !cancelOpen) return;
     try {
@@ -220,14 +289,83 @@ const SubscriptionDetail = () => {
     }
   };
 
+  const runPause = async () => {
+    if (!id) return;
+    const reason = pauseReason.trim();
+    if (!reason) {
+      toast.error("Informe o motivo da pausa");
+      return;
+    }
+    try {
+      setPausing(true);
+      await crmSubscriptionsService.pause(id, reason);
+      toast.success("Assinatura pausada");
+      setPauseOpen(false);
+      setPauseReason("");
+      setContractHistoryRefreshKey((k) => k + 1);
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao pausar");
+    } finally {
+      setPausing(false);
+    }
+  };
+
+  const runResume = async () => {
+    if (!id || !resumeDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      toast.error("Informe a próxima cobrança (AAAA-MM-DD)");
+      return;
+    }
+    try {
+      setResuming(true);
+      await crmSubscriptionsService.resume(id, {
+        next_billing_date: resumeDate,
+        reason: resumeReason.trim() || undefined,
+      });
+      toast.success("Assinatura retomada");
+      setResumeOpen(false);
+      setResumeReason("");
+      setContractHistoryRefreshKey((k) => k + 1);
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao retomar");
+    } finally {
+      setResuming(false);
+    }
+  };
+
+  const runReactivate = async () => {
+    if (!id || !reactivateDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      toast.error("Informe a próxima cobrança (AAAA-MM-DD)");
+      return;
+    }
+    try {
+      setReactivating(true);
+      await crmSubscriptionsService.reactivate(id, {
+        next_billing_date: reactivateDate,
+        reason: reactivateReason.trim() || undefined,
+      });
+      toast.success("Assinatura reativada");
+      setReactivateOpen(false);
+      setReactivateReason("");
+      setContractHistoryRefreshKey((k) => k + 1);
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao reativar");
+    } finally {
+      setReactivating(false);
+    }
+  };
+
   if (loading || !detail) {
     return (
       <div className="flex min-h-[40vh] items-center justify-center text-muted-foreground text-sm">Carregando…</div>
     );
   }
 
-  const { subscription: s, stats, timeline, meta, tenant_billing, recent_jobs, cycles_raw, cycles_read_enabled } =
+  const { subscription: s, stats, timeline: timelineAll, meta, tenant_billing, recent_jobs, cycles_raw, cycles_read_enabled } =
     detail;
+  const timeline = timelineAll.filter((row) => row.merge_source !== "lifecycle");
   const head = subscriptionHeadlineStatus(detail);
   const nextYmd = s.next_billing_date?.slice(0, 10);
   const daysBeforeAcct = clampRecurringGenerateDaysBeforeDue(tenant_billing.recurring_invoice_generate_days_before_due);
@@ -235,6 +373,8 @@ const SubscriptionDetail = () => {
     nextYmd && nextYmd.length === 10 ? computeRecurringGenerationDateYmd(nextYmd, daysBeforeAcct) : null;
   const latestPaidId = detail.latest_paid_invoice_id;
   const canReschedule = s.status === "active" && Boolean(latestPaidId);
+  const canEditContract =
+    (s.status === "active" || s.status === "paused") && Boolean(latestPaidId) && canEditSubscription;
   const editHrefRaw =
     detail.latest_invoice_id &&
     detail.latest_invoice_status &&
@@ -298,13 +438,38 @@ const SubscriptionDetail = () => {
           variant={head.variant}
           className={cn(
             "self-start sm:self-auto",
-            head.variant === "default" && "bg-crm-primary/12 text-crm-primary border-crm-primary/25"
+            head.variant === "default" && "bg-crm-primary/12 text-crm-primary border-crm-primary/25",
+            s.status === "paused" && "bg-amber-500/12 text-amber-800 border-amber-500/30 dark:text-amber-300"
           )}
         >
           {head.label}
         </Badge>
       </div>
 
+      {detail.pending_contract ? (
+        <SubscriptionPendingContractBanner
+          pending={detail.pending_contract}
+          applicationYmd={nextYmd}
+        />
+      ) : null}
+
+      <Tabs defaultValue="contrato" className="space-y-4">
+        <TabsList className="w-full h-auto flex flex-wrap justify-start gap-1 bg-muted/40 p-1">
+          <TabsTrigger value="contrato" className="text-xs sm:text-sm">
+            Contrato
+          </TabsTrigger>
+          <TabsTrigger value="historico" className="text-xs sm:text-sm">
+            Histórico
+          </TabsTrigger>
+          <TabsTrigger value="cobrancas" className="text-xs sm:text-sm">
+            Cobranças
+          </TabsTrigger>
+          <TabsTrigger value="timeline" className="text-xs sm:text-sm">
+            Timeline
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="contrato" className="space-y-6 mt-0">
       {/* BLOCO 1 — Resumo */}
       <Card className="border shadow-sm overflow-hidden">
         <CardHeader className="bg-muted/30 border-b py-4">
@@ -370,10 +535,245 @@ const SubscriptionDetail = () => {
 
       <SubscriptionOperationalHealthCard detail={detail} />
 
-      {/* BLOCO 2 — Histórico */}
+      <Card className="border shadow-sm overflow-hidden">
+        <CardHeader className="bg-muted/30 border-b py-4">
+          <CardTitle className="text-base font-medium">Configurações da assinatura</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-6 pt-6">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Periodicidade</p>
+              <p className="text-sm font-medium">{meta.periodicity_label_pt}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Antecipação na conta</p>
+              <p className="text-sm">{daysBeforeDueLabel(tenant_billing)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Horário / fuso (conta)</p>
+              <p className="text-sm">{generationSummary(tenant_billing)}</p>
+            </div>
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground mb-1">Próximo ciclo — geração e vencimento</p>
+              {nextYmd && generationYmd ? (
+                <>
+                  <p className="text-xs text-muted-foreground">Geração (1.º dia elegível)</p>
+                  <p className="text-sm font-semibold tabular-nums">{formatYmdBr(generationYmd)}</p>
+                  <p className="text-xs text-muted-foreground mt-2">Vencimento da fatura (ciclo)</p>
+                  <p className="text-sm font-medium tabular-nums">{formatYmdBr(nextYmd)}</p>
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground">—</p>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-lg border bg-muted/20 p-4 space-y-4 max-w-xl">
+            <div>
+              <p className="text-sm font-medium text-foreground">Ciclos de cobrança</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Ilimitado projeta receita conforme o período do relatório; finito limita o número total de cobranças
+                (inclui faturas já emitidas).
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <Label htmlFor="cycles_unlimited_sub" className="text-sm font-normal cursor-pointer">
+                Ciclos ilimitados
+              </Label>
+              <Switch
+                id="cycles_unlimited_sub"
+                checked={cyclesUnlimitedEdit}
+                onCheckedChange={setCyclesUnlimitedEdit}
+                disabled={!canEditSubscription || s.status !== "active"}
+              />
+            </div>
+            {!cyclesUnlimitedEdit && (
+              <div className="max-w-[200px]">
+                <Label htmlFor="max_cycles_sub">Quantidade de ciclos</Label>
+                <Input
+                  id="max_cycles_sub"
+                  type="number"
+                  min={1}
+                  className="mt-1"
+                  value={maxCyclesEdit}
+                  onChange={(e) => setMaxCyclesEdit(e.target.value)}
+                  disabled={!canEditSubscription || s.status !== "active"}
+                />
+              </div>
+            )}
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => void saveCyclesConfig()}
+              disabled={!canEditSubscription || cyclesSaving || s.status !== "active"}
+            >
+              {cyclesSaving ? "A guardar…" : "Guardar ciclos"}
+            </Button>
+          </div>
+
+          <div className={cn("flex gap-2", isMobile ? "flex-col w-full" : "flex-wrap")}>
+            {s.status === "active" && canEditSubscription ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn(isMobile && "w-full justify-center")}
+                onClick={() => setPauseOpen(true)}
+              >
+                <Pause className="h-3.5 w-3.5 mr-1" />
+                Pausar
+              </Button>
+            ) : null}
+            {s.status === "paused" && canEditSubscription ? (
+              <Button
+                variant="default"
+                size="sm"
+                className={cn(isMobile && "w-full justify-center")}
+                onClick={() => {
+                  setResumeDate(nextYmd ?? "");
+                  setResumeOpen(true);
+                }}
+              >
+                <Play className="h-3.5 w-3.5 mr-1" />
+                Retomar
+              </Button>
+            ) : null}
+            {s.status === "cancelled" && canEditSubscription ? (
+              <Button
+                variant="default"
+                size="sm"
+                className={cn(isMobile && "w-full justify-center")}
+                onClick={() => {
+                  setReactivateDate("");
+                  setReactivateOpen(true);
+                }}
+              >
+                <RotateCcw className="h-3.5 w-3.5 mr-1" />
+                Reativar
+              </Button>
+            ) : null}
+            {s.status === "active" ? (
+              <>
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn(isMobile && "w-full justify-center")}
+              disabled={!canEditContract}
+              onClick={() => openContractEditor("upgrade")}
+            >
+              <ArrowUp className="h-3.5 w-3.5 mr-1" />
+              Upgrade
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn(isMobile && "w-full justify-center")}
+              disabled={!canEditContract}
+              onClick={() => openContractEditor("downgrade")}
+            >
+              <ArrowDown className="h-3.5 w-3.5 mr-1" />
+              Downgrade
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn(isMobile && "w-full justify-center")}
+              disabled={!canEditContract}
+              onClick={() => openContractEditor("edit")}
+            >
+              <Pencil className="h-3.5 w-3.5 mr-1" />
+              Editar
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn(isMobile && "w-full", !isMobile && "")}
+              disabled={!canEditSubscription || !canReschedule}
+              onClick={() => {
+                const gen =
+                  nextYmd && nextYmd.length === 10
+                    ? computeRecurringGenerationDateYmd(nextYmd, daysBeforeAcct)
+                    : (nextYmd ?? "");
+                setNextDate(gen);
+                setNextOpen(true);
+              }}
+            >
+              Alterar próxima cobrança
+            </Button>
+              </>
+            ) : s.status === "paused" ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn(isMobile && "w-full justify-center")}
+                disabled={!canEditContract}
+                onClick={() => openContractEditor("edit")}
+              >
+                <Pencil className="h-3.5 w-3.5 mr-1" />
+                Editar
+              </Button>
+            ) : null}
+            {detail.latest_invoice_id && canViewInvoices && (
+              <Button variant="outline" size="sm" asChild>
+                <Link to={`/customer-invoices/${detail.latest_invoice_id}`}>Ver fatura mais recente</Link>
+              </Button>
+            )}
+            {editHref && (
+              <Button variant="outline" size="sm" asChild>
+                <Link to={editHref}>
+                  <Pencil className="h-3.5 w-3.5 mr-1" />
+                  Editar última fatura
+                </Link>
+              </Button>
+            )}
+            {s.status === "active" ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={cn("gap-1", isMobile && "w-full justify-center")}
+                  disabled={!canCancelSubscription}
+                >
+                  <MoreHorizontal className="h-4 w-4" />
+                  Cancelar
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                <DropdownMenuItem onSelect={() => setCancelOpen("end_of_period")}>
+                  Ao fim do período atual
+                </DropdownMenuItem>
+                <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setCancelOpen("immediate")}>
+                  Imediato (interrompe renovações)
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            ) : null}
+          </div>
+          {s.status === "paused" ? (
+            <p className="text-xs text-muted-foreground">
+              Enquanto pausada, não são geradas novas faturas nem tarefas de renovação.
+            </p>
+          ) : null}
+          {!canReschedule && s.status === "active" && (
+            <p className="text-xs text-muted-foreground">
+              Para alterar a próxima cobrança ou o contrato, é necessário pelo menos uma fatura paga nesta assinatura.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+        </TabsContent>
+
+        <TabsContent value="historico" className="mt-0">
+          {id ? (
+            <SubscriptionContractHistoryPanel subscriptionId={id} refreshKey={contractHistoryRefreshKey} />
+          ) : null}
+        </TabsContent>
+
+        <TabsContent value="cobrancas" className="space-y-6 mt-0">
+      {/* BLOCO 2 — Cobranças */}
       <Card className="border shadow-sm overflow-hidden">
         <CardHeader className="bg-muted/30 border-b py-4 flex flex-row items-center justify-between">
-          <CardTitle className="text-base font-medium">Histórico de cobranças</CardTitle>
+          <CardTitle className="text-base font-medium">Cobranças</CardTitle>
           {!cycles_read_enabled && (
             <span className="text-xs text-muted-foreground">Inclui todas as faturas da assinatura</span>
           )}
@@ -497,144 +897,17 @@ const SubscriptionDetail = () => {
           </Card>
         ))}
       </div>
+        </TabsContent>
 
-      {/* BLOCO 4 — Configurações */}
-      <Card className="border shadow-sm overflow-hidden">
-        <CardHeader className="bg-muted/30 border-b py-4">
-          <CardTitle className="text-base font-medium">Configurações da assinatura</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-6 pt-6">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <div>
-              <p className="text-xs text-muted-foreground mb-1">Periodicidade</p>
-              <p className="text-sm font-medium">{meta.periodicity_label_pt}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground mb-1">Antecipação na conta</p>
-              <p className="text-sm">{daysBeforeDueLabel(tenant_billing)}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground mb-1">Horário / fuso (conta)</p>
-              <p className="text-sm">{generationSummary(tenant_billing)}</p>
-            </div>
-            <div className="space-y-2">
-              <p className="text-xs text-muted-foreground mb-1">Próximo ciclo — geração e vencimento</p>
-              {nextYmd && generationYmd ? (
-                <>
-                  <p className="text-xs text-muted-foreground">Geração (1.º dia elegível)</p>
-                  <p className="text-sm font-semibold tabular-nums">{formatYmdBr(generationYmd)}</p>
-                  <p className="text-xs text-muted-foreground mt-2">Vencimento da fatura (ciclo)</p>
-                  <p className="text-sm font-medium tabular-nums">{formatYmdBr(nextYmd)}</p>
-                </>
-              ) : (
-                <p className="text-sm text-muted-foreground">—</p>
-              )}
-            </div>
-          </div>
+        <TabsContent value="timeline" className="space-y-6 mt-0">
+      {id ? (
+        <SubscriptionOperationalTimelinePanel
+          subscriptionId={id}
+          detail={detail}
+          refreshKey={contractHistoryRefreshKey}
+        />
+      ) : null}
 
-          <div className="rounded-lg border bg-muted/20 p-4 space-y-4 max-w-xl">
-            <div>
-              <p className="text-sm font-medium text-foreground">Ciclos de cobrança</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Ilimitado projeta receita conforme o período do relatório; finito limita o número total de cobranças
-                (inclui faturas já emitidas).
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <Label htmlFor="cycles_unlimited_sub" className="text-sm font-normal cursor-pointer">
-                Ciclos ilimitados
-              </Label>
-              <Switch
-                id="cycles_unlimited_sub"
-                checked={cyclesUnlimitedEdit}
-                onCheckedChange={setCyclesUnlimitedEdit}
-                disabled={!canEditSubscription || s.status !== "active"}
-              />
-            </div>
-            {!cyclesUnlimitedEdit && (
-              <div className="max-w-[200px]">
-                <Label htmlFor="max_cycles_sub">Quantidade de ciclos</Label>
-                <Input
-                  id="max_cycles_sub"
-                  type="number"
-                  min={1}
-                  className="mt-1"
-                  value={maxCyclesEdit}
-                  onChange={(e) => setMaxCyclesEdit(e.target.value)}
-                  disabled={!canEditSubscription || s.status !== "active"}
-                />
-              </div>
-            )}
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => void saveCyclesConfig()}
-              disabled={!canEditSubscription || cyclesSaving || s.status !== "active"}
-            >
-              {cyclesSaving ? "A guardar…" : "Guardar ciclos"}
-            </Button>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={!canEditSubscription || !canReschedule}
-              onClick={() => {
-                const gen =
-                  nextYmd && nextYmd.length === 10
-                    ? computeRecurringGenerationDateYmd(nextYmd, daysBeforeAcct)
-                    : (nextYmd ?? "");
-                setNextDate(gen);
-                setNextOpen(true);
-              }}
-            >
-              Alterar próxima cobrança
-            </Button>
-            {detail.latest_invoice_id && canViewInvoices && (
-              <Button variant="outline" size="sm" asChild>
-                <Link to={`/customer-invoices/${detail.latest_invoice_id}`}>Ver fatura mais recente</Link>
-              </Button>
-            )}
-            {editHref && (
-              <Button variant="outline" size="sm" asChild>
-                <Link to={editHref}>
-                  <Pencil className="h-3.5 w-3.5 mr-1" />
-                  Editar última fatura
-                </Link>
-              </Button>
-            )}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1"
-                  disabled={s.status !== "active" || !canCancelSubscription}
-                >
-                  <MoreHorizontal className="h-4 w-4" />
-                  Encerrar assinatura
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start">
-                <DropdownMenuItem onSelect={() => setCancelOpen("end_of_period")}>
-                  Ao fim do período atual
-                </DropdownMenuItem>
-                <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setCancelOpen("immediate")}>
-                  Imediato (interrompe renovações)
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-          {!canReschedule && s.status === "active" && (
-            <p className="text-xs text-muted-foreground">
-              Para alterar a próxima cobrança automaticamente, é necessário pelo menos uma fatura paga nesta assinatura.
-            </p>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* BLOCO 5 — Técnico */}
       <Collapsible open={techOpen} onOpenChange={setTechOpen}>
         <Card className="border shadow-sm overflow-hidden">
           <CollapsibleTrigger asChild>
@@ -718,6 +991,24 @@ const SubscriptionDetail = () => {
           </CollapsibleContent>
         </Card>
       </Collapsible>
+        </TabsContent>
+      </Tabs>
+
+      <SubscriptionContractEditDialog
+        open={contractOpen}
+        onOpenChange={setContractOpen}
+        preset={contractPreset}
+        currentAmountCents={s.amount_cents}
+        currentInterval={
+          (BILLING_INTERVAL_OPTIONS.some((o) => o.value === s.billing_interval)
+            ? s.billing_interval
+            : "monthly") as CrmSubscriptionBillingInterval
+        }
+        initialDescription={detail.plan_label?.trim() || detail.pending_contract?.description || ""}
+        canSave={canEditContract}
+        saving={contractSaving}
+        onSave={saveContract}
+      />
 
       <Dialog open={nextOpen} onOpenChange={setNextOpen}>
         <DialogContent>
@@ -771,6 +1062,108 @@ const SubscriptionDetail = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={pauseOpen} onOpenChange={setPauseOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Pausar assinatura</DialogTitle>
+            <DialogDescription>
+              A assinatura deixa de gerar faturas e tarefas automáticas até ser retomada. O histórico é preservado.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label htmlFor="pause_reason">Motivo</Label>
+            <Textarea
+              id="pause_reason"
+              value={pauseReason}
+              onChange={(e) => setPauseReason(e.target.value)}
+              placeholder="Ex.: Cliente suspendeu temporariamente"
+              rows={3}
+            />
+          </div>
+          <DialogFooter className={cn(isMobile && "flex-col gap-2")}>
+            <Button variant="outline" onClick={() => setPauseOpen(false)} className={cn(isMobile && "w-full")}>
+              Cancelar
+            </Button>
+            <Button onClick={() => void runPause()} disabled={pausing || !pauseReason.trim()} className={cn(isMobile && "w-full")}>
+              {pausing ? "Pausando…" : "Pausar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={resumeOpen} onOpenChange={setResumeOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Retomar assinatura</DialogTitle>
+            <DialogDescription>
+              Defina a data da próxima cobrança (vencimento do ciclo). As renovações automáticas voltam a ser agendadas.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="resume_nbd">Próxima cobrança</Label>
+              <Input id="resume_nbd" type="date" value={resumeDate} onChange={(e) => setResumeDate(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="resume_reason">Motivo (opcional)</Label>
+              <Textarea
+                id="resume_reason"
+                value={resumeReason}
+                onChange={(e) => setResumeReason(e.target.value)}
+                rows={2}
+              />
+            </div>
+          </div>
+          <DialogFooter className={cn(isMobile && "flex-col gap-2")}>
+            <Button variant="outline" onClick={() => setResumeOpen(false)} className={cn(isMobile && "w-full")}>
+              Cancelar
+            </Button>
+            <Button onClick={() => void runResume()} disabled={resuming} className={cn(isMobile && "w-full")}>
+              {resuming ? "Retomando…" : "Retomar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={reactivateOpen} onOpenChange={setReactivateOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reativar assinatura</DialogTitle>
+            <DialogDescription>
+              A mesma assinatura volta a ficar ativa, com histórico e contratos preservados.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="reactivate_nbd">Próxima cobrança</Label>
+              <Input
+                id="reactivate_nbd"
+                type="date"
+                value={reactivateDate}
+                onChange={(e) => setReactivateDate(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="reactivate_reason">Motivo (opcional)</Label>
+              <Textarea
+                id="reactivate_reason"
+                value={reactivateReason}
+                onChange={(e) => setReactivateReason(e.target.value)}
+                rows={2}
+              />
+            </div>
+          </div>
+          <DialogFooter className={cn(isMobile && "flex-col gap-2")}>
+            <Button variant="outline" onClick={() => setReactivateOpen(false)} className={cn(isMobile && "w-full")}>
+              Cancelar
+            </Button>
+            <Button onClick={() => void runReactivate()} disabled={reactivating} className={cn(isMobile && "w-full")}>
+              {reactivating ? "Reativando…" : "Reativar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

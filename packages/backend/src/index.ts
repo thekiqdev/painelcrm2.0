@@ -528,6 +528,11 @@ void (async () => {
     await refreshPlatformFeatureFlagRegistry();
     console.log('[boot] Flags globais (system_feature_flags + platform_feature_flags P0) e cifra carregadas.');
 
+    const { ensureSubscriptionsWeeklyBillingInterval } = await import(
+      './startup/ensureSubscriptionsWeeklyBillingInterval.js'
+    );
+    await ensureSubscriptionsWeeklyBillingInterval(pool);
+
     const { runMigrationGuard } = await import('./startup/migrationGuard.js');
     await runMigrationGuard(pool);
   } catch (err) {
