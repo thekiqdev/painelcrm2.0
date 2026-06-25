@@ -62,7 +62,7 @@ async function findLatestSubscriptionInvoiceBefore(
   subscriptionId: string,
   beforePeriodStart: string
 ): Promise<CustomerInvoiceRow | null> {
-  const r = await db.query<CustomerInvoiceRow>(
+  const r = await db.query(
     `SELECT ci.id, ci.tenant_id, ci.client_id, ci.subscription_id,
             ci.period_start, ci.period_end, ci.amount_cents, ci.due_date,
             ci.status, ci.paid_at, ci.invoice_number, ci.gateway,

@@ -684,56 +684,58 @@ export async function getCrmSubscriptionContractHistory(
       [tenantId, subscriptionId]
     );
 
-    return r.rows.map((row) => {
-      const changeTypeRaw = row.change_type;
-      if (changeTypeRaw && isLifecycleHistoryChangeType(changeTypeRaw)) {
+    return r.rows
+      .map((row): CrmSubscriptionContractHistoryRow | null => {
+        const changeTypeRaw = row.change_type;
+        if (changeTypeRaw && isLifecycleHistoryChangeType(changeTypeRaw)) {
+          return {
+            id: row.id,
+            created_at: row.created_at,
+            actor_user_id: row.created_by,
+            actor_name: row.actor_name,
+            change_type: changeTypeRaw,
+            effective_at: null,
+            reason: row.reason,
+            status: row.status,
+            previous_payload: null,
+            new_payload: null,
+            next_billing_date: row.next_billing_date,
+          };
+        }
+
+        const new_payload = buildHistoryPayload(row.amount_cents, row.billing_interval, row.description);
+        if (!new_payload) {
+          return null;
+        }
+        const previous_payload = buildHistoryPayload(
+          row.previous_amount_cents,
+          row.previous_billing_interval,
+          row.previous_description
+        );
         return {
           id: row.id,
           created_at: row.created_at,
           actor_user_id: row.created_by,
           actor_name: row.actor_name,
-          change_type: changeTypeRaw,
-          effective_at: null,
+          change_type:
+            changeTypeRaw && !isLifecycleHistoryChangeType(changeTypeRaw)
+              ? (changeTypeRaw as CrmContractChangeType)
+              : classifyCrmContractChangeType({
+                  previous_amount_cents: row.previous_amount_cents,
+                  previous_billing_interval: row.previous_billing_interval,
+                  previous_description: row.previous_description,
+                  amount_cents: row.amount_cents ?? 0,
+                  billing_interval: row.billing_interval ?? 'monthly',
+                  description: row.description ?? '',
+                }),
+          effective_at: row.effective_at ?? 'immediate',
           reason: row.reason,
           status: row.status,
-          previous_payload: null,
-          new_payload: null,
-          next_billing_date: row.next_billing_date,
+          previous_payload,
+          new_payload,
         };
-      }
-
-      const new_payload = buildHistoryPayload(row.amount_cents, row.billing_interval, row.description);
-      if (!new_payload) {
-        return null;
-      }
-      const previous_payload = buildHistoryPayload(
-        row.previous_amount_cents,
-        row.previous_billing_interval,
-        row.previous_description
-      );
-      return {
-        id: row.id,
-        created_at: row.created_at,
-        actor_user_id: row.created_by,
-        actor_name: row.actor_name,
-        change_type:
-          changeTypeRaw && !isLifecycleHistoryChangeType(changeTypeRaw)
-            ? (changeTypeRaw as CrmContractChangeType)
-            : classifyCrmContractChangeType({
-                previous_amount_cents: row.previous_amount_cents,
-                previous_billing_interval: row.previous_billing_interval,
-                previous_description: row.previous_description,
-                amount_cents: row.amount_cents ?? 0,
-                billing_interval: row.billing_interval ?? 'monthly',
-                description: row.description ?? '',
-              }),
-        effective_at: row.effective_at ?? 'immediate',
-        reason: row.reason,
-        status: row.status,
-        previous_payload,
-        new_payload,
-      };
-    }).filter((row): row is CrmSubscriptionContractHistoryRow => row != null);
+      })
+      .filter((row): row is CrmSubscriptionContractHistoryRow => row !== null);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     if (/subscription_change_events/.test(msg)) {

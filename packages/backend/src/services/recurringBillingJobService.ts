@@ -2159,7 +2159,7 @@ async function processOneCustomerRenewalJob(
     lookup_period_start: prevResolution.lookup_period_start,
     prev_invoice_id: prevInvoice.id,
     cycle_period_start: periodStart,
-    subscription_current_period_start: subscription.current_period_start,
+    subscription_current_period_start: subscription.current_period_start ?? undefined,
   });
 
   const prevItems = await getCustomerInvoiceItems(prevInvoice.id, prevInvoice.tenant_id);
