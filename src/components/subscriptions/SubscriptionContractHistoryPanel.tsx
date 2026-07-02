@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { format } from "date-fns";
-import { ptBR } from "date-fns/locale";
+import { formatDateTimeBrSafe } from "@/lib/billingSafeDate";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -19,9 +18,7 @@ import {
 import { formatYmdBr } from "./subscriptionsListUtils";
 
 function formatCreatedAt(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
-  return format(d, "dd/MM/yyyy", { locale: ptBR });
+  return formatDateTimeBrSafe(iso).replace(" às ", " ").slice(0, 10);
 }
 
 function statusBadgeVariant(

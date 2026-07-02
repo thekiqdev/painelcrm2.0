@@ -1,6 +1,5 @@
 import React from "react";
-import { format } from "date-fns";
-import { ptBR } from "date-fns/locale";
+import { formatYmdBrSafe } from "@/lib/billingSafeDate";
 import {
   Accordion,
   AccordionContent,
@@ -19,8 +18,7 @@ import {
 } from "./subscriptionContractHistoryDisplay";
 
 function formatYmdBr(ymd: string | null | undefined): string {
-  if (!ymd || ymd.length < 10) return "—";
-  return format(new Date(`${ymd.slice(0, 10)}T12:00:00`), "dd/MM/yyyy", { locale: ptBR });
+  return formatYmdBrSafe(ymd);
 }
 
 export function SubscriptionPendingContractBanner({

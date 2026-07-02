@@ -25,6 +25,7 @@ import {
   type CrmSubscriptionAutomationSummary,
   type CrmSubscriptionTimelineRowUx,
 } from './subscriptionTimelineUx.js';
+import { validateBillingRuntime } from '../billingRuntime/billingRuntimeValidator.js';
 import {
   getPendingCrmSubscriptionContract,
   type CrmPendingContractMetadata,
@@ -348,6 +349,9 @@ export async function getCrmSubscriptionDetail(
   const recent_jobs = await listRecentJobsForSubscription(tenantId, subscriptionId);
   const pending_contract = await getPendingCrmSubscriptionContract(subscriptionId);
   const lifecycle_events = await getSubscriptionLifecycleEventsForTimeline(tenantId, subscriptionId);
+
+  const runtime_validation = await validateBillingRuntime(tenantId, subscriptionId);
+
   const timeline = buildSubscriptionTimeline(
     cycles,
     invRows,
@@ -388,6 +392,7 @@ export async function getCrmSubscriptionDetail(
     tenant_billing,
     recent_jobs,
     pending_contract,
+    runtime_validation,
   };
 }
 

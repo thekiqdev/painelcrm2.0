@@ -4,9 +4,8 @@ import {
   recurringBadgeClassName,
   resolveSubscriptionProcessingHealth,
 } from '@/lib/subscriptionRecurringDisplay';
+import { formatYmdBrSafe, formatDateTimeBrSafe } from '@/lib/billingSafeDate';
 import type { CrmSubscriptionDetailPayload } from '@/services/crmSubscriptions';
-import { format } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
 import { Clock } from 'lucide-react';
 import {
   clampRecurringGenerateDaysBeforeDue,
@@ -14,15 +13,11 @@ import {
 } from '@/lib/recurringGenerationPreview';
 
 function formatCheck(iso: string | null): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso.slice(0, 16).replace('T', ' ');
-  return format(d, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
+  return formatDateTimeBrSafe(iso);
 }
 
 function formatYmdBr(ymd: string | null | undefined): string {
-  if (!ymd || ymd.length < 10) return '—';
-  return format(new Date(`${ymd.slice(0, 10)}T12:00:00`), 'dd/MM/yyyy', { locale: ptBR });
+  return formatYmdBrSafe(ymd);
 }
 
 function workerPillClass(status: string): string {

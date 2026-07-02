@@ -446,6 +446,10 @@ const patchBodySchema = z
 
 const confirmManualPaymentBodySchema = z.object({
   financial_account_id: z.string().uuid().optional().nullable(),
+  payment_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  payment_method: z.string().max(64).optional().nullable(),
+  notes: z.string().max(2000).optional().nullable(),
+  amount_received_cents: z.number().int().positive().optional(),
 });
 
 /** PATCH /api/customer-invoices/:id — edita descrição/vencimento/valor (com sync no Asaas) ou cancela (cancela cobrança no gateway primeiro). */
@@ -520,6 +524,10 @@ export async function confirmCustomerInvoiceManualPaymentHandler(req: AuthReques
       tenantId,
       invoiceId: id,
       financialAccountId: parsed.data.financial_account_id ?? null,
+      paymentDateYmd: parsed.data.payment_date ?? null,
+      paymentMethod: parsed.data.payment_method ?? null,
+      notes: parsed.data.notes ?? null,
+      amountReceivedCents: parsed.data.amount_received_cents ?? null,
     });
     res.json(result);
   } catch (err) {

@@ -1,8 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { format } from "date-fns";
-import { ptBR } from "date-fns/locale";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatYmdBrSafe, formatDateTimeBrSafe } from "@/lib/billingSafeDate";
 import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import {
   crmSubscriptionsService,
@@ -23,14 +22,11 @@ import { SubscriptionTimelineStateDot } from "./SubscriptionTimelineStateDot";
 import { resolveTimelineRecurringDisplay } from "@/lib/subscriptionRecurringDisplay";
 
 function formatYmdBr(ymd: string | null | undefined): string {
-  if (!ymd || ymd.length < 10) return "—";
-  return format(new Date(`${ymd.slice(0, 10)}T12:00:00`), "dd/MM/yyyy", { locale: ptBR });
+  return formatYmdBrSafe(ymd);
 }
 
 function formatCreatedAt(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
-  return format(d, "dd/MM/yyyy", { locale: ptBR });
+  return formatDateTimeBrSafe(iso).replace(" às ", " ").slice(0, 10);
 }
 
 type UnifiedItem =

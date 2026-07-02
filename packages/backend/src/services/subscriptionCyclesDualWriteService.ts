@@ -5,34 +5,11 @@ import { billingLog } from './billingLogger.js';
 import { calculateNextBillingDate } from './subscriptionService.js';
 import type { BillingInterval } from './billingService.js';
 import { isSubscriptionCyclesWriteEnabled } from './subscriptionCyclesWriteFlagService.js';
-
-const YMD_STRICT = /^\d{4}-\d{2}-\d{2}$/;
-
-/** Espelha `normalizeBillingCycleKeyYmd` (evita import circular com recurringBillingJobService). */
-function normalizeBillingCycleKeyYmdLocal(raw: string | null | undefined): string {
-  if (raw == null) return '';
-  const s = String(raw).trim();
-  if (!s) return '';
-  if (YMD_STRICT.test(s)) return s;
-  if (s.length >= 10 && YMD_STRICT.test(s.slice(0, 10))) {
-    const sep = s[10];
-    if (s.length === 10 || sep === 'T' || sep === 't' || sep === ' ') {
-      return s.slice(0, 10);
-    }
-  }
-  const t = Date.parse(s);
-  if (!Number.isNaN(t)) {
-    return new Date(t).toISOString().slice(0, 10);
-  }
-  return s.slice(0, 10);
-}
-
-function normalizeSubscriptionNextBillingYmdLocal(value: unknown): string {
-  if (value == null) return '';
-  if (typeof value === 'string') return value.trim().slice(0, 10);
-  if (value instanceof Date) return value.toISOString().slice(0, 10);
-  return String(value).trim().slice(0, 10);
-}
+import {
+  normalizeBillingCycleKeyYmd,
+  normalizeSubscriptionNextBillingYmd,
+} from '../utils/billingCycleKey.js';
+import { safeTodayYmd } from '../utils/billingSafeDate.js';
 
 const OUTCOME_FAILED_MAX = 'failed_max_attempts';
 
@@ -105,7 +82,7 @@ export async function subscriptionCyclesUpsertAfterScheduler(
 ): Promise<void> {
   await guardWrite(
     async (d) => {
-      const cycleDate = normalizeBillingCycleKeyYmdLocal(params.cycleKeyCanonical) || params.cycleKeyCanonical;
+      const cycleDate = normalizeBillingCycleKeyYmd(params.cycleKeyCanonical) || params.cycleKeyCanonical;
       if (!/^\d{4}-\d{2}-\d{2}$/.test(cycleDate)) return;
       const bounds = await loadPeriodBounds(d, params.subscriptionId, cycleDate);
       if (!bounds) return;
@@ -251,7 +228,7 @@ export async function subscriptionCyclesMarkProcessing(
   await guardWrite(
     async (d) => {
       const cycleDate =
-        normalizeBillingCycleKeyYmdLocal(job.cycle_key) || normalizeSubscriptionNextBillingYmdLocal(job.cycle_key);
+        normalizeBillingCycleKeyYmd(job.cycle_key) || normalizeSubscriptionNextBillingYmd(job.cycle_key);
       if (!cycleDate || !/^\d{4}-\d{2}-\d{2}$/.test(cycleDate)) return;
       await upsertCycleRow(d, {
         tenantId: job.tenant_id,
@@ -285,7 +262,7 @@ export async function subscriptionCyclesMarkQueued(db: DbQueryable, jobId: strin
         | { subscription_id: string; tenant_id: string; cycle_key: string }
         | undefined;
       if (!row) return;
-      const cycleDate = normalizeBillingCycleKeyYmdLocal(row.cycle_key);
+      const cycleDate = normalizeBillingCycleKeyYmd(row.cycle_key);
       if (!cycleDate || !/^\d{4}-\d{2}-\d{2}$/.test(cycleDate)) return;
       await upsertCycleRow(d, {
         tenantId: row.tenant_id,
@@ -322,7 +299,7 @@ export async function subscriptionCyclesOnJobCompleted(
 ): Promise<void> {
   await guardWrite(
     async (d) => {
-      const cycleDate = normalizeBillingCycleKeyYmdLocal(params.cycleKey) || params.cycleKey;
+      const cycleDate = normalizeBillingCycleKeyYmd(params.cycleKey) || params.cycleKey;
       if (!cycleDate || !/^\d{4}-\d{2}-\d{2}$/.test(cycleDate)) return;
 
       const isCustomerInv =
@@ -397,11 +374,11 @@ export async function subscriptionCyclesOnJobCancelled(
 ): Promise<void> {
   await guardWrite(
     async (d) => {
-      const cycleDate = normalizeBillingCycleKeyYmdLocal(params.cycleKey) || params.cycleKey;
+      const cycleDate = normalizeBillingCycleKeyYmd(params.cycleKey) || params.cycleKey;
       if (!cycleDate || !/^\d{4}-\d{2}-\d{2}$/.test(cycleDate)) return;
 
       if (params.guardObsolete) {
-        const subNext = normalizeBillingCycleKeyYmdLocal(params.guardObsolete.subscriptionNextBillingYmd);
+        const subNext = normalizeBillingCycleKeyYmd(params.guardObsolete.subscriptionNextBillingYmd);
         if (subNext && subNext === cycleDate) {
           return;
         }
@@ -441,35 +418,27 @@ export async function subscriptionCyclesOnJobFailedAttempt(
 ): Promise<void> {
   await guardWrite(
     async (d) => {
-      const cycleDate = normalizeBillingCycleKeyYmdLocal(params.cycleKey) || params.cycleKey;
+      const cycleDate = normalizeBillingCycleKeyYmd(params.cycleKey) || params.cycleKey;
       if (!cycleDate || !/^\d{4}-\d{2}-\d{2}$/.test(cycleDate)) return;
-      if (params.finalFailure) {
-        await upsertCycleRow(d, {
-          tenantId: params.tenantId,
-          subscriptionId: params.subscriptionId,
-          cycleDate,
-          status: 'failed',
-          jobId: params.jobId,
-          invoiceId: null,
-          processedAt: true,
-          skippedReason: OUTCOME_FAILED_MAX,
-          errorMessage: params.errorMessage.slice(0, 4000),
-          extraMeta: { final_failure: true },
-        });
-      } else {
-        await upsertCycleRow(d, {
-          tenantId: params.tenantId,
-          subscriptionId: params.subscriptionId,
-          cycleDate,
-          status: 'queued',
-          jobId: params.jobId,
-          invoiceId: null,
-          processedAt: false,
-          skippedReason: null,
-          errorMessage: params.errorMessage.slice(0, 4000),
-          extraMeta: { retry_scheduled: true },
-        });
-      }
+      const today = safeTodayYmd();
+      const persistStatus =
+        params.finalFailure && cycleDate < today ? 'failed' : 'pending';
+      const skippedReason = params.finalFailure ? OUTCOME_FAILED_MAX : null;
+      await upsertCycleRow(d, {
+        tenantId: params.tenantId,
+        subscriptionId: params.subscriptionId,
+        cycleDate,
+        status: persistStatus,
+        jobId: params.jobId,
+        invoiceId: null,
+        processedAt: params.finalFailure && cycleDate < today,
+        skippedReason,
+        errorMessage: params.errorMessage.slice(0, 4000),
+        extraMeta: {
+          final_failure: params.finalFailure,
+          recoverable: persistStatus === 'pending',
+        },
+      });
     },
     db,
     'job_failed_attempt'

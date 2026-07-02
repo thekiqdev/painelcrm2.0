@@ -1,4 +1,5 @@
 import { apiClient } from '@/integrations/api/client';
+import { safeNowIso } from '@/lib/billingSafeDate';
 
 export interface CrmSubscriptionListItem {
   id: string;
@@ -165,6 +166,38 @@ export interface CrmSubscriptionDetailPayload {
     reason?: string | null;
     requested_at: string;
   } | null;
+  runtime_validation?: {
+    certified: boolean;
+    repairs: string[];
+    issues: Array<{ code: string; severity: string; message: string }>;
+    observability: {
+      engine_version: string;
+      worker_version: string;
+      execution_version: string;
+      runtime_version: string;
+      pipeline: string;
+      current_stage: string | null;
+      request_id: string | null;
+      job_id: string | null;
+      retry_count: number | null;
+      worker_attempt: number | null;
+      caller: string | null;
+      billing_plan_id: string | null;
+      billing_plan_item_count: number;
+      current_cycle_ymd: string | null;
+      next_cycle_ymd: string | null;
+      current_invoice_id: string | null;
+      normalized_dates: Record<string, string | null>;
+      last_generation_at: string | null;
+      last_retry_at: string | null;
+      last_error: string | null;
+      last_error_origin: {
+        file: string | null;
+        function: string | null;
+        stack_summary: string | null;
+      } | null;
+    };
+  };
 }
 
 export type CrmSubscriptionBillingInterval =
@@ -261,6 +294,66 @@ export type CrmSubscriptionsAnalyticsPayload = {
     }>;
   };
 };
+
+export interface CrmSubscriptionManualRenewalResult {
+  success: boolean;
+  job_id: string | null;
+  invoice_id: string | null;
+  invoice_number: string | null;
+  gateway_status: string | null;
+  notification_sent: boolean;
+  subscription_status: string | null;
+  cycle_key: string | null;
+  execution_mode: 'manual';
+  duration_ms: number;
+  message: string;
+  result: string;
+  error_code?: string | null;
+  stage?: string | null;
+  reason?: string | null;
+  repaired_fields: string[];
+  logs: string[];
+  correlation_id?: string;
+  diagnosis?: unknown;
+}
+
+function parseManualRenewalPostResponse(res: {
+  data?: CrmSubscriptionManualRenewalResult;
+  error?: string;
+  details?: unknown;
+}): CrmSubscriptionManualRenewalResult {
+  if (res.data) return res.data;
+  const details = res.details;
+  if (
+    details &&
+    typeof details === 'object' &&
+    'success' in details &&
+    'result' in details &&
+    'message' in details
+  ) {
+    return details as CrmSubscriptionManualRenewalResult;
+  }
+  throw new Error(res.error ?? 'Resposta inválida do servidor');
+}
+
+export interface CrmSubscriptionManualRenewalStatus {
+  can_generate_now: boolean;
+  can_reprocess: boolean;
+  generate_blockers: string[];
+  processing_job_id: string | null;
+  reprocess_job: {
+    id: string;
+    status: string;
+    cycle_key: string;
+    error_message: string | null;
+    attempts: number;
+    max_attempts: number;
+    retry_at: string | null;
+    updated_at: string;
+    result_invoice_id: string | null;
+  } | null;
+  diagnosis: unknown;
+}
 
 export const crmSubscriptionsService = {
   async list(): Promise<CrmSubscriptionListItem[]> {
@@ -371,5 +464,80 @@ export const crmSubscriptionsService = {
     if (res.error) throw new Error(res.error);
     if (!res.data?.subscription) throw new Error('Resposta inválida');
     return res.data.subscription;
+  },
+
+  async getRenewalDiagnosis(id: string): Promise<CrmSubscriptionManualRenewalStatus> {
+    const res = await apiClient.get<CrmSubscriptionManualRenewalStatus>(
+      `/api/crm-subscriptions/${encodeURIComponent(id)}/renewal-diagnosis`
+    );
+    if (res.error) throw new Error(res.error);
+    if (!res.data) throw new Error('Diagnóstico indisponível');
+    return res.data;
+  },
+
+  async generateRenewalNow(id: string): Promise<CrmSubscriptionManualRenewalResult> {
+    const started = Date.now();
+    console.log(
+      '[BILLING_JOB_TRACE][frontend]',
+      JSON.stringify({
+        ts: safeNowIso(),
+        event: 'manual_renew_request_start',
+        subscription_id: id,
+      })
+    );
+    const res = await apiClient.post<CrmSubscriptionManualRenewalResult>(
+      `/api/crm-subscriptions/${encodeURIComponent(id)}/manual-renew`,
+      {}
+    );
+    const httpStatus =
+      res.details && typeof res.details === 'object' && 'status' in res.details
+        ? (res.details as { status?: number }).status
+        : res.data
+          ? 200
+          : undefined;
+    try {
+      const parsed = parseManualRenewalPostResponse(res);
+      console.log(
+        '[BILLING_JOB_TRACE][frontend]',
+        JSON.stringify({
+          ts: safeNowIso(),
+          event: parsed.success ? 'manual_renew_response_ok' : 'manual_renew_response_failure',
+          subscription_id: id,
+          http_status: httpStatus ?? (parsed.success ? 200 : 400),
+          success: parsed.success,
+          result: parsed.result,
+          error_code: parsed.error_code ?? null,
+          stage: parsed.stage ?? null,
+          job_id: parsed.job_id,
+          invoice_id: parsed.invoice_id,
+          correlation_id: parsed.correlation_id ?? null,
+          duration_ms: Date.now() - started,
+        })
+      );
+      return parsed;
+    } catch (e) {
+      console.log(
+        '[BILLING_JOB_TRACE][frontend]',
+        JSON.stringify({
+          ts: safeNowIso(),
+          event: 'manual_renew_transport_error',
+          subscription_id: id,
+          http_status: httpStatus ?? null,
+          error: e instanceof Error ? e.message : String(e),
+          response_body: res.details ?? null,
+          duration_ms: Date.now() - started,
+          stack: e instanceof Error ? e.stack : undefined,
+        })
+      );
+      throw e;
+    }
+  },
+
+  async reprocessRenewal(id: string, jobId?: string): Promise<CrmSubscriptionManualRenewalResult> {
+    const res = await apiClient.post<CrmSubscriptionManualRenewalResult>(
+      `/api/crm-subscriptions/${encodeURIComponent(id)}/manual-reprocess`,
+      jobId ? { job_id: jobId } : {}
+    );
+    return parseManualRenewalPostResponse(res);
   },
 };

@@ -469,7 +469,13 @@ export const customerInvoicesService = {
 
   async confirmManualPayment(
     id: string,
-    body: { financial_account_id?: string | null } = {}
+    body: {
+      financial_account_id?: string | null;
+      payment_date?: string;
+      payment_method?: string | null;
+      notes?: string | null;
+      amount_received_cents?: number;
+    } = {}
   ): Promise<ConfirmCustomerInvoiceManualPaymentResult> {
     const response = await apiClient.post<ConfirmCustomerInvoiceManualPaymentResult>(
       `${BASE}/${id}/confirm-manual-payment`,

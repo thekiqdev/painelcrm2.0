@@ -414,5 +414,29 @@ export const MIGRATION_ORDER = [
   '277_subscription_change_events.sql',
   /** Sprint S2.4: pause/resume/reactivate em subscription_change_events */
   '278_subscription_change_events_lifecycle.sql',
+  /** Sprint 2.1: Billing Plan V2 (fundação — motor legado inalterado) */
+  '279_billing_plans.sql',
+  /** Sprint 2.1A: domain hardening — plan_number, revision, state, strategy */
+  '280_billing_plans_domain_hardening.sql',
+  /** Sprint 2.2: Billing Plan Items (regra de cobrança — motor legado inalterado) */
+  '281_billing_plan_items.sql',
+  /** Sprint 2.2A: Billing Item versioning, definition hash, effective dates */
+  '282_billing_plan_item_versioning.sql',
+  /** Sprint 2.3: Shadow Mode audit reports */
+  '283_billing_shadow_reports.sql',
+  /** Sprint 2.3B: Billing Consistency Validator reports */
+  '284_billing_consistency_reports.sql',
+  /** Sprint 2.3D: Projection columns on shadow reports */
+  '285_billing_shadow_reports_projection.sql',
+  /** Sprint 2.3E: Migration Readiness reports */
+  '286_billing_migration_readiness_reports.sql',
+  /** Sprint 2.3F: Migration Simulation reports */
+  '287_billing_migration_simulation_reports.sql',
+  /** Sprint 2.3G: Cutover Orchestrator reports */
+  '288_billing_cutover_reports.sql',
+  /** Sprint 2.4A: Certification Suite reports */
+  '289_billing_certification_reports.sql',
+  /** Sprint 3.2B: billing_strategy GA cleanup */
+  '290_billing_strategy_ga_cleanup.sql',
   'create-admin-user.sql',
 ];

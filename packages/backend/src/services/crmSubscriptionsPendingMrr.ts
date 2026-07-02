@@ -3,7 +3,7 @@
  * Leitura pura — sem motor paralelo.
  */
 import { normalizeCrmSubscriptionAmountToMonthlyCents } from './financialReportsSubscriptionProjection.js';
-import { parseCrmPendingContractMetadata } from './crmSubscriptionContractRenewalOverlay.js';
+import { parseCrmPendingContractMetadata } from './crmContractMetadata.js';
 
 export interface ActiveSubscriptionMrrInput {
   amount_cents: number;

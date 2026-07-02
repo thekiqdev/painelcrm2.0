@@ -21,6 +21,9 @@
     "billing:ops-reconciliation": "tsx src/scripts/runBillingReconciliation.ts",
     "tickets:auto-resolve": "tsx src/scripts/runTicketAutoResolve.ts",
     "billing:subscription-cycles-reconcile": "tsx src/scripts/runSubscriptionCyclesReconciliation.ts",
+    "billing:cert-lab": "tsx src/scripts/runBillingCertificationLab.ts",
+    "billing:pipeline-cert": "tsx src/scripts/runBillingPipelineCertification.ts",
+    "billing:production-cert": "tsx src/scripts/runBillingProductionReadiness.ts",
     "avatar-cache:backfill": "tsx src/scripts/runWhatsappAvatarCacheBackfill.ts",
     "test": "vitest run",
     "test:watch": "vitest"

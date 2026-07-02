@@ -32,6 +32,7 @@ import {
 import { toast } from "@/components/ui/sonner";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { safeDate } from "@/lib/billingSafeDate";
 import {
   ArrowRight,
   CalendarClock,
@@ -266,7 +267,12 @@ const SubscriptionsList = () => {
   );
 
   const lastPaymentRelative = analytics?.last_payment?.paid_at
-    ? formatDistanceToNow(new Date(analytics.last_payment.paid_at), { addSuffix: true, locale: ptBR })
+    ? (() => {
+        const d = safeDate(analytics.last_payment.paid_at);
+        return d
+          ? formatDistanceToNow(d, { addSuffix: true, locale: ptBR })
+          : null;
+      })()
     : null;
 
   const chartsPanel = (

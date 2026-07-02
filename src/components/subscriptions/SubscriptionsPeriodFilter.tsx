@@ -1,6 +1,5 @@
 import React from "react";
-import { format } from "date-fns";
-import { ptBR } from "date-fns/locale";
+import { formatYmdBrShortSafe } from "@/lib/billingSafeDate";
 import { Filter } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -49,9 +48,9 @@ export function SubscriptionsPeriodFilter({
         </div>
         {period && (
           <span className="text-[11px] md:text-xs text-muted-foreground text-right tabular-nums">
-            {format(new Date(`${period.from}T12:00:00`), "dd/MM/yy", { locale: ptBR })}
+            {formatYmdBrShortSafe(period.from)}
             {" – "}
-            {format(new Date(`${period.to}T12:00:00`), "dd/MM/yy", { locale: ptBR })}
+            {formatYmdBrShortSafe(period.to)}
           </span>
         )}
       </div>

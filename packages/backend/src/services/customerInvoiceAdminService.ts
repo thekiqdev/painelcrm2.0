@@ -17,6 +17,7 @@ import {
 import { resolveCrmGatewayForTenantInvoice } from './invoicePaymentAttemptReuseService.js';
 import { getFinancialAccount } from './financialAccountsService.js';
 import { createFinancialTransaction, type FinancialTransactionRow } from './financialTransactionsService.js';
+import { normalizeBillingDate, safeTodayYmd } from '../utils/billingSafeDate.js';
 
 const CANCELLABLE_STATUSES = new Set(['pending', 'waiting_payment', 'processing', 'overdue']);
 const EDITABLE_STATUSES = new Set(['pending', 'waiting_payment', 'processing', 'overdue']);
@@ -320,6 +321,10 @@ export async function confirmCustomerInvoiceManualPayment(params: {
   tenantId: string;
   invoiceId: string;
   financialAccountId?: string | null;
+  paymentDateYmd?: string | null;
+  paymentMethod?: string | null;
+  notes?: string | null;
+  amountReceivedCents?: number | null;
 }): Promise<{ invoice: CustomerInvoiceRow; financial_transaction: FinancialTransactionRow | null }> {
   const inv = await getInvoiceById(params.tenantId, params.invoiceId);
   if (!inv) throw new Error('Fatura não encontrada');
@@ -329,6 +334,15 @@ export async function confirmCustomerInvoiceManualPayment(params: {
   if (inv.amount_cents <= 0) {
     throw new Error('Fatura sem valor válido para confirmação');
   }
+
+  const paymentYmd = params.paymentDateYmd
+    ? normalizeBillingDate(params.paymentDateYmd)
+    : safeTodayYmd();
+  const paidAt = new Date(`${paymentYmd}T12:00:00.000Z`);
+  const txAmountCents =
+    params.amountReceivedCents != null && params.amountReceivedCents > 0
+      ? Math.min(params.amountReceivedCents, inv.amount_cents)
+      : inv.amount_cents;
 
   let tx: FinancialTransactionRow | null = null;
   const accountId = params.financialAccountId?.trim() || null;
@@ -349,12 +363,16 @@ export async function confirmCustomerInvoiceManualPayment(params: {
     );
     if ((existingTx.rowCount ?? 0) === 0) {
       const invNo = inv.invoice_number?.trim() || inv.id.slice(0, 8);
+      const methodLabel = params.paymentMethod?.trim() || null;
+      const notes = params.notes?.trim() || null;
+      const descriptionParts = [`Recebimento manual — Fatura ${invNo}`];
+      if (methodLabel) descriptionParts.push(`(${methodLabel})`);
       tx = await createFinancialTransaction(params.tenantId, {
         account_id: accountId,
         type: 'income',
-        amount_cents: inv.amount_cents,
-        description: `Recebimento manual — Fatura ${invNo}`,
-        transaction_date: new Date().toISOString().slice(0, 10),
+        amount_cents: txAmountCents,
+        description: descriptionParts.join(' '),
+        transaction_date: paymentYmd,
         status: 'completed',
         transaction_kind: 'regular',
         customer_id: inv.client_id ?? undefined,
@@ -365,13 +383,16 @@ export async function confirmCustomerInvoiceManualPayment(params: {
           manual_invoice_payment: true,
           invoice_number: inv.invoice_number,
           confirmed_at: new Date().toISOString(),
+          payment_method: methodLabel,
+          payment_notes: notes,
+          payment_date_ymd: paymentYmd,
         },
         project_id: inv.project_id ?? null,
       });
     }
   }
 
-  await updateCustomerInvoiceStatus(params.invoiceId, 'paid', new Date(), 'manual', {
+  await updateCustomerInvoiceStatus(params.invoiceId, 'paid', paidAt, 'manual', {
     skipFinancialSync: true,
   });
 

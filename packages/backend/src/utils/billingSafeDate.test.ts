@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isValidYmd, safeParseYmd, safeDate, safeToISOString } from './billingSafeDate.js';
+import { isValidYmd, safeParseYmd, safeDate, safeToISOString, safeNowIso, safeTodayYmd } from './billingSafeDate.js';
 
 describe('billingSafeDate', () => {
   it('valida YMD civil', () => {
@@ -19,5 +19,10 @@ describe('billingSafeDate', () => {
     expect(safeToISOString('garbage')).toBeNull();
     const iso = safeToISOString('2026-06-24');
     expect(iso).toMatch(/2026-06-24/);
+  });
+
+  it('safeNowIso e safeTodayYmd', () => {
+    expect(safeNowIso()).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(safeTodayYmd()).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 });

@@ -18,6 +18,8 @@ import {
 } from './customerInvoiceService.js';
 import { getCustomerInvoiceSchema } from './customerInvoiceSchema.js';
 import { createSubscription } from './billingSubscriptionService.js';
+import { billingPlanProvisionService } from '../billingPlatform/provisioning/billingPlanProvisionService.js';
+import { BillingPlanProvisionError } from '../billingPlatform/provisioning/types.js';
 import { calculateNextBillingDate, activatePlanFromBilling } from './subscriptionService.js';
 import type { BillingInterval } from './billingSubscriptionService.js';
 import { isAbortLikeError } from '../modules/gateways/asaas/client/asaasClient.js';
@@ -604,6 +606,25 @@ export async function createRecurringManualInvoice(
     cycles_unlimited: body.cycles_unlimited,
     max_cycles: body.max_cycles ?? null,
   });
+
+  try {
+    const provision = await billingPlanProvisionService.ensureBillingPlan(subscription.id, {
+      tenantId,
+    });
+    if (!provision.ok) {
+      throw new BillingPlanProvisionError(
+        provision.message || 'Falha ao provisionar Billing Plan',
+        'PROVISION_FAILED',
+        { subscription_id: subscription.id }
+      );
+    }
+  } catch (e) {
+    await pool.query(`DELETE FROM subscriptions WHERE id = $1::uuid AND tenant_id = $2::uuid`, [
+      subscription.id,
+      tenantId,
+    ]);
+    throw e;
+  }
 
   const result = await createManualInvoice(tenantId, {
     client_id: body.client_id ?? null,

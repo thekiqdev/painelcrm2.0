@@ -35,6 +35,11 @@ export function isBillingTimeWindowVerbose(): boolean {
   return process.env.BILLING_TIME_WINDOW_VERBOSE === 'true';
 }
 
+/** B0.2.3 — trace forense `[BILLING_JOB_TRACE]` do ciclo de vida do job. Default: ativo. */
+export function isBillingJobLifecycleTraceEnabled(): boolean {
+  return process.env.BILLING_JOB_LIFECYCLE_TRACE !== 'false';
+}
+
 /**
  * Jobs em `processing` com `locked_at` mais antigo que este limite são repostos em `pending`
  * no início de cada batch do worker (recuperação pós-crash / processo morto).
@@ -55,4 +60,13 @@ export function getBillingStaleProcessingReclaimMinutes(): number {
  */
 export function isBillingWorkerBatchDiagnostic(): boolean {
   return process.env.BILLING_WORKER_BATCH_DIAGNOSTIC !== 'false';
+}
+
+/** TTL de relatórios de consistência em dias. Default: 90. */
+export function getBillingConsistencyReportTtlDays(): number {
+  const raw = process.env.BILLING_CONSISTENCY_REPORT_TTL_DAYS;
+  if (raw == null || raw === '') return 90;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return 90;
+  return Math.min(n, 365);
 }

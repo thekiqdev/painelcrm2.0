@@ -4,6 +4,8 @@
  */
 
 import { runDetachedFromRequestDb } from '../../utils/db.js';
+import { traceNotification } from '../notificationTrace.js';
+import { safeNowIso } from '../../utils/billingSafeDate.js';
 
 const pending = new Set<Promise<void>>();
 
@@ -31,9 +33,16 @@ export function scheduleBillingNotificationSideEffect(
     pending.delete(tracked);
   });
   pending.add(tracked);
+  traceNotification({
+    event: 'NOTIFICATION_QUEUE',
+    channel: label,
+    attempt: 1,
+    result: 'queued',
+    latency_ms: 0,
+  });
   console.log(
     '[BILLING_NOTIFY_ENQUEUED]',
-    JSON.stringify({ label, pending_count: pending.size, ts: new Date().toISOString() }),
+    JSON.stringify({ label, pending_count: pending.size, ts: safeNowIso() }),
   );
 }
 
@@ -67,7 +76,24 @@ export async function flushBillingNotificationSideEffects(): Promise<BillingNoti
     pending_remaining: pending.size,
   };
 
-  console.log('[BILLING_NOTIFY_FLUSH]', JSON.stringify({ ...result, ts: new Date().toISOString() }));
+  console.log('[BILLING_NOTIFY_FLUSH]', JSON.stringify({ ...result, ts: safeNowIso() }));
+  if (result.fulfilled > 0) {
+    traceNotification({
+      event: 'NOTIFICATION_DELIVERED',
+      channel: 'billing_flush',
+      attempt: result.rounds,
+      latency_ms: result.rounds,
+      result: `fulfilled=${result.fulfilled}`,
+    });
+  }
+  if (result.rejected > 0) {
+    traceNotification({
+      event: 'NOTIFICATION_RETRY',
+      channel: 'billing_flush',
+      attempt: result.rounds,
+      result: `rejected=${result.rejected}`,
+    });
+  }
 
   if (pending.size > 0) {
     console.warn(

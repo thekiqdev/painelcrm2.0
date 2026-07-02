@@ -74,7 +74,11 @@ async function fetchClientPayer(
 ): Promise<{ name?: string; email?: string }> {
   if (!clientId) return {};
   const r = await pool.query<{ name: string | null; email: string | null }>(
-    `SELECT name, email FROM clients WHERE id = $1::uuid AND tenant_id = $2::uuid LIMIT 1`,
+    `SELECT c.name, c.email
+     FROM clients c
+     INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $2::uuid
+     WHERE c.id = $1::uuid
+     LIMIT 1`,
     [clientId, tenantId],
   );
   const row = r.rows[0];

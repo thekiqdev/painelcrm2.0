@@ -115,6 +115,88 @@ router.get('/billing/upcoming', superadminBillingController.getBillingUpcoming);
 router.get('/billing/jobs-failed', superadminBillingController.getBillingJobsFailed);
 router.get('/billing/recurring-jobs', superadminBillingController.getBillingRecurringJobsOps);
 router.get('/billing/health', superadminBillingController.getBillingHealthHandler);
+router.get('/billing/observability', superadminBillingController.getBillingObservabilityHandler);
+/** @deprecated Sprint 3.2B — use /billing/observability */
+router.get('/billing/v2-observability', superadminBillingController.getBillingObservabilityHandler);
+router.get('/billing/engine-health', superadminBillingController.getBillingEngineHealthHandler);
+router.get(
+  '/billing/shadow-report/:subscriptionId',
+  superadminBillingController.getBillingShadowReportHandler,
+);
+router.get('/billing/consistency', superadminBillingController.getBillingConsistencyDashboardHandler);
+router.get(
+  '/billing/consistency/:subscriptionId',
+  superadminBillingController.getBillingConsistencyReportHandler,
+);
+router.post(
+  '/billing/consistency/:subscriptionId/validate',
+  superadminBillingController.postBillingConsistencyValidateHandler,
+);
+router.get(
+  '/billing/context/:subscriptionId',
+  superadminBillingController.getBillingExecutionContextHandler,
+);
+router.post(
+  '/billing/context/:subscriptionId/rebuild',
+  superadminBillingController.postBillingExecutionContextRebuildHandler,
+);
+router.get(
+  '/billing/projection/:subscriptionId',
+  superadminBillingController.getBillingProjectionHandler,
+);
+router.post(
+  '/billing/projection/:subscriptionId/compare',
+  superadminBillingController.postBillingProjectionCompareHandler,
+);
+router.get(
+  '/billing/migration-readiness',
+  superadminBillingController.getBillingMigrationReadinessDashboardHandler,
+);
+router.get(
+  '/billing/migration-readiness/:tenantId',
+  superadminBillingController.getBillingMigrationReadinessHandler,
+);
+router.post(
+  '/billing/migration-readiness/:tenantId/evaluate',
+  superadminBillingController.postBillingMigrationReadinessEvaluateHandler,
+);
+router.get(
+  '/billing/migration-simulator',
+  superadminBillingController.getBillingMigrationSimulatorDashboardHandler,
+);
+router.get(
+  '/billing/migration-simulator/:tenantId',
+  superadminBillingController.getBillingMigrationSimulatorHandler,
+);
+router.post(
+  '/billing/migration-simulator/:tenantId/run',
+  superadminBillingController.postBillingMigrationSimulatorRunHandler,
+);
+router.get('/billing/cutover', superadminBillingController.getBillingCutoverDashboardHandler);
+router.get(
+  '/billing/cutover/:tenantId',
+  superadminBillingController.getBillingCutoverHandler,
+);
+router.post(
+  '/billing/cutover/:tenantId/evaluate',
+  superadminBillingController.postBillingCutoverEvaluateHandler,
+);
+router.get(
+  '/billing/certification',
+  superadminBillingController.getBillingCertificationDashboardHandler,
+);
+router.get(
+  '/billing/certification/:subscriptionId',
+  superadminBillingController.getBillingCertificationHandler,
+);
+router.post(
+  '/billing/certification/run',
+  superadminBillingController.postBillingCertificationRunHandler,
+);
+router.post(
+  '/billing/certification/:subscriptionId/evaluate',
+  superadminBillingController.postBillingCertificationEvaluateHandler,
+);
 router.post('/billing/recovery/run', superadminBillingController.postBillingRecoveryRunHandler);
 router.get('/billing/settings', superadminBillingController.getBillingSettingsHandler);
 router.put('/billing/settings', superadminBillingController.putBillingSettingsHandler);

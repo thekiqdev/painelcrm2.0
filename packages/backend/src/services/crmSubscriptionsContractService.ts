@@ -27,7 +27,8 @@ import {
   parseCrmPendingContractMetadata,
   type CrmContractMetadata,
   type CrmPendingContractMetadata,
-} from './crmSubscriptionContractRenewalOverlay.js';
+} from './crmContractMetadata.js';
+import { billingPlanProvisionService } from '../billingPlatform/provisioning/billingPlanProvisionService.js';
 import { subscriptionChangeEventsHasChangeTypeColumn } from './subscriptionChangeEventsRepository.js';
 
 export type CrmContractEffectiveAt = 'immediate' | 'next_cycle';
@@ -353,6 +354,13 @@ async function applyContractToSubscriptionImmediate(params: {
   return { dates_recalculated };
 }
 
+async function synchronizeBillingPlanAfterContractChange(
+  subscriptionId: string,
+  tenantId: string
+): Promise<void> {
+  await billingPlanProvisionService.ensureBillingPlan(subscriptionId, { tenantId });
+}
+
 export async function applyPendingCrmSubscriptionContractIfDue(
   subscriptionId: string
 ): Promise<boolean> {
@@ -384,6 +392,8 @@ export async function applyPendingCrmSubscriptionContractIfDue(
     intervalChanged,
   });
   await syncOpenInvoicesWithContract(sub.tenant_id, sub.id, contract);
+
+  await synchronizeBillingPlanAfterContractChange(sub.id, sub.tenant_id);
 
   await pool.query(
     `UPDATE subscription_change_events
@@ -530,6 +540,8 @@ export async function patchCrmSubscriptionContract(
   const updated = await getSubscriptionById(sub.id);
   if (!updated) throw new Error('Assinatura não encontrada após atualização');
 
+  await synchronizeBillingPlanAfterContractChange(updated.id, input.tenantId);
+
   return {
     subscription: updated,
     change_event_id: changeEventId,
@@ -542,7 +554,7 @@ export async function patchCrmSubscriptionContract(
   };
 }
 
-export type { CrmPendingContractMetadata } from './crmSubscriptionContractRenewalOverlay.js';
+export type { CrmPendingContractMetadata } from './crmContractMetadata.js';
 
 export async function getPendingCrmSubscriptionContract(
   subscriptionId: string

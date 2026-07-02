@@ -15,7 +15,7 @@ import {
   type CustomerResolutionVia,
 } from './renewalCustomerResolution.js';
 import { getActiveConfig } from './paymentGatewayConfigService.js';
-import { parseCrmContractMetadata } from './crmSubscriptionContractRenewalOverlay.js';
+import { parseCrmContractMetadata } from './crmContractMetadata.js';
 
 type DbQueryable = { query: (text: string, params?: unknown[]) => Promise<{ rows: unknown[] }> };
 

@@ -8,6 +8,8 @@ import {
   publishInvoicePaidNotification,
 } from './notificationsEngine/businessTransactionalNotifications.js';
 import { scheduleBillingNotificationSideEffect } from './notificationsEngine/billingNotificationFlush.js';
+import { traceNotification } from './notificationTrace.js';
+import { safeTodayYmd, safeNowIso } from '../utils/billingSafeDate.js';
 
 export type InvoiceNotificationEvent =
   | 'invoice_created'
@@ -29,7 +31,7 @@ function moneyPtBr(cents: number): string {
 }
 
 function todayKey(): string {
-  return new Date().toISOString().slice(0, 10);
+  return safeTodayYmd();
 }
 
 async function tenantSystemNotificationRecipients(tenantId: string): Promise<string[]> {
@@ -185,16 +187,61 @@ export function notifyInvoiceCreated(params: {
   tenantId: string;
   invoiceId: string;
   preferredSenderUserId?: string | null;
+  /** renewal | manual | worker */
+  origin_kind?: string;
 }): void {
-  publishInvoiceCreatedNotification({
-    pool,
-    tenantId: params.tenantId,
-    invoiceId: params.invoiceId,
-    preferredSenderUserId: params.preferredSenderUserId ?? null,
+  const started = Date.now();
+  traceNotification({
+    event: 'NOTIFICATION_START',
+    tenant_id: params.tenantId,
+    invoice_id: params.invoiceId,
+    channel: 'invoice_created',
+    provider: 'multi',
+    attempt: 1,
+    origin_kind: params.origin_kind ?? 'unknown',
   });
-  scheduleBillingNotificationSideEffect('invoice_in_app.created', () =>
-    notifyInvoiceInApp(params.invoiceId, 'invoice_created'),
-  );
+  try {
+    publishInvoiceCreatedNotification({
+      pool,
+      tenantId: params.tenantId,
+      invoiceId: params.invoiceId,
+      preferredSenderUserId: params.preferredSenderUserId ?? null,
+    });
+    traceNotification({
+      event: 'NOTIFICATION_QUEUE',
+      tenant_id: params.tenantId,
+      invoice_id: params.invoiceId,
+      channel: 'whatsapp',
+      provider: 'platform',
+      attempt: 1,
+      latency_ms: Date.now() - started,
+      result: 'queued',
+    });
+    scheduleBillingNotificationSideEffect('invoice_in_app.created', () =>
+      notifyInvoiceInApp(params.invoiceId, 'invoice_created'),
+    );
+    traceNotification({
+      event: 'NOTIFICATION_SENT',
+      tenant_id: params.tenantId,
+      invoice_id: params.invoiceId,
+      channel: 'invoice_created',
+      attempt: 1,
+      latency_ms: Date.now() - started,
+      result: 'dispatched',
+    });
+  } catch (err) {
+    traceNotification({
+      event: 'NOTIFICATION_FAILED',
+      tenant_id: params.tenantId,
+      invoice_id: params.invoiceId,
+      channel: 'invoice_created',
+      attempt: 1,
+      latency_ms: Date.now() - started,
+      result: 'failed',
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
 }
 
 export function notifyInvoicePaid(params: {

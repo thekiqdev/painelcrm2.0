@@ -1,5 +1,4 @@
-import { format } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
+import { formatYmdBrSafe, formatDateTimeBrSafe, safeDate } from '@/lib/billingSafeDate';
 import type {
   CrmSubscriptionJobRow,
   CrmSubscriptionTenantBillingPrefs,
@@ -46,15 +45,11 @@ function normalizeCycleKey(raw: string | null | undefined): string {
 }
 
 function formatYmdBr(ymd: string | null | undefined): string {
-  if (!ymd || ymd.length < 10) return '—';
-  return format(new Date(`${ymd.slice(0, 10)}T12:00:00`), "dd/MM/yyyy", { locale: ptBR });
+  return formatYmdBrSafe(ymd);
 }
 
 function formatDateTimeBr(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso.slice(0, 16).replace('T', ' ');
-  return format(d, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
+  return formatDateTimeBrSafe(iso);
 }
 
 function generationTimeLabel(prefs: CrmSubscriptionTenantBillingPrefs): string {
@@ -405,8 +400,9 @@ export function resolveSubscriptionProcessingHealth(params: {
     null;
 
   const lastCheckAt = job?.updated_at ?? params.lastJobAt ?? null;
+  const retryAtMs = job?.retry_at ? safeDate(job.retry_at)?.getTime() : null;
   const nextAttemptAt =
-    job?.retry_at && new Date(job.retry_at).getTime() > Date.now() ? job.retry_at : null;
+    retryAtMs != null && retryAtMs > Date.now() ? job!.retry_at : null;
 
   if (params.subscriptionStatus !== 'active') {
     return {

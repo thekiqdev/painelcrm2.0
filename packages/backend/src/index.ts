@@ -78,8 +78,10 @@ import appointmentsRoutes from './routes/appointmentsRoutes.js';
 import { getCheckoutContext } from './controllers/checkoutContextController.js';
 import planPurchaseRoutes from './routes/planPurchaseRoutes.js';
 import billingRoutes from './routes/billingRoutes.js';
+import billingPlatformRoutes from './billingPlatform/api/billingPlatformRoutes.js';
 import customerInvoicesRoutes from './routes/customerInvoicesRoutes.js';
 import crmSubscriptionsRoutes from './routes/crmSubscriptionsRoutes.js';
+import adminSubscriptionsRoutes from './routes/adminSubscriptionsRoutes.js';
 import customerChargesRoutes from './routes/customerChargesRoutes.js';
 import publicRoutes from './routes/publicRoutes.js';
 import acquisitionPublicRoutes from './routes/acquisitionPublicRoutes.js';
@@ -437,8 +439,16 @@ app.use('/api/messages', messagesRoutes);
 app.get('/api/plans', plansController.listPublicPlans);
 app.use('/api/plan-purchase', planPurchaseRoutes);
 app.use('/api/billing', billingRoutes);
+app.use(
+  '/api/billing-platform',
+  authenticateToken,
+  setCurrentTenant,
+  setRequestDb,
+  billingPlatformRoutes
+);
 app.use('/api/customer-invoices', customerInvoicesRoutes);
 app.use('/api/crm-subscriptions', crmSubscriptionsRoutes);
+app.use('/api/admin/subscriptions', adminSubscriptionsRoutes);
 app.use('/api/customer-charges', customerChargesRoutes);
 app.use('/api/media', mediaRoutes);
 app.use('/api/onboarding', onboardingRoutes);

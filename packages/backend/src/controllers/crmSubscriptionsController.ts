@@ -20,6 +20,14 @@ import {
   getCrmSubscriptionsAnalytics,
   resolveCrmSubscriptionsAnalyticsRange,
 } from '../services/crmSubscriptionsAnalyticsService.js';
+import {
+  getManualRenewalStatus,
+  manualGenerateRenewalNow,
+  manualReprocessRenewal,
+  manualRenewSubscription,
+  manualReprocessSubscription,
+} from '../services/billingManualRenewalService.js';
+import { emitBillingJobTrace } from '../services/billingJobLifecycleTrace.js';
 import { assertPermissionKey, ModulePermissionError } from '../permissions/index.js';
 import type { PermissionCatalogKey } from '../permissions/permissionCatalog.js';
 
@@ -407,5 +415,137 @@ export async function postCrmSubscriptionCancel(req: AuthRequest, res: Response)
   } catch (e) {
     console.error('[crmSubscriptionsController] cancel', e);
     res.status(500).json({ error: 'Erro ao cancelar assinatura' });
+  }
+}
+
+function manualRenewalActor(req: AuthRequest): { user_id: string; user_name: string | null; ip: string | null } {
+  const forwarded = req.headers['x-forwarded-for'];
+  const ip =
+    typeof forwarded === 'string'
+      ? forwarded.split(',')[0]?.trim() ?? null
+      : req.socket.remoteAddress ?? null;
+  return {
+    user_id: req.userId ?? 'unknown',
+    user_name: req.user?.email ?? null,
+    ip,
+  };
+}
+
+export async function getCrmSubscriptionRenewalDiagnosisHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Empresa não identificada' });
+      return;
+    }
+    if (!(await requirePermKey(req, 'billing.edit_subscription', res))) return;
+    const { id } = req.params;
+    const status = await getManualRenewalStatus(tenantId, id);
+    res.json(status);
+  } catch (e) {
+    console.error('[crmSubscriptionsController] renewal diagnosis', e);
+    res.status(500).json({ error: 'Erro ao carregar diagnóstico de renovação' });
+  }
+}
+
+export async function postCrmSubscriptionGenerateNowHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Empresa não identificada' });
+      return;
+    }
+    if (!(await requirePermKey(req, 'billing.edit_subscription', res))) return;
+    const { id } = req.params;
+    const result = await manualGenerateRenewalNow(tenantId, id, manualRenewalActor(req));
+    res.status(result.success ? 200 : 400).json(result);
+  } catch (e) {
+    console.error('[crmSubscriptionsController] generate-now', e);
+    res.status(500).json({ error: 'Erro ao gerar cobrança manualmente' });
+  }
+}
+
+export async function postCrmSubscriptionReprocessHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Empresa não identificada' });
+      return;
+    }
+    if (!(await requirePermKey(req, 'billing.edit_subscription', res))) return;
+    const { id } = req.params;
+    const jobId = typeof req.body?.job_id === 'string' ? req.body.job_id : undefined;
+    const result = await manualReprocessRenewal(tenantId, id, manualRenewalActor(req), jobId);
+    res.status(result.success ? 200 : 400).json(result);
+  } catch (e) {
+    console.error('[crmSubscriptionsController] reprocess', e);
+    res.status(500).json({ error: 'Erro ao reprocessar ciclo' });
+  }
+}
+
+/** B0.2.1 — POST manual-renew (execução síncrona, sem scheduler). */
+export async function postCrmSubscriptionManualRenewHandler(req: AuthRequest, res: Response): Promise<void> {
+  const requestStarted = Date.now();
+  try {
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Empresa não identificada' });
+      return;
+    }
+    if (!(await requirePermKey(req, 'billing.edit_subscription', res))) return;
+    const { id } = req.params;
+    emitBillingJobTrace('HTTP_POST_MANUAL_RENEW_RECEIVED', {
+      subscription_id: id,
+      tenant_id: tenantId,
+      caller_file: 'crmSubscriptionsController.ts',
+      caller_line: 486,
+      caller_function: 'postCrmSubscriptionManualRenewHandler',
+    });
+    const result = await manualRenewSubscription(tenantId, id, manualRenewalActor(req));
+    const httpStatus = result.success ? 200 : 400;
+    emitBillingJobTrace('HTTP_POST_MANUAL_RENEW_RESPONSE', {
+      subscription_id: id,
+      tenant_id: tenantId,
+      job_id: result.job_id,
+      correlation_id: result.correlation_id ?? null,
+      http_status: httpStatus,
+      success: result.success,
+      result: result.result,
+      invoice_id: result.invoice_id,
+      duration_ms: Date.now() - requestStarted,
+      caller_file: 'crmSubscriptionsController.ts',
+      caller_line: 496,
+      caller_function: 'postCrmSubscriptionManualRenewHandler',
+    });
+    res.status(httpStatus).json(result);
+  } catch (e) {
+    emitBillingJobTrace('HTTP_POST_MANUAL_RENEW_ERROR', {
+      error: e instanceof Error ? e.message : String(e),
+      stack: e instanceof Error ? e.stack : undefined,
+      caller_file: 'crmSubscriptionsController.ts',
+      caller_line: 498,
+      caller_function: 'postCrmSubscriptionManualRenewHandler',
+    });
+    console.error('[crmSubscriptionsController] manual-renew', e);
+    res.status(500).json({ error: 'Erro na renovação manual' });
+  }
+}
+
+/** B0.2.1 — POST manual-reprocess (execução síncrona). */
+export async function postCrmSubscriptionManualReprocessHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Empresa não identificada' });
+      return;
+    }
+    if (!(await requirePermKey(req, 'billing.edit_subscription', res))) return;
+    const { id } = req.params;
+    const jobId = typeof req.body?.job_id === 'string' ? req.body.job_id : undefined;
+    const result = await manualReprocessSubscription(tenantId, id, manualRenewalActor(req), jobId);
+    res.status(result.success ? 200 : 400).json(result);
+  } catch (e) {
+    console.error('[crmSubscriptionsController] manual-reprocess', e);
+    res.status(500).json({ error: 'Erro no reprocessamento manual' });
   }
 }

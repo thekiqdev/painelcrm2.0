@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { assertTenantScopedQuery } from './tenantSecurity.js';
+import { guardBillingQueryParams } from '../billingRuntime/billingRuntimeDbGuard.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootEnv = path.resolve(__dirname, '../../../../.env');
@@ -102,15 +103,18 @@ export const pool = {
     const text = getQueryText(textOrConfig);
     assertTenantScopedQuery(text);
 
+    const guardedValues =
+      values !== undefined ? guardBillingQueryParams(text, values) : values;
+
     const store = dbRequestStorage.getStore();
     if (store?.client) {
       if (typeof textOrConfig === 'string') {
-        return store.client.query(textOrConfig, values);
+        return store.client.query(textOrConfig, guardedValues);
       }
       return store.client.query(textOrConfig);
     }
     if (typeof textOrConfig === 'string') {
-      return internalPool.query(textOrConfig, values);
+      return internalPool.query(textOrConfig, guardedValues);
     }
     return internalPool.query(textOrConfig);
   },

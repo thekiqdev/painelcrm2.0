@@ -1,5 +1,6 @@
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { formatYmdBrSafe } from '@/lib/billingSafeDate';
 import type { CrmSubscriptionListItem } from "@/services/crmSubscriptions";
 
 export const HIDE_ENDED_STORAGE_KEY = "crm_subscriptions_hide_ended";
@@ -91,8 +92,7 @@ export function matchesSubscriptionStatusFilter(
 }
 
 export function formatYmdBr(ymd: string | null | undefined): string {
-  if (!ymd || ymd.length < 10) return "—";
-  return format(new Date(`${ymd.slice(0, 10)}T12:00:00`), "dd/MM/yyyy", { locale: ptBR });
+  return formatYmdBrSafe(ymd);
 }
 
 export function matchesSubscriptionSearch(row: CrmSubscriptionListItem, query: string): boolean {

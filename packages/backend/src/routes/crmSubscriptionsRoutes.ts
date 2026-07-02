@@ -12,6 +12,11 @@ import {
   postCrmSubscriptionResume,
   postCrmSubscriptionReactivate,
   postCrmSubscriptionCancel,
+  getCrmSubscriptionRenewalDiagnosisHandler,
+  postCrmSubscriptionGenerateNowHandler,
+  postCrmSubscriptionReprocessHandler,
+  postCrmSubscriptionManualRenewHandler,
+  postCrmSubscriptionManualReprocessHandler,
 } from '../controllers/crmSubscriptionsController.js';
 
 const router = Router();
@@ -28,5 +33,10 @@ router.post('/:id/pause', postCrmSubscriptionPause);
 router.post('/:id/resume', postCrmSubscriptionResume);
 router.post('/:id/reactivate', postCrmSubscriptionReactivate);
 router.post('/:id/cancel', postCrmSubscriptionCancel);
+router.get('/:id/renewal-diagnosis', getCrmSubscriptionRenewalDiagnosisHandler);
+router.post('/:id/generate-now', postCrmSubscriptionGenerateNowHandler);
+router.post('/:id/reprocess', postCrmSubscriptionReprocessHandler);
+router.post('/:id/manual-renew', postCrmSubscriptionManualRenewHandler);
+router.post('/:id/manual-reprocess', postCrmSubscriptionManualReprocessHandler);
 
 export default router;

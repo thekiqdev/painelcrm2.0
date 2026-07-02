@@ -31,6 +31,7 @@ export type TimelineJobInput = {
 };
 import { computeRecurringInvoiceGenerationDateYmd } from '../utils/billingGenerationDate.js';
 import { effectiveRecurringGenerateDaysBeforeDue } from '../utils/billingIntervalGenerationCap.js';
+import { safeTodayYmd } from '../utils/billingSafeDate.js';
 
 export type SubscriptionTimelineOperationalState =
   | 'scheduled'
@@ -255,9 +256,17 @@ function resolveOperationalState(params: {
   inv: TimelineInvoiceInput | undefined;
   job: TimelineJobInput | null;
   mergeSource: 'cycle' | 'invoice_only';
+  cycleDateYmd?: string | null;
+  dueDateYmd?: string | null;
 }): { state: SubscriptionTimelineOperationalState; statePt: string; statusPt: string } {
   const { inv, job, mergeSource } = params;
   const cycle = (params.cycleStatus ?? '').toLowerCase();
+  const today = safeTodayYmd();
+  const dueYmd = ymdHead(params.dueDateYmd) ?? ymdHead(params.cycleDateYmd);
+  const recoverableFailure =
+    !inv &&
+    Boolean(dueYmd && dueYmd >= today) &&
+    (isJobGenerationFailure(job) || cycle === 'failed');
 
   if (inv) {
     if (inv.status === 'paid') {
@@ -281,10 +290,16 @@ function resolveOperationalState(params: {
   }
 
   if (isJobGenerationFailure(job)) {
+    if (recoverableFailure) {
+      return { state: 'awaiting_generation', statePt: 'Pendente', statusPt: 'Pendente' };
+    }
     return { state: 'failed', statePt: 'Falhou', statusPt: 'Falha na geração' };
   }
 
   if (cycle === 'failed') {
+    if (recoverableFailure) {
+      return { state: 'awaiting_generation', statePt: 'Pendente', statusPt: 'Pendente' };
+    }
     return { state: 'failed', statePt: 'Falhou', statusPt: cycleStatusLabelPt('failed') };
   }
   if (cycle === 'cancelled') {
@@ -401,6 +416,8 @@ function buildTimelineRow(params: {
     inv,
     job,
     mergeSource,
+    cycleDateYmd,
+    dueDateYmd: due,
   });
   const amount = inv?.amount_cents ?? subscriptionAmountCents;
   const retryPending = hasAutoRetry(job);
@@ -546,7 +563,10 @@ export function buildSubscriptionAutomationSummary(params: {
   if (params.subscriptionStatus !== 'active') {
     worker_status_pt = 'Assinatura inativa';
   } else if (job && isJobGenerationFailure(job)) {
-    worker_status_pt = 'Falha na geração';
+    const nextYmd = ymdHead(nextCharge);
+    const recoverable =
+      Boolean(nextYmd && nextYmd >= safeTodayYmd()) && !job.result_invoice_id;
+    worker_status_pt = recoverable ? 'Aguardando geração' : 'Falha na geração';
   } else if (job?.status === 'processing') {
     worker_status_pt = 'Processando agora';
   } else if (job?.status === 'pending' || !job) {

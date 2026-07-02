@@ -1,20 +1,10 @@
-import React, { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   AlertDialog,
@@ -34,66 +24,46 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { crmSubscriptionsService, type CrmSubscriptionBillingInterval, type CrmSubscriptionDetailPayload } from "@/services/crmSubscriptions";
 import { toast } from "@/components/ui/sonner";
-import { format } from "date-fns";
-import { ptBR } from "date-fns/locale";
-import {
-  ArrowLeft,
-  ArrowDown,
-  ArrowUp,
-  CalendarSync,
-  ChevronDown,
-  FileText,
-  MoreHorizontal,
-  Pause,
-  Pencil,
-  Play,
-  RotateCcw,
-  Wrench,
-} from "lucide-react";
+import { formatYmdBrSafe } from "@/lib/billingSafeDate";
+import { ArrowLeft, ChevronDown } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { SubscriptionContractEditDialog, type SubscriptionContractModalPreset } from "@/components/subscriptions/SubscriptionContractEditDialog";
 import { SubscriptionPendingContractBanner } from "@/components/subscriptions/SubscriptionPendingContractBanner";
-import { SubscriptionOperationalTimelinePanel } from "@/components/subscriptions/SubscriptionOperationalTimelinePanel";
 import { Textarea } from "@/components/ui/textarea";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
-import { ClientEntityLink } from "@/components/entities";
 import { isInvoiceActionable } from "@/lib/customerInvoiceActions";
+import {
+  FinancialCalendar,
+  FinancialHeader,
+  FinancialHistory,
+  FinancialInsights,
+  FinancialEventStoreProvider,
+  FinancialResolveDialog,
+  FinancialSmartScroll,
+  FinancialSummarySidebar,
+  FinancialTechnicalAccordion,
+  LazyFinancialSection,
+  RecurringRevenueCard,
+  NextInvoiceCard,
+} from "@/components/subscriptions/financial";
+import {
+  SubscriptionActionsPanel,
+  SubscriptionExperienceSkeleton,
+  SubscriptionSettingsActions,
+} from "@/components/subscriptions/experience";
+import { SIMPLIFIED_SECTION_GAP } from "@/lib/subscriptionExperienceSimplification";
+import type { FinancialAlert, FinancialHistoryFilter } from "@/lib/subscriptionFinancialExperience";
+import type { KpiClickAction } from "@/lib/subscriptionFinancialRefinement";
+import { openInvoiceInNewTab } from "@/lib/invoiceQuickActions";
 import {
   addCalendarDaysToIsoYmd,
   clampRecurringGenerateDaysBeforeDue,
   computeRecurringGenerationDateYmd,
 } from "@/lib/recurringGenerationPreview";
 import { SubscriptionContractHistoryPanel } from "@/components/subscriptions/SubscriptionContractHistoryPanel";
-import { SubscriptionOperationalHealthCard } from "@/components/subscriptions/SubscriptionOperationalHealthCard";
-import { SubscriptionRecurringStatusBadge } from "@/components/subscriptions/SubscriptionRecurringStatusBadge";
-import { SubscriptionTimelineStateDot } from "@/components/subscriptions/SubscriptionTimelineStateDot";
-import {
-  resolveJobRecurringDisplay,
-  resolveTimelineInvoiceColumn,
-  resolveTimelineRecurringDisplay,
-} from "@/lib/subscriptionRecurringDisplay";
 import { cn } from "@/lib/utils";
-
-function formatAmount(cents: number): string {
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
-}
-
-function subscriptionHeadlineStatus(d: CrmSubscriptionDetailPayload): { label: string; variant: "default" | "secondary" | "outline" } {
-  const { subscription: s } = d;
-  if (s.status === "cancelled") return { label: "Cancelada", variant: "secondary" };
-  if (s.status === "paused") return { label: "Pausada", variant: "outline" };
-  if (s.status !== "active") return { label: s.status, variant: "outline" };
-  if (s.cancel_at_period_end) return { label: "Encerra ao fim do período", variant: "outline" };
-  return { label: "Ativa", variant: "default" };
-}
 
 function generationSummary(tb: CrmSubscriptionDetailPayload["tenant_billing"]): string {
   const t = tb.recurring_generate_time_local?.trim().slice(0, 5);
@@ -110,9 +80,7 @@ function daysBeforeDueLabel(tb: CrmSubscriptionDetailPayload["tenant_billing"]):
 }
 
 function formatYmdBr(ymd: string | null | undefined): string {
-  if (!ymd || ymd.length < 10) return "—";
-  const head = ymd.slice(0, 10);
-  return format(new Date(`${head}T12:00:00`), "dd/MM/yyyy", { locale: ptBR });
+  return formatYmdBrSafe(ymd);
 }
 
 const BILLING_INTERVAL_OPTIONS: Array<{ value: CrmSubscriptionBillingInterval; label: string }> = [
@@ -158,6 +126,13 @@ const SubscriptionDetail = () => {
   const [reactivateDate, setReactivateDate] = useState("");
   const [reactivateReason, setReactivateReason] = useState("");
   const [reactivating, setReactivating] = useState(false);
+  const technicalSectionRef = useRef<HTMLDivElement>(null);
+  const historySectionRef = useRef<HTMLDivElement>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [historyFilter, setHistoryFilter] = useState<FinancialHistoryFilter>("all");
+  const [resolveAlert, setResolveAlert] = useState<FinancialAlert | null>(null);
+  const [generatingBilling, setGeneratingBilling] = useState(false);
+  const [generatingRowId, setGeneratingRowId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -188,6 +163,47 @@ const SubscriptionDetail = () => {
     setCyclesUnlimitedEdit(u);
     setMaxCyclesEdit(detail.subscription.max_cycles != null ? String(detail.subscription.max_cycles) : "12");
   }, [detail?.subscription.id, detail?.subscription.cycles_unlimited, detail?.subscription.max_cycles]);
+
+  const handleGenerateBilling = useCallback(
+    async (row?: import('@/lib/billingSubscriptionExperience').FinancialHistoryRow) => {
+      if (!id || !detail) return;
+      const rowId = row?.id ?? 'next';
+      if (detail.subscription.status !== 'active') {
+        toast.error('Assinatura não está ativa para gerar cobrança');
+        return;
+      }
+      try {
+        setGeneratingBilling(true);
+        setGeneratingRowId(rowId);
+        const result = await crmSubscriptionsService.generateRenewalNow(id);
+        if (result.success) {
+          toast.success(result.invoice_id ? 'Cobrança gerada' : 'Renovação processada');
+          await load();
+        } else {
+          toast.error(result.error_message ?? 'Não foi possível gerar a cobrança');
+          await load();
+        }
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Erro ao gerar cobrança');
+      } finally {
+        setGeneratingBilling(false);
+        setGeneratingRowId(null);
+      }
+    },
+    [id, detail, load]
+  );
+
+  const handleOpenInvoice = useCallback(
+    (invoiceId: string) => {
+      if (canViewInvoices) openInvoiceInNewTab(invoiceId);
+    },
+    [canViewInvoices]
+  );
+
+  const scrollToRenewal = () => {
+    setHistoryFilter("pending");
+    historySectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   const saveNext = async () => {
     if (!id || !nextDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
@@ -358,19 +374,12 @@ const SubscriptionDetail = () => {
   };
 
   if (loading || !detail) {
-    return (
-      <div className="flex min-h-[40vh] items-center justify-center text-muted-foreground text-sm">Carregando…</div>
-    );
+    return <SubscriptionExperienceSkeleton />;
   }
 
-  const { subscription: s, stats, timeline: timelineAll, meta, tenant_billing, recent_jobs, cycles_raw, cycles_read_enabled } =
-    detail;
-  const timeline = timelineAll.filter((row) => row.merge_source !== "lifecycle");
-  const head = subscriptionHeadlineStatus(detail);
+  const { subscription: s, meta, tenant_billing } = detail;
   const nextYmd = s.next_billing_date?.slice(0, 10);
   const daysBeforeAcct = clampRecurringGenerateDaysBeforeDue(tenant_billing.recurring_invoice_generate_days_before_due);
-  const generationYmd =
-    nextYmd && nextYmd.length === 10 ? computeRecurringGenerationDateYmd(nextYmd, daysBeforeAcct) : null;
   const latestPaidId = detail.latest_paid_invoice_id;
   const canReschedule = s.status === "active" && Boolean(latestPaidId);
   const canEditContract =
@@ -383,8 +392,79 @@ const SubscriptionDetail = () => {
       : null;
   const editHref = editHrefRaw && canEditInvoice ? editHrefRaw : null;
 
+  const scrollToHistory = () => {
+    historySectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  const scrollToTechnical = () => {
+    setTechOpen(true);
+    technicalSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const handleFinancialAlert = (alert: FinancialAlert) => {
+    if (alert.kind === "client_overdue") {
+      setHistoryFilter("overdue");
+    }
+    scrollToHistory();
+  };
+
+  const openResolveDialog = (alert: FinancialAlert) => {
+    setResolveAlert(alert);
+  };
+
+  const handleKpiAction = (action: KpiClickAction) => {
+    if (action.type === "scroll_history") {
+      setHistoryFilter(action.filter);
+      historySectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    } else if (action.type === "open_invoice") {
+      openInvoiceInNewTab(action.invoiceId);
+    } else if (action.type === "scroll_to") {
+      document.getElementById(action.targetId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
+
+  const actionHandlers = {
+    onGenerateNext: handleGenerateBilling,
+    onChangeNextBilling: () => {
+      const gen =
+        nextYmd && nextYmd.length === 10
+          ? computeRecurringGenerationDateYmd(nextYmd, daysBeforeAcct)
+          : (nextYmd ?? "");
+      setNextDate(gen);
+      setNextOpen(true);
+    },
+    onEdit: () => openContractEditor("edit"),
+    onUpgrade: () => openContractEditor("upgrade"),
+    onDowngrade: () => openContractEditor("downgrade"),
+    onPause: () => setPauseOpen(true),
+    onResume: () => {
+      setResumeDate(nextYmd ?? "");
+      setResumeOpen(true);
+    },
+    onReactivate: () => {
+      setReactivateDate("");
+      setReactivateOpen(true);
+    },
+    onCancelEndOfPeriod: () => setCancelOpen("end_of_period"),
+    onCancelImmediate: () => setCancelOpen("immediate"),
+    onReprocess: scrollToRenewal,
+    onOpenLogs: scrollToTechnical,
+    onDiagnosis: scrollToRenewal,
+  };
+
+  const actionFlags = {
+    status: s.status,
+    canEditSubscription,
+    canCancelSubscription,
+    canEditContract,
+    canReschedule,
+    canViewInvoices,
+    latestInvoiceId: detail.latest_invoice_id,
+    editHref,
+    showRenewalGenerate: s.status === "active",
+  };
+
   return (
-    <div className="space-y-6 max-w-[1100px] pb-10">
+    <div className={cn(SIMPLIFIED_SECTION_GAP, "max-w-6xl pb-24 md:pb-10")}>
       <div className="flex flex-wrap items-center gap-3">
         <Button variant="ghost" size="sm" className="gap-1 pl-0" onClick={() => navigate("/crm-subscriptions")}>
           <ArrowLeft className="h-4 w-4" />
@@ -392,59 +472,7 @@ const SubscriptionDetail = () => {
         </Button>
       </div>
 
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <div className="flex items-center gap-2 text-muted-foreground text-sm mb-1">
-            <CalendarSync className="h-4 w-4" />
-            <span>Assinatura</span>
-          </div>
-          <h1 className="text-2xl font-semibold tracking-tight flex flex-wrap items-baseline gap-x-2 gap-y-1">
-            {!s.customer_id ? (
-              <>
-                <span>{detail.plan_label?.trim() || "Assinatura recorrente"}</span>
-                <Badge variant="outline" className="text-sm font-normal">
-                  Por link
-                </Badge>
-                <span className="text-muted-foreground font-normal text-base w-full sm:w-auto">
-                  · {meta.periodicity_label_pt}
-                </span>
-              </>
-            ) : detail.client_name?.trim() ? (
-              <>
-                <ClientEntityLink
-                  clientId={s.customer_id}
-                  name={detail.client_name}
-                  variant="inline"
-                  className="text-2xl font-semibold tracking-tight"
-                  disabledFallbackText="Abrir cliente"
-                />
-                <span className="text-muted-foreground font-normal text-base">· {meta.periodicity_label_pt}</span>
-              </>
-            ) : (
-              <>
-                <span className="text-foreground/90">Assinatura CRM</span>
-                <span className="text-muted-foreground font-normal text-base">· {meta.periodicity_label_pt}</span>
-                <p className="text-xs text-muted-foreground w-full font-normal mt-1">
-                  Há vínculo interno de cliente, mas o nome não foi encontrado no cadastro desta empresa.
-                </p>
-              </>
-            )}
-          </h1>
-          {detail.plan_label && (
-            <p className="text-sm text-muted-foreground mt-1 max-w-2xl">{detail.plan_label}</p>
-          )}
-        </div>
-        <Badge
-          variant={head.variant}
-          className={cn(
-            "self-start sm:self-auto",
-            head.variant === "default" && "bg-crm-primary/12 text-crm-primary border-crm-primary/25",
-            s.status === "paused" && "bg-amber-500/12 text-amber-800 border-amber-500/30 dark:text-amber-300"
-          )}
-        >
-          {head.label}
-        </Badge>
-      </div>
+      <FinancialHeader detail={detail} />
 
       {detail.pending_contract ? (
         <SubscriptionPendingContractBanner
@@ -453,546 +481,177 @@ const SubscriptionDetail = () => {
         />
       ) : null}
 
-      <Tabs defaultValue="contrato" className="space-y-4">
-        <TabsList className="w-full h-auto flex flex-wrap justify-start gap-1 bg-muted/40 p-1">
-          <TabsTrigger value="contrato" className="text-xs sm:text-sm">
-            Contrato
-          </TabsTrigger>
-          <TabsTrigger value="historico" className="text-xs sm:text-sm">
-            Histórico
-          </TabsTrigger>
-          <TabsTrigger value="cobrancas" className="text-xs sm:text-sm">
-            Cobranças
-          </TabsTrigger>
-          <TabsTrigger value="timeline" className="text-xs sm:text-sm">
-            Timeline
-          </TabsTrigger>
-        </TabsList>
+      <FinancialEventStoreProvider detail={detail} onPaymentConfirmed={load}>
+      <FinancialSmartScroll detail={detail} />
+      <RecurringRevenueCard
+        latestPaidInvoiceId={latestPaidId}
+        onKpiAction={handleKpiAction}
+      />
 
-        <TabsContent value="contrato" className="space-y-6 mt-0">
-      {/* BLOCO 1 — Resumo */}
-      <Card className="border shadow-sm overflow-hidden">
-        <CardHeader className="bg-muted/30 border-b py-4">
-          <CardTitle className="text-base font-medium">Resumo</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5 pt-6">
-          <div>
-            <p className="text-xs text-muted-foreground mb-1">Cliente</p>
-            {!s.customer_id ? (
-              <div className="space-y-1">
-                <Badge variant="outline" className="text-xs font-normal">
-                  Por link
-                </Badge>
-                <p className="text-sm text-muted-foreground">Sem cliente CRM vinculado a esta cobrança.</p>
-              </div>
-            ) : detail.client_name?.trim() ? (
-              <ClientEntityLink
-                clientId={s.customer_id}
-                name={detail.client_name}
-                variant="inline"
-                className="text-sm font-medium"
-                disabledFallbackText="Abrir cliente"
-              />
-            ) : (
-              <p className="text-sm font-medium text-muted-foreground">
-                Cliente referenciado no faturamento, mas sem dados no cadastro desta empresa.
-              </p>
-            )}
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground mb-1">Valor</p>
-            <p className="text-lg font-semibold tabular-nums">{formatAmount(s.amount_cents)}</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground mb-1">Periodicidade</p>
-            <p className="text-sm font-medium">{meta.periodicity_label_pt}</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground mb-1">Status</p>
-            <p className="text-sm font-medium">{head.label}</p>
-          </div>
-          <div className="sm:col-span-2 lg:col-span-2 space-y-3">
-            <div>
-              <p className="text-xs text-muted-foreground mb-1">
-                Geração prevista (1.º dia em que o sistema pode gerar a fatura)
-              </p>
-              <p className="text-lg font-semibold tabular-nums tracking-tight">
-                {nextYmd && generationYmd ? formatYmdBr(generationYmd) : "—"}
-              </p>
-              {nextYmd && generationYmd ? (
-                <p className="text-[11px] text-muted-foreground mt-1">
-                  {daysBeforeAcct} dia(s) antes do vencimento do ciclo.
-                </p>
-              ) : null}
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground mb-1">Vencimento da cobrança (ciclo — data da fatura)</p>
-              <p className="text-sm font-medium tabular-nums text-foreground/90">{formatYmdBr(nextYmd)}</p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      <NextInvoiceCard
+        detail={detail}
+        generating={generatingBilling}
+        onGenerateBilling={() => handleGenerateBilling()}
+        onOpenInvoice={handleOpenInvoice}
+      />
 
-      <SubscriptionOperationalHealthCard detail={detail} />
+      <div className="grid gap-8 lg:grid-cols-3">
+        <div className="lg:col-span-2 order-2 lg:order-1">
+          <LazyFinancialSection sectionId="financial-calendar">
+            <FinancialCalendar
+              detail={detail}
+              canViewInvoices={canViewInvoices}
+              onGenerateBilling={handleGenerateBilling}
+              onChangeDue={actionHandlers.onChangeNextBilling}
+              onViewHistory={scrollToHistory}
+            />
+          </LazyFinancialSection>
+        </div>
 
-      <Card className="border shadow-sm overflow-hidden">
-        <CardHeader className="bg-muted/30 border-b py-4">
-          <CardTitle className="text-base font-medium">Configurações da assinatura</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-6 pt-6">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <div>
-              <p className="text-xs text-muted-foreground mb-1">Periodicidade</p>
-              <p className="text-sm font-medium">{meta.periodicity_label_pt}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground mb-1">Antecipação na conta</p>
-              <p className="text-sm">{daysBeforeDueLabel(tenant_billing)}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground mb-1">Horário / fuso (conta)</p>
-              <p className="text-sm">{generationSummary(tenant_billing)}</p>
-            </div>
-            <div className="space-y-2">
-              <p className="text-xs text-muted-foreground mb-1">Próximo ciclo — geração e vencimento</p>
-              {nextYmd && generationYmd ? (
-                <>
-                  <p className="text-xs text-muted-foreground">Geração (1.º dia elegível)</p>
-                  <p className="text-sm font-semibold tabular-nums">{formatYmdBr(generationYmd)}</p>
-                  <p className="text-xs text-muted-foreground mt-2">Vencimento da fatura (ciclo)</p>
-                  <p className="text-sm font-medium tabular-nums">{formatYmdBr(nextYmd)}</p>
-                </>
-              ) : (
-                <p className="text-sm text-muted-foreground">—</p>
-              )}
-            </div>
-          </div>
-
-          <div className="rounded-lg border bg-muted/20 p-4 space-y-4 max-w-xl">
-            <div>
-              <p className="text-sm font-medium text-foreground">Ciclos de cobrança</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Ilimitado projeta receita conforme o período do relatório; finito limita o número total de cobranças
-                (inclui faturas já emitidas).
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <Label htmlFor="cycles_unlimited_sub" className="text-sm font-normal cursor-pointer">
-                Ciclos ilimitados
-              </Label>
-              <Switch
-                id="cycles_unlimited_sub"
-                checked={cyclesUnlimitedEdit}
-                onCheckedChange={setCyclesUnlimitedEdit}
-                disabled={!canEditSubscription || s.status !== "active"}
-              />
-            </div>
-            {!cyclesUnlimitedEdit && (
-              <div className="max-w-[200px]">
-                <Label htmlFor="max_cycles_sub">Quantidade de ciclos</Label>
-                <Input
-                  id="max_cycles_sub"
-                  type="number"
-                  min={1}
-                  className="mt-1"
-                  value={maxCyclesEdit}
-                  onChange={(e) => setMaxCyclesEdit(e.target.value)}
-                  disabled={!canEditSubscription || s.status !== "active"}
-                />
-              </div>
-            )}
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => void saveCyclesConfig()}
-              disabled={!canEditSubscription || cyclesSaving || s.status !== "active"}
-            >
-              {cyclesSaving ? "A guardar…" : "Guardar ciclos"}
-            </Button>
-          </div>
-
-          <div className={cn("flex gap-2", isMobile ? "flex-col w-full" : "flex-wrap")}>
-            {s.status === "active" && canEditSubscription ? (
-              <Button
-                variant="outline"
-                size="sm"
-                className={cn(isMobile && "w-full justify-center")}
-                onClick={() => setPauseOpen(true)}
-              >
-                <Pause className="h-3.5 w-3.5 mr-1" />
-                Pausar
-              </Button>
-            ) : null}
-            {s.status === "paused" && canEditSubscription ? (
-              <Button
-                variant="default"
-                size="sm"
-                className={cn(isMobile && "w-full justify-center")}
-                onClick={() => {
-                  setResumeDate(nextYmd ?? "");
-                  setResumeOpen(true);
-                }}
-              >
-                <Play className="h-3.5 w-3.5 mr-1" />
-                Retomar
-              </Button>
-            ) : null}
-            {s.status === "cancelled" && canEditSubscription ? (
-              <Button
-                variant="default"
-                size="sm"
-                className={cn(isMobile && "w-full justify-center")}
-                onClick={() => {
-                  setReactivateDate("");
-                  setReactivateOpen(true);
-                }}
-              >
-                <RotateCcw className="h-3.5 w-3.5 mr-1" />
-                Reativar
-              </Button>
-            ) : null}
-            {s.status === "active" ? (
-              <>
-            <Button
-              variant="outline"
-              size="sm"
-              className={cn(isMobile && "w-full justify-center")}
-              disabled={!canEditContract}
-              onClick={() => openContractEditor("upgrade")}
-            >
-              <ArrowUp className="h-3.5 w-3.5 mr-1" />
-              Upgrade
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className={cn(isMobile && "w-full justify-center")}
-              disabled={!canEditContract}
-              onClick={() => openContractEditor("downgrade")}
-            >
-              <ArrowDown className="h-3.5 w-3.5 mr-1" />
-              Downgrade
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className={cn(isMobile && "w-full justify-center")}
-              disabled={!canEditContract}
-              onClick={() => openContractEditor("edit")}
-            >
-              <Pencil className="h-3.5 w-3.5 mr-1" />
-              Editar
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className={cn(isMobile && "w-full", !isMobile && "")}
-              disabled={!canEditSubscription || !canReschedule}
-              onClick={() => {
-                const gen =
-                  nextYmd && nextYmd.length === 10
-                    ? computeRecurringGenerationDateYmd(nextYmd, daysBeforeAcct)
-                    : (nextYmd ?? "");
-                setNextDate(gen);
-                setNextOpen(true);
-              }}
-            >
-              Alterar próxima cobrança
-            </Button>
-              </>
-            ) : s.status === "paused" ? (
-              <Button
-                variant="outline"
-                size="sm"
-                className={cn(isMobile && "w-full justify-center")}
-                disabled={!canEditContract}
-                onClick={() => openContractEditor("edit")}
-              >
-                <Pencil className="h-3.5 w-3.5 mr-1" />
-                Editar
-              </Button>
-            ) : null}
-            {detail.latest_invoice_id && canViewInvoices && (
-              <Button variant="outline" size="sm" asChild>
-                <Link to={`/customer-invoices/${detail.latest_invoice_id}`}>Ver fatura mais recente</Link>
-              </Button>
-            )}
-            {editHref && (
-              <Button variant="outline" size="sm" asChild>
-                <Link to={editHref}>
-                  <Pencil className="h-3.5 w-3.5 mr-1" />
-                  Editar última fatura
-                </Link>
-              </Button>
-            )}
-            {s.status === "active" ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className={cn("gap-1", isMobile && "w-full justify-center")}
-                  disabled={!canCancelSubscription}
-                >
-                  <MoreHorizontal className="h-4 w-4" />
-                  Cancelar
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start">
-                <DropdownMenuItem onSelect={() => setCancelOpen("end_of_period")}>
-                  Ao fim do período atual
-                </DropdownMenuItem>
-                <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setCancelOpen("immediate")}>
-                  Imediato (interrompe renovações)
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            ) : null}
-          </div>
-          {s.status === "paused" ? (
-            <p className="text-xs text-muted-foreground">
-              Enquanto pausada, não são geradas novas faturas nem tarefas de renovação.
-            </p>
-          ) : null}
-          {!canReschedule && s.status === "active" && (
-            <p className="text-xs text-muted-foreground">
-              Para alterar a próxima cobrança ou o contrato, é necessário pelo menos uma fatura paga nesta assinatura.
-            </p>
-          )}
-        </CardContent>
-      </Card>
-        </TabsContent>
-
-        <TabsContent value="historico" className="mt-0">
-          {id ? (
-            <SubscriptionContractHistoryPanel subscriptionId={id} refreshKey={contractHistoryRefreshKey} />
-          ) : null}
-        </TabsContent>
-
-        <TabsContent value="cobrancas" className="space-y-6 mt-0">
-      {/* BLOCO 2 — Cobranças */}
-      <Card className="border shadow-sm overflow-hidden">
-        <CardHeader className="bg-muted/30 border-b py-4 flex flex-row items-center justify-between">
-          <CardTitle className="text-base font-medium">Cobranças</CardTitle>
-          {!cycles_read_enabled && (
-            <span className="text-xs text-muted-foreground">Inclui todas as faturas da assinatura</span>
-          )}
-        </CardHeader>
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent bg-muted/20">
-                <TableHead className="min-w-[200px]">Ciclo</TableHead>
-                <TableHead>Período</TableHead>
-                <TableHead>Vencimento</TableHead>
-                <TableHead className="min-w-[160px]">Situação</TableHead>
-                <TableHead className="text-right">Valor</TableHead>
-                <TableHead className="text-right w-[120px]">Fatura</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {timeline.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="text-center py-10 text-muted-foreground text-sm">
-                    Ainda não há faturas nesta assinatura.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                timeline.map((row, idx) => {
-                  const display = resolveTimelineRecurringDisplay(row, recent_jobs, tenant_billing);
-                  const invoiceCol = resolveTimelineInvoiceColumn(row, recent_jobs, tenant_billing);
-                  return (
-                  <TableRow key={`${row.invoice_id ?? row.cycle_id ?? idx}`}>
-                    <TableCell className="text-sm align-top py-3">
-                      <div className="flex items-start gap-2">
-                        {row.operational_state ? (
-                          <SubscriptionTimelineStateDot
-                            state={row.operational_state}
-                            className="mt-1.5"
-                            title={row.operational_state_pt}
-                          />
-                        ) : null}
-                        <div className="min-w-0 space-y-0.5">
-                          <p className="font-medium leading-snug">{row.cycle_label ?? row.month_ref}</p>
-                          {row.cycle_subtitle && row.cycle_subtitle !== row.cycle_label ? (
-                            <p className="text-[11px] text-muted-foreground">{row.cycle_subtitle}</p>
-                          ) : null}
-                          {row.generation_note ? (
-                            <p className="text-[11px] text-muted-foreground/90">{row.generation_note}</p>
-                          ) : null}
-                          {row.job_attempts != null && row.job_max_attempts != null ? (
-                            <p className="text-[10px] text-muted-foreground font-mono">
-                              Tentativas {row.job_attempts}/{row.job_max_attempts}
-                            </p>
-                          ) : null}
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground align-top py-3">{row.period_label}</TableCell>
-                    <TableCell className="text-sm tabular-nums align-top py-3">
-                      {row.due_date
-                        ? format(new Date(`${row.due_date}T12:00:00`), "dd/MM/yyyy", { locale: ptBR })
-                        : "—"}
-                    </TableCell>
-                    <TableCell className="text-sm max-w-[240px] align-top py-3">
-                      <div className="flex flex-col gap-1">
-                        <SubscriptionRecurringStatusBadge display={display} showDetail />
-                        {row.has_auto_retry ? (
-                          <Badge variant="outline" className="text-[10px] font-normal w-fit">
-                            Reprocessamento automático
-                          </Badge>
-                        ) : null}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right text-sm tabular-nums">
-                      {row.amount_cents != null ? formatAmount(row.amount_cents) : "—"}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {row.invoice_id ? (
-                        canViewInvoices ? (
-                          <Button variant="outline" size="sm" className="h-8" asChild>
-                            <Link to={`/customer-invoices/${row.invoice_id}`}>
-                              <FileText className="h-3.5 w-3.5 mr-1" />
-                              Ver fatura
-                            </Link>
-                          </Button>
-                        ) : (
-                          <span className="text-xs text-muted-foreground" title="Sem permissão para ver faturas">
-                            —
-                          </span>
-                        )
-                      ) : (
-                        <span
-                          className={cn(
-                            "text-xs",
-                            invoiceCol.muted ? "text-muted-foreground" : "text-foreground"
-                          )}
-                        >
-                          {invoiceCol.label}
-                        </span>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                  );
-                })
-              )}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
-
-      {/* BLOCO 3 — Estatísticas */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {[
-          { label: "Total faturado", value: formatAmount(stats.total_invoiced_cents) },
-          { label: "Total pago", value: formatAmount(stats.total_paid_cents) },
-          { label: "Total pendente", value: formatAmount(stats.total_pending_cents) },
-          { label: "Número de cobranças", value: String(stats.charge_count) },
-        ].map((b) => (
-          <Card key={b.label} className="border shadow-sm">
-            <CardContent className="pt-6">
-              <p className="text-xs text-muted-foreground mb-1">{b.label}</p>
-              <p className="text-xl font-semibold tabular-nums tracking-tight">{b.value}</p>
-            </CardContent>
-          </Card>
-        ))}
+        <div className="order-1 lg:order-2 lg:sticky lg:top-4 lg:self-start">
+          <FinancialSummarySidebar
+            detail={detail}
+            onGenerateBilling={handleGenerateBilling}
+            onViewTechnicalDetail={openResolveDialog}
+            onResolveAlert={(alert) => {
+              if (alert.kind !== 'billing_missing') {
+                openResolveDialog(alert);
+              }
+              handleFinancialAlert(alert);
+            }}
+          />
+        </div>
       </div>
-        </TabsContent>
 
-        <TabsContent value="timeline" className="space-y-6 mt-0">
-      {id ? (
-        <SubscriptionOperationalTimelinePanel
-          subscriptionId={id}
-          detail={detail}
-          refreshKey={contractHistoryRefreshKey}
-        />
-      ) : null}
+      <div ref={historySectionRef}>
+        <LazyFinancialSection sectionId="financial-history">
+          <FinancialHistory
+            canViewInvoices={canViewInvoices}
+            filter={historyFilter}
+            onFilterChange={setHistoryFilter}
+            generatingRowId={generatingRowId}
+            onGenerateBilling={handleGenerateBilling}
+          />
+        </LazyFinancialSection>
+      </div>
 
-      <Collapsible open={techOpen} onOpenChange={setTechOpen}>
-        <Card className="border shadow-sm overflow-hidden">
+      <FinancialInsights />
+
+      <Collapsible open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <Card className="border shadow-sm overflow-hidden rounded-lg">
           <CollapsibleTrigger asChild>
             <button
               type="button"
               className="flex w-full items-center justify-between gap-2 px-6 py-4 text-left bg-muted/30 border-b hover:bg-muted/40 transition-colors"
             >
-              <span className="flex items-center gap-2 text-sm font-medium">
-                <Wrench className="h-4 w-4 text-muted-foreground" />
-                Detalhes para suporte
-              </span>
-              <ChevronDown className={cn("h-4 w-4 shrink-0 transition-transform", techOpen && "rotate-180")} />
+              <span className="text-sm font-medium">Configurações da assinatura</span>
+              <ChevronDown className={cn("h-4 w-4 shrink-0 transition-transform", settingsOpen && "rotate-180")} />
             </button>
           </CollapsibleTrigger>
           <CollapsibleContent>
-            <CardContent className="space-y-6 pt-6 text-sm">
-              <div>
-                <p className="text-xs font-medium text-muted-foreground mb-2">Últimas tarefas automáticas</p>
-                {recent_jobs.length === 0 ? (
-                  <p className="text-muted-foreground text-xs">Nenhum registro recente.</p>
-                ) : (
-                  <div className="rounded-md border overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Estado</TableHead>
-                          <TableHead>Referência do ciclo</TableHead>
-                          <TableHead>Tentativas</TableHead>
-                          <TableHead>Atualizado</TableHead>
-                          <TableHead>Fatura gerada</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {recent_jobs.map((j) => {
-                          const jobDisplay = resolveJobRecurringDisplay(j);
-                          return (
-                          <TableRow key={j.id}>
-                            <TableCell>
-                              <SubscriptionRecurringStatusBadge display={jobDisplay} />
-                            </TableCell>
-                            <TableCell className="font-mono text-xs">{j.cycle_key}</TableCell>
-                            <TableCell>
-                              {j.attempts}/{j.max_attempts}
-                              {j.retry_at ? ` · retorno ${j.retry_at.slice(0, 16)}` : ""}
-                            </TableCell>
-                            <TableCell className="text-xs whitespace-nowrap">{j.updated_at?.slice(0, 19)}</TableCell>
-                            <TableCell>
-                              {j.result_invoice_id ? (
-                                canViewInvoices ? (
-                                  <Link className="text-primary underline text-xs" to={`/customer-invoices/${j.result_invoice_id}`}>
-                                    Abrir
-                                  </Link>
-                                ) : (
-                                  <span className="text-xs text-muted-foreground">—</span>
-                                )
-                              ) : (
-                                "—"
-                              )}
-                            </TableCell>
-                          </TableRow>
-                          );
-                        })}
-                      </TableBody>
-                    </Table>
+            <CardContent className="space-y-6 pt-6">
+              <SubscriptionSettingsActions handlers={actionHandlers} flags={actionFlags} />
+
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 border-t pt-6">
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">Periodicidade</p>
+                      <p className="text-sm font-medium">{meta.periodicity_label_pt}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">Antecipação na conta</p>
+                      <p className="text-sm">{daysBeforeDueLabel(tenant_billing)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">Horário / fuso (conta)</p>
+                      <p className="text-sm">{generationSummary(tenant_billing)}</p>
+                    </div>
                   </div>
-                )}
-              </div>
-              {cycles_read_enabled && cycles_raw.length > 0 && (
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground mb-2">Registros de ciclo (sistema)</p>
-                  <pre className="text-[11px] leading-relaxed bg-muted/50 rounded-md p-3 overflow-x-auto max-h-56 overflow-y-auto">
-                    {JSON.stringify(cycles_raw, null, 2)}
-                  </pre>
-                </div>
-              )}
-              <p className="text-xs text-muted-foreground">
-                Estes dados servem para diagnóstico. Em caso de dúvida, envie ao suporte o identificador da
-                assinatura: <span className="font-mono">{s.id}</span>
-              </p>
-            </CardContent>
-          </CollapsibleContent>
+
+                  <div className="rounded-lg border bg-muted/20 p-4 space-y-4 max-w-xl">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Configurar ciclos</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Ilimitado projeta receita conforme o período do relatório; finito limita o número total de cobranças.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <Label htmlFor="cycles_unlimited_sub" className="text-sm font-normal cursor-pointer">
+                        Ciclos ilimitados
+                      </Label>
+                      <Switch
+                        id="cycles_unlimited_sub"
+                        checked={cyclesUnlimitedEdit}
+                        onCheckedChange={setCyclesUnlimitedEdit}
+                        disabled={!canEditSubscription || s.status !== "active"}
+                      />
+                    </div>
+                    {!cyclesUnlimitedEdit && (
+                      <div className="max-w-[200px]">
+                        <Label htmlFor="max_cycles_sub">Quantidade de ciclos</Label>
+                        <Input
+                          id="max_cycles_sub"
+                          type="number"
+                          min={1}
+                          className="mt-1"
+                          value={maxCyclesEdit}
+                          onChange={(e) => setMaxCyclesEdit(e.target.value)}
+                          disabled={!canEditSubscription || s.status !== "active"}
+                        />
+                      </div>
+                    )}
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => void saveCyclesConfig()}
+                      disabled={!canEditSubscription || cyclesSaving || s.status !== "active"}
+                    >
+                      {cyclesSaving ? "A guardar…" : "Guardar ciclos"}
+                    </Button>
+                  </div>
+
+                  {id ? (
+                    <SubscriptionContractHistoryPanel subscriptionId={id} refreshKey={contractHistoryRefreshKey} />
+                  ) : null}
+                </CardContent>
+              </CollapsibleContent>
         </Card>
       </Collapsible>
-        </TabsContent>
-      </Tabs>
+
+      <div ref={technicalSectionRef}>
+        <FinancialTechnicalAccordion
+          detail={detail}
+          open={techOpen}
+          onOpenChange={setTechOpen}
+        />
+      </div>
+      </FinancialEventStoreProvider>
+
+      <SubscriptionActionsPanel
+        variant="fab"
+        handlers={{
+          onGenerateNext: handleGenerateBilling,
+          onChangeNextBilling: actionHandlers.onChangeNextBilling,
+          onEdit: actionHandlers.onEdit,
+          onPause: actionHandlers.onPause,
+          onDiagnosis: scrollToRenewal,
+        }}
+        flags={{
+          status: s.status,
+          canEditSubscription,
+          canCancelSubscription,
+          canEditContract,
+          canReschedule,
+          canViewInvoices,
+          showRenewalGenerate: s.status === "active",
+        }}
+      />
+
+      <FinancialResolveDialog
+        alert={resolveAlert}
+        open={resolveAlert != null}
+        onOpenChange={(o) => !o && setResolveAlert(null)}
+        onExecute={handleFinancialAlert}
+      />
 
       <SubscriptionContractEditDialog
         open={contractOpen}

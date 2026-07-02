@@ -260,6 +260,14 @@ const CustomerInvoiceDetail = () => {
   }, [id, navigate, loadNotificationDeliveries]);
 
   useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get("action") !== "register_payment" || !invoice) return;
+    if (!INVOICE_ACTIONABLE.has(invoice.status)) return;
+    setManualConfirmOpen(true);
+    navigate(`${location.pathname}`, { replace: true });
+  }, [invoice, location.pathname, location.search, navigate]);
+
+  useEffect(() => {
     if (!id || !invoice?.subscription_id) {
       setRecurrenceInsight(null);
       setRecurrenceInsightError(null);
