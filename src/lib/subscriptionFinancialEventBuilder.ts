@@ -12,7 +12,7 @@ import {
   standardStatusLabel,
 } from './financialEventHelpers';
 import { isRecoverableCycleFailure } from './subscriptionRenewalRecovery';
-import { normalizeDetailForLegacyCycleRecovery } from './legacyCycleRecovery';
+import { normalizeDetailForBillingStateMachine } from './billingStateMachine';
 
 function isPaid(row: CrmSubscriptionTimelineRow): boolean {
   return (row.invoice_status ?? '').toLowerCase() === 'paid' || row.operational_state === 'paid';
@@ -67,7 +67,7 @@ export function buildFinancialEvents(
   detail: CrmSubscriptionDetailPayload,
   todayYmd?: string
 ): FinancialEvent[] {
-  const normalized = normalizeDetailForLegacyCycleRecovery(detail);
+  const normalized = normalizeDetailForBillingStateMachine(detail, todayYmd);
   const today = todayYmd ?? new Date().toISOString().slice(0, 10);
   const events: FinancialEvent[] = [];
   const seen = new Set<string>();
@@ -108,13 +108,12 @@ export function buildFinancialEvents(
       });
     }
 
-    if (
-      (row.operational_state === 'cancelled' || row.operational_state === 'skipped') &&
-      due &&
-      !isPaid(row)
-    ) {
+    const invCancelled =
+      (row.invoice_status ?? '').toLowerCase() === 'cancelled' ||
+      (row.invoice_id && row.operational_state === 'cancelled');
+    if (invCancelled && row.invoice_id && due && !isPaid(row) && !isRefunded(row)) {
       pushEvent(events, seen, normalized, today, {
-        id: `cancel-${row.cycle_id ?? row.invoice_id}-${due}`,
+        id: `cancel-${row.invoice_id}-${due}`,
         type: 'invoice_cancelled',
         ymd: due,
         ...base,
@@ -225,13 +224,16 @@ export function buildFinancialEvents(
       row.operational_state !== 'failed' &&
       !isRecoverableCycleFailure(row, today) &&
       !isPaid(row) &&
-      detail.subscription.status !== 'cancelled'
+      normalized.subscription.status !== 'cancelled'
     ) {
       const isFuture = due >= today;
       if (
         isFuture ||
         row.operational_state === 'awaiting_generation' ||
-        row.operational_state === 'scheduled'
+        row.operational_state === 'scheduled' ||
+        row.operational_state === 'skipped' ||
+        row.cycle_status === 'skipped' ||
+        row.cycle_status === 'pending'
       ) {
         pushEvent(events, seen, normalized, today, {
           id: `sched-${row.cycle_id ?? due}-${due}`,

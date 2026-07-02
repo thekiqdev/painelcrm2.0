@@ -10,6 +10,7 @@ import {
   resolveNextChargeEvent,
   resolveNextChargePresentationFromStore,
 } from './subscriptionFinancialEvents';
+import { resolveHistoryRowState } from './billingStateMachine';
 import type { FinancialEvent, FinancialEventType } from './financialEventTypes';
 import {
   HISTORY_EVENT_TYPES,
@@ -151,12 +152,18 @@ export class FinancialEventStore {
       }
     }
     this._historyCache = [...byCycle.values()]
-      .map((ev) =>
-        financialEventToHistoryRow(ev, this.today, {
+      .map((ev) => {
+        const row = financialEventToHistoryRow(ev, this.today, {
           isNextCharge: ev.id === nextChargeId,
           canGenerateNow: ev.id === nextChargeId && !ev.invoiceId && ev.type === 'upcoming_cycle',
-        })
-      )
+        });
+        const state = resolveHistoryRowState(row, this.today);
+        return {
+          ...row,
+          canGenerateNow: state.showGenerateButton,
+          statusPt: state.label === '—' ? row.statusPt : state.label,
+        };
+      })
       .sort((a, b) => (b.dueYmd ?? '').localeCompare(a.dueYmd ?? ''));
     return this._historyCache;
   }

@@ -49,6 +49,7 @@ export function isValidYmd(ymd: string): boolean {
 export function safeParseYmd(value: string | null | undefined): string | null {
   if (value == null || value === '') return null;
   const head = value.trim().slice(0, 10);
+  if (/NaN/i.test(head)) return null;
   return isValidYmd(head) ? head : null;
 }
 

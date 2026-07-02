@@ -25,6 +25,7 @@ export type ProductionCertification = {
   performance_certified: boolean;
   stress_certified: boolean;
   legacy_cycles_certified: boolean;
+  state_machine_certified: boolean;
   health_threshold: number;
   certificates: {
     auditor: 'AUDITOR CERTIFIED' | 'NOT CERTIFIED';
@@ -63,8 +64,9 @@ export function buildProductionCertification(input: {
   health: BillingHealthScoreReport;
   stress: StressValidationReport;
   legacyCycles?: AuditModuleResult;
+  stateMachine?: AuditModuleResult;
 }): ProductionCertification {
-  const { readiness, auditor, health, stress, legacyCycles } = input;
+  const { readiness, auditor, health, stress, legacyCycles, stateMachine } = input;
   const modules = readiness.modules;
 
   const runtime_certified = modules.productionSubscriptions?.certified ?? false;
@@ -75,6 +77,7 @@ export function buildProductionCertification(input: {
   const migration_certified = modules.migration?.certified ?? false;
   const performance_certified = modules.performance?.certified ?? false;
   const legacy_cycles_certified = legacyCycles?.certified ?? true;
+  const state_machine_certified = stateMachine?.certified ?? true;
 
   const allFlags =
     auditor.auditor_certified &&
@@ -87,6 +90,7 @@ export function buildProductionCertification(input: {
     performance_certified &&
     stress.certified &&
     legacy_cycles_certified &&
+    state_machine_certified &&
     health.billing_health_score >= BILLING_HEALTH_THRESHOLD &&
     readiness.summary.certified;
 
@@ -109,6 +113,7 @@ export function buildProductionCertification(input: {
     performance_certified,
     stress_certified: stress.certified,
     legacy_cycles_certified,
+    state_machine_certified,
     health_threshold: BILLING_HEALTH_THRESHOLD,
     certificates: {
       auditor: auditor.auditor_certified ? 'AUDITOR CERTIFIED' : 'NOT CERTIFIED',

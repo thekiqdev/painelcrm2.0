@@ -32,7 +32,7 @@ export type TimelineJobInput = {
 import { computeRecurringInvoiceGenerationDateYmd } from '../utils/billingGenerationDate.js';
 import { effectiveRecurringGenerateDaysBeforeDue } from '../utils/billingIntervalGenerationCap.js';
 import { safeTodayYmd } from '../utils/billingSafeDate.js';
-import { isLegacyFalseCancelledCycle } from './legacyCancelledCycleRecovery.js';
+import { resolveBillingCycleState } from '../billingRuntime/billingStateMachine.js';
 
 export type SubscriptionTimelineOperationalState =
   | 'scheduled'
@@ -308,24 +308,33 @@ function resolveOperationalState(params: {
     return { state: 'failed', statePt: 'Falhou', statusPt: cycleStatusLabelPt('failed') };
   }
   if (cycle === 'cancelled') {
-    if (
-      isLegacyFalseCancelledCycle({
-        cycleStatus: cycle,
-        invoiceId: null,
-        invoiceStatus: null,
-        skippedReason: params.skippedReason ?? null,
-        subscriptionStatus,
-      })
-    ) {
-      return {
-        state: 'awaiting_generation',
-        statePt: 'Prevista',
-        statusPt: 'Prevista',
-      };
+    const sm = resolveBillingCycleState({
+      cycleStatus: cycle,
+      invoiceId: null,
+      invoiceStatus: null,
+      skippedReason: params.skippedReason ?? null,
+      subscriptionStatus: params.subscriptionStatus ?? 'active',
+      dueYmd: dueYmd,
+      todayYmd: today,
+    });
+    if (sm.state === 'awaiting_generation') {
+      return { state: 'awaiting_generation', statePt: 'Prevista', statusPt: 'Prevista' };
     }
     return { state: 'cancelled', statePt: 'Cancelado', statusPt: cycleStatusLabelPt('cancelled') };
   }
   if (cycle === 'skipped') {
+    const sm = resolveBillingCycleState({
+      cycleStatus: cycle,
+      invoiceId: null,
+      invoiceStatus: null,
+      skippedReason: params.skippedReason ?? null,
+      subscriptionStatus: params.subscriptionStatus ?? 'active',
+      dueYmd: dueYmd,
+      todayYmd: today,
+    });
+    if (sm.state === 'awaiting_generation') {
+      return { state: 'awaiting_generation', statePt: 'Prevista', statusPt: 'Prevista' };
+    }
     return { state: 'skipped', statePt: 'Sem nova fatura', statusPt: cycleStatusLabelPt('skipped') };
   }
   if (cycle === 'processing' || job?.status === 'processing') {

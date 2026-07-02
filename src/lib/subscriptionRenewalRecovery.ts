@@ -31,15 +31,11 @@ import type { FinancialHistoryRow } from './billingSubscriptionExperience';
 import { getNextAwaitingGenerationCycle } from './subscriptionNextInvoiceResolver';
 import { buildSubscriptionFinancialEvents, resolveNextChargeEvent } from './subscriptionFinancialEvents';
 
-export function historyRowShowsChargeAction(row: FinancialHistoryRow): boolean {
-  if (row.canGenerateNow) return true;
-  if (row.invoiceId) return false;
-  if (row.visual === 'paid') return false;
-  if (row.visual === 'cancelled') return false;
-  if (!row.invoiceId && (row.visual === 'future' || row.statusPt === 'Prevista' || row.statusPt === 'Pendente')) {
-    return Boolean(row.isNextCharge);
-  }
-  return false;
+import { resolveHistoryRowState } from './billingStateMachine';
+
+export function historyRowShowsChargeAction(row: FinancialHistoryRow, todayYmd?: string): boolean {
+  const today = todayYmd ?? new Date().toISOString().slice(0, 10);
+  return resolveHistoryRowState(row, today).showGenerateButton;
 }
 
 export function historyRowChargeActionLabel(_row: FinancialHistoryRow): string {

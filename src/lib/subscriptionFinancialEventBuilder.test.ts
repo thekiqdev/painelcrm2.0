@@ -263,11 +263,27 @@ describe('buildFinancialEvents — event types', () => {
     expect(buildFinancialEvents(d, today).some((e) => e.type === 'invoice_refunded')).toBe(true);
   });
 
-  it('invoice_cancelled for cancelled row', () => {
+  it('invoice_cancelled only when invoice exists and is cancelled', () => {
+    const d = detail({
+      timeline: [
+        row({
+          operational_state: 'cancelled',
+          due_date: '2026-08-01',
+          invoice_id: 'inv-c',
+          invoice_status: 'cancelled',
+        }),
+      ],
+    });
+    expect(buildFinancialEvents(d, today).some((e) => e.type === 'invoice_cancelled')).toBe(true);
+  });
+
+  it('cancelled row without invoice becomes upcoming_cycle not invoice_cancelled', () => {
     const d = detail({
       timeline: [row({ operational_state: 'cancelled', due_date: '2026-08-01', invoice_id: null })],
     });
-    expect(buildFinancialEvents(d, today).some((e) => e.type === 'invoice_cancelled')).toBe(true);
+    const events = buildFinancialEvents(d, today);
+    expect(events.some((e) => e.type === 'invoice_cancelled')).toBe(false);
+    expect(events.some((e) => e.type === 'upcoming_cycle')).toBe(true);
   });
 
   it('invoice_reprocessed when has_auto_retry', () => {
@@ -485,7 +501,7 @@ describe('buildFinancialEvents — type coverage matrix', () => {
     {
       name: 'skipped',
       d: detail({ timeline: [row({ operational_state: 'skipped', due_date: '2026-10-02', invoice_id: null })] }),
-      expectType: 'invoice_cancelled',
+      expectType: 'upcoming_cycle',
     },
     {
       name: 'scheduled no invoice',
@@ -573,7 +589,7 @@ describe('buildFinancialEvents — ALL_TYPES presence in composite fixture', () 
         invoice_id: 'inv-manual',
         cycle_id: 'c-manual',
       }),
-      row({ operational_state: 'cancelled', due_date: '2026-07-17', invoice_id: null, cycle_id: 'cx' }),
+      row({ operational_state: 'cancelled', due_date: '2026-07-17', invoice_id: 'inv-cancel', invoice_status: 'cancelled', cycle_id: 'cx' }),
       row({ invoice_status: 'refunded', due_date: '2026-07-19', invoice_id: 'inv-ref', cycle_id: 'c-ref' }),
     ],
   });
