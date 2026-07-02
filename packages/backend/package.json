@@ -24,6 +24,7 @@
     "billing:cert-lab": "tsx src/scripts/runBillingCertificationLab.ts",
     "billing:pipeline-cert": "tsx src/scripts/runBillingPipelineCertification.ts",
     "billing:production-cert": "tsx src/scripts/runBillingProductionReadiness.ts",
+    "billing:production-validation": "tsx src/scripts/runBillingProductionValidation.ts",
     "avatar-cache:backfill": "tsx src/scripts/runWhatsappAvatarCacheBackfill.ts",
     "test": "vitest run",
     "test:watch": "vitest"

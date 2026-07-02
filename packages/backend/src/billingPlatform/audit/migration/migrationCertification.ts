@@ -74,8 +74,40 @@ export async function certifyBillingMigration(
     }
   }
 
-  const stillMissing = missingPlanR.rows.length + missingItemsR.rows.length - repairedPlans;
-  if (stillMissing > 0 && !repair) {
+  const stillMissingPlanR = repair
+    ? await pool.query<{ c: string }>(
+        `SELECT COUNT(*)::text AS c
+         FROM subscriptions s
+         ${where}
+           AND NOT EXISTS (
+             SELECT 1 FROM billing_plans bp
+             WHERE bp.subscription_id = s.id AND bp.tenant_id = s.tenant_id AND bp.status = 'active'
+           )`,
+        params
+      )
+    : null;
+
+  const stillMissingItemsR = repair
+    ? await pool.query<{ c: string }>(
+        `SELECT COUNT(*)::text AS c
+         FROM subscriptions s
+         INNER JOIN billing_plans bp ON bp.subscription_id = s.id AND bp.tenant_id = s.tenant_id AND bp.status = 'active'
+         WHERE s.type = 'customer'
+           ${options.tenantId ? 'AND s.tenant_id = $1::uuid' : ''}
+           AND NOT EXISTS (
+             SELECT 1 FROM billing_plan_items bpi
+             WHERE bpi.billing_plan_id = bp.id AND bpi.tenant_id = s.tenant_id
+           )`,
+        params
+      )
+    : null;
+
+  const stillMissing = repair
+    ? parseInt(stillMissingPlanR?.rows[0]?.c ?? '0', 10) +
+      parseInt(stillMissingItemsR?.rows[0]?.c ?? '0', 10)
+    : missingPlanR.rows.length + missingItemsR.rows.length;
+
+  if (stillMissing > 0) {
     issues.push({
       code: 'legacy_missing_billing_plan',
       severity: 'error',
@@ -85,7 +117,7 @@ export async function certifyBillingMigration(
 
   return {
     module: 'migration',
-    certified: stillMissing <= 0 || repairedPlans >= missingPlanR.rows.length,
+    certified: stillMissing === 0,
     generated_at_iso: new Date().toISOString(),
     duration_ms: Date.now() - started,
     issues,

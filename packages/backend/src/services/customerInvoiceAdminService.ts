@@ -335,9 +335,8 @@ export async function confirmCustomerInvoiceManualPayment(params: {
     throw new Error('Fatura sem valor válido para confirmação');
   }
 
-  const paymentYmd = params.paymentDateYmd
-    ? normalizeBillingDate(params.paymentDateYmd)
-    : safeTodayYmd();
+  const paymentYmd =
+    (params.paymentDateYmd ? normalizeBillingDate(params.paymentDateYmd) : null) ?? safeTodayYmd();
   const paidAt = new Date(`${paymentYmd}T12:00:00.000Z`);
   const txAmountCents =
     params.amountReceivedCents != null && params.amountReceivedCents > 0

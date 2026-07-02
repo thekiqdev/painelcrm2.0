@@ -25,7 +25,7 @@ import {
   type CrmSubscriptionAutomationSummary,
   type CrmSubscriptionTimelineRowUx,
 } from './subscriptionTimelineUx.js';
-import { validateBillingRuntime } from '../billingRuntime/billingRuntimeValidator.js';
+import { validateBillingRuntime, type BillingRuntimeValidationResult } from '../billingRuntime/billingRuntimeValidator.js';
 import {
   getPendingCrmSubscriptionContract,
   type CrmPendingContractMetadata,
@@ -114,6 +114,7 @@ export interface CrmSubscriptionDetail {
   tenant_billing: CrmSubscriptionTenantBillingPrefs;
   recent_jobs: CrmSubscriptionJobRow[];
   pending_contract: CrmPendingContractMetadata | null;
+  runtime_validation: BillingRuntimeValidationResult;
 }
 
 function billingIntervalLabelPt(interval: string): string {
