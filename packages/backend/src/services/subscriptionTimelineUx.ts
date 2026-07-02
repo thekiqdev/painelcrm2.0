@@ -32,6 +32,7 @@ export type TimelineJobInput = {
 import { computeRecurringInvoiceGenerationDateYmd } from '../utils/billingGenerationDate.js';
 import { effectiveRecurringGenerateDaysBeforeDue } from '../utils/billingIntervalGenerationCap.js';
 import { safeTodayYmd } from '../utils/billingSafeDate.js';
+import { isLegacyFalseCancelledCycle } from './legacyCancelledCycleRecovery.js';
 
 export type SubscriptionTimelineOperationalState =
   | 'scheduled'
@@ -78,6 +79,7 @@ export interface CrmSubscriptionTimelineRowUx {
   gateway_status: string | null;
   gateway_reference_id: string | null;
   merge_source: 'cycle' | 'invoice_only' | 'lifecycle';
+  cycle_skipped_reason?: string | null;
   lifecycle_event?: 'pause' | 'resume' | 'reactivate' | null;
   lifecycle_reason?: string | null;
   lifecycle_actor_name?: string | null;
@@ -258,9 +260,12 @@ function resolveOperationalState(params: {
   mergeSource: 'cycle' | 'invoice_only';
   cycleDateYmd?: string | null;
   dueDateYmd?: string | null;
+  skippedReason?: string | null;
+  subscriptionStatus?: string;
 }): { state: SubscriptionTimelineOperationalState; statePt: string; statusPt: string } {
   const { inv, job, mergeSource } = params;
   const cycle = (params.cycleStatus ?? '').toLowerCase();
+  const subscriptionStatus = params.subscriptionStatus ?? 'active';
   const today = safeTodayYmd();
   const dueYmd = ymdHead(params.dueDateYmd) ?? ymdHead(params.cycleDateYmd);
   const recoverableFailure =
@@ -303,6 +308,21 @@ function resolveOperationalState(params: {
     return { state: 'failed', statePt: 'Falhou', statusPt: cycleStatusLabelPt('failed') };
   }
   if (cycle === 'cancelled') {
+    if (
+      isLegacyFalseCancelledCycle({
+        cycleStatus: cycle,
+        invoiceId: null,
+        invoiceStatus: null,
+        skippedReason: params.skippedReason ?? null,
+        subscriptionStatus,
+      })
+    ) {
+      return {
+        state: 'awaiting_generation',
+        statePt: 'Prevista',
+        statusPt: 'Prevista',
+      };
+    }
     return { state: 'cancelled', statePt: 'Cancelado', statusPt: cycleStatusLabelPt('cancelled') };
   }
   if (cycle === 'skipped') {
@@ -403,8 +423,9 @@ function buildTimelineRow(params: {
   subscriptionAmountCents: number;
   job: TimelineJobInput | null;
   mergeSource: 'cycle' | 'invoice_only';
+  subscriptionStatus?: string;
 }): CrmSubscriptionTimelineRowUx {
-  const { cycle, inv, subscriptionAmountCents, job, mergeSource } = params;
+  const { cycle, inv, subscriptionAmountCents, job, mergeSource, subscriptionStatus } = params;
   const cycleDateYmd = ymdHead(cycle?.cycle_date) ?? ymdHead(inv?.period_start) ?? null;
   const ps =
     ymdHead(cycle?.period_start) ?? ymdHead(inv?.period_start) ?? cycleDateYmd;
@@ -418,6 +439,8 @@ function buildTimelineRow(params: {
     mergeSource,
     cycleDateYmd,
     dueDateYmd: due,
+    skippedReason: cycle?.skipped_reason ?? null,
+    subscriptionStatus,
   });
   const amount = inv?.amount_cents ?? subscriptionAmountCents;
   const retryPending = hasAutoRetry(job);
@@ -452,6 +475,7 @@ function buildTimelineRow(params: {
     gateway_status: inv?.gateway_status ?? null,
     gateway_reference_id: inv?.gateway_reference_id ?? null,
     merge_source: mergeSource,
+    cycle_skipped_reason: cycle?.skipped_reason ?? null,
   };
 }
 
@@ -461,7 +485,8 @@ export function buildSubscriptionTimeline(
   subscriptionAmountCents: number,
   cyclesReadEnabled: boolean,
   recentJobs: TimelineJobInput[] = [],
-  lifecycleEvents: SubscriptionLifecycleTimelineInput[] = []
+  lifecycleEvents: SubscriptionLifecycleTimelineInput[] = [],
+  subscriptionStatus = 'active'
 ): CrmSubscriptionTimelineRowUx[] {
   const invById = new Map(invoices.map((i) => [i.id, i]));
   const rows: CrmSubscriptionTimelineRowUx[] = [];
@@ -487,6 +512,7 @@ export function buildSubscriptionTimeline(
           subscriptionAmountCents,
           job,
           mergeSource: 'cycle',
+          subscriptionStatus,
         })
       );
     }
@@ -510,6 +536,7 @@ export function buildSubscriptionTimeline(
         subscriptionAmountCents,
         job,
         mergeSource: 'invoice_only',
+        subscriptionStatus,
       })
     );
   }

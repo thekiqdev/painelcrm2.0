@@ -5,6 +5,7 @@ import type { ProductionReadinessReport } from '../productionReadinessOrchestrat
 import type { BillingHealthScoreReport } from './billingHealthScore.js';
 import type { AuditorCertificationReport } from './auditorScenarioValidator.js';
 import type { StressValidationReport } from './stressValidation.js';
+import type { AuditModuleResult } from '../types.js';
 import { BILLING_HEALTH_THRESHOLD } from './billingHealthScore.js';
 
 export type ProductionCertification = {
@@ -23,6 +24,7 @@ export type ProductionCertification = {
   migration_certified: boolean;
   performance_certified: boolean;
   stress_certified: boolean;
+  legacy_cycles_certified: boolean;
   health_threshold: number;
   certificates: {
     auditor: 'AUDITOR CERTIFIED' | 'NOT CERTIFIED';
@@ -60,8 +62,9 @@ export function buildProductionCertification(input: {
   auditor: AuditorCertificationReport;
   health: BillingHealthScoreReport;
   stress: StressValidationReport;
+  legacyCycles?: AuditModuleResult;
 }): ProductionCertification {
-  const { readiness, auditor, health, stress } = input;
+  const { readiness, auditor, health, stress, legacyCycles } = input;
   const modules = readiness.modules;
 
   const runtime_certified = modules.productionSubscriptions?.certified ?? false;
@@ -71,6 +74,7 @@ export function buildProductionCertification(input: {
   const timezone_certified = modules.timezone?.certified ?? false;
   const migration_certified = modules.migration?.certified ?? false;
   const performance_certified = modules.performance?.certified ?? false;
+  const legacy_cycles_certified = legacyCycles?.certified ?? true;
 
   const allFlags =
     auditor.auditor_certified &&
@@ -82,6 +86,7 @@ export function buildProductionCertification(input: {
     migration_certified &&
     performance_certified &&
     stress.certified &&
+    legacy_cycles_certified &&
     health.billing_health_score >= BILLING_HEALTH_THRESHOLD &&
     readiness.summary.certified;
 
@@ -103,6 +108,7 @@ export function buildProductionCertification(input: {
     migration_certified,
     performance_certified,
     stress_certified: stress.certified,
+    legacy_cycles_certified,
     health_threshold: BILLING_HEALTH_THRESHOLD,
     certificates: {
       auditor: auditor.auditor_certified ? 'AUDITOR CERTIFIED' : 'NOT CERTIFIED',

@@ -359,7 +359,8 @@ export async function getCrmSubscriptionDetail(
     sub.amount_cents,
     cyclesRead,
     recent_jobs,
-    lifecycle_events
+    lifecycle_events,
+    sub.status
   );
   const tenant_billing = tenantRow.rows[0] ?? {
     timezone: null,

@@ -8,6 +8,7 @@ export { certifyBillingMigration } from './migration/migrationCertification.js';
 export { certifyCalendarConsistency } from './calendar/calendarConsistency.js';
 export { certifyBillingTimezone } from './timezone/timezoneCertification.js';
 export { certifyBillingPerformance } from './performance/performanceCertification.js';
+export { auditLegacyCancelledCycles, LEGACY_CYCLE_RECOVERY_ARTIFACT } from './legacy/legacyCancelledCycleAuditor.js';
 export * from './validation/auditorScenarioCatalog.js';
 export * from './validation/auditorScenarioValidator.js';
 export * from './validation/billingHealthScore.js';

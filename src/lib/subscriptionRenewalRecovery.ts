@@ -34,12 +34,16 @@ import { buildSubscriptionFinancialEvents, resolveNextChargeEvent } from './subs
 export function historyRowShowsChargeAction(row: FinancialHistoryRow): boolean {
   if (row.canGenerateNow) return true;
   if (row.invoiceId) return false;
-  if (row.visual === 'paid' || row.visual === 'cancelled') return false;
+  if (row.visual === 'paid') return false;
+  if (row.visual === 'cancelled') return false;
+  if (!row.invoiceId && (row.visual === 'future' || row.statusPt === 'Prevista' || row.statusPt === 'Pendente')) {
+    return Boolean(row.isNextCharge);
+  }
   return false;
 }
 
 export function historyRowChargeActionLabel(_row: FinancialHistoryRow): string {
-  return 'Gerar agora';
+  return 'Gerar cobrança';
 }
 
 export function isJsDateStringFormat(value: string): boolean {

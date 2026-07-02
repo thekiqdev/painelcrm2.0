@@ -17,6 +17,7 @@ import type { ProductionReadinessReport } from '../productionReadinessOrchestrat
 import type { AuditorCertificationReport } from './auditorScenarioValidator.js';
 import type { BillingHealthScoreReport } from './billingHealthScore.js';
 import type { StressValidationReport } from './stressValidation.js';
+import { auditLegacyCancelledCycles, LEGACY_CYCLE_RECOVERY_ARTIFACT } from '../legacy/legacyCancelledCycleAuditor.js';
 
 export const PRODUCTION_VALIDATION_ARTIFACTS = [
   'production-validation.json',
@@ -26,6 +27,7 @@ export const PRODUCTION_VALIDATION_ARTIFACTS = [
   'deployment-certification.json',
   'production-certification.json',
   'production-ready-snapshot.json',
+  LEGACY_CYCLE_RECOVERY_ARTIFACT,
 ] as const;
 
 export type ProductionValidationReport = {
@@ -45,6 +47,8 @@ export async function runProductionValidationCertification(
   const outputDir = options.outputDir ?? DEFAULT_PRODUCTION_AUDIT_DIR;
 
   const readiness = await runProductionReadinessCertification(options);
+  const legacyCycles = await auditLegacyCancelledCycles(options);
+  readiness.modules.legacyCancelledCycles = legacyCycles;
   const auditor = runAuditorScenarioValidation();
   const moduleCoverage = validateModuleCoverage(readiness.modules);
   if (!moduleCoverage.covered) {
@@ -54,7 +58,7 @@ export async function runProductionValidationCertification(
 
   const health = computeBillingHealthScore(readiness.modules, auditor);
   const stress = await runStressValidation();
-  const certification = buildProductionCertification({ readiness, auditor, health, stress });
+  const certification = buildProductionCertification({ readiness, auditor, health, stress, legacyCycles });
   const summary = buildProductionValidationSummary({
     startedAt: started,
     readiness,
@@ -71,6 +75,11 @@ export async function runProductionValidationCertification(
     billing_health_score: health.billing_health_score,
     deployment_ready: certification.deployment_ready,
     readiness_summary: readiness.summary,
+    legacy_cycle_recovery: {
+      certified: legacyCycles.certified,
+      false_cancelled_detected: legacyCycles.metrics.false_cancelled_detected,
+      repaired: legacyCycles.metrics.repaired,
+    },
     health,
     stress_invariants: stress.invariants,
     certification,
@@ -79,6 +88,7 @@ export async function runProductionValidationCertification(
 
   const artifact_paths: Record<string, string> = {
     ...readiness.artifact_paths,
+    [LEGACY_CYCLE_RECOVERY_ARTIFACT]: `${outputDir}/${LEGACY_CYCLE_RECOVERY_ARTIFACT}`,
     'production-validation.json': writeAuditArtifact('production-validation.json', summary, outputDir),
     'auditor-certification.json': writeAuditArtifact('auditor-certification.json', auditor, outputDir),
     'health-score.json': writeAuditArtifact('health-score.json', health, outputDir),

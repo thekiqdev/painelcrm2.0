@@ -12,6 +12,7 @@ import {
   standardStatusLabel,
 } from './financialEventHelpers';
 import { isRecoverableCycleFailure } from './subscriptionRenewalRecovery';
+import { normalizeDetailForLegacyCycleRecovery } from './legacyCycleRecovery';
 
 function isPaid(row: CrmSubscriptionTimelineRow): boolean {
   return (row.invoice_status ?? '').toLowerCase() === 'paid' || row.operational_state === 'paid';
@@ -66,12 +67,13 @@ export function buildFinancialEvents(
   detail: CrmSubscriptionDetailPayload,
   todayYmd?: string
 ): FinancialEvent[] {
+  const normalized = normalizeDetailForLegacyCycleRecovery(detail);
   const today = todayYmd ?? new Date().toISOString().slice(0, 10);
   const events: FinancialEvent[] = [];
   const seen = new Set<string>();
   const timelineDueDates = new Set<string>();
 
-  for (const row of detail.timeline) {
+  for (const row of normalized.timeline) {
     if (row.merge_source === 'lifecycle') continue;
     const due = normalizeYmdInput(row.due_date);
     if (due) timelineDueDates.add(due);
@@ -89,7 +91,7 @@ export function buildFinancialEvents(
     };
 
     if (isPaid(row) && due) {
-      pushEvent(events, seen, detail, today, {
+      pushEvent(events, seen, normalized, today, {
         id: `payment-${row.invoice_id ?? row.cycle_id}-${due}`,
         type: 'payment',
         ymd: due,
@@ -98,7 +100,7 @@ export function buildFinancialEvents(
     }
 
     if (isRefunded(row) && due) {
-      pushEvent(events, seen, detail, today, {
+      pushEvent(events, seen, normalized, today, {
         id: `refund-${row.invoice_id ?? row.cycle_id}-${due}`,
         type: 'invoice_refunded',
         ymd: due,
@@ -111,7 +113,7 @@ export function buildFinancialEvents(
       due &&
       !isPaid(row)
     ) {
-      pushEvent(events, seen, detail, today, {
+      pushEvent(events, seen, normalized, today, {
         id: `cancel-${row.cycle_id ?? row.invoice_id}-${due}`,
         type: 'invoice_cancelled',
         ymd: due,
@@ -124,7 +126,7 @@ export function buildFinancialEvents(
       const failYmd =
         due ?? normalizeYmdInput(resolveGenerationYmd(due, detail.tenant_billing)) ?? today;
       if (isRecoverableCycleFailure(row, today)) {
-        pushEvent(events, seen, detail, today, {
+        pushEvent(events, seen, normalized, today, {
           id: `sched-${row.cycle_id ?? due}-${due ?? failYmd}`,
           type: 'upcoming_cycle',
           ymd: due ?? failYmd,
@@ -139,7 +141,7 @@ export function buildFinancialEvents(
           lastUpdatedAt: row.processed_at ?? null,
         });
       } else {
-        pushEvent(events, seen, detail, today, {
+        pushEvent(events, seen, normalized, today, {
           id: `fail-${row.cycle_id ?? row.due_date}-${failYmd}`,
           type: 'invoice_failed',
           ymd: failYmd,
@@ -158,7 +160,7 @@ export function buildFinancialEvents(
 
     if (row.operational_state === 'gateway_failed') {
       const failYmd = due ?? today;
-      pushEvent(events, seen, detail, today, {
+      pushEvent(events, seen, normalized, today, {
         id: `gwfail-${row.invoice_id ?? row.cycle_id}-${failYmd}`,
         type: 'invoice_failed',
         ymd: failYmd,
@@ -167,7 +169,7 @@ export function buildFinancialEvents(
     }
 
     if (row.has_auto_retry && due) {
-      pushEvent(events, seen, detail, today, {
+      pushEvent(events, seen, normalized, today, {
         id: `retry-${row.cycle_id}-${due}`,
         type: 'invoice_reprocessed',
         ymd: due,
@@ -178,7 +180,7 @@ export function buildFinancialEvents(
     if (row.has_auto_retry && row.job_id) {
       const attemptYmd =
         normalizeYmdInput(row.job_retry_at?.slice(0, 10)) ?? due ?? today;
-      pushEvent(events, seen, detail, today, {
+      pushEvent(events, seen, normalized, today, {
         id: `attempt-${row.job_id}-${attemptYmd}`,
         type: 'charge_attempt',
         ymd: attemptYmd,
@@ -188,7 +190,7 @@ export function buildFinancialEvents(
 
     if (row.operational_state === 'manual_invoice' && row.invoice_id) {
       const ymd = normalizeYmdInput(row.invoice_created_at?.slice(0, 10)) ?? due ?? today;
-      pushEvent(events, seen, detail, today, {
+      pushEvent(events, seen, normalized, today, {
         id: `manual-${row.invoice_id}-${ymd}`,
         type: 'manual_charge',
         ymd,
@@ -199,7 +201,7 @@ export function buildFinancialEvents(
     if (row.invoice_id && row.invoice_created_at && !isPaid(row) && !isRefunded(row)) {
       const invYmd = normalizeYmdInput(row.invoice_created_at.slice(0, 10));
       if (invYmd && invYmd !== due) {
-        pushEvent(events, seen, detail, today, {
+        pushEvent(events, seen, normalized, today, {
           id: `gen-${row.invoice_id}-${invYmd}`,
           type: 'invoice_generated',
           ymd: invYmd,
@@ -209,7 +211,7 @@ export function buildFinancialEvents(
     }
 
     if (row.invoice_id && due && !isPaid(row) && !isRefunded(row)) {
-      pushEvent(events, seen, detail, today, {
+      pushEvent(events, seen, normalized, today, {
         id: `due-${row.invoice_id}-${due}`,
         type: 'invoice_due',
         ymd: due,
@@ -231,7 +233,7 @@ export function buildFinancialEvents(
         row.operational_state === 'awaiting_generation' ||
         row.operational_state === 'scheduled'
       ) {
-        pushEvent(events, seen, detail, today, {
+        pushEvent(events, seen, normalized, today, {
           id: `sched-${row.cycle_id ?? due}-${due}`,
           type: 'upcoming_cycle',
           ymd: due,
@@ -243,9 +245,9 @@ export function buildFinancialEvents(
   }
 
   if (detail.subscription.status !== 'cancelled') {
-    for (const cycle of buildFutureCycles(detail, 12)) {
+    for (const cycle of buildFutureCycles(normalized, 12)) {
       if (timelineDueDates.has(cycle.dueYmd)) continue;
-      pushEvent(events, seen, detail, today, {
+      pushEvent(events, seen, normalized, today, {
         id: `upcoming-${cycle.dueYmd}`,
         type: 'upcoming_cycle',
         ymd: cycle.dueYmd,

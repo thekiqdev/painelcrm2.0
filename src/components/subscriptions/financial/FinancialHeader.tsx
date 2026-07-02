@@ -3,6 +3,9 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { ClientEntityLink } from '@/components/entities';
 import { buildFinancialHeaderData } from '@/lib/subscriptionFinancialExperience';
 import { clientInitials } from '@/lib/billingSubscriptionExperiencePolish';
+import { useEntityNavigation } from '@/hooks/useEntityNavigation';
+import { useModulePermissions } from '@/contexts/ModulePermissionsContext';
+import { isValidEntityId } from '@/lib/entityNavigation';
 import type { CrmSubscriptionDetailPayload } from '@/services/crmSubscriptions';
 import { cn } from '@/lib/utils';
 
@@ -14,6 +17,10 @@ type Props = {
 export function FinancialHeader({ detail, className }: Props) {
   const data = useMemo(() => buildFinancialHeaderData(detail), [detail]);
   const s = detail.subscription;
+  const { openClient } = useEntityNavigation();
+  const { canView, loading } = useModulePermissions();
+  const clientId = s.customer_id?.trim() ?? '';
+  const canOpenClient = Boolean(clientId && isValidEntityId(clientId) && !loading && canView('clients'));
 
   return (
     <header
@@ -22,24 +29,42 @@ export function FinancialHeader({ detail, className }: Props) {
     >
       <div className="px-5 py-6 sm:px-8 space-y-5">
         <div className="flex items-start gap-4">
-          <Avatar className="h-12 w-12 border-2 border-background shadow shrink-0">
-            <AvatarFallback className="bg-crm-primary/15 text-crm-primary font-semibold">
-              {clientInitials(data.clientName)}
-            </AvatarFallback>
-          </Avatar>
+          {canOpenClient ? (
+            <button
+              type="button"
+              className="shrink-0 rounded-full border-0 bg-transparent p-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              title="Abrir cliente"
+              aria-label="Abrir cliente"
+              onClick={() => openClient(clientId, { mode: 'drawer' })}
+            >
+              <Avatar className="h-12 w-12 border-2 border-background shadow">
+                <AvatarFallback className="bg-crm-primary/15 text-crm-primary font-semibold">
+                  {clientInitials(data.clientName)}
+                </AvatarFallback>
+              </Avatar>
+            </button>
+          ) : (
+            <Avatar className="h-12 w-12 border-2 border-background shadow shrink-0">
+              <AvatarFallback className="bg-crm-primary/15 text-crm-primary font-semibold">
+                {clientInitials(data.clientName)}
+              </AvatarFallback>
+            </Avatar>
+          )}
           <div className="min-w-0 flex-1">
-            <p className="text-sm text-muted-foreground">{data.clientName}</p>
+            {canOpenClient ? (
+              <ClientEntityLink
+                clientId={clientId}
+                name={detail.client_name}
+                variant="inline"
+                openMode="route"
+                className="text-sm text-muted-foreground p-0"
+              />
+            ) : (
+              <p className="text-sm text-muted-foreground">{data.clientName}</p>
+            )}
             <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">{data.planName}</h1>
             <p className="text-lg font-bold tabular-nums mt-1">{data.amountLabel}</p>
           </div>
-          {s.customer_id && detail.client_name?.trim() ? (
-            <ClientEntityLink
-              clientId={s.customer_id}
-              name={detail.client_name}
-              variant="inline"
-              className="sr-only"
-            />
-          ) : null}
         </div>
 
         <div className="border-t pt-4 space-y-4">

@@ -65,6 +65,7 @@ export interface CrmSubscriptionTimelineRow {
   lifecycle_reason?: string | null;
   lifecycle_actor_name?: string | null;
   lifecycle_next_billing_date?: string | null;
+  cycle_skipped_reason?: string | null;
 }
 
 export interface CrmSubscriptionAutomationSummary {
