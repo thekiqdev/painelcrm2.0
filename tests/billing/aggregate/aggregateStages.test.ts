@@ -54,7 +54,7 @@ describe('BillingAggregate pipeline stages', () => {
     expect(result.cycles).toHaveLength(0);
   });
 
-  it('CycleStage → FinancialEvent → History → Calendar populam em cadeia', () => {
+  it('pipeline até Sidebar popula em cadeia', () => {
     const context = createBillingContext(buildGoldenDetail(), '2026-06-30');
     const afterSub = subscriptionStage(context, createEmptyBillingAggregate(context));
     const afterCycles = cycleStage(context, afterSub);
@@ -65,6 +65,8 @@ describe('BillingAggregate pipeline stages', () => {
     expect(afterHistory.history).toHaveLength(afterEvents.events.length);
     const afterCalendar = calendarStage(context, afterHistory);
     expect(afterCalendar.calendar).toHaveLength(afterEvents.events.length);
+    const afterSidebar = sidebarStage(context, afterCalendar);
+    expect(afterSidebar.sidebar.eventCount).toBe(afterEvents.events.length);
   });
 
   it.each(
@@ -74,7 +76,8 @@ describe('BillingAggregate pipeline stages', () => {
         name !== 'CycleStage' &&
         name !== 'FinancialEventStage' &&
         name !== 'HistoryStage' &&
-        name !== 'CalendarStage'
+        name !== 'CalendarStage' &&
+        name !== 'SidebarStage'
     )
   )('%s permanece passthrough (placeholder)', (_name, stage) => {
     const context = createBillingContext(buildGoldenDetail(), '2026-06-30');
@@ -85,7 +88,7 @@ describe('BillingAggregate pipeline stages', () => {
     expect(result.events).toHaveLength(0);
   });
 
-  it('runBillingAggregatePipeline aplica stages até Calendar', () => {
+  it('runBillingAggregatePipeline aplica stages até Sidebar', () => {
     const context = createBillingContext(buildGoldenDetail(), '2026-06-30');
     const result = runBillingAggregatePipeline(context, createEmptyBillingAggregate(context));
     expect(result.subscriptionId).toBe('sub-golden');
@@ -94,6 +97,8 @@ describe('BillingAggregate pipeline stages', () => {
     expect(result.events).toHaveLength(result.cycles.length);
     expect(result.history).toHaveLength(result.events.length);
     expect(result.calendar).toHaveLength(result.events.length);
+    expect(result.sidebar.eventCount).toBe(result.events.length);
+    expect(result.sidebar.subscriptionStatus).toBe('active');
     expect(result.alerts).toEqual([]);
   });
 });

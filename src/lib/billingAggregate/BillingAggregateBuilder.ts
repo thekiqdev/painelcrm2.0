@@ -3,6 +3,7 @@ import { buildCalendarFromEvents } from './calendarSnapshot';
 import { mapCyclesFromSource } from './cycleSnapshot';
 import { buildFinancialEventsFromAggregate } from './financialEventSnapshot';
 import { buildHistoryFromEvents } from './historySnapshot';
+import { buildSidebarFromAggregate } from './sidebarSnapshot';
 import { mapSubscriptionSnapshot } from './subscriptionSnapshot';
 
 /** Sprint 5.0-12 — popula `aggregate.subscription` a partir de `context.source.subscription`. */
@@ -38,8 +39,11 @@ export const calendarStage: BillingAggregateStage = (_context, aggregate) => ({
   calendar: buildCalendarFromEvents(aggregate.events),
 });
 
-/** Sprint 5.0-11 — placeholder; popula `sidebar` em sprint futura. */
-export const sidebarStage: BillingAggregateStage = (_context, aggregate) => aggregate;
+/** Sprint 5.0-17 — popula `aggregate.sidebar` a partir de subscription + events. */
+export const sidebarStage: BillingAggregateStage = (_context, aggregate) => ({
+  ...aggregate,
+  sidebar: buildSidebarFromAggregate(aggregate.subscription, aggregate.events),
+});
 
 /** Sprint 5.0-11 — placeholder; popula `nextInvoice` em sprint futura. */
 export const nextInvoiceStage: BillingAggregateStage = (_context, aggregate) => aggregate;

@@ -27,7 +27,7 @@ describe('Billing Aggregate — Golden Dataset harness', () => {
     expect(GOLDEN_SCENARIOS.length).toBeGreaterThanOrEqual(40);
   });
 
-  it('sidebar vazia; subscription, cycles, events, history e calendar populados (5.0-12–5.0-16)', () => {
+  it('alerts vazios; stages até sidebar populadas (5.0-12–5.0-17)', () => {
     for (const scenario of GOLDEN_SCENARIOS) {
       const detail = scenario.build();
       const aggregate = buildBillingAggregateFromDetail(detail, scenario.todayYmd);
@@ -37,6 +37,8 @@ describe('Billing Aggregate — Golden Dataset harness', () => {
       expect(aggregate.events).toHaveLength(aggregate.cycles.length);
       expect(aggregate.history).toHaveLength(aggregate.events.length);
       expect(aggregate.calendar).toHaveLength(aggregate.events.length);
+      expect(aggregate.sidebar.eventCount).toBe(aggregate.events.length);
+      expect(aggregate.sidebar.subscriptionStatus).toBe(aggregate.subscription.status);
       expect(aggregate.cycles.map((c) => c.id)).toEqual(detail.cycles_raw.map((c) => c.id));
       expect(aggregate.cycles.map((c) => c.status)).toEqual(detail.cycles_raw.map((c) => c.status));
       if (aggregate.cycles.length > 0) {
@@ -48,6 +50,7 @@ describe('Billing Aggregate — Golden Dataset harness', () => {
         expect(aggregate.events).toEqual([]);
         expect(aggregate.history).toEqual([]);
         expect(aggregate.calendar).toEqual([]);
+        expect(aggregate.sidebar.lastEventDate).toBeNull();
       }
     }
   });

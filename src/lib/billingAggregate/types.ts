@@ -162,10 +162,28 @@ export type BillingCalendarSnapshot = {
   metadata: BillingCalendarEntryMetadata;
 };
 
+/** Metadados do resumo da sidebar (cópia — sem regras). */
+export type BillingSidebarMetadata = {
+  subscriptionId: string;
+  tenantId: string;
+  customerId: string | null;
+  cancelAtPeriodEnd: boolean;
+  nextBillingDate: string | null;
+  currentPeriodStart: string | null;
+  currentPeriodEnd: string | null;
+};
+
+/** Resumo da sidebar do Aggregate (Sprint 5.0-17). */
 export type BillingSidebarSnapshot = {
-  nextReceiptDate: string;
-  openAmount: string;
-  alertCount: number;
+  subscriptionStatus: string;
+  subscriptionType: string;
+  billingInterval: string;
+  currency: string;
+  amount: number;
+  eventCount: number;
+  lastEventDate: string | null;
+  lastEventType: BillingFinancialEventType | null;
+  metadata: BillingSidebarMetadata;
 };
 
 export type BillingNextInvoiceSnapshot = {

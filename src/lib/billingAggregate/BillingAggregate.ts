@@ -6,9 +6,23 @@ import {
 } from './subscriptionSnapshot';
 
 const EMPTY_SIDEBAR = {
-  nextReceiptDate: '—',
-  openAmount: '—',
-  alertCount: 0,
+  subscriptionStatus: '',
+  subscriptionType: '',
+  billingInterval: '',
+  currency: '',
+  amount: 0,
+  eventCount: 0,
+  lastEventDate: null,
+  lastEventType: null,
+  metadata: {
+    subscriptionId: '',
+    tenantId: '',
+    customerId: null,
+    cancelAtPeriodEnd: false,
+    nextBillingDate: null,
+    currentPeriodStart: null,
+    currentPeriodEnd: null,
+  },
 } as const;
 
 const EMPTY_NEXT_INVOICE = {
