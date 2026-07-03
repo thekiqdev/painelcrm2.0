@@ -6,6 +6,7 @@ export type {
   BillingAlertSnapshot,
   BillingCalendarEntryMetadata,
   BillingCalendarSnapshot,
+  BillingCapabilitiesMetadata,
   BillingCapabilitySnapshot,
   BillingContext,
   BillingContextSourceRefs,
@@ -70,6 +71,9 @@ export { buildSidebarFromAggregate } from './sidebarSnapshot';
 export { resolveNextInvoiceFromEvents } from './nextInvoiceSnapshot';
 
 export { buildAlertsFromAggregate } from './alertsSnapshot';
+
+export { buildCapabilitiesFromAggregate } from './capabilitiesSnapshot';
+export type { CapabilitiesAggregateInput } from './capabilitiesSnapshot';
 
 export {
   subscriptionStage,

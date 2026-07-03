@@ -4,6 +4,7 @@ import { mapCyclesFromSource } from './cycleSnapshot';
 import { buildFinancialEventsFromAggregate } from './financialEventSnapshot';
 import { buildHistoryFromEvents } from './historySnapshot';
 import { buildAlertsFromAggregate } from './alertsSnapshot';
+import { buildCapabilitiesFromAggregate } from './capabilitiesSnapshot';
 import { resolveNextInvoiceFromEvents } from './nextInvoiceSnapshot';
 import { buildSidebarFromAggregate } from './sidebarSnapshot';
 import { mapSubscriptionSnapshot } from './subscriptionSnapshot';
@@ -63,8 +64,20 @@ export const alertStage: BillingAggregateStage = (_context, aggregate) => ({
   ),
 });
 
-/** Sprint 5.0-11 — placeholder; popula `capabilities` em sprint futura. */
-export const capabilityStage: BillingAggregateStage = (_context, aggregate) => aggregate;
+/** Sprint 5.0-20 — popula `aggregate.capabilities` a partir do Aggregate completo. */
+export const capabilityStage: BillingAggregateStage = (_context, aggregate) => ({
+  ...aggregate,
+  capabilities: buildCapabilitiesFromAggregate({
+    subscription: aggregate.subscription,
+    cycles: aggregate.cycles,
+    events: aggregate.events,
+    history: aggregate.history,
+    calendar: aggregate.calendar,
+    sidebar: aggregate.sidebar,
+    nextInvoice: aggregate.nextInvoice,
+    alerts: aggregate.alerts,
+  }),
+});
 
 /** Sprint 5.0-11 — placeholder; popula `technical` em sprint futura. */
 export const technicalStage: BillingAggregateStage = (_context, aggregate) => aggregate;

@@ -27,7 +27,28 @@ const EMPTY_SIDEBAR = {
 
 const EMPTY_CAPABILITIES = {
   canGenerate: false,
-  supportsGenerate: false,
+  canRetry: false,
+  canCancel: false,
+  canRefund: false,
+  canPause: false,
+  canResume: false,
+  canReactivate: false,
+  canDeleteInvoice: false,
+  canOpenInvoice: false,
+  canOpenSubscription: false,
+  metadata: {
+    subscriptionId: '',
+    subscriptionStatus: '',
+    cycleCount: 0,
+    eventCount: 0,
+    historyCount: 0,
+    calendarCount: 0,
+    alertCount: 0,
+    hasNextInvoice: false,
+    failedEventCount: 0,
+    paymentEventCount: 0,
+    eventsWithInvoiceCount: 0,
+  },
 } as const;
 
 const EMPTY_TECHNICAL = {

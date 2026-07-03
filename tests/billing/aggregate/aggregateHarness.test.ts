@@ -27,7 +27,7 @@ describe('Billing Aggregate — Golden Dataset harness', () => {
     expect(GOLDEN_SCENARIOS.length).toBeGreaterThanOrEqual(40);
   });
 
-  it('stages até alerts populadas (5.0-12–5.0-19)', () => {
+  it('aggregate completo até capabilities (5.0-12–5.0-20)', () => {
     for (const scenario of GOLDEN_SCENARIOS) {
       const detail = scenario.build();
       const aggregate = buildBillingAggregateFromDetail(detail, scenario.todayYmd);
@@ -39,6 +39,9 @@ describe('Billing Aggregate — Golden Dataset harness', () => {
       expect(aggregate.calendar).toHaveLength(aggregate.events.length);
       expect(aggregate.sidebar.eventCount).toBe(aggregate.events.length);
       expect(aggregate.sidebar.subscriptionStatus).toBe(aggregate.subscription.status);
+      expect(aggregate.capabilities.canOpenSubscription).toBe(true);
+      expect(aggregate.capabilities.metadata.subscriptionId).toBe(aggregate.subscription.id);
+      expect(aggregate.capabilities.metadata.eventCount).toBe(aggregate.events.length);
       expect(aggregate.cycles.map((c) => c.id)).toEqual(detail.cycles_raw.map((c) => c.id));
       expect(aggregate.cycles.map((c) => c.status)).toEqual(detail.cycles_raw.map((c) => c.status));
       if (aggregate.cycles.length > 0) {

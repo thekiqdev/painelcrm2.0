@@ -54,7 +54,7 @@ describe('BillingAggregate pipeline stages', () => {
     expect(result.cycles).toHaveLength(0);
   });
 
-  it('pipeline até Alerts popula em cadeia', () => {
+  it('pipeline até Capabilities popula em cadeia', () => {
     const context = createBillingContext(buildGoldenDetail(), '2026-06-30');
     const afterSub = subscriptionStage(context, createEmptyBillingAggregate(context));
     const afterCycles = cycleStage(context, afterSub);
@@ -71,6 +71,8 @@ describe('BillingAggregate pipeline stages', () => {
     expect(afterNext.nextInvoice).not.toBeNull();
     const afterAlerts = alertStage(context, afterNext);
     expect(afterAlerts.alerts.length).toBeGreaterThan(0);
+    const afterCaps = capabilityStage(context, afterAlerts);
+    expect(afterCaps.capabilities.canOpenSubscription).toBe(true);
   });
 
   it.each(
@@ -83,7 +85,8 @@ describe('BillingAggregate pipeline stages', () => {
         name !== 'CalendarStage' &&
         name !== 'SidebarStage' &&
         name !== 'NextInvoiceStage' &&
-        name !== 'AlertStage'
+        name !== 'AlertStage' &&
+        name !== 'CapabilityStage'
     )
   )('%s permanece passthrough (placeholder)', (_name, stage) => {
     const context = createBillingContext(buildGoldenDetail(), '2026-06-30');
@@ -94,7 +97,7 @@ describe('BillingAggregate pipeline stages', () => {
     expect(result.events).toHaveLength(0);
   });
 
-  it('runBillingAggregatePipeline aplica stages até Alerts', () => {
+  it('runBillingAggregatePipeline aplica stages até Capabilities', () => {
     const context = createBillingContext(buildGoldenDetail(), '2026-06-30');
     const result = runBillingAggregatePipeline(context, createEmptyBillingAggregate(context));
     expect(result.subscriptionId).toBe('sub-golden');
@@ -107,6 +110,8 @@ describe('BillingAggregate pipeline stages', () => {
     expect(result.sidebar.subscriptionStatus).toBe('active');
     expect(result.nextInvoice).not.toBeNull();
     expect(result.alerts.length).toBeGreaterThan(0);
-    expect(result.capabilities).toEqual({ canGenerate: false, supportsGenerate: false });
+    expect(result.capabilities.canOpenSubscription).toBe(true);
+    expect(result.capabilities.canGenerate).toBe(true);
+    expect(result.capabilities.metadata.eventCount).toBe(result.events.length);
   });
 });

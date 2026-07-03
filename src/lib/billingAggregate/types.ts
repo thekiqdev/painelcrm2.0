@@ -240,9 +240,36 @@ export type BillingAlertSnapshot = {
   metadata: BillingAlertMetadata;
 };
 
+export type BillingCapabilitiesMetadata = {
+  subscriptionId: string;
+  subscriptionStatus: string;
+  cycleCount: number;
+  eventCount: number;
+  historyCount: number;
+  calendarCount: number;
+  alertCount: number;
+  hasNextInvoice: boolean;
+  failedEventCount: number;
+  paymentEventCount: number;
+  eventsWithInvoiceCount: number;
+};
+
+/**
+ * Capacidades centralizadas do Aggregate (Sprint 5.0-20).
+ * Snapshot determinístico — ainda não consumido pela UI.
+ */
 export type BillingCapabilitySnapshot = {
   canGenerate: boolean;
-  supportsGenerate: boolean;
+  canRetry: boolean;
+  canCancel: boolean;
+  canRefund: boolean;
+  canPause: boolean;
+  canResume: boolean;
+  canReactivate: boolean;
+  canDeleteInvoice: boolean;
+  canOpenInvoice: boolean;
+  canOpenSubscription: boolean;
+  metadata: BillingCapabilitiesMetadata;
 };
 
 export type BillingTechnicalSnapshot = {
