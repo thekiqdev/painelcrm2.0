@@ -8,18 +8,23 @@ import type {
   CrmSubscriptionTimelineRow,
 } from '@/services/crmSubscriptions';
 
-/** Snapshot de ciclo no Aggregate (espelha `cycles_raw` — populado em sprints futuras). */
+/** Metadados extras do ciclo (campos além do mapeamento canônico). */
+export type BillingCycleMetadata = Record<string, unknown>;
+
+/** Snapshot normalizado de ciclo (Sprint 5.0-13). */
 export type BillingCycleSnapshot = {
   id: string;
-  cycle_date: string;
-  period_start: string;
-  period_end: string;
+  subscriptionId: string;
+  cycleDate: string;
+  periodStart: string;
+  periodEnd: string;
   status: string;
-  invoice_id: string | null;
-  job_id: string | null;
-  processed_at: string | null;
-  skipped_reason: string | null;
-  error_message: string | null;
+  invoiceId: string | null;
+  jobId: string | null;
+  processedAt: string | null;
+  skippedReason: string | null;
+  errorMessage: string | null;
+  metadata: BillingCycleMetadata;
 };
 
 /** Snapshot de fatura (Billing 5.0 — §6.1 constituição 4.2R). */

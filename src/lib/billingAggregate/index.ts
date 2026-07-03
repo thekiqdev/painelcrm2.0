@@ -6,6 +6,7 @@ export type {
   BillingContext,
   BillingContextSourceRefs,
   BillingContextValidationResult,
+  BillingCycleMetadata,
   BillingCycleSnapshot,
   BillingFinancialEventSnapshot,
   BillingHistorySnapshot,
@@ -42,6 +43,9 @@ export {
   mapSubscriptionSnapshot,
   EMPTY_BILLING_SUBSCRIPTION_SNAPSHOT,
 } from './subscriptionSnapshot';
+
+export { mapCycleSnapshot, mapCyclesFromSource } from './cycleSnapshot';
+export type { BillingCycleRawSource } from './cycleSnapshot';
 
 export {
   subscriptionStage,

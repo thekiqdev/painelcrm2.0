@@ -104,9 +104,12 @@ describe('SubscriptionStage', () => {
     expect(snapshotBillingContextSource(detail)).toBe(before);
   });
 
-  it('não popula cycles, history, calendar ou events', () => {
+  it('subscriptionStage isolada não popula cycles; views permanecem vazias no pipeline', () => {
+    const context = createBillingContext(buildGoldenDetail(), '2026-06-30');
+    const afterSub = subscriptionStage(context, createEmptyBillingAggregate(context));
+    expect(afterSub.cycles).toEqual([]);
+
     const aggregate = buildBillingAggregateFromDetail(buildGoldenDetail(), '2026-06-30');
-    expect(aggregate.cycles).toEqual([]);
     expect(aggregate.history).toEqual([]);
     expect(aggregate.calendar).toEqual([]);
     expect(aggregate.events).toEqual([]);

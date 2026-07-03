@@ -45,7 +45,7 @@ describe('BillingAggregate pipeline stages', () => {
     expect(() => stage(context, initial)).not.toThrow();
   });
 
-  it('SubscriptionStage popula subscription', () => {
+  it('SubscriptionStage popula subscription sem cycles', () => {
     const context = createBillingContext(buildGoldenDetail(), '2026-06-30');
     const initial = createEmptyBillingAggregate(context);
     const result = subscriptionStage(context, initial);
@@ -54,23 +54,31 @@ describe('BillingAggregate pipeline stages', () => {
     expect(result.cycles).toHaveLength(0);
   });
 
-  it.each(STAGES.filter(([name]) => name !== 'SubscriptionStage'))(
-    '%s permanece passthrough (placeholder)',
-    (_name, stage) => {
-      const context = createBillingContext(buildGoldenDetail(), '2026-06-30');
-      const initial = createEmptyBillingAggregate(context);
-      const result = stage(context, initial);
-      expect(result).toBe(initial);
-      expect(result.cycles).toHaveLength(0);
-      expect(result.events).toHaveLength(0);
-    }
-  );
+  it('CycleStage popula cycles preservando ordem', () => {
+    const context = createBillingContext(buildGoldenDetail(), '2026-06-30');
+    const afterSub = subscriptionStage(context, createEmptyBillingAggregate(context));
+    const result = cycleStage(context, afterSub);
+    expect(result.cycles).toHaveLength(context.source.cycles_raw.length);
+    expect(result.cycles.map((c) => c.id)).toEqual(context.source.cycles_raw.map((c) => c.id));
+  });
 
-  it('runBillingAggregatePipeline aplica SubscriptionStage e mantém views vazias', () => {
+  it.each(
+    STAGES.filter(([name]) => name !== 'SubscriptionStage' && name !== 'CycleStage')
+  )('%s permanece passthrough (placeholder)', (_name, stage) => {
+    const context = createBillingContext(buildGoldenDetail(), '2026-06-30');
+    const initial = createEmptyBillingAggregate(context);
+    const result = stage(context, initial);
+    expect(result).toBe(initial);
+    expect(result.cycles).toHaveLength(0);
+    expect(result.events).toHaveLength(0);
+  });
+
+  it('runBillingAggregatePipeline aplica Subscription e Cycle stages', () => {
     const context = createBillingContext(buildGoldenDetail(), '2026-06-30');
     const result = runBillingAggregatePipeline(context, createEmptyBillingAggregate(context));
     expect(result.subscriptionId).toBe('sub-golden');
     expect(result.subscription.status).toBe('active');
+    expect(result.cycles).toHaveLength(context.source.cycles_raw.length);
     expect(result.history).toEqual([]);
   });
 });

@@ -1,4 +1,5 @@
 import type { BillingAggregate, BillingAggregateStage, BillingContext } from './types';
+import { mapCyclesFromSource } from './cycleSnapshot';
 import { mapSubscriptionSnapshot } from './subscriptionSnapshot';
 
 /** Sprint 5.0-12 — popula `aggregate.subscription` a partir de `context.source.subscription`. */
@@ -7,8 +8,11 @@ export const subscriptionStage: BillingAggregateStage = (context, aggregate) => 
   subscription: mapSubscriptionSnapshot(context.source.subscription),
 });
 
-/** Sprint 5.0-11 — placeholder; popula `cycles` em sprint futura. */
-export const cycleStage: BillingAggregateStage = (_context, aggregate) => aggregate;
+/** Sprint 5.0-13 — popula `aggregate.cycles` a partir de `context.source.cycles_raw`. */
+export const cycleStage: BillingAggregateStage = (context, aggregate) => ({
+  ...aggregate,
+  cycles: mapCyclesFromSource(context.source.cycles_raw, context.source.subscription.id),
+});
 
 /** Sprint 5.0-11 — placeholder; popula `timeline` em sprint futura. */
 export const timelineStage: BillingAggregateStage = (_context, aggregate) => aggregate;
