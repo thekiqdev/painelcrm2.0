@@ -54,16 +54,20 @@ describe('BillingAggregate pipeline stages', () => {
     expect(result.cycles).toHaveLength(0);
   });
 
-  it('CycleStage popula cycles preservando ordem', () => {
+  it('CycleStage popula cycles; FinancialEventStage popula events 1:1', () => {
     const context = createBillingContext(buildGoldenDetail(), '2026-06-30');
     const afterSub = subscriptionStage(context, createEmptyBillingAggregate(context));
-    const result = cycleStage(context, afterSub);
-    expect(result.cycles).toHaveLength(context.source.cycles_raw.length);
-    expect(result.cycles.map((c) => c.id)).toEqual(context.source.cycles_raw.map((c) => c.id));
+    const afterCycles = cycleStage(context, afterSub);
+    expect(afterCycles.cycles).toHaveLength(context.source.cycles_raw.length);
+    const afterEvents = financialEventStage(context, afterCycles);
+    expect(afterEvents.events).toHaveLength(afterCycles.cycles.length);
   });
 
   it.each(
-    STAGES.filter(([name]) => name !== 'SubscriptionStage' && name !== 'CycleStage')
+    STAGES.filter(
+      ([name]) =>
+        name !== 'SubscriptionStage' && name !== 'CycleStage' && name !== 'FinancialEventStage'
+    )
   )('%s permanece passthrough (placeholder)', (_name, stage) => {
     const context = createBillingContext(buildGoldenDetail(), '2026-06-30');
     const initial = createEmptyBillingAggregate(context);
@@ -73,12 +77,13 @@ describe('BillingAggregate pipeline stages', () => {
     expect(result.events).toHaveLength(0);
   });
 
-  it('runBillingAggregatePipeline aplica Subscription e Cycle stages', () => {
+  it('runBillingAggregatePipeline aplica Subscription, Cycle e FinancialEvent stages', () => {
     const context = createBillingContext(buildGoldenDetail(), '2026-06-30');
     const result = runBillingAggregatePipeline(context, createEmptyBillingAggregate(context));
     expect(result.subscriptionId).toBe('sub-golden');
     expect(result.subscription.status).toBe('active');
     expect(result.cycles).toHaveLength(context.source.cycles_raw.length);
+    expect(result.events).toHaveLength(result.cycles.length);
     expect(result.history).toEqual([]);
   });
 });

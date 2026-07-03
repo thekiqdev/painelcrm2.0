@@ -8,7 +8,9 @@ export type {
   BillingContextValidationResult,
   BillingCycleMetadata,
   BillingCycleSnapshot,
+  BillingFinancialEventMetadata,
   BillingFinancialEventSnapshot,
+  BillingFinancialEventType,
   BillingHistorySnapshot,
   BillingInvoiceSnapshot,
   BillingNextInvoiceSnapshot,
@@ -46,6 +48,11 @@ export {
 
 export { mapCycleSnapshot, mapCyclesFromSource } from './cycleSnapshot';
 export type { BillingCycleRawSource } from './cycleSnapshot';
+
+export {
+  mapCycleToFinancialEvent,
+  buildFinancialEventsFromAggregate,
+} from './financialEventSnapshot';
 
 export {
   subscriptionStage,

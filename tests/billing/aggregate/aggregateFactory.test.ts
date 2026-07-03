@@ -43,7 +43,7 @@ describe('BillingAggregateFactory', () => {
     expect(aggregate.subscription.amount).toBe(detail.subscription.amount_cents);
     expect(aggregate.cycles).toHaveLength(detail.cycles_raw.length);
     expect(aggregate.cycles[0]?.id).toBe(detail.cycles_raw[0]?.id);
-    expect(aggregate.events).toEqual([]);
+    expect(aggregate.events).toHaveLength(detail.cycles_raw.length);
     expect(aggregate.history).toEqual([]);
     expect(aggregate.calendar).toEqual([]);
     expect(aggregate.timeline).toEqual([]);

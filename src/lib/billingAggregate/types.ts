@@ -1,4 +1,3 @@
-import type { FinancialEventType } from '@/lib/financialEventTypes';
 import type {
   CrmSubscriptionAutomationSummary,
   CrmSubscriptionDetailPayload,
@@ -78,14 +77,39 @@ export type BillingSubscriptionSnapshot = {
   metadata: BillingSubscriptionMetadata;
 };
 
+/** Tipos de evento do Aggregate Billing 5.0 (independente do motor legado). */
+export type BillingFinancialEventType =
+  | 'cycle_pending'
+  | 'cycle_queued'
+  | 'cycle_processing'
+  | 'invoice_generated'
+  | 'payment'
+  | 'invoice_failed'
+  | 'cycle_cancelled'
+  | 'cycle_skipped'
+  | 'cycle_unknown';
+
+export type BillingFinancialEventMetadata = {
+  invoiceId: string | null;
+  jobId: string | null;
+  periodStart: string;
+  periodEnd: string;
+  skippedReason: string | null;
+  errorMessage: string | null;
+  amount: number;
+  currency: string;
+  cycleMetadata: BillingCycleMetadata;
+};
+
+/** Evento financeiro canônico do Aggregate (Sprint 5.0-14). */
 export type BillingFinancialEventSnapshot = {
   id: string;
-  type: FinancialEventType;
-  cycleId: string | null;
-  invoiceId: string | null;
-  ymd: string;
-  dueYmd: string | null;
-  kind: 'real' | 'projected';
+  cycleId: string;
+  subscriptionId: string;
+  eventType: BillingFinancialEventType;
+  occurredAt: string;
+  status: string;
+  metadata: BillingFinancialEventMetadata;
 };
 
 export type BillingHistorySnapshot = {

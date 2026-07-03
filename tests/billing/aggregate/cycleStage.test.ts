@@ -165,7 +165,6 @@ describe('CycleStage', () => {
 
   it('não popula events, history ou calendar', () => {
     const aggregate = buildBillingAggregateFromDetail(buildGoldenDetail(), '2026-06-30');
-    expect(aggregate.events).toEqual([]);
     expect(aggregate.history).toEqual([]);
     expect(aggregate.calendar).toEqual([]);
   });
