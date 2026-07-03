@@ -54,7 +54,7 @@ describe('BillingAggregate pipeline stages', () => {
     expect(result.cycles).toHaveLength(0);
   });
 
-  it('pipeline até Sidebar popula em cadeia', () => {
+  it('pipeline até NextInvoice popula em cadeia', () => {
     const context = createBillingContext(buildGoldenDetail(), '2026-06-30');
     const afterSub = subscriptionStage(context, createEmptyBillingAggregate(context));
     const afterCycles = cycleStage(context, afterSub);
@@ -67,6 +67,9 @@ describe('BillingAggregate pipeline stages', () => {
     expect(afterCalendar.calendar).toHaveLength(afterEvents.events.length);
     const afterSidebar = sidebarStage(context, afterCalendar);
     expect(afterSidebar.sidebar.eventCount).toBe(afterEvents.events.length);
+    const afterNext = nextInvoiceStage(context, afterSidebar);
+    expect(afterNext.nextInvoice).not.toBeNull();
+    expect(afterNext.nextInvoice!.eventId).toBeTruthy();
   });
 
   it.each(
@@ -77,7 +80,8 @@ describe('BillingAggregate pipeline stages', () => {
         name !== 'FinancialEventStage' &&
         name !== 'HistoryStage' &&
         name !== 'CalendarStage' &&
-        name !== 'SidebarStage'
+        name !== 'SidebarStage' &&
+        name !== 'NextInvoiceStage'
     )
   )('%s permanece passthrough (placeholder)', (_name, stage) => {
     const context = createBillingContext(buildGoldenDetail(), '2026-06-30');
@@ -88,7 +92,7 @@ describe('BillingAggregate pipeline stages', () => {
     expect(result.events).toHaveLength(0);
   });
 
-  it('runBillingAggregatePipeline aplica stages até Sidebar', () => {
+  it('runBillingAggregatePipeline aplica stages até NextInvoice', () => {
     const context = createBillingContext(buildGoldenDetail(), '2026-06-30');
     const result = runBillingAggregatePipeline(context, createEmptyBillingAggregate(context));
     expect(result.subscriptionId).toBe('sub-golden');
@@ -99,6 +103,7 @@ describe('BillingAggregate pipeline stages', () => {
     expect(result.calendar).toHaveLength(result.events.length);
     expect(result.sidebar.eventCount).toBe(result.events.length);
     expect(result.sidebar.subscriptionStatus).toBe('active');
+    expect(result.nextInvoice).not.toBeNull();
     expect(result.alerts).toEqual([]);
   });
 });

@@ -3,6 +3,7 @@ import { buildCalendarFromEvents } from './calendarSnapshot';
 import { mapCyclesFromSource } from './cycleSnapshot';
 import { buildFinancialEventsFromAggregate } from './financialEventSnapshot';
 import { buildHistoryFromEvents } from './historySnapshot';
+import { resolveNextInvoiceFromEvents } from './nextInvoiceSnapshot';
 import { buildSidebarFromAggregate } from './sidebarSnapshot';
 import { mapSubscriptionSnapshot } from './subscriptionSnapshot';
 
@@ -45,8 +46,11 @@ export const sidebarStage: BillingAggregateStage = (_context, aggregate) => ({
   sidebar: buildSidebarFromAggregate(aggregate.subscription, aggregate.events),
 });
 
-/** Sprint 5.0-11 — placeholder; popula `nextInvoice` em sprint futura. */
-export const nextInvoiceStage: BillingAggregateStage = (_context, aggregate) => aggregate;
+/** Sprint 5.0-18 — resolve `aggregate.nextInvoice` exclusivamente a partir de `aggregate.events`. */
+export const nextInvoiceStage: BillingAggregateStage = (_context, aggregate) => ({
+  ...aggregate,
+  nextInvoice: resolveNextInvoiceFromEvents(aggregate.events),
+});
 
 /** Sprint 5.0-11 — placeholder; popula `alerts` em sprint futura. */
 export const alertStage: BillingAggregateStage = (_context, aggregate) => aggregate;

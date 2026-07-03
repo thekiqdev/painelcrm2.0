@@ -186,13 +186,30 @@ export type BillingSidebarSnapshot = {
   metadata: BillingSidebarMetadata;
 };
 
-export type BillingNextInvoiceSnapshot = {
-  cycleId: string | null;
+/** Metadados da próxima cobrança (cópia do evento — sem regras). */
+export type BillingNextInvoiceMetadata = {
   invoiceId: string | null;
-  dueYmd: string | null;
-  statusLabel: string;
-  showGenerate: boolean;
-  isProjected: boolean;
+  jobId: string | null;
+  periodStart: string;
+  periodEnd: string;
+  skippedReason: string | null;
+  errorMessage: string | null;
+  amount: number;
+  currency: string;
+};
+
+/**
+ * Próxima cobrança do Aggregate (Sprint 5.0-18).
+ * Referência determinística a um FinancialEvent existente — ou `null` se não houver eventos.
+ */
+export type BillingNextInvoiceSnapshot = {
+  eventId: string;
+  cycleId: string;
+  subscriptionId: string;
+  eventType: BillingFinancialEventType;
+  date: string;
+  status: string;
+  metadata: BillingNextInvoiceMetadata;
 };
 
 export type BillingAlertSnapshot = {
@@ -227,7 +244,8 @@ export type BillingAggregate = {
   history: BillingHistorySnapshot[];
   calendar: BillingCalendarSnapshot[];
   sidebar: BillingSidebarSnapshot;
-  nextInvoice: BillingNextInvoiceSnapshot;
+  /** `null` quando `events` está vazio — sem eventos virtuais. */
+  nextInvoice: BillingNextInvoiceSnapshot | null;
   alerts: BillingAlertSnapshot[];
   capabilities: BillingCapabilitySnapshot;
   technical: BillingTechnicalSnapshot;

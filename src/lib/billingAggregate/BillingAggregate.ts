@@ -25,15 +25,6 @@ const EMPTY_SIDEBAR = {
   },
 } as const;
 
-const EMPTY_NEXT_INVOICE = {
-  cycleId: null,
-  invoiceId: null,
-  dueYmd: null,
-  statusLabel: '—',
-  showGenerate: false,
-  isProjected: false,
-} as const;
-
 const EMPTY_CAPABILITIES = {
   canGenerate: false,
   supportsGenerate: false,
@@ -61,7 +52,7 @@ export function createEmptyBillingAggregate(context: BillingContext): BillingAgg
     history: [],
     calendar: [],
     sidebar: { ...EMPTY_SIDEBAR },
-    nextInvoice: { ...EMPTY_NEXT_INVOICE },
+    nextInvoice: null,
     alerts: [],
     capabilities: { ...EMPTY_CAPABILITIES },
     technical: { ...EMPTY_TECHNICAL },

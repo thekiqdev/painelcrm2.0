@@ -15,6 +15,7 @@ export type {
   BillingHistoryRowMetadata,
   BillingHistorySnapshot,
   BillingInvoiceSnapshot,
+  BillingNextInvoiceMetadata,
   BillingNextInvoiceSnapshot,
   BillingSidebarMetadata,
   BillingSidebarSnapshot,
@@ -62,6 +63,8 @@ export { mapEventToHistoryRow, buildHistoryFromEvents } from './historySnapshot'
 export { mapEventToCalendarEntry, buildCalendarFromEvents } from './calendarSnapshot';
 
 export { buildSidebarFromAggregate } from './sidebarSnapshot';
+
+export { resolveNextInvoiceFromEvents } from './nextInvoiceSnapshot';
 
 export {
   subscriptionStage,
