@@ -1,14 +1,9 @@
 import type { BillingAggregate, BillingContext } from './types';
 import { billingContextSourceSignature } from './BillingContext';
-
-const EMPTY_SUBSCRIPTION = {
-  id: '',
-  status: '',
-  amount_cents: 0,
-  billing_interval: '',
-  next_billing_date: null,
-  gateway: null,
-} as const;
+import {
+  EMPTY_BILLING_SUBSCRIPTION_SNAPSHOT,
+  mapSubscriptionSnapshot,
+} from './subscriptionSnapshot';
 
 const EMPTY_SIDEBAR = {
   nextReceiptDate: '—',
@@ -41,7 +36,10 @@ export function createEmptyBillingAggregate(context: BillingContext): BillingAgg
     subscriptionId: context.source.subscription.id,
     builtAt: context.builtAt,
     todayYmd: context.todayYmd,
-    subscription: { ...EMPTY_SUBSCRIPTION, id: context.source.subscription.id },
+    subscription: {
+      ...EMPTY_BILLING_SUBSCRIPTION_SNAPSHOT,
+      id: context.source.subscription.id,
+    },
     cycles: [],
     invoices: [],
     timeline: [],

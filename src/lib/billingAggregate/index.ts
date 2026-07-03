@@ -12,6 +12,7 @@ export type {
   BillingInvoiceSnapshot,
   BillingNextInvoiceSnapshot,
   BillingSidebarSnapshot,
+  BillingSubscriptionMetadata,
   BillingSubscriptionSnapshot,
   BillingTechnicalSnapshot,
   BillingAggregateStage,
@@ -36,6 +37,11 @@ export {
   buildBillingAggregate,
   buildBillingAggregateFromDetail,
 } from './BillingAggregateFactory';
+
+export {
+  mapSubscriptionSnapshot,
+  EMPTY_BILLING_SUBSCRIPTION_SNAPSHOT,
+} from './subscriptionSnapshot';
 
 export {
   subscriptionStage,

@@ -35,9 +35,12 @@ describe('BillingAggregateFactory', () => {
     expect(billingAggregateSignature(a)).toBe(billingAggregateSignature(b));
   });
 
-  it('estrutura inicial vazia conforme sprint 5.0-11', () => {
-    const aggregate = buildBillingAggregateFromDetail(buildGoldenDetail(), '2026-06-30');
+  it('views permanecem vazias; subscription populada (sprint 5.0-12)', () => {
+    const detail = buildGoldenDetail();
+    const aggregate = buildBillingAggregateFromDetail(detail, '2026-06-30');
 
+    expect(aggregate.subscription.id).toBe(detail.subscription.id);
+    expect(aggregate.subscription.amount).toBe(detail.subscription.amount_cents);
     expect(aggregate.cycles).toEqual([]);
     expect(aggregate.events).toEqual([]);
     expect(aggregate.history).toEqual([]);

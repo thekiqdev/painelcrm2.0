@@ -36,13 +36,41 @@ export type BillingInvoiceSnapshot = {
   gateway_reference_id: string | null;
 };
 
+export type BillingSubscriptionMetadata = {
+  planId: string | null;
+  gateway: string | null;
+  gracePeriodDays: number;
+  defaultPaymentMethod: string | null;
+  usersCount: number | null;
+  lastJobAt: string | null;
+  createdBy: string | null;
+  cyclesUnlimited: boolean | null;
+  maxCycles: number | null;
+};
+
+/** Snapshot normalizado da assinatura (Sprint 5.0-12). */
 export type BillingSubscriptionSnapshot = {
   id: string;
+  tenantId: string;
+  customerId: string | null;
   status: string;
-  amount_cents: number;
-  billing_interval: string;
-  next_billing_date: string | null;
-  gateway: string | null;
+  subscriptionType: string;
+  billingInterval: string;
+  billingIntervalCount: number;
+  currency: string;
+  amount: number;
+  nextBillingDate: string | null;
+  currentPeriodStart: string | null;
+  currentPeriodEnd: string | null;
+  billingAnchorDay: number | null;
+  cancelAtPeriodEnd: boolean;
+  cancelledAt: string | null;
+  pausedAt: string | null;
+  reactivatedAt: string | null;
+  trialEndsAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  metadata: BillingSubscriptionMetadata;
 };
 
 export type BillingFinancialEventSnapshot = {

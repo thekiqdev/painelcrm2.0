@@ -27,13 +27,14 @@ describe('Billing Aggregate — Golden Dataset harness', () => {
     expect(GOLDEN_SCENARIOS.length).toBeGreaterThanOrEqual(40);
   });
 
-  it('aggregate permanece vazio em todas as views (sprint 5.0-11)', () => {
+  it('views permanecem vazias; subscription populada (sprint 5.0-12)', () => {
     for (const scenario of GOLDEN_SCENARIOS) {
       const aggregate = buildBillingAggregateFromDetail(scenario.build(), scenario.todayYmd);
       expect(aggregate.history).toEqual([]);
       expect(aggregate.calendar).toEqual([]);
       expect(aggregate.events).toEqual([]);
       expect(aggregate.alerts).toEqual([]);
+      expect(aggregate.subscription.id).toBe(scenario.build().subscription.id);
     }
   });
 });

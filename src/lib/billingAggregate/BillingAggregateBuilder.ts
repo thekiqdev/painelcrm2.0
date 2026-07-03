@@ -1,7 +1,11 @@
 import type { BillingAggregate, BillingAggregateStage, BillingContext } from './types';
+import { mapSubscriptionSnapshot } from './subscriptionSnapshot';
 
-/** Sprint 5.0-11 — placeholder; popula `subscription` em sprint futura. */
-export const subscriptionStage: BillingAggregateStage = (_context, aggregate) => aggregate;
+/** Sprint 5.0-12 — popula `aggregate.subscription` a partir de `context.source.subscription`. */
+export const subscriptionStage: BillingAggregateStage = (context, aggregate) => ({
+  ...aggregate,
+  subscription: mapSubscriptionSnapshot(context.source.subscription),
+});
 
 /** Sprint 5.0-11 — placeholder; popula `cycles` em sprint futura. */
 export const cycleStage: BillingAggregateStage = (_context, aggregate) => aggregate;
