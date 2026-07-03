@@ -212,10 +212,32 @@ export type BillingNextInvoiceSnapshot = {
   metadata: BillingNextInvoiceMetadata;
 };
 
+export type BillingAlertSeverity = 'info' | 'warning' | 'error';
+
+export type BillingAlertKind =
+  | 'no_events'
+  | 'subscription_status'
+  | 'invoice_failed'
+  | 'cycle_cancelled'
+  | 'next_invoice';
+
+export type BillingAlertMetadata = {
+  subscriptionId: string;
+  subscriptionStatus: string;
+  eventType: string | null;
+  eventStatus: string | null;
+  nextInvoiceEventId: string | null;
+};
+
+/** Alerta determinístico do Aggregate (Sprint 5.0-19). */
 export type BillingAlertSnapshot = {
   id: string;
-  kind: string;
+  kind: BillingAlertKind;
+  severity: BillingAlertSeverity;
   title: string;
+  description: string;
+  eventId: string | null;
+  metadata: BillingAlertMetadata;
 };
 
 export type BillingCapabilitySnapshot = {

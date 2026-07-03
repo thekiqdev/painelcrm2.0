@@ -114,7 +114,7 @@ describe('SubscriptionStage', () => {
     expect(aggregate.events.length).toBe(aggregate.cycles.length);
     expect(aggregate.history.length).toBe(aggregate.events.length);
     expect(aggregate.calendar.length).toBe(aggregate.events.length);
-    expect(aggregate.alerts).toEqual([]);
+    expect(aggregate.alerts.length).toBeGreaterThan(0);
   });
 
   it('mapSubscriptionSnapshot é determinístico', () => {

@@ -27,11 +27,11 @@ describe('Billing Aggregate — Golden Dataset harness', () => {
     expect(GOLDEN_SCENARIOS.length).toBeGreaterThanOrEqual(40);
   });
 
-  it('alerts vazios; stages até nextInvoice populadas (5.0-12–5.0-18)', () => {
+  it('stages até alerts populadas (5.0-12–5.0-19)', () => {
     for (const scenario of GOLDEN_SCENARIOS) {
       const detail = scenario.build();
       const aggregate = buildBillingAggregateFromDetail(detail, scenario.todayYmd);
-      expect(aggregate.alerts).toEqual([]);
+      expect(Array.isArray(aggregate.alerts)).toBe(true);
       expect(aggregate.subscription.id).toBe(detail.subscription.id);
       expect(aggregate.cycles).toHaveLength(detail.cycles_raw.length);
       expect(aggregate.events).toHaveLength(aggregate.cycles.length);
@@ -54,6 +54,7 @@ describe('Billing Aggregate — Golden Dataset harness', () => {
         expect(aggregate.calendar).toEqual([]);
         expect(aggregate.sidebar.lastEventDate).toBeNull();
         expect(aggregate.nextInvoice).toBeNull();
+        expect(aggregate.alerts.some((a) => a.kind === 'no_events')).toBe(true);
       }
     }
   });

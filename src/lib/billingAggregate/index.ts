@@ -1,5 +1,8 @@
 export type {
   BillingAggregate,
+  BillingAlertKind,
+  BillingAlertMetadata,
+  BillingAlertSeverity,
   BillingAlertSnapshot,
   BillingCalendarEntryMetadata,
   BillingCalendarSnapshot,
@@ -65,6 +68,8 @@ export { mapEventToCalendarEntry, buildCalendarFromEvents } from './calendarSnap
 export { buildSidebarFromAggregate } from './sidebarSnapshot';
 
 export { resolveNextInvoiceFromEvents } from './nextInvoiceSnapshot';
+
+export { buildAlertsFromAggregate } from './alertsSnapshot';
 
 export {
   subscriptionStage,

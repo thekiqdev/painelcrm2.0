@@ -35,7 +35,7 @@ describe('BillingAggregateFactory', () => {
     expect(billingAggregateSignature(a)).toBe(billingAggregateSignature(b));
   });
 
-  it('alerts vazios; stages até nextInvoice populadas (5.0-12–5.0-18)', () => {
+  it('capabilities vazias; stages até alerts populadas (5.0-12–5.0-19)', () => {
     const detail = buildGoldenDetail();
     const aggregate = buildBillingAggregateFromDetail(detail, '2026-06-30');
 
@@ -50,8 +50,8 @@ describe('BillingAggregateFactory', () => {
     expect(aggregate.sidebar.subscriptionStatus).toBe(aggregate.subscription.status);
     expect(aggregate.nextInvoice).not.toBeNull();
     expect(aggregate.nextInvoice!.eventId).toBeTruthy();
+    expect(aggregate.alerts.length).toBeGreaterThan(0);
     expect(aggregate.timeline).toEqual([]);
-    expect(aggregate.alerts).toEqual([]);
     expect(aggregate.invoices).toEqual([]);
     expect(aggregate.capabilities).toEqual({ canGenerate: false, supportsGenerate: false });
     expect(aggregate.technical).toEqual({ workerStatus: null, engineVersion: null });
