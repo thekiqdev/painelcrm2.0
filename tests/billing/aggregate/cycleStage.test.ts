@@ -163,9 +163,14 @@ describe('CycleStage', () => {
     expect(snapshotBillingContextSource(detail)).toBe(before);
   });
 
-  it('não popula events, history ou calendar', () => {
+  it('cycleStage isolada não popula history/calendar; pipeline completo preenche history', () => {
+    const context = createBillingContext(buildGoldenDetail(), '2026-06-30');
+    const afterCycles = cycleStage(context, createEmptyBillingAggregate(context));
+    expect(afterCycles.history).toEqual([]);
+    expect(afterCycles.calendar).toEqual([]);
+
     const aggregate = buildBillingAggregateFromDetail(buildGoldenDetail(), '2026-06-30');
-    expect(aggregate.history).toEqual([]);
+    expect(aggregate.history).toHaveLength(aggregate.events.length);
     expect(aggregate.calendar).toEqual([]);
   });
 

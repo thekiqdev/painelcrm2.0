@@ -1,6 +1,7 @@
 import type { BillingAggregate, BillingAggregateStage, BillingContext } from './types';
 import { mapCyclesFromSource } from './cycleSnapshot';
 import { buildFinancialEventsFromAggregate } from './financialEventSnapshot';
+import { buildHistoryFromEvents } from './historySnapshot';
 import { mapSubscriptionSnapshot } from './subscriptionSnapshot';
 
 /** Sprint 5.0-12 — popula `aggregate.subscription` a partir de `context.source.subscription`. */
@@ -24,8 +25,11 @@ export const financialEventStage: BillingAggregateStage = (_context, aggregate) 
   events: buildFinancialEventsFromAggregate(aggregate.subscription, aggregate.cycles),
 });
 
-/** Sprint 5.0-11 — placeholder; popula `history` em sprint futura. */
-export const historyStage: BillingAggregateStage = (_context, aggregate) => aggregate;
+/** Sprint 5.0-15 — popula `aggregate.history` exclusivamente a partir de `aggregate.events`. */
+export const historyStage: BillingAggregateStage = (_context, aggregate) => ({
+  ...aggregate,
+  history: buildHistoryFromEvents(aggregate.events),
+});
 
 /** Sprint 5.0-11 — placeholder; popula `calendar` em sprint futura. */
 export const calendarStage: BillingAggregateStage = (_context, aggregate) => aggregate;

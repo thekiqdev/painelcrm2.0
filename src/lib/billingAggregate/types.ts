@@ -112,14 +112,30 @@ export type BillingFinancialEventSnapshot = {
   metadata: BillingFinancialEventMetadata;
 };
 
+/** Metadados da linha de histórico (cópia do evento — sem regras). */
+export type BillingHistoryRowMetadata = {
+  invoiceId: string | null;
+  jobId: string | null;
+  periodStart: string;
+  periodEnd: string;
+  skippedReason: string | null;
+  errorMessage: string | null;
+  amount: number;
+  currency: string;
+  eventType: BillingFinancialEventType;
+};
+
+/** Linha de histórico do Aggregate (Sprint 5.0-15) — projeção 1:1 de events. */
 export type BillingHistorySnapshot = {
   id: string;
-  cycleId: string | null;
-  invoiceId: string | null;
-  dueYmd: string | null;
-  statusLabel: string;
-  canGenerate: boolean;
-  isProjected: boolean;
+  eventId: string;
+  cycleId: string;
+  subscriptionId: string;
+  type: BillingFinancialEventType;
+  status: string;
+  date: string;
+  title: string;
+  metadata: BillingHistoryRowMetadata;
 };
 
 export type BillingCalendarSnapshot = {

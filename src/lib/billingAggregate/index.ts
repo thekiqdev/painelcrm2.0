@@ -11,6 +11,7 @@ export type {
   BillingFinancialEventMetadata,
   BillingFinancialEventSnapshot,
   BillingFinancialEventType,
+  BillingHistoryRowMetadata,
   BillingHistorySnapshot,
   BillingInvoiceSnapshot,
   BillingNextInvoiceSnapshot,
@@ -53,6 +54,8 @@ export {
   mapCycleToFinancialEvent,
   buildFinancialEventsFromAggregate,
 } from './financialEventSnapshot';
+
+export { mapEventToHistoryRow, buildHistoryFromEvents } from './historySnapshot';
 
 export {
   subscriptionStage,
