@@ -1,0 +1,33 @@
+{
+  "scenarioId": "subscription-cancelled",
+  "todayYmd": "2026-06-30",
+  "history": {
+    "rowCount": 0,
+    "rows": [],
+    "generateCycleIds": []
+  },
+  "calendar": {
+    "eventCount": 0,
+    "events": [],
+    "projectedCount": 0
+  },
+  "sidebar": {
+    "alertKinds": [],
+    "alertCount": 0,
+    "nextReceiptDate": "—",
+    "openAmount": "R$ 0,00"
+  },
+  "nextInvoice": {
+    "cycleId": null,
+    "invoiceId": null,
+    "isProjected": false,
+    "dueYmd": null,
+    "statusLabel": "Cancelada",
+    "showGenerate": false
+  },
+  "financialEvents": {
+    "realCount": 0,
+    "projectedCount": 0,
+    "events": []
+  }
+}
