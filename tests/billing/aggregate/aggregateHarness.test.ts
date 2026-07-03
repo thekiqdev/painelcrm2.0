@@ -27,25 +27,27 @@ describe('Billing Aggregate — Golden Dataset harness', () => {
     expect(GOLDEN_SCENARIOS.length).toBeGreaterThanOrEqual(40);
   });
 
-  it('calendar/sidebar vazios; subscription, cycles, events e history populados (5.0-12–5.0-15)', () => {
+  it('sidebar vazia; subscription, cycles, events, history e calendar populados (5.0-12–5.0-16)', () => {
     for (const scenario of GOLDEN_SCENARIOS) {
       const detail = scenario.build();
       const aggregate = buildBillingAggregateFromDetail(detail, scenario.todayYmd);
-      expect(aggregate.calendar).toEqual([]);
       expect(aggregate.alerts).toEqual([]);
       expect(aggregate.subscription.id).toBe(detail.subscription.id);
       expect(aggregate.cycles).toHaveLength(detail.cycles_raw.length);
       expect(aggregate.events).toHaveLength(aggregate.cycles.length);
       expect(aggregate.history).toHaveLength(aggregate.events.length);
+      expect(aggregate.calendar).toHaveLength(aggregate.events.length);
       expect(aggregate.cycles.map((c) => c.id)).toEqual(detail.cycles_raw.map((c) => c.id));
       expect(aggregate.cycles.map((c) => c.status)).toEqual(detail.cycles_raw.map((c) => c.status));
       if (aggregate.cycles.length > 0) {
         expect(aggregate.events.every((e) => e.cycleId)).toBe(true);
         const eventIds = new Set(aggregate.events.map((e) => e.id));
         expect(aggregate.history.every((r) => eventIds.has(r.eventId))).toBe(true);
+        expect(aggregate.calendar.every((e) => eventIds.has(e.eventId))).toBe(true);
       } else {
         expect(aggregate.events).toEqual([]);
         expect(aggregate.history).toEqual([]);
+        expect(aggregate.calendar).toEqual([]);
       }
     }
   });

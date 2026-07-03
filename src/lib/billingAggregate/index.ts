@@ -1,6 +1,7 @@
 export type {
   BillingAggregate,
   BillingAlertSnapshot,
+  BillingCalendarEntryMetadata,
   BillingCalendarSnapshot,
   BillingCapabilitySnapshot,
   BillingContext,
@@ -56,6 +57,8 @@ export {
 } from './financialEventSnapshot';
 
 export { mapEventToHistoryRow, buildHistoryFromEvents } from './historySnapshot';
+
+export { mapEventToCalendarEntry, buildCalendarFromEvents } from './calendarSnapshot';
 
 export {
   subscriptionStage,

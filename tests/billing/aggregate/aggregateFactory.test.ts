@@ -35,7 +35,7 @@ describe('BillingAggregateFactory', () => {
     expect(billingAggregateSignature(a)).toBe(billingAggregateSignature(b));
   });
 
-  it('views calendar/sidebar vazias; subscription, cycles, events e history populados (5.0-12–5.0-15)', () => {
+  it('sidebar vazia; subscription, cycles, events, history e calendar populados (5.0-12–5.0-16)', () => {
     const detail = buildGoldenDetail();
     const aggregate = buildBillingAggregateFromDetail(detail, '2026-06-30');
 
@@ -45,7 +45,7 @@ describe('BillingAggregateFactory', () => {
     expect(aggregate.cycles[0]?.id).toBe(detail.cycles_raw[0]?.id);
     expect(aggregate.events).toHaveLength(detail.cycles_raw.length);
     expect(aggregate.history).toHaveLength(aggregate.events.length);
-    expect(aggregate.calendar).toEqual([]);
+    expect(aggregate.calendar).toHaveLength(aggregate.events.length);
     expect(aggregate.timeline).toEqual([]);
     expect(aggregate.alerts).toEqual([]);
     expect(aggregate.invoices).toEqual([]);

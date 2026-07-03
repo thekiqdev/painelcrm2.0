@@ -54,7 +54,7 @@ describe('BillingAggregate pipeline stages', () => {
     expect(result.cycles).toHaveLength(0);
   });
 
-  it('CycleStage, FinancialEventStage e HistoryStage populam em cadeia', () => {
+  it('CycleStage → FinancialEvent → History → Calendar populam em cadeia', () => {
     const context = createBillingContext(buildGoldenDetail(), '2026-06-30');
     const afterSub = subscriptionStage(context, createEmptyBillingAggregate(context));
     const afterCycles = cycleStage(context, afterSub);
@@ -63,6 +63,8 @@ describe('BillingAggregate pipeline stages', () => {
     expect(afterEvents.events).toHaveLength(afterCycles.cycles.length);
     const afterHistory = historyStage(context, afterEvents);
     expect(afterHistory.history).toHaveLength(afterEvents.events.length);
+    const afterCalendar = calendarStage(context, afterHistory);
+    expect(afterCalendar.calendar).toHaveLength(afterEvents.events.length);
   });
 
   it.each(
@@ -71,7 +73,8 @@ describe('BillingAggregate pipeline stages', () => {
         name !== 'SubscriptionStage' &&
         name !== 'CycleStage' &&
         name !== 'FinancialEventStage' &&
-        name !== 'HistoryStage'
+        name !== 'HistoryStage' &&
+        name !== 'CalendarStage'
     )
   )('%s permanece passthrough (placeholder)', (_name, stage) => {
     const context = createBillingContext(buildGoldenDetail(), '2026-06-30');
@@ -82,7 +85,7 @@ describe('BillingAggregate pipeline stages', () => {
     expect(result.events).toHaveLength(0);
   });
 
-  it('runBillingAggregatePipeline aplica stages até History', () => {
+  it('runBillingAggregatePipeline aplica stages até Calendar', () => {
     const context = createBillingContext(buildGoldenDetail(), '2026-06-30');
     const result = runBillingAggregatePipeline(context, createEmptyBillingAggregate(context));
     expect(result.subscriptionId).toBe('sub-golden');
@@ -90,6 +93,7 @@ describe('BillingAggregate pipeline stages', () => {
     expect(result.cycles).toHaveLength(context.source.cycles_raw.length);
     expect(result.events).toHaveLength(result.cycles.length);
     expect(result.history).toHaveLength(result.events.length);
-    expect(result.calendar).toEqual([]);
+    expect(result.calendar).toHaveLength(result.events.length);
+    expect(result.alerts).toEqual([]);
   });
 });

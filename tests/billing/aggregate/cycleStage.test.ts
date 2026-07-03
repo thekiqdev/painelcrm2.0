@@ -163,7 +163,7 @@ describe('CycleStage', () => {
     expect(snapshotBillingContextSource(detail)).toBe(before);
   });
 
-  it('cycleStage isolada não popula history/calendar; pipeline completo preenche history', () => {
+  it('cycleStage isolada não popula history/calendar; pipeline completo preenche ambos', () => {
     const context = createBillingContext(buildGoldenDetail(), '2026-06-30');
     const afterCycles = cycleStage(context, createEmptyBillingAggregate(context));
     expect(afterCycles.history).toEqual([]);
@@ -171,7 +171,7 @@ describe('CycleStage', () => {
 
     const aggregate = buildBillingAggregateFromDetail(buildGoldenDetail(), '2026-06-30');
     expect(aggregate.history).toHaveLength(aggregate.events.length);
-    expect(aggregate.calendar).toEqual([]);
+    expect(aggregate.calendar).toHaveLength(aggregate.events.length);
   });
 
   it('mapCyclesFromSource é determinístico', () => {

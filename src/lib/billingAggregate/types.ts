@@ -138,13 +138,28 @@ export type BillingHistorySnapshot = {
   metadata: BillingHistoryRowMetadata;
 };
 
+/** Metadados da entrada de calendário (cópia do evento — sem regras). */
+export type BillingCalendarEntryMetadata = {
+  invoiceId: string | null;
+  jobId: string | null;
+  periodStart: string;
+  periodEnd: string;
+  skippedReason: string | null;
+  errorMessage: string | null;
+  amount: number;
+  currency: string;
+};
+
+/** Entrada de calendário do Aggregate (Sprint 5.0-16) — projeção 1:1 de events. */
 export type BillingCalendarSnapshot = {
   id: string;
-  ymd: string;
-  cycleId: string | null;
-  invoiceId: string | null;
-  isProjected: boolean;
-  supportsGenerate: boolean;
+  eventId: string;
+  cycleId: string;
+  subscriptionId: string;
+  date: string;
+  eventType: BillingFinancialEventType;
+  status: string;
+  metadata: BillingCalendarEntryMetadata;
 };
 
 export type BillingSidebarSnapshot = {
