@@ -19,3 +19,17 @@ export type {
   ShadowExecutionReport,
   ShadowPerformanceMetrics,
 } from './shadowRuntime';
+
+export {
+  certifyScenario,
+  runShadowCertification,
+  classifyDivergenceSummary,
+} from './shadowCertification';
+export type {
+  DivergenceClass,
+  SurfaceName,
+  SurfaceDivergence,
+  SurfaceParity,
+  ScenarioCertification,
+  ShadowCertificationReport,
+} from './shadowCertification';
