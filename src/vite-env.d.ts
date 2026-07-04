@@ -12,6 +12,8 @@ interface ImportMetaEnv {
   readonly VITE_CHAT_MEDIA_DEBUG?: string;
   /** Logs de diagnóstico da pipeline de avatar (URL bruta vs bloqueio WhatsApp no browser). */
   readonly VITE_CHAT_AVATAR_DEBUG?: string;
+  /** Sprint 5.0-21 — Shadow Mode: executa BillingAggregate em paralelo ao FinancialEventStore (default off). */
+  readonly VITE_BILLING_SHADOW_MODE?: string;
 }
 
 interface ImportMeta {

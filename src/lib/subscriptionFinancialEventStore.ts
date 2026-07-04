@@ -1,10 +1,18 @@
 import type { CrmSubscriptionDetailPayload } from '@/services/crmSubscriptions';
+import { isBillingShadowModeEnabled } from '@/lib/billingShadow/featureFlag';
+import { runBillingShadowSideEffect } from '@/lib/billingShadow/shadowRuntime';
 import { shiftMonthKey } from './billingSubscriptionExperiencePolish';
 import { intervalLabel } from '@/components/subscriptions/subscriptionsListUtils';
 import { subscriptionHeadlineStatus } from './billingSubscriptionExperience';
 import type { FinancialHistoryRow } from './billingSubscriptionExperience';
 import type { CalendarVisualKind } from './billingSubscriptionExperience';
 import { buildFinancialEvents } from './subscriptionFinancialEventBuilder';
+import {
+  buildProjectionEvents,
+  isProjectedFinancialEvent,
+  mergeRealAndProjectionEvents,
+} from './subscriptionFinancialProjection';
+import { resolveFirstEligibleCycle, cycleSupportsManualGenerate } from './subscriptionCyclesSource';
 import {
   financialEventToHistoryRow,
   resolveNextChargeEvent,
@@ -74,6 +82,9 @@ function visualFromEvent(ev: FinancialEvent, today: string): CalendarVisualKind 
 }
 
 export class FinancialEventStore {
+  /** Eventos reais (subscription_cycles) — única fonte para Billing. */
+  readonly realEvents: FinancialEvent[];
+  /** Eventos reais + projeções UX (Sprint 4.2H). */
   readonly events: FinancialEvent[];
   readonly subscriptionId: string;
   readonly today: string;
@@ -88,13 +99,15 @@ export class FinancialEventStore {
   private _byDayCache: Map<string, FinancialEvent[]> | null = null;
 
   constructor(
-    private readonly detail: CrmSubscriptionDetailPayload,
+    readonly detail: CrmSubscriptionDetailPayload,
     todayYmd?: string
   ) {
     this.today = todayYmd ?? new Date().toISOString().slice(0, 10);
     this.subscriptionId = detail.subscription.id;
     this.builtAt = new Date().toISOString();
-    this.events = buildFinancialEvents(detail, this.today);
+    this.realEvents = buildFinancialEvents(detail, this.today);
+    const projections = buildProjectionEvents(detail, this.today);
+    this.events = mergeRealAndProjectionEvents(this.realEvents, projections);
   }
 
   getEventsByDay(): Map<string, FinancialEvent[]> {
@@ -115,22 +128,24 @@ export class FinancialEventStore {
     this._calendarCache = this.events.map((ev) => {
       const overdue = ev.type === 'invoice_due' && Boolean(ev.dueYmd && ev.dueYmd < this.today);
       const kind = eventToCalendarKind(ev.type, overdue);
+      const projected = isProjectedFinancialEvent(ev);
       return {
         id: ev.id,
         ymd: ev.ymd,
         kind,
         emoji: eventEmoji(ev.type),
-        title: timelineTitle(ev.type),
+        title: projected ? 'Prevista' : timelineTitle(ev.type),
         amountCents: ev.amountCents,
         competence: ev.competence,
         invoiceId: ev.invoiceId,
-        statusPt: ev.statusLabel,
+        statusPt: projected ? 'Prevista' : ev.statusLabel,
         gateway: ev.gateway,
         paidAt: ev.paidAt,
         clientName: ev.clientName,
         lastUpdatedAt: ev.lastUpdatedAt,
         cycleId: ev.cycleId,
         notes: ev.notes,
+        isProjected: projected,
       };
     });
     return this._calendarCache;
@@ -138,14 +153,12 @@ export class FinancialEventStore {
 
   getHistoryRows(): FinancialHistoryRow[] {
     if (this._historyCache) return this._historyCache;
-    const nextCharge = resolveNextChargeEvent(this.events, this.today);
-    const nextChargeId = nextCharge?.id ?? null;
+    const nextCycleId = resolveFirstEligibleCycle(this.detail)?.id ?? null;
     const HISTORY_TYPES: FinancialEventType[] = [...HISTORY_EVENT_TYPES, 'upcoming_cycle'];
     const byCycle = new Map<string, FinancialEvent>();
-    for (const ev of this.events) {
+    for (const ev of this.realEvents) {
       if (!HISTORY_TYPES.includes(ev.type)) continue;
-      // Histórico exibe apenas a próxima cobrança prevista; demais ficam no calendário.
-      if (ev.type === 'upcoming_cycle' && ev.id !== nextChargeId) continue;
+      if (!ev.cycleId) continue;
       const existing = byCycle.get(ev.cycleKey);
       if (!existing || eventTypePriority(ev.type) < eventTypePriority(existing.type)) {
         byCycle.set(ev.cycleKey, ev);
@@ -154,13 +167,14 @@ export class FinancialEventStore {
     this._historyCache = [...byCycle.values()]
       .map((ev) => {
         const row = financialEventToHistoryRow(ev, this.today, {
-          isNextCharge: ev.id === nextChargeId,
-          canGenerateNow: ev.id === nextChargeId && !ev.invoiceId && ev.type === 'upcoming_cycle',
+          isNextCharge: ev.cycleId === nextCycleId,
+          canGenerateNow: cycleSupportsManualGenerate(this.detail, ev.cycleId),
+          isProjected: false,
         });
         const state = resolveHistoryRowState(row, this.today);
         return {
           ...row,
-          canGenerateNow: state.showGenerateButton,
+          canGenerateNow: cycleSupportsManualGenerate(this.detail, ev.cycleId),
           statusPt: state.label === '—' ? row.statusPt : state.label,
         };
       })
@@ -199,7 +213,7 @@ export class FinancialEventStore {
   }
 
   private historyCategory(row: FinancialHistoryRow): FinancialHistoryFilter {
-    if (row.statusPt === 'Prevista' || row.visual === 'future') return 'pending';
+    if (row.isProjected || (row.statusPt === 'Prevista' && !row.cycleId)) return 'pending';
     if (row.statusPt === 'Reembolsada') return 'refunded';
     if (row.visual === 'cancelled' || row.statusPt === 'Cancelado') return 'cancelled';
     if (row.visual === 'paid' || row.statusPt === 'Pago') return 'paid';
@@ -253,8 +267,8 @@ export class FinancialEventStore {
 
   getKpiCards(): FinancialKpiCard[] {
     if (this._kpiCache) return this._kpiCache;
-    const payments = this.events.filter((e) => KPI_PAYMENT_TYPES.includes(e.type));
-    const open = this.events.filter((e) => KPI_OPEN_TYPES.includes(e.type));
+    const payments = this.realEvents.filter((e) => KPI_PAYMENT_TYPES.includes(e.type));
+    const open = this.realEvents.filter((e) => KPI_OPEN_TYPES.includes(e.type));
     const receivedTotal = payments.reduce((s, e) => s + (e.amountCents ?? 0), 0);
     const openTotal = open.reduce((s, e) => s + (e.amountCents ?? 0), 0);
     const lastPayment = [...payments].sort((a, b) => b.ymd.localeCompare(a.ymd))[0];
@@ -324,7 +338,7 @@ export class FinancialEventStore {
 
   getInsights(): FinancialInsight[] {
     if (this._insightsCache) return this._insightsCache;
-    this._insightsCache = buildFinancialInsights(this.events, this.detail, this.today);
+    this._insightsCache = buildFinancialInsights(this.realEvents, this.detail, this.today);
     return this._insightsCache;
   }
 
@@ -350,8 +364,15 @@ export class FinancialEventStore {
       if (ev.type === 'invoice_due' && ev.dueYmd && ev.dueYmd < this.today) continue;
       if (seen.has(ev.ymd)) continue;
       seen.add(ev.ymd);
-      const statusLabel =
-        ev.type === 'upcoming_cycle' ? (paused ? 'Pausado' : 'Prevista') : ev.statusLabel;
+      const statusLabel = isProjectedFinancialEvent(ev)
+        ? this.detail.subscription.status === 'paused'
+          ? 'Pausado'
+          : 'Prevista'
+        : ev.type === 'upcoming_cycle'
+          ? paused
+            ? 'Pausado'
+            : 'Prevista'
+          : ev.statusLabel;
       items.push({
         id: ev.id,
         ymd: ev.ymd,
@@ -369,7 +390,7 @@ export class FinancialEventStore {
   }
 
   getNextChargeEvent(): FinancialEvent | null {
-    return resolveNextChargeEvent(this.events, this.today);
+    return resolveNextChargeEvent(this.realEvents, this.detail);
   }
 
   getNextChargePresentation() {
@@ -377,10 +398,10 @@ export class FinancialEventStore {
   }
 
   getSidebarSummary() {
-    const payments = this.events.filter((e) => e.type === 'payment');
+    const payments = this.realEvents.filter((e) => e.type === 'payment');
     const last = [...payments].sort((a, b) => b.ymd.localeCompare(a.ymd))[0];
     const nextCharge = this.getNextChargePresentation();
-    const open = this.events
+    const open = this.realEvents
       .filter((e) => KPI_OPEN_TYPES.includes(e.type))
       .reduce((s, e) => s + (e.amountCents ?? 0), 0);
     return {
@@ -411,7 +432,7 @@ export class FinancialEventStore {
   }
 
   getPaymentEventIds(): Set<string> {
-    return new Set(this.events.filter((e) => e.type === 'payment').map((e) => e.id));
+    return new Set(this.realEvents.filter((e) => e.type === 'payment').map((e) => e.id));
   }
 
   getEventById(id: string): FinancialEvent | undefined {
@@ -427,7 +448,23 @@ export function createFinancialEventStore(
   detail: CrmSubscriptionDetailPayload,
   todayYmd?: string
 ): FinancialEventStore {
-  return new FinancialEventStore(detail, todayYmd);
+  // Sprint 5.0-21 — Shadow Mode: Aggregate em paralelo; UI usa apenas o store legado.
+  // Flag default off (VITE_BILLING_SHADOW_MODE). Erros do Aggregate nunca afetam a UI.
+  if (!isBillingShadowModeEnabled()) {
+    return new FinancialEventStore(detail, todayYmd);
+  }
+
+  const legacyStart = performance.now();
+  const store = new FinancialEventStore(detail, todayYmd);
+  const legacyMs = performance.now() - legacyStart;
+
+  try {
+    runBillingShadowSideEffect(detail, store, legacyMs);
+  } catch {
+    // isolamento total — falha no shadow nunca quebra o store legado
+  }
+
+  return store;
 }
 
 export function financialEventStoreSignature(detail: CrmSubscriptionDetailPayload): string {
