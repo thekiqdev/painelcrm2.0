@@ -1,3 +1,4 @@
+import { GENERATABLE_CYCLE_STATUSES } from './aggregateDateUtils';
 import type {
   BillingAlertSnapshot,
   BillingCalendarSnapshot,
@@ -10,13 +11,6 @@ import type {
   BillingSubscriptionSnapshot,
 } from './types';
 
-const GENERATABLE_EVENT_TYPES = new Set([
-  'cycle_pending',
-  'cycle_queued',
-  'invoice_failed',
-  'cycle_skipped',
-]);
-
 export type CapabilitiesAggregateInput = {
   subscription: BillingSubscriptionSnapshot;
   cycles: BillingCycleSnapshot[];
@@ -28,31 +22,46 @@ export type CapabilitiesAggregateInput = {
   alerts: BillingAlertSnapshot[];
 };
 
+export function cycleSupportsManualGenerateFromAggregate(
+  subscription: BillingSubscriptionSnapshot,
+  cycles: BillingCycleSnapshot[],
+  cycleId: string | null | undefined
+): boolean {
+  if (subscription.status === 'cancelled') return false;
+  if (!cycleId?.trim()) return false;
+  const cycle = cycles.find((c) => c.id === cycleId.trim());
+  if (!cycle || cycle.invoiceId) return false;
+  return GENERATABLE_CYCLE_STATUSES.has(cycle.status.trim().toLowerCase());
+}
+
 /**
- * Projeta `aggregate.capabilities` a partir do Aggregate completo.
- * Sprint 5.0-20: flags determinísticas — sem motor legado, sem ações, sem UI.
+ * Capabilities alinhadas a cycleSupportsManualGenerate / status da assinatura.
  */
 export function buildCapabilitiesFromAggregate(
   input: CapabilitiesAggregateInput
 ): BillingCapabilitySnapshot {
   const { subscription, cycles, events, history, calendar, nextInvoice, alerts } = input;
   const status = subscription.status;
+  const real = events.filter((e) => e.kind === 'real');
 
-  const failedEventCount = events.filter((e) => e.eventType === 'invoice_failed').length;
-  const paymentEventCount = events.filter((e) => e.eventType === 'payment').length;
-  const eventsWithInvoiceCount = events.filter((e) => Boolean(e.metadata.invoiceId)).length;
+  const failedEventCount = real.filter((e) => e.eventType === 'invoice_failed').length;
+  const paymentEventCount = real.filter((e) => e.eventType === 'payment').length;
+  const eventsWithInvoiceCount = real.filter((e) => Boolean(e.metadata.invoiceId)).length;
 
-  const hasGeneratableEvent = events.some(
-    (e) => GENERATABLE_EVENT_TYPES.has(e.eventType) && !e.metadata.invoiceId
+  const generatableCycles = cycles.filter(
+    (c) =>
+      !c.invoiceId && GENERATABLE_CYCLE_STATUSES.has(c.status.trim().toLowerCase())
   );
+  const canGenerate =
+    status !== 'cancelled' && generatableCycles.length > 0;
 
   const hasInvoice =
     eventsWithInvoiceCount > 0 || Boolean(nextInvoice?.metadata.invoiceId);
 
   return {
-    canGenerate: status === 'active' && hasGeneratableEvent,
-    canRetry: status === 'active' && failedEventCount > 0,
-    canCancel: status === 'active' && events.length > 0,
+    canGenerate,
+    canRetry: status !== 'cancelled' && failedEventCount > 0,
+    canCancel: status === 'active' && real.length > 0,
     canRefund: paymentEventCount > 0,
     canPause: status === 'active',
     canResume: status === 'paused',
@@ -64,7 +73,7 @@ export function buildCapabilitiesFromAggregate(
       subscriptionId: subscription.id,
       subscriptionStatus: status,
       cycleCount: cycles.length,
-      eventCount: events.length,
+      eventCount: real.length,
       historyCount: history.length,
       calendarCount: calendar.length,
       alertCount: alerts.length,

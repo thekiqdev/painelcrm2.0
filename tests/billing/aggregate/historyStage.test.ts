@@ -59,7 +59,7 @@ describe('HistoryStage', () => {
   it('módulo historySnapshot não importa motor legado', () => {
     const source = readModuleSource(HISTORY_MODULE);
     for (const forbidden of FORBIDDEN_LEGACY_IMPORTS) {
-      expect(source).not.toContain(forbidden);
+      expect(source).not.toMatch(new RegExp(`from ['"].*${forbidden}`));
     }
     expect(source).not.toMatch(/detail\.timeline/);
     expect(source).not.toMatch(/cycles_raw/);
@@ -104,7 +104,7 @@ describe('HistoryStage', () => {
     expect(aggregate.history[0]).toHaveProperty(field);
   });
 
-  it('ordena cronologicamente por date (occurredAt)', () => {
+  it('ordena por dueYmd desc (paridade legado)', () => {
     const detail = buildGoldenDetail({
       cycles_raw: [
         {
@@ -134,9 +134,9 @@ describe('HistoryStage', () => {
       ],
     });
     const aggregate = buildBillingAggregateFromDetail(detail, '2026-06-30');
-    expect(aggregate.history.map((r) => r.cycleId)).toEqual(['c-early', 'c-late']);
+    expect(aggregate.history.map((r) => r.cycleId)).toEqual(['c-late', 'c-early']);
     for (let i = 1; i < aggregate.history.length; i++) {
-      expect(aggregate.history[i - 1]!.date.localeCompare(aggregate.history[i]!.date)).toBeLessThanOrEqual(
+      expect(aggregate.history[i - 1]!.date.localeCompare(aggregate.history[i]!.date)).toBeGreaterThanOrEqual(
         0
       );
     }

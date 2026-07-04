@@ -4,28 +4,26 @@ import type {
   BillingHistorySnapshot,
 } from './types';
 
-/** Títulos estáticos por eventType — sem regras de negócio. */
 const EVENT_TYPE_TITLE: Record<BillingFinancialEventType, string> = {
   cycle_pending: 'Ciclo pendente',
   cycle_queued: 'Ciclo na fila',
   cycle_processing: 'Ciclo em processamento',
   invoice_generated: 'Fatura gerada',
+  invoice_due: 'Fatura em aberto',
   payment: 'Pagamento',
   invoice_failed: 'Falha na fatura',
   cycle_cancelled: 'Ciclo cancelado',
   cycle_skipped: 'Ciclo ignorado',
   cycle_unknown: 'Evento de ciclo',
+  upcoming_cycle: 'Prevista',
 };
 
 function titleForEventType(eventType: BillingFinancialEventType): string {
   return EVENT_TYPE_TITLE[eventType] ?? EVENT_TYPE_TITLE.cycle_unknown;
 }
 
-/**
- * Converte um FinancialEvent do Aggregate em HistoryRow (1:1).
- * Sprint 5.0-15: sem cycles, timeline, elegibilidade ou Generate.
- */
-export function mapEventToHistoryRow(event: BillingFinancialEventSnapshot): BillingHistorySnapshot {
+export function mapEventToHistoryRow(event: BillingFinancialEventSnapshot): BillingHistorySnapshot | null {
+  if (event.kind === 'projected' || !event.cycleId) return null;
   return {
     id: `history-${event.id}`,
     eventId: event.id,
@@ -33,7 +31,7 @@ export function mapEventToHistoryRow(event: BillingFinancialEventSnapshot): Bill
     subscriptionId: event.subscriptionId,
     type: event.eventType,
     status: event.status,
-    date: event.occurredAt,
+    date: event.dueYmd,
     title: titleForEventType(event.eventType),
     metadata: {
       invoiceId: event.metadata.invoiceId,
@@ -50,17 +48,16 @@ export function mapEventToHistoryRow(event: BillingFinancialEventSnapshot): Bill
 }
 
 /**
- * Projeta `aggregate.history` exclusivamente a partir de `aggregate.events`.
- * Ordenação cronológica por `occurredAt` (asc), desempate por `id`.
- * Uma linha por evento — sem consolidação nem deduplicação.
+ * History apenas de eventos reais com cycleId.
+ * Ordenação: dueYmd desc (paridade com FinancialEventStore.getHistoryRows).
  */
 export function buildHistoryFromEvents(
   events: BillingFinancialEventSnapshot[]
 ): BillingHistorySnapshot[] {
-  const sorted = [...events].sort((a, b) => {
-    const byDate = a.occurredAt.localeCompare(b.occurredAt);
-    if (byDate !== 0) return byDate;
-    return a.id.localeCompare(b.id);
-  });
-  return sorted.map(mapEventToHistoryRow);
+  const rows = events
+    .map(mapEventToHistoryRow)
+    .filter((r): r is BillingHistorySnapshot => r != null);
+  return rows.sort(
+    (a, b) => b.date.localeCompare(a.date) || a.cycleId.localeCompare(b.cycleId)
+  );
 }

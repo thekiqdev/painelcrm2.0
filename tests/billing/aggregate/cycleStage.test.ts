@@ -171,7 +171,7 @@ describe('CycleStage', () => {
 
     const aggregate = buildBillingAggregateFromDetail(buildGoldenDetail(), '2026-06-30');
     expect(aggregate.history).toHaveLength(aggregate.events.length);
-    expect(aggregate.calendar).toHaveLength(aggregate.events.length);
+    expect(aggregate.calendar.length).toBeGreaterThanOrEqual(aggregate.events.length);
   });
 
   it('mapCyclesFromSource é determinístico', () => {

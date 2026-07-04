@@ -28,6 +28,7 @@ export type AggregateShadowSnapshot = {
   eventCount: number;
   historyCount: number;
   calendarCount: number;
+  projectedCalendarCount: number;
   alertCount: number;
   eventIds: string[];
   historyCycleIds: string[];
@@ -35,6 +36,7 @@ export type AggregateShadowSnapshot = {
   nextInvoiceEventId: string | null;
   nextInvoiceCycleId: string | null;
   nextInvoiceDate: string | null;
+  nextInvoiceIsProjected: boolean;
   capabilities: {
     canGenerate: boolean;
     canRetry: boolean;
@@ -85,16 +87,21 @@ export function buildAggregateShadowSnapshot(
     engine: 'aggregate',
     subscriptionId: aggregate.subscriptionId,
     todayYmd: aggregate.todayYmd,
-    eventCount: aggregate.events.length,
+    eventCount: aggregate.events.filter((e) => e.kind === 'real').length,
     historyCount: aggregate.history.length,
     calendarCount: aggregate.calendar.length,
+    projectedCalendarCount: aggregate.calendar.filter((e) => e.isProjected).length,
     alertCount: aggregate.alerts.length,
     eventIds: aggregate.events.map((e) => e.id).sort(),
     historyCycleIds: aggregate.history.map((r) => r.cycleId).sort(),
-    calendarCycleIds: aggregate.calendar.map((e) => e.cycleId).sort(),
+    calendarCycleIds: aggregate.calendar
+      .map((e) => e.cycleId ?? '')
+      .filter(Boolean)
+      .sort(),
     nextInvoiceEventId: aggregate.nextInvoice?.eventId ?? null,
     nextInvoiceCycleId: aggregate.nextInvoice?.cycleId ?? null,
     nextInvoiceDate: aggregate.nextInvoice?.date ?? null,
+    nextInvoiceIsProjected: aggregate.nextInvoice?.isProjected ?? false,
     capabilities: {
       canGenerate: aggregate.capabilities.canGenerate,
       canRetry: aggregate.capabilities.canRetry,

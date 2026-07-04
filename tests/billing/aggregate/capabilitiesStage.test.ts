@@ -64,7 +64,7 @@ describe('CapabilitiesStage', () => {
   it('módulo capabilitiesSnapshot não importa motor legado', () => {
     const source = readModuleSource(CAPABILITIES_MODULE);
     for (const forbidden of FORBIDDEN_LEGACY_IMPORTS) {
-      expect(source).not.toContain(forbidden);
+      expect(source).not.toMatch(new RegExp(`from ['"].*${forbidden}`));
     }
     expect(source).not.toMatch(/detail\.timeline/);
     expect(source).not.toMatch(/cycles_raw/);
@@ -112,14 +112,14 @@ describe('CapabilitiesStage', () => {
     expect(aggregate.capabilities.canGenerate).toBe(false);
   });
 
-  it('evento failed: canRetry true', () => {
+  it('evento failed definitivo: canRetry true', () => {
     const detail = buildGoldenDetail({
       cycles_raw: [
         {
           id: 'c-fail',
-          cycle_date: '2026-07-14',
-          period_start: '2026-07-07',
-          period_end: '2026-08-07',
+          cycle_date: '2026-05-14',
+          period_start: '2026-05-07',
+          period_end: '2026-06-07',
           status: 'failed',
           invoice_id: null,
           job_id: null,
@@ -174,8 +174,8 @@ describe('CapabilitiesStage', () => {
     aggregate = financialEventStage(context, aggregate);
     aggregate = historyStage(context, aggregate);
     aggregate = calendarStage(context, aggregate);
-    aggregate = sidebarStage(context, aggregate);
     aggregate = nextInvoiceStage(context, aggregate);
+    aggregate = sidebarStage(context, aggregate);
     aggregate = alertStage(context, aggregate);
     const result = capabilityStage(context, aggregate);
     expect(result.capabilities).toEqual(

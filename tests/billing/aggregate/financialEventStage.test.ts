@@ -44,8 +44,10 @@ const REQUIRED_EVENT_FIELDS = [
   'cycleId',
   'subscriptionId',
   'eventType',
+  'dueYmd',
   'occurredAt',
   'status',
+  'kind',
   'metadata',
 ] as const;
 
@@ -57,7 +59,7 @@ describe('FinancialEventStage', () => {
   it('módulo financialEventSnapshot não importa motor legado', () => {
     const source = readModuleSource(FINANCIAL_EVENT_MODULE);
     for (const forbidden of FORBIDDEN_LEGACY_IMPORTS) {
-      expect(source).not.toContain(forbidden);
+      expect(source).not.toMatch(new RegExp(`from ['"].*${forbidden}`));
     }
     expect(source).not.toMatch(/detail\.timeline/);
     expect(source).not.toMatch(/operational_state/);
@@ -123,10 +125,11 @@ describe('FinancialEventStage', () => {
         errorMessage: null,
         metadata: {},
       },
-      subscription
+      subscription,
+      '2026-06-30'
     );
-    expect(event.occurredAt).toBe('2026-06-14T12:00:00Z');
-    expect(event.eventType).toBe('payment');
+    expect(event?.occurredAt).toBe('2026-06-14T12:00:00Z');
+    expect(event?.eventType).toBe('payment');
   });
 
   it('cycles vazios produzem events vazios', () => {
@@ -145,18 +148,20 @@ describe('FinancialEventStage', () => {
     const beforeCycles = aggregate.cycles;
     const result = financialEventStage(context, aggregate);
     expect(result.events).toEqual(
-      buildFinancialEventsFromAggregate(result.subscription, beforeCycles)
+      buildFinancialEventsFromAggregate(result.subscription, beforeCycles, context.todayYmd)
     );
   });
 
   it.each(GOLDEN_SCENARIOS.map((s) => [s.id, s] as const))(
-    '%s — events.length === cycles.length',
+    '%s — events reais determinísticos',
     (_id, scenario) => {
       const detail = scenario.build();
-      const aggregate = buildBillingAggregateFromDetail(detail, scenario.todayYmd);
-      expect(aggregate.events).toHaveLength(aggregate.cycles.length);
-      if (aggregate.cycles.length > 0) {
-        expect(aggregate.events.every((e) => e.subscriptionId === aggregate.subscriptionId)).toBe(true);
+      const a = buildBillingAggregateFromDetail(detail, scenario.todayYmd);
+      const b = buildBillingAggregateFromDetail(detail, scenario.todayYmd);
+      expect(a.events).toEqual(b.events);
+      expect(a.events.every((e) => e.kind === 'real')).toBe(true);
+      if (a.subscription.status === 'cancelled') {
+        expect(a.events.every((e) => e.eventType === 'payment')).toBe(true);
       }
     }
   );

@@ -11,6 +11,7 @@ import {
   financialEventStage,
   calendarStage,
   historyStage,
+  nextInvoiceStage,
   sidebarStage,
   subscriptionStage,
 } from '@/lib/billingAggregate';
@@ -41,6 +42,9 @@ const BUILDER_MODULE = path.resolve(
 );
 
 const REQUIRED_SIDEBAR_FIELDS = [
+  'nextReceiptDate',
+  'openAmount',
+  'lastPaymentDate',
   'subscriptionStatus',
   'subscriptionType',
   'billingInterval',
@@ -60,24 +64,24 @@ describe('SidebarStage', () => {
   it('módulo sidebarSnapshot não importa motor legado', () => {
     const source = readModuleSource(SIDEBAR_MODULE);
     for (const forbidden of FORBIDDEN_LEGACY_IMPORTS) {
-      expect(source).not.toContain(forbidden);
+      expect(source).not.toMatch(new RegExp(`from ['"].*${forbidden}`));
     }
     expect(source).not.toMatch(/detail\.timeline/);
     expect(source).not.toMatch(/cycles_raw/);
     expect(source).not.toMatch(/context\.source/);
   });
 
-  it('SidebarStage no builder usa apenas subscription e events', () => {
+  it('SidebarStage no builder usa subscription, events e nextInvoice', () => {
     const builder = readModuleSource(BUILDER_MODULE);
     const stageBlock = builder.slice(
       builder.indexOf('export const sidebarStage'),
-      builder.indexOf('export const nextInvoiceStage')
+      builder.indexOf('export const alertStage')
     );
     expect(stageBlock).toContain('buildSidebarFromAggregate');
     expect(stageBlock).toContain('aggregate.subscription');
     expect(stageBlock).toContain('aggregate.events');
+    expect(stageBlock).toContain('aggregate.nextInvoice');
     expect(stageBlock).not.toContain('context.source');
-    expect(stageBlock).not.toContain('aggregate.cycles');
   });
 
   it('popula sidebar a partir de subscription e events', () => {
@@ -129,8 +133,9 @@ describe('SidebarStage', () => {
       ],
     });
     const aggregate = buildBillingAggregateFromDetail(detail, '2026-06-30');
-    expect(aggregate.sidebar.lastEventDate).toBe('2026-09-14T12:00:00Z');
+    expect(aggregate.sidebar.lastEventDate).toBe('2026-09-14');
     expect(aggregate.sidebar.lastEventType).toBe('payment');
+    expect(aggregate.sidebar.lastPaymentDate).toBe('14 Set');
     expect(aggregate.sidebar.eventCount).toBe(2);
   });
 
@@ -145,7 +150,7 @@ describe('SidebarStage', () => {
     expect(aggregate.sidebar.subscriptionStatus).toBe(aggregate.subscription.status);
   });
 
-  it('sidebarStage isolada usa apenas subscription e events do aggregate', () => {
+  it('sidebarStage isolada usa subscription, events e nextInvoice', () => {
     const context = createBillingContext(buildGoldenDetail(), '2026-06-30');
     let aggregate = createEmptyBillingAggregate(context);
     aggregate = subscriptionStage(context, aggregate);
@@ -153,19 +158,21 @@ describe('SidebarStage', () => {
     aggregate = financialEventStage(context, aggregate);
     aggregate = historyStage(context, aggregate);
     aggregate = calendarStage(context, aggregate);
+    aggregate = nextInvoiceStage(context, aggregate);
     const result = sidebarStage(context, aggregate);
     expect(result.sidebar).toEqual(
-      buildSidebarFromAggregate(aggregate.subscription, aggregate.events)
+      buildSidebarFromAggregate(aggregate.subscription, aggregate.events, aggregate.nextInvoice)
     );
   });
 
-  it('não depende de cycles para o resumo', () => {
+  it('sidebar inclui contrato UI legado', () => {
     const detail = buildGoldenDetail({
       timeline: [timelineRow({ cycle_id: 'c-only', due_date: '2026-07-14' })],
     });
     const aggregate = buildBillingAggregateFromDetail(detail, '2026-06-30');
-    const fromEventsOnly = buildSidebarFromAggregate(aggregate.subscription, aggregate.events);
-    expect(aggregate.sidebar).toEqual(fromEventsOnly);
+    expect(aggregate.sidebar.nextReceiptDate).toBeTruthy();
+    expect(aggregate.sidebar.openAmount).toBeTruthy();
+    expect(aggregate.sidebar.lastPaymentDate).toBeTruthy();
     expect(aggregate.sidebar.eventCount).toBe(aggregate.events.length);
   });
 

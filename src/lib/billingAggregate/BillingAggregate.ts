@@ -6,6 +6,9 @@ import {
 } from './subscriptionSnapshot';
 
 const EMPTY_SIDEBAR = {
+  nextReceiptDate: '—',
+  openAmount: 'R$ 0,00',
+  lastPaymentDate: '—',
   subscriptionStatus: '',
   subscriptionType: '',
   billingInterval: '',

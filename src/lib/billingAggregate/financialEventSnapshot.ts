@@ -1,3 +1,4 @@
+import { GENERATABLE_CYCLE_STATUSES } from './aggregateDateUtils';
 import type {
   BillingCycleSnapshot,
   BillingFinancialEventMetadata,
@@ -5,28 +6,6 @@ import type {
   BillingFinancialEventType,
   BillingSubscriptionSnapshot,
 } from './types';
-
-/** Normalização literal cycle.status → eventType (sem timeline). */
-const CYCLE_STATUS_EVENT_TYPE: Record<string, BillingFinancialEventType> = {
-  pending: 'cycle_pending',
-  queued: 'cycle_queued',
-  processing: 'cycle_processing',
-  generated: 'invoice_generated',
-  invoiced: 'invoice_generated',
-  paid: 'payment',
-  failed: 'invoice_failed',
-  cancelled: 'cycle_cancelled',
-  skipped: 'cycle_skipped',
-};
-
-function resolveEventType(status: string): BillingFinancialEventType {
-  const key = status.trim().toLowerCase();
-  return CYCLE_STATUS_EVENT_TYPE[key] ?? 'cycle_unknown';
-}
-
-function resolveOccurredAt(cycle: BillingCycleSnapshot): string {
-  return cycle.processedAt ?? cycle.cycleDate;
-}
 
 function buildEventMetadata(
   cycle: BillingCycleSnapshot,
@@ -45,30 +24,93 @@ function buildEventMetadata(
   };
 }
 
-/** Um evento real por ciclo — origem exclusiva do Aggregate (5.0-14). */
+/**
+ * Emite no máximo um evento real por ciclo, alinhado ao critério do legado
+ * (subscription_cycles + status), sem timeline.
+ */
 export function mapCycleToFinancialEvent(
   cycle: BillingCycleSnapshot,
-  subscription: BillingSubscriptionSnapshot
-): BillingFinancialEventSnapshot {
-  const eventType = resolveEventType(cycle.status);
-  return {
-    id: `billing-event-${cycle.id}`,
+  subscription: BillingSubscriptionSnapshot,
+  todayYmd: string
+): BillingFinancialEventSnapshot | null {
+  const status = cycle.status.trim().toLowerCase();
+  const due = cycle.cycleDate;
+  const hasInvoice = Boolean(cycle.invoiceId);
+  const meta = buildEventMetadata(cycle, subscription);
+  const base = {
     cycleId: cycle.id,
     subscriptionId: cycle.subscriptionId,
-    eventType,
-    occurredAt: resolveOccurredAt(cycle),
+    dueYmd: due,
+    occurredAt: cycle.processedAt ?? due,
     status: cycle.status,
-    metadata: buildEventMetadata(cycle, subscription),
+    kind: 'real' as const,
+    metadata: meta,
   };
+
+  if (status === 'paid') {
+    return { id: `billing-event-${cycle.id}`, eventType: 'payment', ...base };
+  }
+
+  if (subscription.status === 'cancelled') {
+    return null;
+  }
+
+  if (status === 'failed' && !hasInvoice) {
+    const recoverable = !due || due >= todayYmd;
+    return {
+      id: `billing-event-${cycle.id}`,
+      eventType: recoverable ? 'cycle_pending' : 'invoice_failed',
+      ...base,
+    };
+  }
+
+  if (hasInvoice && (status === 'generated' || status === 'invoiced' || status === 'pending')) {
+    return { id: `billing-event-${cycle.id}`, eventType: 'invoice_due', ...base };
+  }
+
+  if (hasInvoice && status === 'gateway_failed') {
+    return { id: `billing-event-${cycle.id}`, eventType: 'invoice_failed', ...base };
+  }
+
+  if (!hasInvoice && GENERATABLE_CYCLE_STATUSES.has(status)) {
+    const eventType: BillingFinancialEventType =
+      status === 'skipped'
+        ? 'cycle_skipped'
+        : status === 'cancelled'
+          ? 'cycle_cancelled'
+          : status === 'queued'
+            ? 'cycle_queued'
+            : 'cycle_pending';
+    return { id: `billing-event-${cycle.id}`, eventType, ...base };
+  }
+
+  if (status === 'processing') {
+    return { id: `billing-event-${cycle.id}`, eventType: 'cycle_processing', ...base };
+  }
+
+  if (hasInvoice) {
+    return { id: `billing-event-${cycle.id}`, eventType: 'invoice_generated', ...base };
+  }
+
+  return { id: `billing-event-${cycle.id}`, eventType: 'cycle_unknown', ...base };
 }
 
 /**
- * Constrói `aggregate.events` apenas a partir de subscription + cycles.
- * Sem projeção, sem timeline, sem builders legados.
+ * Constrói `aggregate.events` reais a partir de subscription + cycles + today.
+ * Sprint 5.0-21B: alinhamento semântico ao legado sem builders legados.
  */
 export function buildFinancialEventsFromAggregate(
   subscription: BillingSubscriptionSnapshot,
-  cycles: BillingCycleSnapshot[]
+  cycles: BillingCycleSnapshot[],
+  todayYmd: string
 ): BillingFinancialEventSnapshot[] {
-  return cycles.map((cycle) => mapCycleToFinancialEvent(cycle, subscription));
+  const events: BillingFinancialEventSnapshot[] = [];
+  const ordered = [...cycles].sort(
+    (a, b) => a.cycleDate.localeCompare(b.cycleDate) || a.id.localeCompare(b.id)
+  );
+  for (const cycle of ordered) {
+    const ev = mapCycleToFinancialEvent(cycle, subscription, todayYmd);
+    if (ev) events.push(ev);
+  }
+  return events;
 }

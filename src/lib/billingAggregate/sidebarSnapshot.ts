@@ -1,46 +1,46 @@
+import { formatCentsCompact, formatEventDateShort } from './aggregateDateUtils';
 import type {
   BillingFinancialEventSnapshot,
+  BillingNextInvoiceSnapshot,
   BillingSidebarSnapshot,
   BillingSubscriptionSnapshot,
 } from './types';
 
-/**
- * Seleciona o evento mais recente por `occurredAt` (desempate por `id`).
- * Cópia determinística — sem regras de negócio.
- */
-function resolveLastEvent(
-  events: BillingFinancialEventSnapshot[]
-): BillingFinancialEventSnapshot | null {
-  if (events.length === 0) return null;
-  let last = events[0]!;
-  for (let i = 1; i < events.length; i++) {
-    const candidate = events[i]!;
-    const byDate = candidate.occurredAt.localeCompare(last.occurredAt);
-    if (byDate > 0 || (byDate === 0 && candidate.id.localeCompare(last.id) > 0)) {
-      last = candidate;
-    }
-  }
-  return last;
-}
+const OPEN_EVENT_TYPES = new Set(['invoice_due', 'invoice_generated', 'manual_charge']);
 
 /**
- * Projeta `aggregate.sidebar` a partir de subscription + events.
- * Sprint 5.0-17: resumo determinístico — sem alerts, NextInvoice, capabilities ou projeções.
+ * Sidebar alinhada ao contrato UI legado (nextReceiptDate, openAmount, lastPaymentDate).
  */
 export function buildSidebarFromAggregate(
   subscription: BillingSubscriptionSnapshot,
-  events: BillingFinancialEventSnapshot[]
+  events: BillingFinancialEventSnapshot[],
+  nextInvoice: BillingNextInvoiceSnapshot | null
 ): BillingSidebarSnapshot {
-  const lastEvent = resolveLastEvent(events);
+  const real = events.filter((e) => e.kind === 'real');
+  const payments = real.filter((e) => e.eventType === 'payment');
+  const lastPayment = [...payments].sort((a, b) => b.dueYmd.localeCompare(a.dueYmd))[0];
+  const openCents = real
+    .filter((e) => OPEN_EVENT_TYPES.has(e.eventType))
+    .reduce((s, e) => s + (e.metadata.amount ?? 0), 0);
+
+  const lastReal = [...real].sort(
+    (a, b) => b.dueYmd.localeCompare(a.dueYmd) || b.id.localeCompare(a.id)
+  )[0];
+
+  const nextDate = nextInvoice?.date ?? null;
+
   return {
+    nextReceiptDate: nextDate ? formatEventDateShort(nextDate) : '—',
+    openAmount: formatCentsCompact(openCents),
+    lastPaymentDate: lastPayment ? formatEventDateShort(lastPayment.dueYmd) : '—',
     subscriptionStatus: subscription.status,
     subscriptionType: subscription.subscriptionType,
     billingInterval: subscription.billingInterval,
     currency: subscription.currency,
     amount: subscription.amount,
-    eventCount: events.length,
-    lastEventDate: lastEvent?.occurredAt ?? null,
-    lastEventType: lastEvent?.eventType ?? null,
+    eventCount: real.length,
+    lastEventDate: lastReal?.dueYmd ?? null,
+    lastEventType: lastReal?.eventType ?? null,
     metadata: {
       subscriptionId: subscription.id,
       tenantId: subscription.tenantId,

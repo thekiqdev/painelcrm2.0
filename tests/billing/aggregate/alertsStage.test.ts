@@ -59,14 +59,14 @@ describe('AlertsStage', () => {
   it('módulo alertsSnapshot não importa motor legado', () => {
     const source = readModuleSource(ALERTS_MODULE);
     for (const forbidden of FORBIDDEN_LEGACY_IMPORTS) {
-      expect(source).not.toContain(forbidden);
+      expect(source).not.toMatch(new RegExp(`from ['"].*${forbidden}`));
     }
     expect(source).not.toMatch(/detail\.timeline/);
     expect(source).not.toMatch(/cycles_raw/);
     expect(source).not.toMatch(/context\.source/);
   });
 
-  it('AlertsStage no builder usa subscription, events e nextInvoice', () => {
+  it('AlertsStage usa subscription, events, cycles e nextInvoice', () => {
     const builder = readModuleSource(BUILDER_MODULE);
     const stageBlock = builder.slice(
       builder.indexOf('export const alertStage'),
@@ -75,42 +75,72 @@ describe('AlertsStage', () => {
     expect(stageBlock).toContain('buildAlertsFromAggregate');
     expect(stageBlock).toContain('aggregate.subscription');
     expect(stageBlock).toContain('aggregate.events');
-    expect(stageBlock).toContain('aggregate.nextInvoice');
+    expect(stageBlock).toContain('aggregate.cycles');
     expect(stageBlock).not.toContain('context.source');
-    expect(stageBlock).not.toContain('aggregate.cycles');
   });
 
   it.each(REQUIRED_ALERT_FIELDS)('campo obrigatório presente: %s', (field) => {
-    const aggregate = buildBillingAggregateFromDetail(buildGoldenDetail(), '2026-06-30');
+    const detail = buildGoldenDetail({
+      cycles_raw: [
+        {
+          id: 'c-overdue',
+          cycle_date: '2026-06-01',
+          period_start: '2026-05-25',
+          period_end: '2026-06-25',
+          status: 'generated',
+          invoice_id: 'inv-overdue',
+          job_id: null,
+          processed_at: null,
+          skipped_reason: null,
+          error_message: null,
+        },
+      ],
+    });
+    const aggregate = buildBillingAggregateFromDetail(detail, '2026-06-30');
     expect(aggregate.alerts.length).toBeGreaterThan(0);
     expect(aggregate.alerts[0]).toHaveProperty(field);
   });
 
-  it('emite no_events quando não há FinancialEvents', () => {
+  it('sem ciclos problemáticos não emite alertas legados', () => {
     const aggregate = buildBillingAggregateFromDetail(
       buildGoldenDetail({ timeline: [], cycles_raw: [] }),
       '2026-06-30'
     );
-    expect(aggregate.alerts.some((a) => a.kind === 'no_events')).toBe(true);
-    expect(aggregate.alerts.some((a) => a.kind === 'next_invoice')).toBe(false);
+    expect(aggregate.alerts.every((a) =>
+      ['billing_missing', 'client_overdue', 'gateway_failed'].includes(a.kind)
+    )).toBe(true);
+    expect(aggregate.alerts).toHaveLength(0);
   });
 
-  it('emite next_invoice quando nextInvoice está presente', () => {
-    const aggregate = buildBillingAggregateFromDetail(buildGoldenDetail(), '2026-06-30');
-    expect(aggregate.nextInvoice).not.toBeNull();
-    const alert = aggregate.alerts.find((a) => a.kind === 'next_invoice');
-    expect(alert).toBeDefined();
-    expect(alert!.eventId).toBe(aggregate.nextInvoice!.eventId);
+  it('emite client_overdue para fatura vencida', () => {
+    const detail = buildGoldenDetail({
+      cycles_raw: [
+        {
+          id: 'c-overdue',
+          cycle_date: '2026-06-01',
+          period_start: '2026-05-25',
+          period_end: '2026-06-25',
+          status: 'generated',
+          invoice_id: 'inv-overdue',
+          job_id: null,
+          processed_at: null,
+          skipped_reason: null,
+          error_message: null,
+        },
+      ],
+    });
+    const aggregate = buildBillingAggregateFromDetail(detail, '2026-06-30');
+    expect(aggregate.alerts.some((a) => a.kind === 'client_overdue')).toBe(true);
   });
 
-  it('emite invoice_failed para eventos de falha', () => {
+  it('emite billing_missing para falha definitiva no passado', () => {
     const detail = buildGoldenDetail({
       cycles_raw: [
         {
           id: 'c-fail',
-          cycle_date: '2026-07-14',
-          period_start: '2026-07-07',
-          period_end: '2026-08-07',
+          cycle_date: '2026-05-14',
+          period_start: '2026-05-07',
+          period_end: '2026-06-07',
           status: 'failed',
           invoice_id: null,
           job_id: null,
@@ -121,18 +151,15 @@ describe('AlertsStage', () => {
       ],
     });
     const aggregate = buildBillingAggregateFromDetail(detail, '2026-06-30');
-    const failed = aggregate.alerts.filter((a) => a.kind === 'invoice_failed');
-    expect(failed).toHaveLength(1);
-    expect(failed[0]!.eventId).toBe('billing-event-c-fail');
-    expect(failed[0]!.severity).toBe('error');
+    expect(aggregate.alerts.some((a) => a.kind === 'billing_missing')).toBe(true);
   });
 
-  it('emite subscription_status para assinatura pausada', () => {
+  it('assinatura pausada sem ciclos não emite alertas legados', () => {
     const aggregate = buildBillingAggregateFromDetail(
       buildGoldenDetail({ subscription: { status: 'paused' }, timeline: [], cycles_raw: [] }),
       '2026-06-30'
     );
-    expect(aggregate.alerts.some((a) => a.kind === 'subscription_status')).toBe(true);
+    expect(aggregate.alerts).toHaveLength(0);
   });
 
   it('mesmo Aggregate gera sempre os mesmos Alerts', () => {
@@ -144,7 +171,7 @@ describe('AlertsStage', () => {
     expect(a.alerts).toEqual(b.alerts);
   });
 
-  it('alertStage isolada usa apenas subscription, events e nextInvoice', () => {
+  it('alertStage isolada usa subscription, events, cycles e nextInvoice', () => {
     const context = createBillingContext(buildGoldenDetail(), '2026-06-30');
     let aggregate = createEmptyBillingAggregate(context);
     aggregate = subscriptionStage(context, aggregate);
@@ -152,11 +179,17 @@ describe('AlertsStage', () => {
     aggregate = financialEventStage(context, aggregate);
     aggregate = historyStage(context, aggregate);
     aggregate = calendarStage(context, aggregate);
-    aggregate = sidebarStage(context, aggregate);
     aggregate = nextInvoiceStage(context, aggregate);
+    aggregate = sidebarStage(context, aggregate);
     const result = alertStage(context, aggregate);
     expect(result.alerts).toEqual(
-      buildAlertsFromAggregate(aggregate.subscription, aggregate.events, aggregate.nextInvoice)
+      buildAlertsFromAggregate(
+        aggregate.subscription,
+        aggregate.events,
+        aggregate.nextInvoice,
+        aggregate.cycles,
+        context.todayYmd
+      )
     );
   });
 

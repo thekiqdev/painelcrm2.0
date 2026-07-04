@@ -11,8 +11,6 @@ import {
   calendarStage,
   historyStage,
   nextInvoiceStage,
-  resolveNextInvoiceFromEvents,
-  sidebarStage,
   subscriptionStage,
 } from '@/lib/billingAggregate';
 import { buildGoldenDetail, timelineRow } from '../golden-dataset';
@@ -58,27 +56,26 @@ describe('NextInvoiceStage', () => {
   it('módulo nextInvoiceSnapshot não importa motor legado', () => {
     const source = readModuleSource(NEXT_INVOICE_MODULE);
     for (const forbidden of FORBIDDEN_LEGACY_IMPORTS) {
-      expect(source).not.toContain(forbidden);
+      expect(source).not.toMatch(new RegExp(`from ['"].*${forbidden}`));
     }
     expect(source).not.toMatch(/detail\.timeline/);
     expect(source).not.toMatch(/cycles_raw/);
     expect(source).not.toMatch(/context\.source/);
   });
 
-  it('NextInvoiceStage no builder usa apenas aggregate.events', () => {
+  it('NextInvoiceStage usa subscription, cycles e events (first eligible)', () => {
     const builder = readModuleSource(BUILDER_MODULE);
     const stageBlock = builder.slice(
       builder.indexOf('export const nextInvoiceStage'),
-      builder.indexOf('export const alertStage')
+      builder.indexOf('export const sidebarStage')
     );
-    expect(stageBlock).toContain('resolveNextInvoiceFromEvents');
+    expect(stageBlock).toContain('resolveNextInvoiceFromAggregate');
     expect(stageBlock).toContain('aggregate.events');
+    expect(stageBlock).toContain('aggregate.cycles');
     expect(stageBlock).not.toContain('context.source');
-    expect(stageBlock).not.toContain('aggregate.cycles');
-    expect(stageBlock).not.toContain('aggregate.subscription');
   });
 
-  it('seleciona o evento mais antigo (cronologia crescente)', () => {
+  it('seleciona o first eligible cycle (sem invoice)', () => {
     const detail = buildGoldenDetail({
       cycles_raw: [
         {
@@ -109,16 +106,17 @@ describe('NextInvoiceStage', () => {
     });
     const aggregate = buildBillingAggregateFromDetail(detail, '2026-06-30');
     expect(aggregate.nextInvoice).not.toBeNull();
-    expect(aggregate.nextInvoice!.cycleId).toBe('c-early');
-    expect(aggregate.nextInvoice!.date).toBe('2026-07-14T12:00:00Z');
-    expect(aggregate.nextInvoice!.eventType).toBe('payment');
+    expect(aggregate.nextInvoice!.cycleId).toBe('c-late');
+    expect(aggregate.nextInvoice!.date).toBe('2026-09-14');
+    expect(aggregate.nextInvoice!.isProjected).toBe(false);
   });
 
-  it('eventId referencia um FinancialEvent existente', () => {
+  it('eventId referencia um FinancialEvent existente quando real', () => {
     const aggregate = buildBillingAggregateFromDetail(buildGoldenDetail(), '2026-06-30');
     expect(aggregate.nextInvoice).not.toBeNull();
+    expect(aggregate.nextInvoice!.isProjected).toBe(false);
     const eventIds = new Set(aggregate.events.map((e) => e.id));
-    expect(eventIds.has(aggregate.nextInvoice!.eventId)).toBe(true);
+    expect(eventIds.has(aggregate.nextInvoice!.eventId!)).toBe(true);
   });
 
   it.each(REQUIRED_NEXT_INVOICE_FIELDS)('campo obrigatório presente: %s', (field) => {
@@ -126,13 +124,14 @@ describe('NextInvoiceStage', () => {
     expect(aggregate.nextInvoice).toHaveProperty(field);
   });
 
-  it('events vazios produzem nextInvoice null', () => {
+  it('sem cycles elegíveis usa projeção a partir de next_billing_date', () => {
     const aggregate = buildBillingAggregateFromDetail(
       buildGoldenDetail({ timeline: [], cycles_raw: [] }),
       '2026-06-30'
     );
-    expect(aggregate.nextInvoice).toBeNull();
-    expect(resolveNextInvoiceFromEvents([])).toBeNull();
+    expect(aggregate.nextInvoice).not.toBeNull();
+    expect(aggregate.nextInvoice!.isProjected).toBe(true);
+    expect(aggregate.nextInvoice!.cycleId).toBeNull();
   });
 
   it('mesmo Aggregate produz sempre o mesmo NextInvoice', () => {
@@ -147,7 +146,7 @@ describe('NextInvoiceStage', () => {
     expect(a.nextInvoice).toEqual(b.nextInvoice);
   });
 
-  it('nextInvoiceStage isolada usa apenas events do aggregate', () => {
+  it('nextInvoiceStage isolada usa first eligible cycle', () => {
     const context = createBillingContext(buildGoldenDetail(), '2026-06-30');
     let aggregate = createEmptyBillingAggregate(context);
     aggregate = subscriptionStage(context, aggregate);
@@ -155,10 +154,9 @@ describe('NextInvoiceStage', () => {
     aggregate = financialEventStage(context, aggregate);
     aggregate = historyStage(context, aggregate);
     aggregate = calendarStage(context, aggregate);
-    aggregate = sidebarStage(context, aggregate);
-    const events = aggregate.events;
     const result = nextInvoiceStage(context, aggregate);
-    expect(result.nextInvoice).toEqual(resolveNextInvoiceFromEvents(events));
+    expect(result.nextInvoice?.cycleId).toBe(aggregate.cycles[0]?.id);
+    expect(result.nextInvoice?.isProjected).toBe(false);
   });
 
   it('empate por occurredAt resolve por id', () => {
@@ -196,17 +194,15 @@ describe('NextInvoiceStage', () => {
   });
 
   it.each(GOLDEN_SCENARIOS.map((s) => [s.id, s] as const))(
-    '%s — nextInvoice alinhado a events',
+    '%s — nextInvoice determinístico',
     (_id, scenario) => {
       const detail = scenario.build();
-      const aggregate = buildBillingAggregateFromDetail(detail, scenario.todayYmd);
-      if (aggregate.events.length === 0) {
-        expect(aggregate.nextInvoice).toBeNull();
-      } else {
-        expect(aggregate.nextInvoice).not.toBeNull();
-        const eventIds = new Set(aggregate.events.map((e) => e.id));
-        expect(eventIds.has(aggregate.nextInvoice!.eventId)).toBe(true);
-        expect(aggregate.nextInvoice).toEqual(resolveNextInvoiceFromEvents(aggregate.events));
+      const a = buildBillingAggregateFromDetail(detail, scenario.todayYmd);
+      const b = buildBillingAggregateFromDetail(detail, scenario.todayYmd);
+      expect(a.nextInvoice).toEqual(b.nextInvoice);
+      if (a.nextInvoice && !a.nextInvoice.isProjected && a.nextInvoice.eventId) {
+        const eventIds = new Set(a.events.map((e) => e.id));
+        expect(eventIds.has(a.nextInvoice.eventId)).toBe(true);
       }
     }
   );

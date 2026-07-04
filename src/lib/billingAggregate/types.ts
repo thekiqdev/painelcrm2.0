@@ -83,11 +83,13 @@ export type BillingFinancialEventType =
   | 'cycle_queued'
   | 'cycle_processing'
   | 'invoice_generated'
+  | 'invoice_due'
   | 'payment'
   | 'invoice_failed'
   | 'cycle_cancelled'
   | 'cycle_skipped'
-  | 'cycle_unknown';
+  | 'cycle_unknown'
+  | 'upcoming_cycle';
 
 export type BillingFinancialEventMetadata = {
   invoiceId: string | null;
@@ -101,14 +103,18 @@ export type BillingFinancialEventMetadata = {
   cycleMetadata: BillingCycleMetadata;
 };
 
-/** Evento financeiro canônico do Aggregate (Sprint 5.0-14). */
+/** Evento financeiro canônico do Aggregate (Sprint 5.0-14 / alinhado 5.0-21B). */
 export type BillingFinancialEventSnapshot = {
   id: string;
-  cycleId: string;
+  /** null apenas para projeções UX. */
+  cycleId: string | null;
   subscriptionId: string;
   eventType: BillingFinancialEventType;
+  /** Data de vencimento (âncora de paridade History/Calendar). */
+  dueYmd: string;
   occurredAt: string;
   status: string;
+  kind: 'real' | 'projected';
   metadata: BillingFinancialEventMetadata;
 };
 
@@ -125,7 +131,7 @@ export type BillingHistoryRowMetadata = {
   eventType: BillingFinancialEventType;
 };
 
-/** Linha de histórico do Aggregate (Sprint 5.0-15) — projeção 1:1 de events. */
+/** Linha de histórico do Aggregate — apenas eventos reais com cycleId. */
 export type BillingHistorySnapshot = {
   id: string;
   eventId: string;
@@ -133,6 +139,7 @@ export type BillingHistorySnapshot = {
   subscriptionId: string;
   type: BillingFinancialEventType;
   status: string;
+  /** dueYmd do evento — ordenação desc (paridade legado). */
   date: string;
   title: string;
   metadata: BillingHistoryRowMetadata;
@@ -150,15 +157,16 @@ export type BillingCalendarEntryMetadata = {
   currency: string;
 };
 
-/** Entrada de calendário do Aggregate (Sprint 5.0-16) — projeção 1:1 de events. */
+/** Entrada de calendário do Aggregate — reais + projeções UX. */
 export type BillingCalendarSnapshot = {
   id: string;
   eventId: string;
-  cycleId: string;
+  cycleId: string | null;
   subscriptionId: string;
   date: string;
   eventType: BillingFinancialEventType;
   status: string;
+  isProjected: boolean;
   metadata: BillingCalendarEntryMetadata;
 };
 
@@ -173,8 +181,11 @@ export type BillingSidebarMetadata = {
   currentPeriodEnd: string | null;
 };
 
-/** Resumo da sidebar do Aggregate (Sprint 5.0-17). */
+/** Resumo da sidebar do Aggregate — contrato alinhado à UI legada (5.0-21B). */
 export type BillingSidebarSnapshot = {
+  nextReceiptDate: string;
+  openAmount: string;
+  lastPaymentDate: string;
   subscriptionStatus: string;
   subscriptionType: string;
   billingInterval: string;
@@ -190,8 +201,8 @@ export type BillingSidebarSnapshot = {
 export type BillingNextInvoiceMetadata = {
   invoiceId: string | null;
   jobId: string | null;
-  periodStart: string;
-  periodEnd: string;
+  periodStart: string | null;
+  periodEnd: string | null;
   skippedReason: string | null;
   errorMessage: string | null;
   amount: number;
@@ -199,22 +210,25 @@ export type BillingNextInvoiceMetadata = {
 };
 
 /**
- * Próxima cobrança do Aggregate (Sprint 5.0-18).
- * Referência determinística a um FinancialEvent existente — ou `null` se não houver eventos.
+ * Próxima cobrança do Aggregate — first eligible cycle ou projeção (5.0-21B).
  */
 export type BillingNextInvoiceSnapshot = {
-  eventId: string;
-  cycleId: string;
+  eventId: string | null;
+  cycleId: string | null;
   subscriptionId: string;
-  eventType: BillingFinancialEventType;
-  date: string;
+  eventType: BillingFinancialEventType | null;
+  date: string | null;
   status: string;
+  isProjected: boolean;
   metadata: BillingNextInvoiceMetadata;
 };
 
 export type BillingAlertSeverity = 'info' | 'warning' | 'error';
 
 export type BillingAlertKind =
+  | 'billing_missing'
+  | 'client_overdue'
+  | 'gateway_failed'
   | 'no_events'
   | 'subscription_status'
   | 'invoice_failed'

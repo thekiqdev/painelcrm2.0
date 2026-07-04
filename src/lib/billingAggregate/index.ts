@@ -68,7 +68,17 @@ export { mapEventToCalendarEntry, buildCalendarFromEvents } from './calendarSnap
 
 export { buildSidebarFromAggregate } from './sidebarSnapshot';
 
-export { resolveNextInvoiceFromEvents } from './nextInvoiceSnapshot';
+export {
+  resolveNextInvoiceFromEvents,
+  resolveNextInvoiceFromAggregate,
+  resolveFirstEligibleCycleFromAggregate,
+} from './nextInvoiceSnapshot';
+
+export { buildProjectionEventsFromAggregate } from './projectionSnapshot';
+
+export {
+  cycleSupportsManualGenerateFromAggregate,
+} from './capabilitiesSnapshot';
 
 export { buildAlertsFromAggregate } from './alertsSnapshot';
 

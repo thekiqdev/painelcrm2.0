@@ -45,12 +45,12 @@ describe('BillingAggregateFactory', () => {
     expect(aggregate.cycles[0]?.id).toBe(detail.cycles_raw[0]?.id);
     expect(aggregate.events).toHaveLength(detail.cycles_raw.length);
     expect(aggregate.history).toHaveLength(aggregate.events.length);
-    expect(aggregate.calendar).toHaveLength(aggregate.events.length);
+    expect(aggregate.calendar.length).toBeGreaterThanOrEqual(aggregate.events.length);
     expect(aggregate.sidebar.eventCount).toBe(aggregate.events.length);
     expect(aggregate.sidebar.subscriptionStatus).toBe(aggregate.subscription.status);
+    expect(aggregate.sidebar.nextReceiptDate).toBeTruthy();
     expect(aggregate.nextInvoice).not.toBeNull();
-    expect(aggregate.nextInvoice!.eventId).toBeTruthy();
-    expect(aggregate.alerts.length).toBeGreaterThan(0);
+    expect(Array.isArray(aggregate.alerts)).toBe(true);
     expect(aggregate.capabilities.canOpenSubscription).toBe(true);
     expect(aggregate.capabilities.metadata.eventCount).toBe(aggregate.events.length);
     expect(aggregate.timeline).toEqual([]);

@@ -157,14 +157,19 @@ export function certifyScenario(
     .map((r) => r.cycleId)
     .filter(Boolean)
     .sort();
-  const aggregateGeneratableCycleIds = aggregate.events
+  const aggregateGeneratableCycleIds = aggregate.cycles
     .filter(
-      (e) =>
-        ['cycle_pending', 'cycle_queued', 'invoice_failed', 'cycle_skipped'].includes(e.eventType) &&
-        !e.metadata.invoiceId
+      (c) =>
+        !c.invoiceId &&
+        ['pending', 'queued', 'failed', 'skipped', 'cancelled'].includes(
+          c.status.trim().toLowerCase()
+        )
     )
-    .map((e) => e.cycleId)
+    .map((c) => c.id)
     .sort();
+  if (aggregate.subscription.status === 'cancelled') {
+    aggregateGeneratableCycleIds.length = 0;
+  }
 
   // --- subscription ---
   const subscription = surfaceParity('subscription', [
@@ -276,21 +281,25 @@ export function certifyScenario(
     ),
   ]);
 
-  // --- calendar (real only vs all) ---
+  // --- calendar (reais + projeções) ---
   const legacyRealCalCycleIds = realCalendar
     .map((e) => e.cycleId)
     .filter(Boolean)
     .sort() as string[];
-  const aggCalCycleIds = [...aggregate.calendar.map((e) => e.cycleId)].sort();
+  const aggRealCalCycleIds = aggregate.calendar
+    .filter((e) => !e.isProjected)
+    .map((e) => e.cycleId)
+    .filter(Boolean)
+    .sort() as string[];
   const calendar = surfaceParity('calendar', [
     check(
       'calendar',
       scenarioId,
       'realCount',
       realCalendar.length,
-      aggSnap.calendarCount,
-      'structural',
-      'Calendário legado inclui projeções; Aggregate só eventos reais'
+      aggregate.calendar.filter((e) => !e.isProjected).length,
+      'semantic',
+      'Contagem de eventos reais no calendário'
     ),
     check(
       'calendar',
@@ -298,15 +307,15 @@ export function certifyScenario(
       'totalCount',
       legacySnap.calendarCount,
       aggSnap.calendarCount,
-      'structural',
-      'Contagem total do calendário (legado com projeções)'
+      'semantic',
+      'Contagem total do calendário (reais + projeções)'
     ),
     check(
       'calendar',
       scenarioId,
       'realCycleIds',
       legacyRealCalCycleIds,
-      aggCalCycleIds,
+      aggRealCalCycleIds,
       'semantic',
       'cycleIds de eventos reais no calendário'
     ),
@@ -315,9 +324,9 @@ export function certifyScenario(
       scenarioId,
       'projectedCount',
       legacySnap.projectedCalendarCount,
-      0,
-      'structural',
-      'Aggregate não emite projeções UX'
+      aggSnap.projectedCalendarCount,
+      'semantic',
+      'Contagem de projeções UX no calendário'
     ),
   ]);
 
@@ -327,20 +336,29 @@ export function certifyScenario(
     check(
       'sidebar',
       scenarioId,
-      'shape',
-      ['nextReceiptDate', 'openAmount', 'lastPaymentDate'],
-      ['subscriptionStatus', 'eventCount', 'lastEventDate', 'amount'],
-      'structural',
-      'Modelos de sidebar incompatíveis (legado UX vs resumo Aggregate)'
+      'nextReceiptDate',
+      legacySidebar.nextReceiptDate,
+      aggregate.sidebar.nextReceiptDate,
+      'semantic',
+      'Data da próxima cobrança (label curto)'
     ),
     check(
       'sidebar',
       scenarioId,
-      'subscriptionStatus',
-      detail.subscription.status,
-      aggregate.sidebar.subscriptionStatus,
-      'data',
-      'Status da assinatura no sidebar do Aggregate'
+      'openAmount',
+      legacySidebar.openAmount,
+      aggregate.sidebar.openAmount,
+      'semantic',
+      'Valor em aberto'
+    ),
+    check(
+      'sidebar',
+      scenarioId,
+      'lastPaymentDate',
+      legacySidebar.lastPaymentDate,
+      aggregate.sidebar.lastPaymentDate,
+      'semantic',
+      'Data do último pagamento'
     ),
     check(
       'sidebar',
@@ -362,25 +380,25 @@ export function certifyScenario(
       legacySnap.nextChargeCycleId,
       aggSnap.nextInvoiceCycleId,
       'semantic',
-      'Legado: first eligible / projeção; Aggregate: evento mais antigo'
+      'cycleId da próxima cobrança (first eligible)'
     ),
     check(
       'nextInvoice',
       scenarioId,
       'presence',
       legacySnap.nextChargeCycleId != null || legacySnap.nextChargeIsProjected,
-      aggSnap.nextInvoiceCycleId != null,
+      aggSnap.nextInvoiceCycleId != null || aggSnap.nextInvoiceIsProjected,
       'semantic',
-      'Presença de próxima cobrança (legado pode ser projetada sem cycleId)'
+      'Presença de próxima cobrança (real ou projetada)'
     ),
     check(
       'nextInvoice',
       scenarioId,
       'isProjected',
       legacySnap.nextChargeIsProjected,
-      false,
-      'structural',
-      'Aggregate nunca marca nextInvoice como projeção'
+      aggSnap.nextInvoiceIsProjected,
+      'semantic',
+      'Flag isProjected da próxima cobrança'
     ),
   ]);
 
@@ -424,7 +442,7 @@ export function certifyScenario(
       scenarioId,
       'generateCycleIds',
       legacyCanGenerateCycleIds,
-      aggregate.subscription.status === 'active' ? aggregateGeneratableCycleIds : [],
+      aggregate.subscription.status === 'cancelled' ? [] : aggregateGeneratableCycleIds,
       'behavior',
       'Ciclos elegíveis a Generate'
     ),
@@ -435,17 +453,17 @@ export function certifyScenario(
       detail.cycles_raw[0]
         ? cycleSupportsManualGenerate(detail, detail.cycles_raw[0].id)
         : false,
-      aggregate.capabilities.canGenerate &&
-        aggregate.events.some(
-          (e) =>
-            e.cycleId === detail.cycles_raw[0]?.id &&
-            !e.metadata.invoiceId &&
-            ['cycle_pending', 'cycle_queued', 'invoice_failed', 'cycle_skipped'].includes(
-              e.eventType
+      detail.cycles_raw[0]
+        ? aggregate.subscription.status !== 'cancelled' &&
+            !aggregate.cycles.find((c) => c.id === detail.cycles_raw[0]!.id)?.invoiceId &&
+            ['pending', 'queued', 'failed', 'skipped', 'cancelled'].includes(
+              (aggregate.cycles.find((c) => c.id === detail.cycles_raw[0]!.id)?.status ?? '')
+                .trim()
+                .toLowerCase()
             )
-        ),
+        : false,
       'behavior',
-      'Paridade pontual do primeiro cycle_raw com canGenerate do Aggregate'
+      'Paridade pontual do primeiro cycle_raw com elegibilidade do Aggregate'
     ),
   ]);
 
