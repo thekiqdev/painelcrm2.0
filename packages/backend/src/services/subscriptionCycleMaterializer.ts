@@ -12,7 +12,10 @@ import {
 } from '../utils/billingCycleKey.js';
 
 export type DbQueryable = {
-  query: (text: string, params?: unknown[]) => Promise<{ rows: Record<string, unknown>[]; rowCount?: number | null }>;
+  query: <T extends Record<string, unknown> = Record<string, unknown>>(
+    text: string,
+    params?: unknown[]
+  ) => Promise<{ rows: T[]; rowCount?: number | null }>;
 };
 
 export type SubscriptionCycleMaterializeSource =
