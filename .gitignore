@@ -25,6 +25,9 @@ packages/backend/uploads/
 # Armazenamento local de media service / avatars (não versionar)
 packages/backend/storage/
 
+# Artefatos locais de debug/certificação billing (traces, labs)
+storage/debug/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
