@@ -1,18 +1,20 @@
 /**
  * Reparo de ciclos recuperáveis (Sprint 4.1I).
  * Migra `failed` → `pending` quando ainda não há invoice e o ciclo é futuro/hoje.
- * Não altera motor de billing — apenas estado operacional persistido.
+ * Sprint 5.0-24C — inclui repair INV-19 (invoiced sem invoice_id).
  */
 import { pool } from '../utils/db.js';
 import { billingLog } from './billingLogger.js';
 import { isSubscriptionCyclesWriteEnabled } from './subscriptionCyclesWriteFlagService.js';
 import { normalizeBillingDate, safeTodayYmd } from '../utils/billingSafeDate.js';
 import { normalizeBillingCycleKeyYmd } from '../utils/billingCycleKey.js';
+import { repairInvoicedCyclesWithoutInvoice } from './subscriptionCycleLifecycleService.js';
 
 export type CycleRepairResult = {
   cycles_repaired: number;
   jobs_repaired: number;
   repaired_cycle_dates: string[];
+  invariant_cycles_reopened: number;
 };
 
 async function repairCyclesTable(
@@ -82,21 +84,26 @@ export async function repairRecoverableSubscriptionCycles(
   subscriptionId: string
 ): Promise<CycleRepairResult> {
   const todayYmd = safeTodayYmd();
+  const invariant = await repairInvoicedCyclesWithoutInvoice(tenantId, subscriptionId, {
+    reason: 'runtime_invariant_repair',
+  });
   const cycles = await repairCyclesTable(tenantId, subscriptionId, todayYmd);
   const jobs = await repairFailedJobs(tenantId, subscriptionId, todayYmd);
-  if (cycles.count > 0 || jobs > 0) {
+  if (cycles.count > 0 || jobs > 0 || invariant.cycles_reopened > 0) {
     billingLog('worker', 'subscription_cycles_auto_repair', {
       tenant_id: tenantId,
       subscription_id: subscriptionId,
       cycles_repaired: cycles.count,
       jobs_repaired: jobs,
-      cycle_dates: cycles.dates.join(','),
+      invariant_cycles_reopened: invariant.cycles_reopened,
+      cycle_dates: [...invariant.cycle_dates, ...cycles.dates].join(','),
     });
   }
   return {
     cycles_repaired: cycles.count,
     jobs_repaired: jobs,
-    repaired_cycle_dates: cycles.dates,
+    repaired_cycle_dates: [...invariant.cycle_dates, ...cycles.dates],
+    invariant_cycles_reopened: invariant.cycles_reopened,
   };
 }
 

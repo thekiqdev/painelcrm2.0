@@ -8,7 +8,7 @@
         "cycleId": "c-manual",
         "invoiceId": "inv-manual",
         "dueYmd": "2026-07-14",
-        "statusPt": "Pendente",
+        "statusPt": "Fatura em aberto",
         "canGenerateNow": false,
         "isProjected": false,
         "eventType": "invoice_due"

@@ -66,6 +66,29 @@ export async function listSubscriptionCyclesBySubscriptionId(
 /**
  * Ciclo correspondente à fatura: prioriza `invoice_id`, depois `cycle_date = period_start`.
  */
+/** Ciclo exato por id (geração manual determinística — Sprint 4.2D). */
+export async function getSubscriptionCycleById(
+  tenantId: string,
+  subscriptionId: string,
+  cycleId: string
+): Promise<SubscriptionCycleDbRow | null> {
+  try {
+    const r = await pool.query<SubscriptionCycleDbRow>(
+      `SELECT ${SELECT_LIST}
+       FROM subscription_cycles
+       WHERE tenant_id = $1
+         AND subscription_id = $2
+         AND id = $3::uuid
+       LIMIT 1`,
+      [tenantId, subscriptionId, cycleId]
+    );
+    return r.rows[0] ?? null;
+  } catch (e: unknown) {
+    if (isMissingSubscriptionCyclesTable(e)) return null;
+    throw e;
+  }
+}
+
 export async function findSubscriptionCycleForInvoice(
   tenantId: string,
   subscriptionId: string,

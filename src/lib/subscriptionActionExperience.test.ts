@@ -220,11 +220,11 @@ describe('historyStatusDisplayLabel', () => {
 });
 
 describe('historyRowCanGenerate', () => {
-  it('failed without invoice', () => {
-    expect(historyRowCanGenerate(historyRow({ visual: 'failed', invoiceId: null }))).toBe(true);
+  it('failed without invoice when OCRE allows', () => {
+    expect(historyRowCanGenerate(historyRow({ visual: 'failed', invoiceId: null, canGenerateNow: true }))).toBe(true);
   });
   it('paid with invoice false', () => {
-    expect(historyRowCanGenerate(historyRow({ visual: 'paid', invoiceId: 'inv-1' }))).toBe(false);
+    expect(historyRowCanGenerate(historyRow({ visual: 'paid', invoiceId: 'inv-1', canGenerateNow: false }))).toBe(false);
   });
 });
 

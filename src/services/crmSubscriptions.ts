@@ -107,6 +107,22 @@ export interface CrmSubscriptionTenantBillingPrefs {
   recurring_invoice_generate_days_before_due?: number | null;
 }
 
+export interface CrmSubscriptionInvoiceSnapshot {
+  id: string;
+  subscription_cycle_id: string | null;
+  amount_cents: number;
+  due_date: string;
+  period_start: string | null;
+  period_end: string | null;
+  status: string;
+  created_at: string;
+  gateway_status: string | null;
+  gateway_reference_id: string | null;
+  invoice_type?: string | null;
+  paid_at?: string | null;
+  refunded_at?: string | null;
+}
+
 export interface CrmSubscriptionDetailPayload {
   subscription: {
     id: string;
@@ -156,6 +172,8 @@ export interface CrmSubscriptionDetailPayload {
     error_message: string | null;
   }>;
   cycles_read_enabled: boolean;
+  /** Faturas da assinatura — SSOT read (Billing 5.0 / 4.2R). */
+  invoices?: CrmSubscriptionInvoiceSnapshot[];
   tenant_billing: CrmSubscriptionTenantBillingPrefs;
   recent_jobs: CrmSubscriptionJobRow[];
   meta: { periodicity_label_pt: string };
@@ -476,19 +494,32 @@ export const crmSubscriptionsService = {
     return res.data;
   },
 
-  async generateRenewalNow(id: string): Promise<CrmSubscriptionManualRenewalResult> {
+  async generateRenewalNow(
+    id: string,
+    options?: { cycleId?: string }
+  ): Promise<CrmSubscriptionManualRenewalResult> {
     const started = Date.now();
+    const body: { cycle_id?: string } = {};
+    if (options?.cycleId?.trim()) {
+      body.cycle_id = options.cycleId.trim();
+    } else if (import.meta.env.DEV) {
+      console.warn(
+        '[BILLING_DETERMINISTIC_GENERATE] generateRenewalNow sem cycle_id — chamada legada rejeitada em dev',
+        { subscription_id: id }
+      );
+    }
     console.log(
       '[BILLING_JOB_TRACE][frontend]',
       JSON.stringify({
         ts: safeNowIso(),
         event: 'manual_renew_request_start',
         subscription_id: id,
+        cycle_id: body.cycle_id ?? null,
       })
     );
     const res = await apiClient.post<CrmSubscriptionManualRenewalResult>(
       `/api/crm-subscriptions/${encodeURIComponent(id)}/manual-renew`,
-      {}
+      body
     );
     const httpStatus =
       res.details && typeof res.details === 'object' && 'status' in res.details
@@ -540,5 +571,31 @@ export const crmSubscriptionsService = {
       jobId ? { job_id: jobId } : {}
     );
     return parseManualRenewalPostResponse(res);
+  },
+
+  async repairCycleInvariants(
+    id: string,
+    options?: { cycleId?: string }
+  ): Promise<{
+    success: boolean;
+    cycles_reopened: number;
+    cycle_ids: string[];
+    cycle_dates: string[];
+    jobs_reset: number;
+  }> {
+    const body: { cycle_id?: string } = {};
+    if (options?.cycleId?.trim()) {
+      body.cycle_id = options.cycleId.trim();
+    }
+    const res = await apiClient.post<{
+      success: boolean;
+      cycles_reopened: number;
+      cycle_ids: string[];
+      cycle_dates: string[];
+      jobs_reset: number;
+    }>(`/api/crm-subscriptions/${encodeURIComponent(id)}/repair-cycle-invariants`, body);
+    if (res.error) throw new Error(res.error);
+    if (!res.data) throw new Error('Resposta inválida ao reparar competência');
+    return res.data;
   },
 };

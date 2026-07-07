@@ -2,7 +2,6 @@ import { formatYmdBrSafe } from '@/lib/billingSafeDate';
 import type { CrmSubscriptionDetailPayload, CrmSubscriptionTimelineRow } from '@/services/crmSubscriptions';
 import {
   buildFinancialHistoryRows,
-  buildFutureCycles,
   friendlyBillingMessage,
   normalizeYmdInput,
   resolveGenerationYmd,
@@ -60,6 +59,10 @@ export type FinancialCalendarEvent = {
   lastUpdatedAt?: string | null;
   cycleId?: string | null;
   notes?: string | null;
+  /** Sprint 4.2H — competência projetada (somente visualização). */
+  isProjected?: boolean;
+  /** Sprint 5.0-24D — INV-19 violado. */
+  needsInvariantRepair?: boolean;
 };
 
 export type FinancialTimelineItem = {

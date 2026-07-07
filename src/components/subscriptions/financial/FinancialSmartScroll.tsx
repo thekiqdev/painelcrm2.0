@@ -1,5 +1,4 @@
 import { useEffect, useRef } from 'react';
-import { buildFinancialAlerts } from '@/lib/subscriptionFinancialExperience';
 import type { CrmSubscriptionDetailPayload } from '@/services/crmSubscriptions';
 import {
   resolveFinancialPageScrollTarget,
@@ -19,7 +18,7 @@ export function FinancialSmartScroll({ detail }: Props) {
   useEffect(() => {
     if (doneRef.current) return;
     doneRef.current = true;
-    const alerts = buildFinancialAlerts(detail, store.today);
+    const alerts = store.getFinancialAlerts();
     const target = resolveFinancialPageScrollTarget(store.events, alerts, store.today);
     if (!target) return;
     requestAnimationFrame(() => {

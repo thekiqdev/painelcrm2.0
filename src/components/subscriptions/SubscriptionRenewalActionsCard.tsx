@@ -16,11 +16,13 @@ import { Loader2, PlayCircle, RefreshCw, Zap, CheckCircle2, XCircle } from "luci
 import { useNavigate } from "react-router-dom";
 import {
   crmSubscriptionsService,
-  type CrmSubscriptionManualRenewalStatus,
   type CrmSubscriptionManualRenewalResult,
+  type CrmSubscriptionManualRenewalStatus,
 } from "@/services/crmSubscriptions";
 import { formatDateTimeBrSafe, safeNowIso } from "@/lib/billingSafeDate";
 import { friendlyBillingMessage } from "@/lib/billingSubscriptionExperience";
+import { executeDeterministicGenerateRenewal } from "@/lib/subscriptionBillingGeneration";
+import { resolveOperationalCompetency } from "@/lib/operationalCompetencyResolver";
 
 type Props = {
   subscriptionId: string;
@@ -96,7 +98,44 @@ export function SubscriptionRenewalActionsCard({
     const pollSignal = { cancelled: false };
     void pollWhileProcessing(pollSignal);
     try {
-      const result = await crmSubscriptionsService.generateRenewalNow(subscriptionId);
+      const detail = await crmSubscriptionsService.get(subscriptionId);
+      const resolved = resolveOperationalCompetency(detail, { mode: 'NEXT_GENERATE' });
+      const cycle = resolved.cycleId
+        ? detail.cycles_raw?.find((c) => c.id === resolved.cycleId) ?? null
+        : null;
+      if (!cycle) {
+        setLastResult({
+          success: false,
+          job_id: null,
+          invoice_id: null,
+          invoice_number: null,
+          gateway_status: null,
+          notification_sent: false,
+          subscription_status: detail.subscription.status,
+          cycle_key: null,
+          execution_mode: 'manual',
+          duration_ms: 0,
+          message: 'Nenhum ciclo elegível em subscription_cycles.',
+          result: 'cycle_id_required',
+          error_code: 'CYCLE_ID_REQUIRED',
+          stage: 'CYCLE_RESOLUTION',
+          reason: 'cycle_id_required',
+          repaired_fields: [],
+          logs: [],
+          correlation_id: `manual-cycle-${subscriptionId}-${Date.now()}`,
+        });
+        return;
+      }
+      const result = await executeDeterministicGenerateRenewal({
+        subscriptionId,
+        detail,
+        target: {
+          cycleId: cycle.id,
+          dueYmd: cycle.cycle_date,
+          componentName: 'SubscriptionRenewalActionsCard',
+        },
+        componentName: 'SubscriptionRenewalActionsCard',
+      });
       pollSignal.cancelled = true;
       setLastResult(result);
       await loadStatus();

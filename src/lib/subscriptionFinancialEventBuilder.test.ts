@@ -3,6 +3,7 @@ import type { CrmSubscriptionDetailPayload, CrmSubscriptionTimelineRow } from '@
 import { buildFinancialEvents } from './subscriptionFinancialEventBuilder';
 import { createFinancialEventStore } from './subscriptionFinancialEventStore';
 import type { FinancialEventType } from './financialEventTypes';
+import { cyclesRawFromTimeline } from './testHelpers/subscriptionCyclesFixture';
 
 const today = '2026-06-30';
 
@@ -32,6 +33,47 @@ function row(overrides: Partial<CrmSubscriptionTimelineRow> = {}): CrmSubscripti
 }
 
 function detail(overrides: Partial<CrmSubscriptionDetailPayload> = {}): CrmSubscriptionDetailPayload {
+  const timeline = [
+      row({
+        due_date: '2026-06-30',
+        invoice_id: 'inv-paid',
+        invoice_status: 'paid',
+        operational_state: 'paid',
+        status_pt: 'Pago',
+        processed_at: '2026-06-30T12:00:00Z',
+        amount_cents: 11000,
+        cycle_id: 'c0',
+      }),
+      row({
+        due_date: '2026-07-07',
+        invoice_id: 'inv-2',
+        invoice_status: 'paid',
+        operational_state: 'paid',
+        status_pt: 'Pago',
+        processed_at: '2026-07-07T12:00:00Z',
+        cycle_id: 'c2',
+      }),
+      row({
+        due_date: '2026-07-14',
+        invoice_id: null,
+        operational_state: 'failed',
+        status_pt: 'Falha na geração',
+        job_error_snippet: 'timeout',
+        cycle_id: 'c3',
+      }),
+      row({
+        due_date: '2026-07-21',
+        invoice_id: 'inv-pending',
+        invoice_created_at: '2026-07-18T10:00:00Z',
+        invoice_status: 'pending',
+        operational_state: 'generated',
+        status_pt: 'Aguardando',
+        cycle_id: 'c4',
+      }),
+      ...(overrides.timeline ?? []),
+    ];
+  const cycles_raw =
+    overrides.cycles_raw !== undefined ? overrides.cycles_raw : cyclesRawFromTimeline(timeline);
   return {
     subscription: {
       id: 'sub-1',
@@ -72,52 +114,15 @@ function detail(overrides: Partial<CrmSubscriptionDetailPayload> = {}): CrmSubsc
       charge_count: 2,
       paid_count: 2,
     },
-    timeline: [
-      row({
-        due_date: '2026-06-30',
-        invoice_id: 'inv-paid',
-        invoice_status: 'paid',
-        operational_state: 'paid',
-        status_pt: 'Pago',
-        processed_at: '2026-06-30T12:00:00Z',
-        amount_cents: 11000,
-      }),
-      row({
-        due_date: '2026-07-07',
-        invoice_id: 'inv-2',
-        invoice_status: 'paid',
-        operational_state: 'paid',
-        status_pt: 'Pago',
-        processed_at: '2026-07-07T12:00:00Z',
-        cycle_id: 'c2',
-      }),
-      row({
-        due_date: '2026-07-14',
-        invoice_id: null,
-        operational_state: 'failed',
-        status_pt: 'Falha na geração',
-        job_error_snippet: 'timeout',
-        cycle_id: 'c3',
-      }),
-      row({
-        due_date: '2026-07-21',
-        invoice_id: 'inv-pending',
-        invoice_created_at: '2026-07-18T10:00:00Z',
-        invoice_status: 'pending',
-        operational_state: 'generated',
-        status_pt: 'Aguardando',
-        cycle_id: 'c4',
-      }),
-      ...(overrides.timeline ?? []),
-    ],
+    timeline,
     automation_summary: {
       last_generation_at: null,
       last_generation_label: null,
       next_generation_ymd: '2026-07-14',
       next_charge_ymd: '2026-07-21',
     },
-    cycles_raw: [],
-    cycles_read_enabled: false,
+    cycles_raw,
+    cycles_read_enabled: overrides.cycles_read_enabled ?? cycles_raw.length > 0,
     tenant_billing: {
       recurring_invoice_generate_days_before_due: 0,
       recurring_generate_time_local: '08:00',
@@ -400,10 +405,10 @@ describe('buildFinancialEvents — multiple events same day', () => {
 });
 
 describe('buildFinancialEvents — subscription status', () => {
-  it('cancelled subscription skips future upcoming_cycle from buildFutureCycles', () => {
+  it('cancelled subscription skips uninvoiced upcoming cycles', () => {
     const d = detail({ subscription: { ...detail().subscription, status: 'cancelled' } });
     const upcoming = buildFinancialEvents(d, today).filter((e) => e.type === 'upcoming_cycle');
-    expect(upcoming.every((e) => e.ymd <= today || e.dueYmd === null)).toBe(true);
+    expect(upcoming).toHaveLength(0);
   });
 
   it('paused still has timeline events', () => {
@@ -411,9 +416,9 @@ describe('buildFinancialEvents — subscription status', () => {
     expect(buildFinancialEvents(d, today).length).toBeGreaterThan(0);
   });
 
-  it('empty timeline only future cycles', () => {
-    const d = detail({ timeline: [] });
-    expect(buildFinancialEvents(d, today).some((e) => e.type === 'upcoming_cycle')).toBe(true);
+  it('empty timeline without cycles_raw yields no events', () => {
+    const d = detail({ timeline: [], cycles_raw: [] });
+    expect(buildFinancialEvents(d, today)).toHaveLength(0);
   });
 });
 
@@ -438,7 +443,7 @@ describe('buildFinancialEvents — amounts', () => {
     expect(pay?.amountCents).toBe(11000);
   });
 
-  it('future cycle uses projected amount', () => {
+  it('future cycle uses subscription amount from cycle row', () => {
     const upcoming = buildFinancialEvents(detail(), today).filter((e) => e.type === 'upcoming_cycle');
     expect(upcoming.some((e) => e.amountCents === 11000)).toBe(true);
   });
@@ -466,7 +471,7 @@ describe('buildFinancialEvents — parameterized dates', () => {
 describe('buildFinancialEvents — store integration', () => {
   it('store event count matches builder', () => {
     const d = detail();
-    expect(createFinancialEventStore(d, today).events.length).toBe(buildFinancialEvents(d, today).length);
+    expect(createFinancialEventStore(d, today).realEvents.length).toBe(buildFinancialEvents(d, today).length);
   });
 
   it('KPI received sums payments', () => {

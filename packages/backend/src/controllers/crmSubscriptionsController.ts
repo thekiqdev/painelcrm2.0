@@ -22,12 +22,12 @@ import {
 } from '../services/crmSubscriptionsAnalyticsService.js';
 import {
   getManualRenewalStatus,
-  manualGenerateRenewalNow,
   manualReprocessRenewal,
   manualRenewSubscription,
   manualReprocessSubscription,
 } from '../services/billingManualRenewalService.js';
 import { emitBillingJobTrace } from '../services/billingJobLifecycleTrace.js';
+import { repairInvoicedCyclesWithoutInvoice } from '../services/subscriptionCycleLifecycleService.js';
 import { assertPermissionKey, ModulePermissionError } from '../permissions/index.js';
 import type { PermissionCatalogKey } from '../permissions/permissionCatalog.js';
 
@@ -457,7 +457,13 @@ export async function postCrmSubscriptionGenerateNowHandler(req: AuthRequest, re
     }
     if (!(await requirePermKey(req, 'billing.edit_subscription', res))) return;
     const { id } = req.params;
-    const result = await manualGenerateRenewalNow(tenantId, id, manualRenewalActor(req));
+    const cycleId =
+      typeof req.body?.cycle_id === 'string'
+        ? req.body.cycle_id
+        : typeof req.body?.cycleId === 'string'
+          ? req.body.cycleId
+          : undefined;
+    const result = await manualRenewSubscription(tenantId, id, manualRenewalActor(req), cycleId ? { cycleId } : undefined);
     res.status(result.success ? 200 : 400).json(result);
   } catch (e) {
     console.error('[crmSubscriptionsController] generate-now', e);
@@ -494,14 +500,21 @@ export async function postCrmSubscriptionManualRenewHandler(req: AuthRequest, re
     }
     if (!(await requirePermKey(req, 'billing.edit_subscription', res))) return;
     const { id } = req.params;
+    const cycleId =
+      typeof req.body?.cycle_id === 'string'
+        ? req.body.cycle_id
+        : typeof req.body?.cycleId === 'string'
+          ? req.body.cycleId
+          : undefined;
     emitBillingJobTrace('HTTP_POST_MANUAL_RENEW_RECEIVED', {
       subscription_id: id,
       tenant_id: tenantId,
+      cycle_id: cycleId ?? null,
       caller_file: 'crmSubscriptionsController.ts',
       caller_line: 486,
       caller_function: 'postCrmSubscriptionManualRenewHandler',
     });
-    const result = await manualRenewSubscription(tenantId, id, manualRenewalActor(req));
+    const result = await manualRenewSubscription(tenantId, id, manualRenewalActor(req), cycleId ? { cycleId } : undefined);
     const httpStatus = result.success ? 200 : 400;
     emitBillingJobTrace('HTTP_POST_MANUAL_RENEW_RESPONSE', {
       subscription_id: id,
@@ -528,6 +541,42 @@ export async function postCrmSubscriptionManualRenewHandler(req: AuthRequest, re
     });
     console.error('[crmSubscriptionsController] manual-renew', e);
     res.status(500).json({ error: 'Erro na renovação manual' });
+  }
+}
+
+/** Sprint 5.0-24C — repara INV-19 (invoiced sem invoice_id) para assinatura ou ciclo específico. */
+export async function postCrmSubscriptionRepairCycleInvariantsHandler(
+  req: AuthRequest,
+  res: Response
+): Promise<void> {
+  try {
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Empresa não identificada' });
+      return;
+    }
+    if (!(await requirePermKey(req, 'billing.edit_subscription', res))) return;
+    const { id: subscriptionId } = req.params;
+    const cycleId =
+      typeof req.body?.cycle_id === 'string'
+        ? req.body.cycle_id
+        : typeof req.body?.cycleId === 'string'
+          ? req.body.cycleId
+          : undefined;
+    const result = await repairInvoicedCyclesWithoutInvoice(tenantId, subscriptionId, {
+      reason: 'manual_repair_cycle_invariants',
+      cycleId: cycleId ?? null,
+    });
+    res.status(200).json({
+      success: true,
+      cycles_reopened: result.cycles_reopened,
+      cycle_ids: result.cycle_ids,
+      cycle_dates: result.cycle_dates,
+      jobs_reset: result.jobs_reset,
+    });
+  } catch (e) {
+    console.error('[crmSubscriptionsController] repair-cycle-invariants', e);
+    res.status(500).json({ error: 'Erro ao reparar competências da assinatura' });
   }
 }
 

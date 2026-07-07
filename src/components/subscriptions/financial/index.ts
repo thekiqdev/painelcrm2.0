@@ -12,6 +12,8 @@ export { FinancialSummarySidebar } from './FinancialSummarySidebar';
 export { SubscriptionProgressBar } from './SubscriptionProgressBar';
 export { FinancialTechnicalAccordion } from './FinancialTechnicalAccordion';
 export { FinancialEventStoreProvider, useFinancialEventStore, useFinancialTimeZone, usePaymentConfirmedHandler } from './FinancialEventStoreContext';
+/** Sprint 5.0-22 — alias do provider oficial (BillingAggregate via cutover). */
+export { FinancialEventStoreProvider as BillingExperienceProvider } from './FinancialEventStoreContext';
 export { FinancialSmartScroll } from './FinancialSmartScroll';
 export { LazyFinancialSection } from './LazyFinancialSection';
 export { PaymentEventChip } from './PaymentEventChip';

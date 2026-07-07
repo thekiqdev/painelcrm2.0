@@ -38,7 +38,7 @@ describe('Regression 4.2N — Timeline causality', () => {
     });
     const normalized = normalizeDetailForLegacyCycleRecovery(detail);
     const store = createFinancialEventStore(normalized, today);
-    expect(store.getHistoryRows().find((r) => r.cycleId === 'c-next')?.canGenerateNow).toBe(true);
+    expect(store.getHistoryRows().find((r) => r.cycleId === 'c-legacy')?.canGenerateNow).toBe(true);
   });
 
   it('histórico deriva de realEvents, não de projeções', () => {

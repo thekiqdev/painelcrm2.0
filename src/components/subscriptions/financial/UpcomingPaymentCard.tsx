@@ -3,9 +3,11 @@ import { UpcomingPaymentsList } from './UpcomingPaymentsList';
 import { useFinancialEventStore } from './FinancialEventStoreContext';
 import { cn } from '@/lib/utils';
 
+import type { GenerateBillingTarget } from '@/lib/subscriptionBillingGeneration';
+
 type Props = {
   canViewInvoices?: boolean;
-  onGenerateBilling?: () => void;
+  onGenerateBilling?: (target?: GenerateBillingTarget) => void;
   onChangeDue?: () => void;
   className?: string;
 };

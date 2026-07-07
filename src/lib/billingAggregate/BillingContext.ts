@@ -7,7 +7,10 @@ export function billingContextSourceSignature(detail: CrmSubscriptionDetailPaylo
     .filter((r) => r.merge_source !== 'lifecycle')
     .map((r) => `${r.cycle_id}:${r.invoice_id}:${r.operational_state}:${r.due_date}`)
     .join('|');
-  return `${detail.subscription.id}:${detail.subscription.status}:${detail.subscription.next_billing_date}:${detail.latest_invoice_id ?? ''}:${tl}`;
+  const cy = (detail.cycles_raw ?? [])
+    .map((c) => `${c.id}:${c.cycle_date}:${c.status}:${c.invoice_id ?? ''}`)
+    .join('|');
+  return `${detail.subscription.id}:${detail.subscription.status}:${detail.subscription.next_billing_date}:${detail.latest_invoice_id ?? ''}:${tl}:${cy}`;
 }
 
 export function createBillingContext(
@@ -31,6 +34,9 @@ export function validateBillingContext(context: BillingContext): BillingContextV
   }
   if (!Array.isArray(source.cycles_raw)) {
     return { ok: false, reason: 'cycles_raw must be an array' };
+  }
+  if (source.invoices != null && !Array.isArray(source.invoices)) {
+    return { ok: false, reason: 'invoices must be an array when present' };
   }
   if (!Array.isArray(source.recent_jobs)) {
     return { ok: false, reason: 'recent_jobs must be an array' };

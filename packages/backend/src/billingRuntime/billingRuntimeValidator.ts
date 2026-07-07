@@ -261,6 +261,9 @@ export async function validateBillingRuntime(
   }
 
   const cycleRepair = await repairRecoverableSubscriptionCycles(tenantId, subscriptionId);
+  if (cycleRepair.invariant_cycles_reopened > 0) {
+    repairs.push(`invoiced_invariant_reopened:${cycleRepair.invariant_cycles_reopened}`);
+  }
   if (cycleRepair.cycles_repaired > 0) repairs.push(`cycles_failed_to_pending:${cycleRepair.cycles_repaired}`);
   if (cycleRepair.jobs_repaired > 0) repairs.push(`jobs_failed_to_pending:${cycleRepair.jobs_repaired}`);
 

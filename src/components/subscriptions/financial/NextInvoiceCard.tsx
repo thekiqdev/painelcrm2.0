@@ -1,18 +1,18 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useFinancialEventStore } from './FinancialEventStoreContext';
-import { resolveNextChargePresentationFromStore } from '@/lib/subscriptionFinancialEvents';
 import type { CrmSubscriptionDetailPayload } from '@/services/crmSubscriptions';
 import { formatYmdBrSafe } from '@/lib/billingSafeDate';
 import { FINANCIAL_CARD_BODY, FINANCIAL_CARD_HEADER, FINANCIAL_CARD_SHELL } from '@/lib/subscriptionFinancialOverview';
 import { PaymentBadge, focusRingClass } from './FinancialStatCard';
 import { cn } from '@/lib/utils';
 import { Eye, Loader2, Zap } from 'lucide-react';
+import type { GenerateBillingTarget } from '@/lib/subscriptionBillingGeneration';
 
 type Props = {
   detail: CrmSubscriptionDetailPayload;
   generating?: boolean;
-  onGenerateBilling?: () => void;
+  onGenerateBilling?: (target?: GenerateBillingTarget) => void;
   onOpenInvoice?: (invoiceId: string) => void;
   className?: string;
 };
@@ -34,8 +34,18 @@ export function NextInvoiceCard({
   className,
 }: Props) {
   const store = useFinancialEventStore();
-  const next = resolveNextChargePresentationFromStore(store);
-  const showAction = detail.subscription.status === 'active' && (next.hasInvoice ? onOpenInvoice : onGenerateBilling);
+  const next = store.getNextChargePresentation();
+  const resolved = store.resolveCyclePresentation(next.cycleId, 'NEXT_CARD');
+  const showAction =
+    detail.subscription.status === 'active' &&
+    !resolved.isProjected &&
+    (resolved.canOpen || resolved.canGenerate);
+
+  const subtitle = next.isProjected
+    ? 'Previsão — o ciclo oficial será criado automaticamente pelo agendador'
+    : next.hasInvoice
+      ? 'Cobrança gerada — abra ou avance para a próxima competência'
+      : 'Competência disponível para geração antecipada';
 
   if (!next.visible && !next.dueYmd) return null;
 
@@ -43,9 +53,7 @@ export function NextInvoiceCard({
     <Card className={cn(FINANCIAL_CARD_SHELL, className)} id="next-invoice-card">
       <CardHeader className={cn(FINANCIAL_CARD_HEADER, 'py-4')}>
         <CardTitle className="text-base font-semibold">Próxima cobrança</CardTitle>
-        <p className="text-xs text-muted-foreground font-normal">
-          {next.hasInvoice ? 'Cobrança gerada — abra ou avance para a próxima competência' : 'Competência disponível para geração antecipada'}
-        </p>
+        <p className="text-xs text-muted-foreground font-normal">{subtitle}</p>
       </CardHeader>
       <CardContent className={cn(FINANCIAL_CARD_BODY, 'space-y-4')}>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -74,20 +82,24 @@ export function NextInvoiceCard({
             <Button
               type="button"
               size="sm"
-              variant={next.hasInvoice ? 'outline' : 'default'}
+              variant={resolved.canOpen ? 'outline' : 'default'}
               className={cn('gap-1.5', focusRingClass())}
               disabled={generating}
               onClick={() => {
-                if (next.hasInvoice && next.invoiceId) {
+                if (resolved.canOpen && next.invoiceId) {
                   onOpenInvoice?.(next.invoiceId);
-                } else {
-                  onGenerateBilling?.();
+                } else if (resolved.canGenerate && next.cycleId) {
+                  onGenerateBilling?.({
+                    cycleId: next.cycleId,
+                    dueYmd: next.dueYmd,
+                    componentName: 'NextInvoiceCard',
+                  });
                 }
               }}
             >
               {generating ? (
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-              ) : next.hasInvoice ? (
+              ) : resolved.canOpen ? (
                 <Eye className="h-4 w-4" aria-hidden />
               ) : (
                 <Zap className="h-4 w-4" aria-hidden />

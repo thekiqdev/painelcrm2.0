@@ -415,6 +415,14 @@ export async function deleteCustomerInvoiceWithGateway(
       );
     }
     await deleteCustomerInvoiceChildrenAndItemsThenRow(tenantId, invoiceId);
+    if (inv.subscription_id) {
+      try {
+        const { resolveAfterInvoiceDelete } = await import('./operationalCompetencyResolver.js');
+        await resolveAfterInvoiceDelete(tenantId, inv.subscription_id);
+      } catch {
+        /* best-effort pós-delete */
+      }
+    }
     return;
   }
   if (!DELETABLE_STATUSES.has(inv.status)) {
@@ -429,26 +437,7 @@ export async function deleteCustomerInvoiceWithGateway(
   await pool.query(`DELETE FROM customer_invoices WHERE id = $1 AND tenant_id = $2`, [invoiceId, tenantId]);
 }
 
-function isMissingSubscriptionCyclesTable(e: unknown): boolean {
-  const code = typeof e === 'object' && e !== null && 'code' in e ? String((e as { code: unknown }).code) : '';
-  const msg = e instanceof Error ? e.message : String(e);
-  return (
-    code === '42P01' ||
-    (/subscription_cycles/i.test(msg) && /does not exist/i.test(msg))
-  );
-}
-
-async function detachSubscriptionCyclesInvoiceRef(tenantId: string, invoiceId: string): Promise<void> {
-  try {
-    await pool.query(
-      `UPDATE subscription_cycles SET invoice_id = NULL WHERE tenant_id = $1 AND invoice_id = $2::uuid`,
-      [tenantId, invoiceId]
-    );
-  } catch (e: unknown) {
-    if (isMissingSubscriptionCyclesTable(e)) return;
-    throw e;
-  }
-}
+import { reopenCyclesAfterInvoiceRemoved } from './subscriptionCycleLifecycleService.js';
 
 async function deletePaymentAttemptsForInvoice(invoiceId: string): Promise<void> {
   if (!(await hasInvoicePaymentAttemptsTable())) return;
@@ -457,7 +446,7 @@ async function deletePaymentAttemptsForInvoice(invoiceId: string): Promise<void>
 
 /** Exclusão física de uma fatura (itens, tentativas, desvincular ciclos) — sem chamada ao gateway. */
 async function purgeOneCustomerInvoiceRow(tenantId: string, invoiceId: string): Promise<void> {
-  await detachSubscriptionCyclesInvoiceRef(tenantId, invoiceId);
+  await reopenCyclesAfterInvoiceRemoved(tenantId, invoiceId, { reason: 'invoice_purged' });
   await deletePaymentAttemptsForInvoice(invoiceId);
   await pool.query(`DELETE FROM customer_invoice_items WHERE invoice_id = $1`, [invoiceId]);
   await pool.query(`DELETE FROM customer_invoices WHERE id = $1 AND tenant_id = $2`, [invoiceId, tenantId]);

@@ -47,9 +47,12 @@ function groupEventsByType(events: ReturnType<typeof useFinancialEventStore>['ev
 export function FinancialTechnicalAccordion({ detail, open, onOpenChange, className }: Props) {
   const store = useFinancialEventStore();
   const timeZone = useFinancialTimeZone();
-  const technical = buildTechnicalDiagnostics(detail);
+  const technicalView = store.getTechnicalView();
+  const technical = technicalView?.diagnostics ?? buildTechnicalDiagnostics(detail);
   const workerHistory = buildWorkerHistoryEntries(detail);
-  const { subscription: s, recent_jobs, cycles_raw, cycles_read_enabled, automation_summary } = detail;
+  const { subscription: s, recent_jobs, automation_summary } = detail;
+  const cycles_raw = store.getAggregate()?.cycles ?? [];
+  const cycles_read_enabled = technicalView?.cyclesReadEnabled ?? detail.cycles_read_enabled;
   const eventsByType = groupEventsByType(store.events);
   const [workerOpen, setWorkerOpen] = useState(false);
 

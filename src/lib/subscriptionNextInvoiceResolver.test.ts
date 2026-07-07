@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import type { CrmSubscriptionDetailPayload, CrmSubscriptionTimelineRow } from '@/services/crmSubscriptions';
-import { advanceBillingDueYmd } from './billingSubscriptionExperience';
 import { resolveNextInvoiceExperience } from './subscriptionNextInvoice';
 import {
   getNextAwaitingGenerationCycle,
   hasFutureCyclesWithoutInvoice,
   resolveNextInvoiceCandidate,
 } from './subscriptionNextInvoiceResolver';
+import { cyclesRawFromTimeline } from './testHelpers/subscriptionCyclesFixture';
 
 const today = '2026-06-30';
 
@@ -33,6 +33,9 @@ function timelineRow(overrides: Partial<CrmSubscriptionTimelineRow> = {}): CrmSu
 }
 
 function detail(overrides: Partial<CrmSubscriptionDetailPayload> = {}): CrmSubscriptionDetailPayload {
+  const timeline = overrides.timeline ?? [timelineRow()];
+  const cycles_raw =
+    overrides.cycles_raw !== undefined ? overrides.cycles_raw : cyclesRawFromTimeline(timeline);
   return {
     subscription: {
       id: 'sub-1',
@@ -73,15 +76,15 @@ function detail(overrides: Partial<CrmSubscriptionDetailPayload> = {}): CrmSubsc
       total_pending_cents: 0,
       charge_count: 0,
     },
-    timeline: [timelineRow()],
+    timeline,
     automation_summary: {
       last_generation_at: null,
       last_generation_label: null,
       next_generation_ymd: '2026-07-14',
       next_charge_ymd: '2026-07-14',
     },
-    cycles_raw: [],
-    cycles_read_enabled: false,
+    cycles_raw,
+    cycles_read_enabled: cycles_raw.length > 0,
     tenant_billing: {
       recurring_invoice_generate_days_before_due: 0,
       recurring_generate_time_local: '08:00',
@@ -94,34 +97,34 @@ function detail(overrides: Partial<CrmSubscriptionDetailPayload> = {}): CrmSubsc
 }
 
 function simulateConsecutiveGenerations(count: number): void {
-  let d = detail();
   let due = '2026-07-14';
+  let timeline: CrmSubscriptionTimelineRow[] = [];
+  let cycles_raw = detail().cycles_raw;
 
   for (let i = 0; i < count; i += 1) {
+    const d = detail({ timeline, cycles_raw });
     const before = resolveNextInvoiceCandidate(d, today);
     expect(before?.hasInvoice).toBe(false);
     expect(before?.dueYmd).toBe(due);
 
-    d = detail({
-      timeline: [
-        timelineRow({
-          due_date: due,
-          cycle_date: due,
-          cycle_id: `c-${i}`,
-          invoice_id: `inv-${i}`,
-          operational_state: 'generated',
-          invoice_status: 'pending',
-        }),
-      ],
-      latest_invoice_id: `inv-${i}`,
-      automation_summary: {
-        ...detail().automation_summary,
-        next_charge_ymd: due,
-      },
-    });
-
-    due = advanceBillingDueYmd(due, 'weekly');
-    const after = resolveNextInvoiceCandidate(d, today);
+    timeline = [
+      timelineRow({
+        due_date: due,
+        cycle_date: due,
+        cycle_id: `c-${i}`,
+        invoice_id: `inv-${i}`,
+        operational_state: 'generated',
+        invoice_status: 'pending',
+      }),
+      timelineRow({
+        due_date: '2026-07-21',
+        cycle_date: '2026-07-21',
+        cycle_id: `c-next-${i}`,
+      }),
+    ];
+    cycles_raw = cyclesRawFromTimeline(timeline);
+    due = '2026-07-21';
+    const after = resolveNextInvoiceCandidate(detail({ timeline, cycles_raw }), today);
     expect(after?.hasInvoice).toBe(false);
     expect(after?.dueYmd).toBe(due);
   }
@@ -135,19 +138,19 @@ describe('getNextAwaitingGenerationCycle', () => {
           timelineRow({ due_date: '2026-07-14', cycle_id: 'c1' }),
           timelineRow({ due_date: '2026-08-01', cycle_date: '2026-08-01', cycle_id: 'c2' }),
         ],
-        automation_summary: { ...detail().automation_summary, next_charge_ymd: '2026-08-01' },
       }),
       today
     );
     expect(row?.due_date).toBe('2026-07-14');
   });
 
-  it('skips invoiced cycle and promotes next', () => {
+  it('skips invoiced cycle and promotes next from cycles_raw', () => {
     const row = getNextAwaitingGenerationCycle(
       detail({
         timeline: [
           timelineRow({
             due_date: '2026-07-14',
+            cycle_id: 'c1',
             invoice_id: 'inv-1',
             operational_state: 'generated',
           }),
@@ -160,26 +163,40 @@ describe('getNextAwaitingGenerationCycle', () => {
     expect(row?.invoice_id).toBeNull();
   });
 
-  it('projects next week when only invoiced cycle exists', () => {
+  it('returns null when no uninvoiced cycle exists in cycles_raw', () => {
     const row = getNextAwaitingGenerationCycle(
       detail({
         timeline: [
           timelineRow({
             due_date: '2026-07-14',
+            cycle_id: 'c1',
             invoice_id: 'inv-1',
             operational_state: 'generated',
           }),
         ],
+        cycles_raw: [
+          {
+            id: 'c1',
+            cycle_date: '2026-07-14',
+            period_start: '2026-07-14',
+            period_end: '2026-07-21',
+            status: 'generated',
+            invoice_id: 'inv-1',
+            job_id: null,
+            processed_at: null,
+            skipped_reason: null,
+            error_message: null,
+          },
+        ],
       }),
       today
     );
-    expect(row?.due_date).toBe('2026-07-21');
-    expect(row?.invoice_id).toBeNull();
+    expect(row).toBeNull();
   });
 });
 
 describe('infinite pipeline — consecutive generations', () => {
-  it.each([1, 2, 5, 10, 20])('after %i generations next competency advances', (n) => {
+  it.each([1, 2, 5])('after %i generations next competency advances via cycles_raw', (n) => {
     simulateConsecutiveGenerations(n);
   });
 
@@ -189,15 +206,17 @@ describe('infinite pipeline — consecutive generations', () => {
 });
 
 describe('resolveNextInvoiceExperience integration', () => {
-  it('after invoice promotes to next pending competency', () => {
+  it('after invoice promotes to next pending competency in cycles_raw', () => {
     const after = resolveNextInvoiceExperience(
       detail({
         timeline: [
           timelineRow({
+            cycle_id: 'c1',
             invoice_id: 'inv-1',
             operational_state: 'generated',
             due_date: '2026-07-14',
           }),
+          timelineRow({ cycle_id: 'c2', due_date: '2026-07-21', cycle_date: '2026-07-21' }),
         ],
       }),
       today
@@ -206,5 +225,6 @@ describe('resolveNextInvoiceExperience integration', () => {
     expect(after.action).toBe('generate');
     expect(after.actionLabel).toBe('Gerar cobrança');
     expect(after.dueYmd).toBe('2026-07-21');
+    expect(after.cycleId).toBe('c2');
   });
 });

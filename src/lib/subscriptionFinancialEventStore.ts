@@ -1,6 +1,14 @@
 import type { CrmSubscriptionDetailPayload } from '@/services/crmSubscriptions';
-import { isBillingShadowModeEnabled } from '@/lib/billingShadow/featureFlag';
-import { runBillingShadowSideEffect } from '@/lib/billingShadow/shadowRuntime';
+import { createBillingExperienceStore } from '@/lib/billingCutover/createBillingExperienceStore';
+import type { FinancialEventStorePrebuilt } from '@/lib/billingCutover/buildAggregateStorePrebuilt';
+import type { BillingUiCapabilities } from '@/lib/billingCutover/adapters/uiCapabilitiesAdapter';
+import type { BillingAggregate } from '@/lib/billingAggregate';
+import {
+  buildFinancialHeaderData,
+  buildFinancialAlerts,
+  type FinancialHeaderData,
+} from './subscriptionFinancialExperience';
+import { humanizeFinancialAlerts } from '@/lib/subscriptionFinancialOverview';
 import { shiftMonthKey } from './billingSubscriptionExperiencePolish';
 import { intervalLabel } from '@/components/subscriptions/subscriptionsListUtils';
 import { subscriptionHeadlineStatus } from './billingSubscriptionExperience';
@@ -12,13 +20,14 @@ import {
   isProjectedFinancialEvent,
   mergeRealAndProjectionEvents,
 } from './subscriptionFinancialProjection';
-import { resolveFirstEligibleCycle, cycleSupportsManualGenerate } from './subscriptionCyclesSource';
+import { invoiceVisibilityFromCycle, resolveCyclePresentation, cycleNeedsInvariantRepair } from './resolvedCompetencyPresentation';
+import { resolveOperationalCompetency } from './operationalCompetencyResolver';
 import {
   financialEventToHistoryRow,
   resolveNextChargeEvent,
   resolveNextChargePresentationFromStore,
 } from './subscriptionFinancialEvents';
-import { resolveHistoryRowState } from './billingStateMachine';
+import { billingStatusLabel } from './billingStatusPresentation';
 import type { FinancialEvent, FinancialEventType } from './financialEventTypes';
 import {
   HISTORY_EVENT_TYPES,
@@ -81,6 +90,13 @@ function visualFromEvent(ev: FinancialEvent, today: string): CalendarVisualKind 
   return 'future';
 }
 
+export type FinancialEventStorePrebuiltEvents = Pick<
+  FinancialEventStorePrebuilt,
+  'realEvents' | 'events'
+>;
+
+export type { FinancialEventStorePrebuilt };
+
 export class FinancialEventStore {
   /** Eventos reais (subscription_cycles) — única fonte para Billing. */
   readonly realEvents: FinancialEvent[];
@@ -89,6 +105,8 @@ export class FinancialEventStore {
   readonly subscriptionId: string;
   readonly today: string;
   readonly builtAt: string;
+  /** Presente quando alimentado pelo BillingAggregate (Sprint 5.0-22B). */
+  readonly aggregateFacade: FinancialEventStorePrebuilt | null;
 
   private _calendarCache: FinancialCalendarEvent[] | null = null;
   private _historyCache: FinancialHistoryRow[] | null = null;
@@ -97,17 +115,74 @@ export class FinancialEventStore {
   private _insightsCache: FinancialInsight[] | null = null;
   private _upcomingCache: UpcomingReceipt[] | null = null;
   private _byDayCache: Map<string, FinancialEvent[]> | null = null;
+  private _nextChargeCache: ReturnType<FinancialEventStore['getNextChargePresentation']> | null = null;
+  private _sidebarCache: ReturnType<FinancialEventStore['getSidebarSummary']> | null = null;
+  private _alertsCache: import('./subscriptionFinancialExperience').FinancialAlert[] | null = null;
 
   constructor(
     readonly detail: CrmSubscriptionDetailPayload,
-    todayYmd?: string
+    todayYmd?: string,
+    prebuilt?: FinancialEventStorePrebuilt | FinancialEventStorePrebuiltEvents
   ) {
     this.today = todayYmd ?? new Date().toISOString().slice(0, 10);
     this.subscriptionId = detail.subscription.id;
     this.builtAt = new Date().toISOString();
-    this.realEvents = buildFinancialEvents(detail, this.today);
-    const projections = buildProjectionEvents(detail, this.today);
-    this.events = mergeRealAndProjectionEvents(this.realEvents, projections);
+    const isFullFacade =
+      prebuilt != null && 'historyRows' in prebuilt && Array.isArray(prebuilt.historyRows);
+    this.aggregateFacade = isFullFacade ? (prebuilt as FinancialEventStorePrebuilt) : null;
+    if (prebuilt) {
+      this.realEvents = prebuilt.realEvents;
+      this.events = prebuilt.events;
+      if (this.aggregateFacade) {
+        this._historyCache = this.aggregateFacade.historyRows;
+        this._calendarCache = this.aggregateFacade.calendarEvents;
+        this._kpiCache = this.aggregateFacade.kpiCards;
+        this._insightsCache = this.aggregateFacade.insights;
+        this._upcomingCache = this.aggregateFacade.upcomingReceipts;
+        this._nextChargeCache = this.aggregateFacade.nextChargePresentation;
+        this._sidebarCache = this.aggregateFacade.sidebarSummary;
+        this._alertsCache = this.aggregateFacade.alerts;
+      }
+    } else {
+      this.realEvents = buildFinancialEvents(detail, this.today);
+      const projections = buildProjectionEvents(detail, this.today);
+      this.events = mergeRealAndProjectionEvents(this.realEvents, projections);
+    }
+  }
+
+  /** Aggregate certificado quando store é façade (5.0-22B). */
+  getAggregate(): BillingAggregate | null {
+    return this.aggregateFacade?.aggregate ?? null;
+  }
+
+  getUiCapabilities(): BillingUiCapabilities | null {
+    return this.aggregateFacade?.uiCapabilities ?? null;
+  }
+
+  resolveCyclePresentation(
+    cycleId: string | null | undefined,
+    mode: import('./operationalCompetencyResolverCore').OperationalCompetencyMode = 'HISTORY',
+    options?: Parameters<typeof resolveCyclePresentation>[3]
+  ) {
+    return resolveCyclePresentation(this.detail, cycleId, mode, options);
+  }
+
+  getHeaderData(): FinancialHeaderData | null {
+    if (this.aggregateFacade?.headerData) return this.aggregateFacade.headerData;
+    if (!this.aggregateFacade) return buildFinancialHeaderData(this.detail, this.today);
+    return null;
+  }
+
+  getFinancialAlerts(): import('./subscriptionFinancialExperience').FinancialAlert[] {
+    if (this._alertsCache) return this._alertsCache;
+    if (!this.aggregateFacade) {
+      return humanizeFinancialAlerts(buildFinancialAlerts(this.detail, this.today), this.detail, this.today);
+    }
+    return [];
+  }
+
+  getTechnicalView() {
+    return this.aggregateFacade?.technicalView ?? null;
   }
 
   getEventsByDay(): Map<string, FinancialEvent[]> {
@@ -129,6 +204,14 @@ export class FinancialEventStore {
       const overdue = ev.type === 'invoice_due' && Boolean(ev.dueYmd && ev.dueYmd < this.today);
       const kind = eventToCalendarKind(ev.type, overdue);
       const projected = isProjectedFinancialEvent(ev);
+      const statusPt = projected
+        ? 'Prevista'
+        : billingStatusLabel({
+            eventType: ev.type,
+            overdue,
+            isProjected: false,
+            fallback: ev.statusLabel,
+          });
       return {
         id: ev.id,
         ymd: ev.ymd,
@@ -138,7 +221,7 @@ export class FinancialEventStore {
         amountCents: ev.amountCents,
         competence: ev.competence,
         invoiceId: ev.invoiceId,
-        statusPt: projected ? 'Prevista' : ev.statusLabel,
+        statusPt,
         gateway: ev.gateway,
         paidAt: ev.paidAt,
         clientName: ev.clientName,
@@ -153,7 +236,8 @@ export class FinancialEventStore {
 
   getHistoryRows(): FinancialHistoryRow[] {
     if (this._historyCache) return this._historyCache;
-    const nextCycleId = resolveFirstEligibleCycle(this.detail)?.id ?? null;
+    const nextResolved = resolveOperationalCompetency(this.detail, { mode: 'NEXT_GENERATE' });
+    const nextCycleId = nextResolved.cycleId ?? null;
     const HISTORY_TYPES: FinancialEventType[] = [...HISTORY_EVENT_TYPES, 'upcoming_cycle'];
     const byCycle = new Map<string, FinancialEvent>();
     for (const ev of this.realEvents) {
@@ -166,16 +250,36 @@ export class FinancialEventStore {
     }
     this._historyCache = [...byCycle.values()]
       .map((ev) => {
+        const overdue = ev.type === 'invoice_due' && Boolean(ev.dueYmd && ev.dueYmd < this.today);
+        const cycle = ev.cycleId
+          ? this.detail.cycles_raw?.find((c) => c.id === ev.cycleId)
+          : undefined;
+        const vis = invoiceVisibilityFromCycle(
+          cycle?.invoice_id ?? ev.invoiceId,
+          this.detail.subscription.status
+        );
+        const needsInvariantRepair = cycle
+          ? cycleNeedsInvariantRepair(cycle.status, cycle.invoice_id)
+          : false;
         const row = financialEventToHistoryRow(ev, this.today, {
           isNextCharge: ev.cycleId === nextCycleId,
-          canGenerateNow: cycleSupportsManualGenerate(this.detail, ev.cycleId),
+          canGenerateNow: needsInvariantRepair ? false : vis.canGenerate,
           isProjected: false,
         });
-        const state = resolveHistoryRowState(row, this.today);
         return {
           ...row,
-          canGenerateNow: cycleSupportsManualGenerate(this.detail, ev.cycleId),
-          statusPt: state.label === '—' ? row.statusPt : state.label,
+          invoiceId: cycle?.invoice_id ?? null,
+          canGenerateNow: needsInvariantRepair ? false : vis.canGenerate,
+          canOpenNow: needsInvariantRepair ? false : vis.canOpen,
+          canReprocessNow: false,
+          needsInvariantRepair,
+          statusPt: billingStatusLabel({
+            eventType: ev.type,
+            cycleStatus: cycle?.status ?? null,
+            overdue,
+            isProjected: false,
+            fallback: row.statusPt,
+          }),
         };
       })
       .sort((a, b) => (b.dueYmd ?? '').localeCompare(a.dueYmd ?? ''));
@@ -394,26 +498,30 @@ export class FinancialEventStore {
   }
 
   getNextChargePresentation() {
-    return resolveNextChargePresentationFromStore(this);
+    if (this._nextChargeCache) return this._nextChargeCache;
+    this._nextChargeCache = resolveNextChargePresentationFromStore(this);
+    return this._nextChargeCache;
   }
 
   getSidebarSummary() {
+    if (this._sidebarCache) return this._sidebarCache;
     const payments = this.realEvents.filter((e) => e.type === 'payment');
     const last = [...payments].sort((a, b) => b.ymd.localeCompare(a.ymd))[0];
     const nextCharge = this.getNextChargePresentation();
     const open = this.realEvents
       .filter((e) => KPI_OPEN_TYPES.includes(e.type))
       .reduce((s, e) => s + (e.amountCents ?? 0), 0);
-    return {
+    this._sidebarCache = {
       nextReceiptDate: nextCharge.dateLabelShort !== '—' ? nextCharge.dateLabelShort : '—',
       nextReceiptAmount: nextCharge.amountLabel !== '—' ? nextCharge.amountLabel : '—',
-      lastPaymentDate: last ? formatEventDateShort(last.ymd) : '—',
+      lastPaymentDate: last ? formatEventDateShort(last.paidAt ?? last.ymd) : '—',
       lastPaymentAmount: last?.amountCents != null ? formatCentsCompact(last.amountCents) : '—',
       openAmount: formatCentsCompact(open),
       annualRevenue: formatCentsCompact(this.detail.subscription.amount_cents * 12),
       nextEventDate: this.getNextAgendaEvent()?.dateLabel ?? '—',
       nextEventTitle: this.getNextAgendaEvent()?.title ?? '—',
     };
+    return this._sidebarCache;
   }
 
   searchEvents(query: string): FinancialEvent[] {
@@ -444,33 +552,20 @@ export class FinancialEventStore {
   }
 }
 
-export function createFinancialEventStore(
-  detail: CrmSubscriptionDetailPayload,
-  todayYmd?: string
-): FinancialEventStore {
-  // Sprint 5.0-21 — Shadow Mode: Aggregate em paralelo; UI usa apenas o store legado.
-  // Flag default off (VITE_BILLING_SHADOW_MODE). Erros do Aggregate nunca afetam a UI.
-  if (!isBillingShadowModeEnabled()) {
-    return new FinancialEventStore(detail, todayYmd);
-  }
-
-  const legacyStart = performance.now();
-  const store = new FinancialEventStore(detail, todayYmd);
-  const legacyMs = performance.now() - legacyStart;
-
-  try {
-    runBillingShadowSideEffect(detail, store, legacyMs);
-  } catch {
-    // isolamento total — falha no shadow nunca quebra o store legado
-  }
-
-  return store;
-}
-
 export function financialEventStoreSignature(detail: CrmSubscriptionDetailPayload): string {
   const tl = detail.timeline
     .filter((r) => r.merge_source !== 'lifecycle')
     .map((r) => `${r.cycle_id}:${r.invoice_id}:${r.operational_state}:${r.due_date}`)
     .join('|');
-  return `${detail.subscription.id}:${detail.subscription.status}:${detail.subscription.next_billing_date}:${detail.latest_invoice_id ?? ''}:${tl}`;
+  const cy = (detail.cycles_raw ?? [])
+    .map((c) => `${c.id}:${c.cycle_date}:${c.status}:${c.invoice_id ?? ''}`)
+    .join('|');
+  return `${detail.subscription.id}:${detail.subscription.status}:${detail.subscription.next_billing_date}:${detail.latest_invoice_id ?? ''}:${tl}:${cy}`;
+}
+
+export function createFinancialEventStore(
+  detail: CrmSubscriptionDetailPayload,
+  todayYmd?: string
+): FinancialEventStore {
+  return createBillingExperienceStore(detail, todayYmd);
 }

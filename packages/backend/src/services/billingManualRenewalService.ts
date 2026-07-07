@@ -11,6 +11,9 @@ import {
   loadRenewalEnqueueJoinRow,
   normalizeBillingCycleKeyYmd,
 } from './recurringBillingJobService.js';
+import { materializePlannedCycles, planManualGenerateCycles } from './subscriptionCyclePlanner.js';
+import { getSubscriptionById } from './billingSubscriptionService.js';
+import { normalizeSubscriptionNextBillingYmd } from '../utils/billingCycleKey.js';
 import { flushBillingNotificationSideEffects } from './notificationsEngine/billingNotificationFlush.js';
 import {
   assessManualGenerateReadiness,
@@ -19,6 +22,7 @@ import {
   type RenewalDiagnosis,
 } from './renewalDiagnosisService.js';
 import { resolveAndPersistSubscriptionCustomerId } from './renewalCustomerResolution.js';
+import { resetJobExecutionForReopenedCompetency } from './billingJobExecutionResetService.js';
 import {
   patchBillingJobTraceContext,
   runWithBillingJobTraceContext,
@@ -199,22 +203,6 @@ async function cycleHasInvoiceForKey(
   return Boolean(r.rows[0]?.ok);
 }
 
-async function reactivateJobForManualGenerate(jobId: string): Promise<void> {
-  const sql = `UPDATE billing_recurring_jobs
-     SET status = 'pending',
-         scheduled_at = now(),
-         retry_at = NULL,
-         locked_at = NULL,
-         locked_by = NULL,
-         error_message = NULL,
-         completion_outcome = NULL,
-         updated_at = now()
-     WHERE id = $1::uuid
-       AND result_invoice_id IS NULL
-       AND status IN ('completed', 'failed', 'cancelled')`;
-  await pool.query(sql, [jobId]);
-}
-
 async function findReprocessableJob(
   subscriptionId: string,
   tenantId: string,
@@ -300,7 +288,8 @@ async function prepareJobForImmediateRun(jobId: string): Promise<void> {
 
 async function ensureJobForManualGenerate(
   subscriptionId: string,
-  tenantId: string
+  tenantId: string,
+  options?: { cycleKey: string }
 ): Promise<{ job_id: string; mode: 'inserted' | 'reactivated' | 'reused_pending' }> {
   return withBillingWorkerRlsBypass(async () => {
     traceBillingJobPhase(
@@ -342,7 +331,20 @@ async function ensureJobForManualGenerate(
       /* não bloqueia — worker também trata */
     }
 
-    const cycleKey = normalizeBillingCycleKeyYmd(join.next_billing_date) || join.next_billing_date;
+    const cycleKey =
+      (options?.cycleKey ? normalizeBillingCycleKeyYmd(options.cycleKey) || options.cycleKey : null) ||
+      normalizeBillingCycleKeyYmd(join.next_billing_date) ||
+      join.next_billing_date;
+
+    const enqueueJoin = options?.cycleKey
+      ? { ...join, next_billing_date: cycleKey }
+      : join;
+
+    await materializePlannedCycles(pool, {
+      tenantId,
+      subscriptionId,
+      plans: planManualGenerateCycles(cycleKey),
+    });
 
     const pendingR = await pool.query(
       `SELECT id::text FROM billing_recurring_jobs
@@ -362,7 +364,7 @@ async function ensureJobForManualGenerate(
       return { job_id: pendingId, mode: 'reused_pending' };
     }
 
-    const outcome = await insertOrReactivateRenewalJob(pool, join);
+    const outcome = await insertOrReactivateRenewalJob(pool, enqueueJoin);
     if (outcome === 'skipped_active_exists') {
       const activeR = await pool.query(
         `SELECT id::text, status FROM billing_recurring_jobs
@@ -395,17 +397,14 @@ async function ensureJobForManualGenerate(
     if (outcome === 'skipped_completed_cycle') {
       const hasInvoice = await cycleHasInvoiceForKey(subscriptionId, tenantId, cycleKey);
       if (!hasInvoice) {
-        const reviveR = await pool.query<{ id: string }>(
-          `SELECT id::text FROM billing_recurring_jobs
-           WHERE ${BILLING_JOBS_WHERE_SUB_TENANT_SAME_LOGICAL_CYCLE}
-             AND status IN ('completed', 'failed', 'cancelled')
-             AND result_invoice_id IS NULL
-           ORDER BY updated_at DESC LIMIT 1`,
-          [subscriptionId, tenantId, cycleKey]
-        );
-        const reviveId = reviveR.rows[0]?.id;
+        const reset = await resetJobExecutionForReopenedCompetency(pool, {
+          tenantId,
+          subscriptionId,
+          cycleDateYmd: cycleKey,
+          reason: 'manual_generate_revive',
+        });
+        const reviveId = reset.job_ids[0];
         if (reviveId) {
-          await reactivateJobForManualGenerate(reviveId);
           return { job_id: reviveId, mode: 'reactivated' };
         }
       }
@@ -639,6 +638,54 @@ async function runSynchronousManualPipeline(params: {
   const structured = success ? null : structuredErrorFromResult(result);
   if (success) {
     traceRenewalPipelineStage('COMPLETE', { invoice_id: exec.invoice_id, result });
+    const materializeStarted = Date.now();
+    try {
+      traceRenewalPipelineStage('POST_MANUAL_ENQUEUE_NEXT', {
+        subscription_id: params.subscriptionId,
+        phase: 'materialize_next_competency',
+      });
+      const sub = await getSubscriptionById(params.subscriptionId);
+      const nextYmd =
+        sub && sub.tenant_id === params.tenantId
+          ? normalizeBillingCycleKeyYmd(sub.next_billing_date) ||
+            normalizeSubscriptionNextBillingYmd(sub.next_billing_date)
+          : null;
+      if (nextYmd && /^\d{4}-\d{2}-\d{2}$/.test(nextYmd)) {
+        await materializePlannedCycles(pool, {
+          tenantId: params.tenantId,
+          subscriptionId: params.subscriptionId,
+          plans: [{ cycleDateYmd: nextYmd, source: 'manual_generate' }],
+        });
+        traceRenewalPipelineStageEnd(
+          'POST_MANUAL_ENQUEUE_NEXT',
+          materializeStarted,
+          { ok: true, cycle_date: nextYmd, materialized: true },
+          true
+        );
+        logs.push(`post_manual_materialize_next ok cycle_date=${nextYmd}`);
+        traceBillingJobPhase(
+          'manual_post_materialize_next',
+          { subscription_id: params.subscriptionId, cycle_date: nextYmd },
+          { file: 'billingManualRenewalService.ts', line: 651, function: 'runSynchronousManualPipeline' }
+        );
+      } else {
+        traceRenewalPipelineStageEnd(
+          'POST_MANUAL_ENQUEUE_NEXT',
+          materializeStarted,
+          { ok: false, reason: 'next_billing_unresolvable' },
+          false
+        );
+        logs.push('post_manual_materialize_next skipped reason=next_billing_unresolvable');
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      traceRenewalPipelineError('POST_MANUAL_ENQUEUE_NEXT', e, { subscription_id: params.subscriptionId });
+      logs.push(`post_manual_materialize_next_error=${msg.slice(0, 200)}`);
+      billingLog('job', 'manual_post_materialize_next_failed', {
+        subscription_id: params.subscriptionId,
+        error: msg.slice(0, 500),
+      });
+    }
   } else {
     traceRenewalPipelineError('JOB_PICKUP', new Error(message), { result, job_status: exec.job_status });
   }
@@ -714,13 +761,15 @@ function emptyManualResult(
   };
 }
 
-/** B0.2.1 — Gerar próxima cobrança (execução síncrona, sem scheduler). */
+/** B0.2.1 — Gerar cobrança (execução síncrona, sem scheduler). Sprint 4.2D: sempre por ciclo. */
 export async function manualRenewSubscription(
   tenantId: string,
   subscriptionId: string,
-  actor: ActorContext
+  actor: ActorContext,
+  options?: { cycleId?: string }
 ): Promise<ManualBillingExecutionResult> {
-  return manualGenerateRenewalNow(tenantId, subscriptionId, actor);
+  const { generateInvoiceForCycle } = await import('./billingCycleInvoiceGenerationService.js');
+  return generateInvoiceForCycle(tenantId, subscriptionId, actor, options?.cycleId);
 }
 
 /** B0.2.1 — Reprocessar ciclo pendente (execução síncrona). */
@@ -733,10 +782,18 @@ export async function manualReprocessSubscription(
   return manualReprocessRenewal(tenantId, subscriptionId, actor, jobId);
 }
 
+export type ManualGenerateRenewalOptions = {
+  cycleId?: string;
+  cycleKey?: string;
+  periodStart?: string;
+  periodEnd?: string;
+};
+
 export async function manualGenerateRenewalNow(
   tenantId: string,
   subscriptionId: string,
-  actor: ActorContext
+  actor: ActorContext,
+  options?: ManualGenerateRenewalOptions
 ): Promise<ManualRenewalActionResult> {
   const started = Date.now();
   const correlationId = `manual-gen-${subscriptionId}-${Date.now()}`;
@@ -765,6 +822,8 @@ export async function manualGenerateRenewalNow(
         tenant_id: tenantId,
         actor_user: actor.user_id,
         action: 'generate_now',
+        cycle_id: options?.cycleId ?? null,
+        cycle_key: options?.cycleKey ?? null,
       });
       traceBillingJobPhase(
         'manual_generate_renewal_now_start',
@@ -804,10 +863,17 @@ export async function manualGenerateRenewalNow(
       const jobResStarted = Date.now();
       let jobId: string;
       try {
-        const ensured = await ensureJobForManualGenerate(subscriptionId, tenantId);
+        const ensured = await ensureJobForManualGenerate(
+          subscriptionId,
+          tenantId,
+          options?.cycleKey ? { cycleKey: options.cycleKey } : undefined
+        );
         jobId = ensured.job_id;
         patchBillingJobTraceContext({ job_id: jobId });
-        patchRenewalPipelineContext({ job_id: jobId, cycle_key: diagnosis.dates.job_cycle_key });
+        patchRenewalPipelineContext({
+          job_id: jobId,
+          cycle_key: options?.cycleKey ?? diagnosis.dates.job_cycle_key,
+        });
         traceRenewalPipelineStageEnd('JOB_RESOLUTION', jobResStarted, { job_id: jobId, mode: ensured.mode }, true);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);

@@ -1,21 +1,21 @@
 /**
  * Dual-write em `subscription_cycles` (Etapa 3). Nunca deve falhar o motor legado: erros são engolidos após log.
+ * Sprint 5.0-23A: INSERT inicial delegado ao SubscriptionCycleMaterializer.
  */
 import { billingLog } from './billingLogger.js';
-import { calculateNextBillingDate } from './subscriptionService.js';
-import type { BillingInterval } from './billingService.js';
 import { isSubscriptionCyclesWriteEnabled } from './subscriptionCyclesWriteFlagService.js';
 import {
   normalizeBillingCycleKeyYmd,
   normalizeSubscriptionNextBillingYmd,
 } from '../utils/billingCycleKey.js';
 import { safeTodayYmd } from '../utils/billingSafeDate.js';
+import {
+  ensureSubscriptionCycle,
+  updateSubscriptionCycleLifecycle,
+  type DbQueryable,
+} from './subscriptionCycleMaterializer.js';
 
 const OUTCOME_FAILED_MAX = 'failed_max_attempts';
-
-type DbQueryable = {
-  query: (text: string, params?: unknown[]) => Promise<{ rows: Record<string, unknown>[]; rowCount?: number | null }>;
-};
 
 function isMissingSubscriptionCyclesTable(e: unknown): boolean {
   const code = typeof e === 'object' && e !== null && 'code' in e ? String((e as { code: unknown }).code) : '';
@@ -44,30 +44,8 @@ async function guardWrite(run: (db: DbQueryable) => Promise<void>, db: DbQueryab
   }
 }
 
-async function loadPeriodBounds(
-  db: DbQueryable,
-  subscriptionId: string,
-  cycleDateYmd: string
-): Promise<{ period_start: string; period_end: string } | null> {
-  const r = await db.query(
-    `SELECT billing_interval, billing_anchor_day, type FROM subscriptions WHERE id = $1 LIMIT 1`,
-    [subscriptionId]
-  );
-  const row = r.rows[0] as
-    | { billing_interval: string; billing_anchor_day: number | null; type: string }
-    | undefined;
-  if (!row) return null;
-  const interval = (row.billing_interval || 'monthly') as BillingInterval;
-  const period_start = cycleDateYmd;
-  const period_end =
-    row.type === 'customer'
-      ? calculateNextBillingDate(period_start, interval, null)
-      : calculateNextBillingDate(period_start, interval, row.billing_anchor_day);
-  return { period_start, period_end };
-}
-
 /**
- * Scheduler: após enfileirar ou confirmar job ativo para o ciclo.
+ * @deprecated Wrapper temporário — delega ao SubscriptionCycleMaterializer (Sprint 5.0-23A).
  */
 export async function subscriptionCyclesUpsertAfterScheduler(
   db: DbQueryable,
@@ -76,145 +54,22 @@ export async function subscriptionCyclesUpsertAfterScheduler(
     subscriptionId: string;
     cycleKeyCanonical: string;
     jobId: string | null;
-    /** Metadados extras (ex.: geração antecipada: generation_date, generate_days_before_due). */
     schedulingMeta?: Record<string, unknown> | null;
   }
 ): Promise<void> {
   await guardWrite(
     async (d) => {
-      const cycleDate = normalizeBillingCycleKeyYmd(params.cycleKeyCanonical) || params.cycleKeyCanonical;
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(cycleDate)) return;
-      const bounds = await loadPeriodBounds(d, params.subscriptionId, cycleDate);
-      if (!bounds) return;
-      const status = params.jobId ? 'queued' : 'pending';
-      const meta = JSON.stringify({
-        dual_write: 'scheduler',
-        v: 1,
-        ...(params.schedulingMeta && typeof params.schedulingMeta === 'object' ? params.schedulingMeta : {}),
+      await ensureSubscriptionCycle(d, {
+        tenantId: params.tenantId,
+        subscriptionId: params.subscriptionId,
+        cycleDateYmd: params.cycleKeyCanonical,
+        source: 'scheduler',
+        jobId: params.jobId,
+        schedulingMeta: params.schedulingMeta,
       });
-      await d.query(
-        `INSERT INTO subscription_cycles (
-           tenant_id, subscription_id, cycle_date, period_start, period_end,
-           status, job_id, invoice_id, processed_at, skipped_reason, error_message, metadata, updated_at
-         )
-         VALUES ($1, $2, $3::date, $4::date, $5::date, $6, $7::uuid, NULL, NULL, NULL, NULL, $8::jsonb, now())
-         ON CONFLICT (subscription_id, cycle_date) DO UPDATE SET
-           job_id = CASE
-             WHEN subscription_cycles.status = 'invoiced' THEN subscription_cycles.job_id
-             WHEN EXCLUDED.job_id IS NOT NULL THEN EXCLUDED.job_id
-             ELSE subscription_cycles.job_id
-           END,
-           status = CASE
-             WHEN subscription_cycles.status = 'invoiced' THEN subscription_cycles.status
-             ELSE EXCLUDED.status
-           END,
-           period_start = CASE
-             WHEN subscription_cycles.status = 'invoiced' THEN subscription_cycles.period_start
-             ELSE EXCLUDED.period_start
-           END,
-           period_end = CASE
-             WHEN subscription_cycles.status = 'invoiced' THEN subscription_cycles.period_end
-             ELSE EXCLUDED.period_end
-           END,
-           metadata = COALESCE(subscription_cycles.metadata, '{}'::jsonb) || COALESCE(EXCLUDED.metadata, '{}'::jsonb),
-           updated_at = now()`,
-        [
-          params.tenantId,
-          params.subscriptionId,
-          cycleDate,
-          bounds.period_start,
-          bounds.period_end,
-          status,
-          params.jobId,
-          meta,
-        ]
-      );
     },
     db,
     'scheduler_upsert'
-  );
-}
-
-async function upsertCycleRow(
-  d: DbQueryable,
-  params: {
-    tenantId: string;
-    subscriptionId: string;
-    cycleDate: string;
-    status: string;
-    jobId: string | null;
-    invoiceId: string | null;
-    processedAt: boolean;
-    skippedReason: string | null;
-    errorMessage: string | null;
-    extraMeta: Record<string, unknown> | null;
-  }
-): Promise<void> {
-  const bounds = await loadPeriodBounds(d, params.subscriptionId, params.cycleDate);
-  if (!bounds) return;
-  const baseMeta = { dual_write: 'worker', v: 1, ...(params.extraMeta ?? {}) };
-  await d.query(
-    `INSERT INTO subscription_cycles (
-       tenant_id, subscription_id, cycle_date, period_start, period_end,
-       status, job_id, invoice_id, processed_at, skipped_reason, error_message, metadata, updated_at
-     )
-     VALUES (
-       $1, $2, $3::date, $4::date, $5::date, $6, $7::uuid, $8::uuid,
-       CASE WHEN $9 THEN now() ELSE NULL END,
-       $10, $11, $12::jsonb, now()
-     )
-     ON CONFLICT (subscription_id, cycle_date) DO UPDATE SET
-       job_id = CASE
-         WHEN subscription_cycles.status = 'invoiced' THEN subscription_cycles.job_id
-         WHEN EXCLUDED.job_id IS NOT NULL THEN EXCLUDED.job_id
-         ELSE subscription_cycles.job_id
-       END,
-       status = CASE
-         WHEN subscription_cycles.status = 'invoiced' THEN subscription_cycles.status
-         ELSE EXCLUDED.status
-       END,
-       invoice_id = CASE
-         WHEN subscription_cycles.status = 'invoiced' THEN subscription_cycles.invoice_id
-         WHEN EXCLUDED.invoice_id IS NOT NULL THEN EXCLUDED.invoice_id
-         ELSE subscription_cycles.invoice_id
-       END,
-       processed_at = CASE
-         WHEN subscription_cycles.status = 'invoiced' THEN subscription_cycles.processed_at
-         WHEN EXCLUDED.processed_at IS NOT NULL THEN EXCLUDED.processed_at
-         ELSE subscription_cycles.processed_at
-       END,
-       skipped_reason = CASE
-         WHEN subscription_cycles.status = 'invoiced' THEN subscription_cycles.skipped_reason
-         ELSE COALESCE(EXCLUDED.skipped_reason, subscription_cycles.skipped_reason)
-       END,
-       error_message = CASE
-         WHEN subscription_cycles.status = 'invoiced' THEN subscription_cycles.error_message
-         ELSE COALESCE(EXCLUDED.error_message, subscription_cycles.error_message)
-       END,
-       period_start = CASE
-         WHEN subscription_cycles.status = 'invoiced' THEN subscription_cycles.period_start
-         ELSE EXCLUDED.period_start
-       END,
-       period_end = CASE
-         WHEN subscription_cycles.status = 'invoiced' THEN subscription_cycles.period_end
-         ELSE EXCLUDED.period_end
-       END,
-       metadata = COALESCE(subscription_cycles.metadata, '{}'::jsonb) || COALESCE(EXCLUDED.metadata, '{}'::jsonb),
-       updated_at = now()`,
-    [
-      params.tenantId,
-      params.subscriptionId,
-      params.cycleDate,
-      bounds.period_start,
-      bounds.period_end,
-      params.status,
-      params.jobId,
-      params.invoiceId,
-      params.processedAt,
-      params.skippedReason,
-      params.errorMessage,
-      JSON.stringify(baseMeta),
-    ]
   );
 }
 
@@ -230,7 +85,7 @@ export async function subscriptionCyclesMarkProcessing(
       const cycleDate =
         normalizeBillingCycleKeyYmd(job.cycle_key) || normalizeSubscriptionNextBillingYmd(job.cycle_key);
       if (!cycleDate || !/^\d{4}-\d{2}-\d{2}$/.test(cycleDate)) return;
-      await upsertCycleRow(d, {
+      await updateSubscriptionCycleLifecycle(d, {
         tenantId: job.tenant_id,
         subscriptionId: job.subscription_id,
         cycleDate,
@@ -264,7 +119,7 @@ export async function subscriptionCyclesMarkQueued(db: DbQueryable, jobId: strin
       if (!row) return;
       const cycleDate = normalizeBillingCycleKeyYmd(row.cycle_key);
       if (!cycleDate || !/^\d{4}-\d{2}-\d{2}$/.test(cycleDate)) return;
-      await upsertCycleRow(d, {
+      await updateSubscriptionCycleLifecycle(d, {
         tenantId: row.tenant_id,
         subscriptionId: row.subscription_id,
         cycleDate,
@@ -308,7 +163,7 @@ export async function subscriptionCyclesOnJobCompleted(
         params.resultInvoiceType === 'tenant_billing' && params.resultInvoiceId != null;
 
       if (isCustomerInv) {
-        await upsertCycleRow(d, {
+        await updateSubscriptionCycleLifecycle(d, {
           tenantId: params.tenantId,
           subscriptionId: params.subscriptionId,
           cycleDate,
@@ -324,7 +179,7 @@ export async function subscriptionCyclesOnJobCompleted(
       }
 
       if (isTenant) {
-        await upsertCycleRow(d, {
+        await updateSubscriptionCycleLifecycle(d, {
           tenantId: params.tenantId,
           subscriptionId: params.subscriptionId,
           cycleDate,
@@ -339,7 +194,7 @@ export async function subscriptionCyclesOnJobCompleted(
         return;
       }
 
-      await upsertCycleRow(d, {
+      await updateSubscriptionCycleLifecycle(d, {
         tenantId: params.tenantId,
         subscriptionId: params.subscriptionId,
         cycleDate,
@@ -368,7 +223,6 @@ export async function subscriptionCyclesOnJobCancelled(
     tenantId: string;
     cycleKey: string;
     outcome: string;
-    /** Só para mismatch: só atualiza ciclo se o job for realmente obsoleto face à assinatura. */
     guardObsolete?: { subscriptionNextBillingYmd: string };
   }
 ): Promise<void> {
@@ -384,7 +238,7 @@ export async function subscriptionCyclesOnJobCancelled(
         }
       }
 
-      await upsertCycleRow(d, {
+      await updateSubscriptionCycleLifecycle(d, {
         tenantId: params.tenantId,
         subscriptionId: params.subscriptionId,
         cycleDate,
@@ -424,7 +278,7 @@ export async function subscriptionCyclesOnJobFailedAttempt(
       const persistStatus =
         params.finalFailure && cycleDate < today ? 'failed' : 'pending';
       const skippedReason = params.finalFailure ? OUTCOME_FAILED_MAX : null;
-      await upsertCycleRow(d, {
+      await updateSubscriptionCycleLifecycle(d, {
         tenantId: params.tenantId,
         subscriptionId: params.subscriptionId,
         cycleDate,

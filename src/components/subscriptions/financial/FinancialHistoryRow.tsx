@@ -7,6 +7,7 @@ import { formatYmdBrSafe } from '@/lib/billingSafeDate';
 import { PaymentBadge } from './FinancialStatCard';
 import { InvoiceDirectActions } from './InvoiceDirectActions';
 import { HistoryRowChargeAction } from './HistoryRowChargeAction';
+import { CycleInvariantRepairAction } from './CycleInvariantRepairAction';
 import { useFinancialTimeZone, usePaymentConfirmedHandler } from './FinancialEventStoreContext';
 import { TableCell, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -16,7 +17,10 @@ type Props = {
   row: HistoryRow;
   canViewInvoices?: boolean;
   generatingRowId?: string | null;
+  repairingRowId?: string | null;
   onGenerateBilling?: (row: HistoryRow) => void;
+  onRepairCycleInvariant?: (row: HistoryRow) => void;
+  canRepairCycle?: boolean;
   variant: 'table' | 'card';
 };
 
@@ -24,7 +28,10 @@ export function FinancialHistoryRow({
   row,
   canViewInvoices = true,
   generatingRowId = null,
+  repairingRowId = null,
   onGenerateBilling,
+  onRepairCycleInvariant,
+  canRepairCycle = true,
   variant,
 }: Props) {
   const timeZone = useFinancialTimeZone();
@@ -32,12 +39,26 @@ export function FinancialHistoryRow({
   const badgeVariant = badgeVariantFromHistoryStatus(row.visual, row.statusPt, row.invoiceId);
   const statusLabel = historyStatusDisplayLabel(row);
   const loading = generatingRowId === row.id;
+  const repairing = repairingRowId === row.id;
+  const repairAction = row.needsInvariantRepair ? (
+    <CycleInvariantRepairAction
+      cycleId={row.cycleId}
+      loading={repairing}
+      disabled={!canRepairCycle}
+      onRepair={() => onRepairCycleInvariant?.(row)}
+    />
+  ) : null;
   const chargeAction = row.canGenerateNow ? (
     <HistoryRowChargeAction row={row} loading={loading} onGenerate={onGenerateBilling} />
   ) : null;
   const nextBadge = row.isNextCharge ? (
     <Badge variant="secondary" className="text-[10px] font-medium shrink-0">
       Próxima cobrança
+    </Badge>
+  ) : null;
+  const projectedBadge = row.isProjected ? (
+    <Badge variant="outline" className="text-[10px] font-medium shrink-0 text-muted-foreground">
+      Prevista
     </Badge>
   ) : null;
   const rowHighlight = row.isNextCharge ? 'bg-primary/5 border-l-2 border-l-primary' : '';
@@ -50,6 +71,7 @@ export function FinancialHistoryRow({
           <div className="flex items-center gap-2 min-w-0">
             <p className="font-medium text-sm">{formatHistoryCompetence(row)}</p>
             {nextBadge}
+            {projectedBadge}
           </div>
           <PaymentBadge label={statusLabel} variant={badgeVariant} />
         </div>
@@ -60,6 +82,7 @@ export function FinancialHistoryRow({
           <span>Venc. {formatYmdBrSafe(row.dueYmd)}</span>
           {row.paidAt ? <span>Pago {formatYmdBrSafe(row.paidAt)}</span> : null}
           <div className="flex items-center gap-2 ml-auto">
+            {repairAction}
             {chargeAction}
             {row.invoiceId ? (
               <InvoiceDirectActions
@@ -86,6 +109,7 @@ export function FinancialHistoryRow({
         <div className="flex items-center gap-1.5 min-w-0">
           <span className="truncate">{formatHistoryCompetence(row)}</span>
           {nextBadge}
+          {projectedBadge}
         </div>
       </TableCell>
       <TableCell className="text-right tabular-nums text-sm whitespace-nowrap py-1.5">
@@ -102,6 +126,7 @@ export function FinancialHistoryRow({
       </TableCell>
       <TableCell className="text-right whitespace-nowrap py-1.5">
         <div className="inline-flex items-center justify-end gap-1">
+          {repairAction}
           {chargeAction}
           {row.invoiceId ? (
             <InvoiceDirectActions

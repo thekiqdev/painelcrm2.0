@@ -57,8 +57,12 @@ export {
 export { mapCycleSnapshot, mapCyclesFromSource } from './cycleSnapshot';
 export type { BillingCycleRawSource } from './cycleSnapshot';
 
+export { mapInvoiceSnapshot, mapInvoicesFromSource } from './invoiceSnapshot';
+export type { BillingInvoiceRawSource } from './invoiceSnapshot';
+
 export {
   mapCycleToFinancialEvent,
+  emitEventsForCycle,
   buildFinancialEventsFromAggregate,
 } from './financialEventSnapshot';
 

@@ -6,7 +6,17 @@ import type {
   BillingSubscriptionSnapshot,
 } from './types';
 
-const OPEN_EVENT_TYPES = new Set(['invoice_due', 'invoice_generated', 'manual_charge']);
+function ymdHead(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const head = value.slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(head) ? head : null;
+}
+
+const OPEN_EVENT_TYPES = new Set([
+  'invoice_due',
+  'invoice_generated',
+  'manual_charge',
+]);
 
 /**
  * Sidebar alinhada ao contrato UI legado (nextReceiptDate, openAmount, lastPaymentDate).
@@ -32,7 +42,9 @@ export function buildSidebarFromAggregate(
   return {
     nextReceiptDate: nextDate ? formatEventDateShort(nextDate) : '—',
     openAmount: formatCentsCompact(openCents),
-    lastPaymentDate: lastPayment ? formatEventDateShort(lastPayment.dueYmd) : '—',
+    lastPaymentDate: lastPayment
+      ? formatEventDateShort(ymdHead(lastPayment.occurredAt) ?? lastPayment.dueYmd)
+      : '—',
     subscriptionStatus: subscription.status,
     subscriptionType: subscription.subscriptionType,
     billingInterval: subscription.billingInterval,

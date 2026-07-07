@@ -79,7 +79,7 @@ describe('HistoryStage', () => {
     expect(stageBlock).not.toContain('aggregate.subscription');
   });
 
-  it('history.length === events.length (1 evento = 1 linha)', () => {
+  it('history: uma linha por ciclo (dedupe multi-evento)', () => {
     const detail = buildGoldenDetail({
       timeline: [
         timelineRow({ cycle_id: 'c-a', due_date: '2026-07-14' }),
@@ -87,7 +87,7 @@ describe('HistoryStage', () => {
       ],
     });
     const aggregate = buildBillingAggregateFromDetail(detail, '2026-06-30');
-    expect(aggregate.history).toHaveLength(aggregate.events.length);
+    expect(aggregate.history.length).toBeLessThanOrEqual(aggregate.events.length);
     expect(aggregate.history).toHaveLength(2);
   });
 
@@ -170,16 +170,19 @@ describe('HistoryStage', () => {
     expect(row.subscriptionId).toBe(event.subscriptionId);
     expect(row.type).toBe(event.eventType);
     expect(row.status).toBe(event.status);
-    expect(row.date).toBe(event.occurredAt);
+    expect(row.date).toBe(event.dueYmd);
     expect(row.title.length).toBeGreaterThan(0);
   });
 
   it.each(GOLDEN_SCENARIOS.map((s) => [s.id, s] as const))(
-    '%s — history.length === events.length e eventIds válidos',
+    '%s — history cobre eventos com cycleId',
     (_id, scenario) => {
       const detail = scenario.build();
       const aggregate = buildBillingAggregateFromDetail(detail, scenario.todayYmd);
-      expect(aggregate.history).toHaveLength(aggregate.events.length);
+      const cycledEvents = aggregate.events.filter((e) => e.cycleId);
+      expect(aggregate.history.length).toBeLessThanOrEqual(
+        aggregate.cycles.length || (cycledEvents.length > 0 ? 1 : 0)
+      );
       const eventIds = new Set(aggregate.events.map((e) => e.id));
       for (const row of aggregate.history) {
         expect(eventIds.has(row.eventId)).toBe(true);

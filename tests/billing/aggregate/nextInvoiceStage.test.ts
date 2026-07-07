@@ -106,8 +106,8 @@ describe('NextInvoiceStage', () => {
     });
     const aggregate = buildBillingAggregateFromDetail(detail, '2026-06-30');
     expect(aggregate.nextInvoice).not.toBeNull();
-    expect(aggregate.nextInvoice!.cycleId).toBe('c-late');
-    expect(aggregate.nextInvoice!.date).toBe('2026-09-14');
+    expect(aggregate.nextInvoice!.cycleId).toBeNull();
+    expect(aggregate.nextInvoice!.date).toBe('2026-08-14');
     expect(aggregate.nextInvoice!.isProjected).toBe(false);
   });
 

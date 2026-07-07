@@ -6,6 +6,7 @@ import {
   normalizeDetailForBillingStateMachine,
 } from './billingStateMachine';
 import { buildFinancialEvents } from './subscriptionFinancialEventBuilder';
+import { cyclesRawFromTimeline } from './testHelpers/subscriptionCyclesFixture';
 import type { CrmSubscriptionDetailPayload, CrmSubscriptionTimelineRow } from '@/services/crmSubscriptions';
 
 const today = '2026-07-01';
@@ -68,7 +69,7 @@ function detail(timeline: CrmSubscriptionTimelineRow[]): CrmSubscriptionDetailPa
       worker_status_pt: '—',
       last_worker_check_at: null,
     },
-    cycles_raw: [],
+    cycles_raw: cyclesRawFromTimeline(timeline),
     cycles_read_enabled: true,
     tenant_billing: {
       timezone: 'America/Sao_Paulo',

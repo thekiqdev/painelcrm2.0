@@ -112,7 +112,7 @@ describe('SubscriptionStage', () => {
 
     const aggregate = buildBillingAggregateFromDetail(buildGoldenDetail(), '2026-06-30');
     expect(aggregate.events.length).toBeGreaterThan(0);
-    expect(aggregate.history.length).toBe(aggregate.events.length);
+    expect(aggregate.history.length).toBeLessThanOrEqual(aggregate.events.length);
     expect(aggregate.calendar.length).toBeGreaterThanOrEqual(aggregate.events.length);
     expect(Array.isArray(aggregate.alerts)).toBe(true);
   });

@@ -5,7 +5,7 @@
 import { buildBillingAggregateFromDetail } from '@/lib/billingAggregate';
 import { FinancialEventStore } from '@/lib/subscriptionFinancialEventStore';
 import { buildFinancialAlerts } from '@/lib/subscriptionFinancialExperience';
-import { cycleSupportsManualGenerate } from '@/lib/subscriptionCyclesSource';
+import { cycleSupportsManualGenerate } from '@/lib/operationalCompetencyResolver';
 import type { CrmSubscriptionDetailPayload } from '@/services/crmSubscriptions';
 import {
   buildAggregateShadowSnapshot,

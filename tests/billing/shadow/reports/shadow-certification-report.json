@@ -1,24 +1,24 @@
 {
   "sprint": "5.0-21A",
-  "generatedAt": "2026-07-04T03:29:21.879Z",
+  "generatedAt": "2026-07-07T16:52:01.532Z",
   "scenarioCount": 40,
   "metrics": {
-    "legacyExecutionMs": 20.26,
-    "aggregateExecutionMs": 18.33,
+    "legacyExecutionMs": 43.21,
+    "aggregateExecutionMs": 38.96,
     "historyParityPercent": 100,
-    "calendarParityPercent": 94.4,
-    "sidebarParityPercent": 93.8,
-    "nextInvoiceParityPercent": 100,
-    "alertsParityPercent": 77.5,
+    "calendarParityPercent": 100,
+    "sidebarParityPercent": 99.4,
+    "nextInvoiceParityPercent": 98.3,
+    "alertsParityPercent": 90,
     "capabilitiesParityPercent": 100,
-    "eventsParityPercent": 92.5,
-    "overallParityPercent": 95.7
+    "eventsParityPercent": 100,
+    "overallParityPercent": 98.9
   },
   "scenarios": [
     {
       "scenarioId": "first-charge-paid",
-      "legacyMs": 11.454099999999926,
-      "aggregateMs": 8.389200000000073,
+      "legacyMs": 18.23090000000002,
+      "aggregateMs": 12.035199999999804,
       "surfaces": [
         {
           "surface": "subscription",
@@ -58,28 +58,9 @@
         {
           "surface": "sidebar",
           "checks": 4,
-          "passed": 2,
-          "percent": 50,
-          "divergences": [
-            {
-              "surface": "sidebar",
-              "scenarioId": "first-charge-paid",
-              "field": "openAmount",
-              "legacy": "R$ 0,00",
-              "aggregate": "R$ 110,00",
-              "classification": "semantic",
-              "evidence": "Valor em aberto"
-            },
-            {
-              "surface": "sidebar",
-              "scenarioId": "first-charge-paid",
-              "field": "lastPaymentDate",
-              "legacy": "14 Jun",
-              "aggregate": "—",
-              "classification": "semantic",
-              "evidence": "Data do último pagamento"
-            }
-          ]
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
         },
         {
           "surface": "nextInvoice",
@@ -91,30 +72,9 @@
         {
           "surface": "alerts",
           "checks": 2,
-          "passed": 0,
-          "percent": 0,
-          "divergences": [
-            {
-              "surface": "alerts",
-              "scenarioId": "first-charge-paid",
-              "field": "kinds",
-              "legacy": [],
-              "aggregate": [
-                "client_overdue"
-              ],
-              "classification": "structural",
-              "evidence": "Taxonomias de alerta diferentes (legado UX vs Aggregate)"
-            },
-            {
-              "surface": "alerts",
-              "scenarioId": "first-charge-paid",
-              "field": "count",
-              "legacy": 0,
-              "aggregate": 1,
-              "classification": "semantic",
-              "evidence": "Quantidade de alertas"
-            }
-          ]
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
         },
         {
           "surface": "capabilities",
@@ -124,51 +84,12 @@
           "divergences": []
         }
       ],
-      "divergences": [
-        {
-          "surface": "sidebar",
-          "scenarioId": "first-charge-paid",
-          "field": "openAmount",
-          "legacy": "R$ 0,00",
-          "aggregate": "R$ 110,00",
-          "classification": "semantic",
-          "evidence": "Valor em aberto"
-        },
-        {
-          "surface": "sidebar",
-          "scenarioId": "first-charge-paid",
-          "field": "lastPaymentDate",
-          "legacy": "14 Jun",
-          "aggregate": "—",
-          "classification": "semantic",
-          "evidence": "Data do último pagamento"
-        },
-        {
-          "surface": "alerts",
-          "scenarioId": "first-charge-paid",
-          "field": "kinds",
-          "legacy": [],
-          "aggregate": [
-            "client_overdue"
-          ],
-          "classification": "structural",
-          "evidence": "Taxonomias de alerta diferentes (legado UX vs Aggregate)"
-        },
-        {
-          "surface": "alerts",
-          "scenarioId": "first-charge-paid",
-          "field": "count",
-          "legacy": 0,
-          "aggregate": 1,
-          "classification": "semantic",
-          "evidence": "Quantidade de alertas"
-        }
-      ]
+      "divergences": []
     },
     {
       "scenarioId": "subscription-newly-created",
-      "legacyMs": 0.33390000000008513,
-      "aggregateMs": 0.42679999999973006,
+      "legacyMs": 0.9054000000000997,
+      "aggregateMs": 0.5507999999999811,
       "surfaces": [
         {
           "surface": "subscription",
@@ -238,8 +159,8 @@
     },
     {
       "scenarioId": "subscription-paused",
-      "legacyMs": 0.3579999999997199,
-      "aggregateMs": 0.4596999999998843,
+      "legacyMs": 0.3748000000000502,
+      "aggregateMs": 1.2678000000000793,
       "surfaces": [
         {
           "surface": "subscription",
@@ -351,8 +272,8 @@
     },
     {
       "scenarioId": "subscription-resumed",
-      "legacyMs": 0.4681000000000495,
-      "aggregateMs": 0.5302999999998974,
+      "legacyMs": 1.3534999999997126,
+      "aggregateMs": 0.7397000000000844,
       "surfaces": [
         {
           "surface": "subscription",
@@ -464,8 +385,8 @@
     },
     {
       "scenarioId": "subscription-reactivated",
-      "legacyMs": 0.3188999999997577,
-      "aggregateMs": 0.3973000000000866,
+      "legacyMs": 0.43149999999968713,
+      "aggregateMs": 0.7503999999998996,
       "surfaces": [
         {
           "surface": "subscription",
@@ -577,8 +498,136 @@
     },
     {
       "scenarioId": "subscription-cancelled",
-      "legacyMs": 0.059399999999641295,
-      "aggregateMs": 0.27690000000029613,
+      "legacyMs": 0.09259999999994761,
+      "aggregateMs": 0.3811000000000604,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 3,
+          "percent": 75,
+          "divergences": [
+            {
+              "surface": "sidebar",
+              "scenarioId": "subscription-cancelled",
+              "field": "nextReceiptDate",
+              "legacy": "—",
+              "aggregate": "14 Jul",
+              "classification": "semantic",
+              "evidence": "Data da próxima cobrança (label curto)"
+            }
+          ]
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 1,
+          "percent": 33.3,
+          "divergences": [
+            {
+              "surface": "nextInvoice",
+              "scenarioId": "subscription-cancelled",
+              "field": "cycleId",
+              "legacy": null,
+              "aggregate": "c-last",
+              "classification": "semantic",
+              "evidence": "cycleId da próxima cobrança (first eligible)"
+            },
+            {
+              "surface": "nextInvoice",
+              "scenarioId": "subscription-cancelled",
+              "field": "presence",
+              "legacy": false,
+              "aggregate": true,
+              "classification": "semantic",
+              "evidence": "Presença de próxima cobrança (real ou projetada)"
+            }
+          ]
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": [
+        {
+          "surface": "sidebar",
+          "scenarioId": "subscription-cancelled",
+          "field": "nextReceiptDate",
+          "legacy": "—",
+          "aggregate": "14 Jul",
+          "classification": "semantic",
+          "evidence": "Data da próxima cobrança (label curto)"
+        },
+        {
+          "surface": "nextInvoice",
+          "scenarioId": "subscription-cancelled",
+          "field": "cycleId",
+          "legacy": null,
+          "aggregate": "c-last",
+          "classification": "semantic",
+          "evidence": "cycleId da próxima cobrança (first eligible)"
+        },
+        {
+          "surface": "nextInvoice",
+          "scenarioId": "subscription-cancelled",
+          "field": "presence",
+          "legacy": false,
+          "aggregate": true,
+          "classification": "semantic",
+          "evidence": "Presença de próxima cobrança (real ou projetada)"
+        }
+      ]
+    },
+    {
+      "scenarioId": "charge-paid",
+      "legacyMs": 0.6422000000002299,
+      "aggregateMs": 2.672399999999925,
       "surfaces": [
         {
           "surface": "subscription",
@@ -647,159 +696,9 @@
       "divergences": []
     },
     {
-      "scenarioId": "charge-paid",
-      "legacyMs": 0.2417000000000371,
-      "aggregateMs": 0.2438999999999396,
-      "surfaces": [
-        {
-          "surface": "subscription",
-          "checks": 2,
-          "passed": 2,
-          "percent": 100,
-          "divergences": []
-        },
-        {
-          "surface": "cycles",
-          "checks": 2,
-          "passed": 2,
-          "percent": 100,
-          "divergences": []
-        },
-        {
-          "surface": "events",
-          "checks": 2,
-          "passed": 2,
-          "percent": 100,
-          "divergences": []
-        },
-        {
-          "surface": "history",
-          "checks": 3,
-          "passed": 3,
-          "percent": 100,
-          "divergences": []
-        },
-        {
-          "surface": "calendar",
-          "checks": 4,
-          "passed": 4,
-          "percent": 100,
-          "divergences": []
-        },
-        {
-          "surface": "sidebar",
-          "checks": 4,
-          "passed": 2,
-          "percent": 50,
-          "divergences": [
-            {
-              "surface": "sidebar",
-              "scenarioId": "charge-paid",
-              "field": "openAmount",
-              "legacy": "R$ 0,00",
-              "aggregate": "R$ 110,00",
-              "classification": "semantic",
-              "evidence": "Valor em aberto"
-            },
-            {
-              "surface": "sidebar",
-              "scenarioId": "charge-paid",
-              "field": "lastPaymentDate",
-              "legacy": "14 Jun",
-              "aggregate": "—",
-              "classification": "semantic",
-              "evidence": "Data do último pagamento"
-            }
-          ]
-        },
-        {
-          "surface": "nextInvoice",
-          "checks": 3,
-          "passed": 3,
-          "percent": 100,
-          "divergences": []
-        },
-        {
-          "surface": "alerts",
-          "checks": 2,
-          "passed": 0,
-          "percent": 0,
-          "divergences": [
-            {
-              "surface": "alerts",
-              "scenarioId": "charge-paid",
-              "field": "kinds",
-              "legacy": [],
-              "aggregate": [
-                "client_overdue"
-              ],
-              "classification": "structural",
-              "evidence": "Taxonomias de alerta diferentes (legado UX vs Aggregate)"
-            },
-            {
-              "surface": "alerts",
-              "scenarioId": "charge-paid",
-              "field": "count",
-              "legacy": 0,
-              "aggregate": 1,
-              "classification": "semantic",
-              "evidence": "Quantidade de alertas"
-            }
-          ]
-        },
-        {
-          "surface": "capabilities",
-          "checks": 3,
-          "passed": 3,
-          "percent": 100,
-          "divergences": []
-        }
-      ],
-      "divergences": [
-        {
-          "surface": "sidebar",
-          "scenarioId": "charge-paid",
-          "field": "openAmount",
-          "legacy": "R$ 0,00",
-          "aggregate": "R$ 110,00",
-          "classification": "semantic",
-          "evidence": "Valor em aberto"
-        },
-        {
-          "surface": "sidebar",
-          "scenarioId": "charge-paid",
-          "field": "lastPaymentDate",
-          "legacy": "14 Jun",
-          "aggregate": "—",
-          "classification": "semantic",
-          "evidence": "Data do último pagamento"
-        },
-        {
-          "surface": "alerts",
-          "scenarioId": "charge-paid",
-          "field": "kinds",
-          "legacy": [],
-          "aggregate": [
-            "client_overdue"
-          ],
-          "classification": "structural",
-          "evidence": "Taxonomias de alerta diferentes (legado UX vs Aggregate)"
-        },
-        {
-          "surface": "alerts",
-          "scenarioId": "charge-paid",
-          "field": "count",
-          "legacy": 0,
-          "aggregate": 1,
-          "classification": "semantic",
-          "evidence": "Quantidade de alertas"
-        }
-      ]
-    },
-    {
       "scenarioId": "charge-overdue",
-      "legacyMs": 0.20280000000002474,
-      "aggregateMs": 0.2557000000001608,
+      "legacyMs": 0.49710000000004584,
+      "aggregateMs": 0.9007999999998901,
       "surfaces": [
         {
           "surface": "subscription",
@@ -869,8 +768,8 @@
     },
     {
       "scenarioId": "charge-future",
-      "legacyMs": 0.223700000000008,
-      "aggregateMs": 0.3746000000001004,
+      "legacyMs": 0.43499999999994543,
+      "aggregateMs": 0.9755000000000109,
       "surfaces": [
         {
           "surface": "subscription",
@@ -940,8 +839,8 @@
     },
     {
       "scenarioId": "charge-manual",
-      "legacyMs": 0.21079999999983556,
-      "aggregateMs": 0.2782000000001972,
+      "legacyMs": 0.85550000000012,
+      "aggregateMs": 0.9176000000002205,
       "surfaces": [
         {
           "surface": "subscription",
@@ -960,33 +859,9 @@
         {
           "surface": "events",
           "checks": 2,
-          "passed": 0,
-          "percent": 0,
-          "divergences": [
-            {
-              "surface": "events",
-              "scenarioId": "charge-manual",
-              "field": "count",
-              "legacy": 2,
-              "aggregate": 1,
-              "classification": "semantic",
-              "evidence": "Contagem de eventos reais (legado) vs events do Aggregate"
-            },
-            {
-              "surface": "events",
-              "scenarioId": "charge-manual",
-              "field": "cycleIds",
-              "legacy": [
-                "c-manual",
-                "c-manual"
-              ],
-              "aggregate": [
-                "c-manual"
-              ],
-              "classification": "semantic",
-              "evidence": "Conjunto de cycleIds em eventos reais"
-            }
-          ]
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
         },
         {
           "surface": "history",
@@ -998,68 +873,16 @@
         {
           "surface": "calendar",
           "checks": 4,
-          "passed": 1,
-          "percent": 25,
-          "divergences": [
-            {
-              "surface": "calendar",
-              "scenarioId": "charge-manual",
-              "field": "realCount",
-              "legacy": 2,
-              "aggregate": 1,
-              "classification": "semantic",
-              "evidence": "Contagem de eventos reais no calendário"
-            },
-            {
-              "surface": "calendar",
-              "scenarioId": "charge-manual",
-              "field": "totalCount",
-              "legacy": 14,
-              "aggregate": 13,
-              "classification": "semantic",
-              "evidence": "Contagem total do calendário (reais + projeções)"
-            },
-            {
-              "surface": "calendar",
-              "scenarioId": "charge-manual",
-              "field": "realCycleIds",
-              "legacy": [
-                "c-manual",
-                "c-manual"
-              ],
-              "aggregate": [
-                "c-manual"
-              ],
-              "classification": "semantic",
-              "evidence": "cycleIds de eventos reais no calendário"
-            }
-          ]
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
         },
         {
           "surface": "sidebar",
           "checks": 4,
-          "passed": 2,
-          "percent": 50,
-          "divergences": [
-            {
-              "surface": "sidebar",
-              "scenarioId": "charge-manual",
-              "field": "openAmount",
-              "legacy": "R$ 220,00",
-              "aggregate": "R$ 110,00",
-              "classification": "semantic",
-              "evidence": "Valor em aberto"
-            },
-            {
-              "surface": "sidebar",
-              "scenarioId": "charge-manual",
-              "field": "eventCount",
-              "legacy": 2,
-              "aggregate": 1,
-              "classification": "semantic",
-              "evidence": "eventCount do sidebar vs realEvents"
-            }
-          ]
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
         },
         {
           "surface": "nextInvoice",
@@ -1083,86 +906,12 @@
           "divergences": []
         }
       ],
-      "divergences": [
-        {
-          "surface": "events",
-          "scenarioId": "charge-manual",
-          "field": "count",
-          "legacy": 2,
-          "aggregate": 1,
-          "classification": "semantic",
-          "evidence": "Contagem de eventos reais (legado) vs events do Aggregate"
-        },
-        {
-          "surface": "events",
-          "scenarioId": "charge-manual",
-          "field": "cycleIds",
-          "legacy": [
-            "c-manual",
-            "c-manual"
-          ],
-          "aggregate": [
-            "c-manual"
-          ],
-          "classification": "semantic",
-          "evidence": "Conjunto de cycleIds em eventos reais"
-        },
-        {
-          "surface": "calendar",
-          "scenarioId": "charge-manual",
-          "field": "realCount",
-          "legacy": 2,
-          "aggregate": 1,
-          "classification": "semantic",
-          "evidence": "Contagem de eventos reais no calendário"
-        },
-        {
-          "surface": "calendar",
-          "scenarioId": "charge-manual",
-          "field": "totalCount",
-          "legacy": 14,
-          "aggregate": 13,
-          "classification": "semantic",
-          "evidence": "Contagem total do calendário (reais + projeções)"
-        },
-        {
-          "surface": "calendar",
-          "scenarioId": "charge-manual",
-          "field": "realCycleIds",
-          "legacy": [
-            "c-manual",
-            "c-manual"
-          ],
-          "aggregate": [
-            "c-manual"
-          ],
-          "classification": "semantic",
-          "evidence": "cycleIds de eventos reais no calendário"
-        },
-        {
-          "surface": "sidebar",
-          "scenarioId": "charge-manual",
-          "field": "openAmount",
-          "legacy": "R$ 220,00",
-          "aggregate": "R$ 110,00",
-          "classification": "semantic",
-          "evidence": "Valor em aberto"
-        },
-        {
-          "surface": "sidebar",
-          "scenarioId": "charge-manual",
-          "field": "eventCount",
-          "legacy": 2,
-          "aggregate": 1,
-          "classification": "semantic",
-          "evidence": "eventCount do sidebar vs realEvents"
-        }
-      ]
+      "divergences": []
     },
     {
       "scenarioId": "charge-early-generated",
-      "legacyMs": 0.3289999999997235,
-      "aggregateMs": 0.23729999999977736,
+      "legacyMs": 1.0769999999997708,
+      "aggregateMs": 1.375,
       "surfaces": [
         {
           "surface": "subscription",
@@ -1181,33 +930,9 @@
         {
           "surface": "events",
           "checks": 2,
-          "passed": 0,
-          "percent": 0,
-          "divergences": [
-            {
-              "surface": "events",
-              "scenarioId": "charge-early-generated",
-              "field": "count",
-              "legacy": 2,
-              "aggregate": 1,
-              "classification": "semantic",
-              "evidence": "Contagem de eventos reais (legado) vs events do Aggregate"
-            },
-            {
-              "surface": "events",
-              "scenarioId": "charge-early-generated",
-              "field": "cycleIds",
-              "legacy": [
-                "c-early",
-                "c-early"
-              ],
-              "aggregate": [
-                "c-early"
-              ],
-              "classification": "semantic",
-              "evidence": "Conjunto de cycleIds em eventos reais"
-            }
-          ]
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
         },
         {
           "surface": "history",
@@ -1219,68 +944,16 @@
         {
           "surface": "calendar",
           "checks": 4,
-          "passed": 1,
-          "percent": 25,
-          "divergences": [
-            {
-              "surface": "calendar",
-              "scenarioId": "charge-early-generated",
-              "field": "realCount",
-              "legacy": 2,
-              "aggregate": 1,
-              "classification": "semantic",
-              "evidence": "Contagem de eventos reais no calendário"
-            },
-            {
-              "surface": "calendar",
-              "scenarioId": "charge-early-generated",
-              "field": "totalCount",
-              "legacy": 14,
-              "aggregate": 13,
-              "classification": "semantic",
-              "evidence": "Contagem total do calendário (reais + projeções)"
-            },
-            {
-              "surface": "calendar",
-              "scenarioId": "charge-early-generated",
-              "field": "realCycleIds",
-              "legacy": [
-                "c-early",
-                "c-early"
-              ],
-              "aggregate": [
-                "c-early"
-              ],
-              "classification": "semantic",
-              "evidence": "cycleIds de eventos reais no calendário"
-            }
-          ]
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
         },
         {
           "surface": "sidebar",
           "checks": 4,
-          "passed": 2,
-          "percent": 50,
-          "divergences": [
-            {
-              "surface": "sidebar",
-              "scenarioId": "charge-early-generated",
-              "field": "openAmount",
-              "legacy": "R$ 220,00",
-              "aggregate": "R$ 110,00",
-              "classification": "semantic",
-              "evidence": "Valor em aberto"
-            },
-            {
-              "surface": "sidebar",
-              "scenarioId": "charge-early-generated",
-              "field": "eventCount",
-              "legacy": 2,
-              "aggregate": 1,
-              "classification": "semantic",
-              "evidence": "eventCount do sidebar vs realEvents"
-            }
-          ]
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
         },
         {
           "surface": "nextInvoice",
@@ -1304,86 +977,12 @@
           "divergences": []
         }
       ],
-      "divergences": [
-        {
-          "surface": "events",
-          "scenarioId": "charge-early-generated",
-          "field": "count",
-          "legacy": 2,
-          "aggregate": 1,
-          "classification": "semantic",
-          "evidence": "Contagem de eventos reais (legado) vs events do Aggregate"
-        },
-        {
-          "surface": "events",
-          "scenarioId": "charge-early-generated",
-          "field": "cycleIds",
-          "legacy": [
-            "c-early",
-            "c-early"
-          ],
-          "aggregate": [
-            "c-early"
-          ],
-          "classification": "semantic",
-          "evidence": "Conjunto de cycleIds em eventos reais"
-        },
-        {
-          "surface": "calendar",
-          "scenarioId": "charge-early-generated",
-          "field": "realCount",
-          "legacy": 2,
-          "aggregate": 1,
-          "classification": "semantic",
-          "evidence": "Contagem de eventos reais no calendário"
-        },
-        {
-          "surface": "calendar",
-          "scenarioId": "charge-early-generated",
-          "field": "totalCount",
-          "legacy": 14,
-          "aggregate": 13,
-          "classification": "semantic",
-          "evidence": "Contagem total do calendário (reais + projeções)"
-        },
-        {
-          "surface": "calendar",
-          "scenarioId": "charge-early-generated",
-          "field": "realCycleIds",
-          "legacy": [
-            "c-early",
-            "c-early"
-          ],
-          "aggregate": [
-            "c-early"
-          ],
-          "classification": "semantic",
-          "evidence": "cycleIds de eventos reais no calendário"
-        },
-        {
-          "surface": "sidebar",
-          "scenarioId": "charge-early-generated",
-          "field": "openAmount",
-          "legacy": "R$ 220,00",
-          "aggregate": "R$ 110,00",
-          "classification": "semantic",
-          "evidence": "Valor em aberto"
-        },
-        {
-          "surface": "sidebar",
-          "scenarioId": "charge-early-generated",
-          "field": "eventCount",
-          "legacy": 2,
-          "aggregate": 1,
-          "classification": "semantic",
-          "evidence": "eventCount do sidebar vs realEvents"
-        }
-      ]
+      "divergences": []
     },
     {
       "scenarioId": "generate-jul-before-aug",
-      "legacyMs": 0.23529999999982465,
-      "aggregateMs": 0.3591000000001259,
+      "legacyMs": 0.4827999999997701,
+      "aggregateMs": 0.8384000000000924,
       "surfaces": [
         {
           "surface": "subscription",
@@ -1453,8 +1052,8 @@
     },
     {
       "scenarioId": "generate-oct-skip-sep",
-      "legacyMs": 0.24879999999984648,
-      "aggregateMs": 0.2108999999995831,
+      "legacyMs": 0.9674999999997453,
+      "aggregateMs": 0.7235999999998057,
       "surfaces": [
         {
           "surface": "subscription",
@@ -1524,8 +1123,8 @@
     },
     {
       "scenarioId": "generate-retroactive-months",
-      "legacyMs": 0.18010000000003856,
-      "aggregateMs": 0.18100000000004002,
+      "legacyMs": 0.4758999999999105,
+      "aggregateMs": 0.7728000000001884,
       "surfaces": [
         {
           "surface": "subscription",
@@ -1579,30 +1178,9 @@
         {
           "surface": "alerts",
           "checks": 2,
-          "passed": 0,
-          "percent": 0,
-          "divergences": [
-            {
-              "surface": "alerts",
-              "scenarioId": "generate-retroactive-months",
-              "field": "kinds",
-              "legacy": [
-                "client_overdue"
-              ],
-              "aggregate": [],
-              "classification": "structural",
-              "evidence": "Taxonomias de alerta diferentes (legado UX vs Aggregate)"
-            },
-            {
-              "surface": "alerts",
-              "scenarioId": "generate-retroactive-months",
-              "field": "count",
-              "legacy": 1,
-              "aggregate": 0,
-              "classification": "semantic",
-              "evidence": "Quantidade de alertas"
-            }
-          ]
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
         },
         {
           "surface": "capabilities",
@@ -1612,33 +1190,12 @@
           "divergences": []
         }
       ],
-      "divergences": [
-        {
-          "surface": "alerts",
-          "scenarioId": "generate-retroactive-months",
-          "field": "kinds",
-          "legacy": [
-            "client_overdue"
-          ],
-          "aggregate": [],
-          "classification": "structural",
-          "evidence": "Taxonomias de alerta diferentes (legado UX vs Aggregate)"
-        },
-        {
-          "surface": "alerts",
-          "scenarioId": "generate-retroactive-months",
-          "field": "count",
-          "legacy": 1,
-          "aggregate": 0,
-          "classification": "semantic",
-          "evidence": "Quantidade de alertas"
-        }
-      ]
+      "divergences": []
     },
     {
       "scenarioId": "generate-multiple-future-months",
-      "legacyMs": 0.20519999999987704,
-      "aggregateMs": 0.17639999999983047,
+      "legacyMs": 0.5282000000001972,
+      "aggregateMs": 0.6239999999997963,
       "surfaces": [
         {
           "surface": "subscription",
@@ -1708,8 +1265,8 @@
     },
     {
       "scenarioId": "retry-after-failure",
-      "legacyMs": 0.34380000000010114,
-      "aggregateMs": 0.3083000000001448,
+      "legacyMs": 1.340099999999893,
+      "aggregateMs": 0.4139999999997599,
       "surfaces": [
         {
           "surface": "subscription",
@@ -1779,8 +1336,8 @@
     },
     {
       "scenarioId": "gateway-failed",
-      "legacyMs": 0.3263000000001739,
-      "aggregateMs": 0.35140000000001237,
+      "legacyMs": 0.8649999999997817,
+      "aggregateMs": 0.5939000000003034,
       "surfaces": [
         {
           "surface": "subscription",
@@ -1799,33 +1356,9 @@
         {
           "surface": "events",
           "checks": 2,
-          "passed": 0,
-          "percent": 0,
-          "divergences": [
-            {
-              "surface": "events",
-              "scenarioId": "gateway-failed",
-              "field": "count",
-              "legacy": 2,
-              "aggregate": 1,
-              "classification": "semantic",
-              "evidence": "Contagem de eventos reais (legado) vs events do Aggregate"
-            },
-            {
-              "surface": "events",
-              "scenarioId": "gateway-failed",
-              "field": "cycleIds",
-              "legacy": [
-                "c-gw",
-                "c-gw"
-              ],
-              "aggregate": [
-                "c-gw"
-              ],
-              "classification": "semantic",
-              "evidence": "Conjunto de cycleIds em eventos reais"
-            }
-          ]
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
         },
         {
           "surface": "history",
@@ -1837,59 +1370,16 @@
         {
           "surface": "calendar",
           "checks": 4,
-          "passed": 1,
-          "percent": 25,
-          "divergences": [
-            {
-              "surface": "calendar",
-              "scenarioId": "gateway-failed",
-              "field": "realCount",
-              "legacy": 2,
-              "aggregate": 1,
-              "classification": "semantic",
-              "evidence": "Contagem de eventos reais no calendário"
-            },
-            {
-              "surface": "calendar",
-              "scenarioId": "gateway-failed",
-              "field": "totalCount",
-              "legacy": 14,
-              "aggregate": 13,
-              "classification": "semantic",
-              "evidence": "Contagem total do calendário (reais + projeções)"
-            },
-            {
-              "surface": "calendar",
-              "scenarioId": "gateway-failed",
-              "field": "realCycleIds",
-              "legacy": [
-                "c-gw",
-                "c-gw"
-              ],
-              "aggregate": [
-                "c-gw"
-              ],
-              "classification": "semantic",
-              "evidence": "cycleIds de eventos reais no calendário"
-            }
-          ]
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
         },
         {
           "surface": "sidebar",
           "checks": 4,
-          "passed": 3,
-          "percent": 75,
-          "divergences": [
-            {
-              "surface": "sidebar",
-              "scenarioId": "gateway-failed",
-              "field": "eventCount",
-              "legacy": 2,
-              "aggregate": 1,
-              "classification": "semantic",
-              "evidence": "eventCount do sidebar vs realEvents"
-            }
-          ]
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
         },
         {
           "surface": "nextInvoice",
@@ -1901,30 +1391,9 @@
         {
           "surface": "alerts",
           "checks": 2,
-          "passed": 0,
-          "percent": 0,
-          "divergences": [
-            {
-              "surface": "alerts",
-              "scenarioId": "gateway-failed",
-              "field": "kinds",
-              "legacy": [
-                "gateway_failed"
-              ],
-              "aggregate": [],
-              "classification": "structural",
-              "evidence": "Taxonomias de alerta diferentes (legado UX vs Aggregate)"
-            },
-            {
-              "surface": "alerts",
-              "scenarioId": "gateway-failed",
-              "field": "count",
-              "legacy": 1,
-              "aggregate": 0,
-              "classification": "semantic",
-              "evidence": "Quantidade de alertas"
-            }
-          ]
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
         },
         {
           "surface": "capabilities",
@@ -1934,97 +1403,12 @@
           "divergences": []
         }
       ],
-      "divergences": [
-        {
-          "surface": "events",
-          "scenarioId": "gateway-failed",
-          "field": "count",
-          "legacy": 2,
-          "aggregate": 1,
-          "classification": "semantic",
-          "evidence": "Contagem de eventos reais (legado) vs events do Aggregate"
-        },
-        {
-          "surface": "events",
-          "scenarioId": "gateway-failed",
-          "field": "cycleIds",
-          "legacy": [
-            "c-gw",
-            "c-gw"
-          ],
-          "aggregate": [
-            "c-gw"
-          ],
-          "classification": "semantic",
-          "evidence": "Conjunto de cycleIds em eventos reais"
-        },
-        {
-          "surface": "calendar",
-          "scenarioId": "gateway-failed",
-          "field": "realCount",
-          "legacy": 2,
-          "aggregate": 1,
-          "classification": "semantic",
-          "evidence": "Contagem de eventos reais no calendário"
-        },
-        {
-          "surface": "calendar",
-          "scenarioId": "gateway-failed",
-          "field": "totalCount",
-          "legacy": 14,
-          "aggregate": 13,
-          "classification": "semantic",
-          "evidence": "Contagem total do calendário (reais + projeções)"
-        },
-        {
-          "surface": "calendar",
-          "scenarioId": "gateway-failed",
-          "field": "realCycleIds",
-          "legacy": [
-            "c-gw",
-            "c-gw"
-          ],
-          "aggregate": [
-            "c-gw"
-          ],
-          "classification": "semantic",
-          "evidence": "cycleIds de eventos reais no calendário"
-        },
-        {
-          "surface": "sidebar",
-          "scenarioId": "gateway-failed",
-          "field": "eventCount",
-          "legacy": 2,
-          "aggregate": 1,
-          "classification": "semantic",
-          "evidence": "eventCount do sidebar vs realEvents"
-        },
-        {
-          "surface": "alerts",
-          "scenarioId": "gateway-failed",
-          "field": "kinds",
-          "legacy": [
-            "gateway_failed"
-          ],
-          "aggregate": [],
-          "classification": "structural",
-          "evidence": "Taxonomias de alerta diferentes (legado UX vs Aggregate)"
-        },
-        {
-          "surface": "alerts",
-          "scenarioId": "gateway-failed",
-          "field": "count",
-          "legacy": 1,
-          "aggregate": 0,
-          "classification": "semantic",
-          "evidence": "Quantidade de alertas"
-        }
-      ]
+      "divergences": []
     },
     {
       "scenarioId": "cycle-skipped",
-      "legacyMs": 0.3708000000001448,
-      "aggregateMs": 0.3425999999999476,
+      "legacyMs": 0.4371000000001004,
+      "aggregateMs": 0.5895000000000437,
       "surfaces": [
         {
           "surface": "subscription",
@@ -2094,8 +1478,8 @@
     },
     {
       "scenarioId": "cancelled-official",
-      "legacyMs": 0.2867999999998574,
-      "aggregateMs": 0.22440000000005966,
+      "legacyMs": 0.5644999999999527,
+      "aggregateMs": 1.1882000000000517,
       "surfaces": [
         {
           "surface": "subscription",
@@ -2165,8 +1549,8 @@
     },
     {
       "scenarioId": "cancelled-legacy",
-      "legacyMs": 0.22430000000031214,
-      "aggregateMs": 0.4000999999998385,
+      "legacyMs": 0.39640000000008513,
+      "aggregateMs": 1.0149999999998727,
       "surfaces": [
         {
           "surface": "subscription",
@@ -2236,8 +1620,8 @@
     },
     {
       "scenarioId": "invoice-deleted",
-      "legacyMs": 0.19250000000010914,
-      "aggregateMs": 0.1908000000003085,
+      "legacyMs": 0.5050999999998567,
+      "aggregateMs": 0.45759999999972933,
       "surfaces": [
         {
           "surface": "subscription",
@@ -2307,8 +1691,8 @@
     },
     {
       "scenarioId": "invoice-refund",
-      "legacyMs": 0.19840000000021973,
-      "aggregateMs": 0.22000000000025466,
+      "legacyMs": 1.1822000000001935,
+      "aggregateMs": 0.6217000000001462,
       "surfaces": [
         {
           "surface": "subscription",
@@ -2348,19 +1732,9 @@
         {
           "surface": "sidebar",
           "checks": 4,
-          "passed": 3,
-          "percent": 75,
-          "divergences": [
-            {
-              "surface": "sidebar",
-              "scenarioId": "invoice-refund",
-              "field": "openAmount",
-              "legacy": "R$ 0,00",
-              "aggregate": "R$ 110,00",
-              "classification": "semantic",
-              "evidence": "Valor em aberto"
-            }
-          ]
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
         },
         {
           "surface": "nextInvoice",
@@ -2384,22 +1758,12 @@
           "divergences": []
         }
       ],
-      "divergences": [
-        {
-          "surface": "sidebar",
-          "scenarioId": "invoice-refund",
-          "field": "openAmount",
-          "legacy": "R$ 0,00",
-          "aggregate": "R$ 110,00",
-          "classification": "semantic",
-          "evidence": "Valor em aberto"
-        }
-      ]
+      "divergences": []
     },
     {
       "scenarioId": "invoice-only",
-      "legacyMs": 0.17459999999982756,
-      "aggregateMs": 0.1942999999996573,
+      "legacyMs": 0.32429999999976644,
+      "aggregateMs": 0.5356000000001586,
       "surfaces": [
         {
           "surface": "subscription",
@@ -2453,30 +1817,9 @@
         {
           "surface": "alerts",
           "checks": 2,
-          "passed": 0,
-          "percent": 0,
-          "divergences": [
-            {
-              "surface": "alerts",
-              "scenarioId": "invoice-only",
-              "field": "kinds",
-              "legacy": [
-                "client_overdue"
-              ],
-              "aggregate": [],
-              "classification": "structural",
-              "evidence": "Taxonomias de alerta diferentes (legado UX vs Aggregate)"
-            },
-            {
-              "surface": "alerts",
-              "scenarioId": "invoice-only",
-              "field": "count",
-              "legacy": 1,
-              "aggregate": 0,
-              "classification": "semantic",
-              "evidence": "Quantidade de alertas"
-            }
-          ]
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
         },
         {
           "surface": "capabilities",
@@ -2486,33 +1829,12 @@
           "divergences": []
         }
       ],
-      "divergences": [
-        {
-          "surface": "alerts",
-          "scenarioId": "invoice-only",
-          "field": "kinds",
-          "legacy": [
-            "client_overdue"
-          ],
-          "aggregate": [],
-          "classification": "structural",
-          "evidence": "Taxonomias de alerta diferentes (legado UX vs Aggregate)"
-        },
-        {
-          "surface": "alerts",
-          "scenarioId": "invoice-only",
-          "field": "count",
-          "legacy": 1,
-          "aggregate": 0,
-          "classification": "semantic",
-          "evidence": "Quantidade de alertas"
-        }
-      ]
+      "divergences": []
     },
     {
       "scenarioId": "projection-only",
-      "legacyMs": 0.16240000000016153,
-      "aggregateMs": 0.1920999999997548,
+      "legacyMs": 0.3061000000002423,
+      "aggregateMs": 0.35629999999991924,
       "surfaces": [
         {
           "surface": "subscription",
@@ -2582,8 +1904,8 @@
     },
     {
       "scenarioId": "timeline-without-cycle",
-      "legacyMs": 0.15699999999969805,
-      "aggregateMs": 0.20570000000043365,
+      "legacyMs": 0.29579999999987194,
+      "aggregateMs": 0.3856999999998152,
       "surfaces": [
         {
           "surface": "subscription",
@@ -2695,8 +2017,8 @@
     },
     {
       "scenarioId": "timeline-with-cycle",
-      "legacyMs": 0.17860000000018772,
-      "aggregateMs": 0.1777999999999338,
+      "legacyMs": 0.28070000000025175,
+      "aggregateMs": 0.34130000000004657,
       "surfaces": [
         {
           "surface": "subscription",
@@ -2766,8 +2088,8 @@
     },
     {
       "scenarioId": "next-billing-date-changed",
-      "legacyMs": 0.19239999999990687,
-      "aggregateMs": 0.18269999999984066,
+      "legacyMs": 0.2957000000001244,
+      "aggregateMs": 0.3651999999997315,
       "surfaces": [
         {
           "surface": "subscription",
@@ -2837,8 +2159,8 @@
     },
     {
       "scenarioId": "contract-interval-change",
-      "legacyMs": 0.18329999999969004,
-      "aggregateMs": 0.19039999999995416,
+      "legacyMs": 0.5039000000001579,
+      "aggregateMs": 0.43200000000024374,
       "surfaces": [
         {
           "surface": "subscription",
@@ -2908,8 +2230,8 @@
     },
     {
       "scenarioId": "anchor-change",
-      "legacyMs": 0.1708000000003267,
-      "aggregateMs": 0.16679999999996653,
+      "legacyMs": 0.41970000000037544,
+      "aggregateMs": 0.6867999999999483,
       "surfaces": [
         {
           "surface": "subscription",
@@ -2979,8 +2301,8 @@
     },
     {
       "scenarioId": "month-gap",
-      "legacyMs": 0.18849999999974898,
-      "aggregateMs": 0.17909999999983484,
+      "legacyMs": 0.3634999999999309,
+      "aggregateMs": 0.40419999999994616,
       "surfaces": [
         {
           "surface": "subscription",
@@ -3050,8 +2372,8 @@
     },
     {
       "scenarioId": "gap-filled",
-      "legacyMs": 0.20190000000002328,
-      "aggregateMs": 0.2199999999997999,
+      "legacyMs": 0.39620000000013533,
+      "aggregateMs": 0.5882000000001426,
       "surfaces": [
         {
           "surface": "subscription",
@@ -3121,8 +2443,8 @@
     },
     {
       "scenarioId": "reschedule",
-      "legacyMs": 0.1744999999996253,
-      "aggregateMs": 0.20340000000032887,
+      "legacyMs": 4.7301000000002205,
+      "aggregateMs": 0.41729999999961365,
       "surfaces": [
         {
           "surface": "subscription",
@@ -3192,8 +2514,8 @@
     },
     {
       "scenarioId": "job-mismatch",
-      "legacyMs": 0.1756999999997788,
-      "aggregateMs": 0.17309999999997672,
+      "legacyMs": 0.3395999999997912,
+      "aggregateMs": 0.40180000000009386,
       "surfaces": [
         {
           "surface": "subscription",
@@ -3263,8 +2585,8 @@
     },
     {
       "scenarioId": "job-reenqueue",
-      "legacyMs": 0.17430000000013024,
-      "aggregateMs": 0.1687000000001717,
+      "legacyMs": 0.3467999999998028,
+      "aggregateMs": 0.9408000000003085,
       "surfaces": [
         {
           "surface": "subscription",
@@ -3334,8 +2656,8 @@
     },
     {
       "scenarioId": "manual-renew",
-      "legacyMs": 0.16519999999991342,
-      "aggregateMs": 0.16380000000026484,
+      "legacyMs": 0.332300000000032,
+      "aggregateMs": 0.35980000000017753,
       "surfaces": [
         {
           "surface": "subscription",
@@ -3405,8 +2727,8 @@
     },
     {
       "scenarioId": "worker-renewal",
-      "legacyMs": 0.19630000000006476,
-      "aggregateMs": 0.18970000000035725,
+      "legacyMs": 0.3625000000001819,
+      "aggregateMs": 0.48119999999971697,
       "surfaces": [
         {
           "surface": "subscription",
@@ -3476,8 +2798,8 @@
     },
     {
       "scenarioId": "scheduler-renewal",
-      "legacyMs": 0.16829999999981737,
-      "aggregateMs": 0.18229999999994106,
+      "legacyMs": 0.30940000000009604,
+      "aggregateMs": 0.6573000000003049,
       "surfaces": [
         {
           "surface": "subscription",
@@ -3547,8 +2869,8 @@
     },
     {
       "scenarioId": "subscription-trial",
-      "legacyMs": 0.13959999999997308,
-      "aggregateMs": 0.15189999999984138,
+      "legacyMs": 0.29300000000012005,
+      "aggregateMs": 0.47699999999986176,
       "surfaces": [
         {
           "surface": "subscription",
@@ -3618,8 +2940,8 @@
     },
     {
       "scenarioId": "subscription-pending-activation",
-      "legacyMs": 0.2930999999998676,
-      "aggregateMs": 0.3137000000001535,
+      "legacyMs": 0.33339999999998327,
+      "aggregateMs": 0.30569999999988795,
       "surfaces": [
         {
           "surface": "subscription",
@@ -3689,8 +3011,8 @@
     },
     {
       "scenarioId": "subscription-expired",
-      "legacyMs": 0.15250000000014552,
-      "aggregateMs": 0.23680000000013024,
+      "legacyMs": 0.340900000000147,
+      "aggregateMs": 0.4191000000000713,
       "surfaces": [
         {
           "surface": "subscription",
@@ -3761,44 +3083,6 @@
   ],
   "divergenceMatrix": [
     {
-      "surface": "sidebar",
-      "scenarioId": "first-charge-paid",
-      "field": "openAmount",
-      "legacy": "R$ 0,00",
-      "aggregate": "R$ 110,00",
-      "classification": "semantic",
-      "evidence": "Valor em aberto"
-    },
-    {
-      "surface": "sidebar",
-      "scenarioId": "first-charge-paid",
-      "field": "lastPaymentDate",
-      "legacy": "14 Jun",
-      "aggregate": "—",
-      "classification": "semantic",
-      "evidence": "Data do último pagamento"
-    },
-    {
-      "surface": "alerts",
-      "scenarioId": "first-charge-paid",
-      "field": "kinds",
-      "legacy": [],
-      "aggregate": [
-        "client_overdue"
-      ],
-      "classification": "structural",
-      "evidence": "Taxonomias de alerta diferentes (legado UX vs Aggregate)"
-    },
-    {
-      "surface": "alerts",
-      "scenarioId": "first-charge-paid",
-      "field": "count",
-      "legacy": 0,
-      "aggregate": 1,
-      "classification": "semantic",
-      "evidence": "Quantidade de alertas"
-    },
-    {
       "surface": "alerts",
       "scenarioId": "subscription-paused",
       "field": "kinds",
@@ -3860,320 +3144,30 @@
     },
     {
       "surface": "sidebar",
-      "scenarioId": "charge-paid",
-      "field": "openAmount",
-      "legacy": "R$ 0,00",
-      "aggregate": "R$ 110,00",
+      "scenarioId": "subscription-cancelled",
+      "field": "nextReceiptDate",
+      "legacy": "—",
+      "aggregate": "14 Jul",
       "classification": "semantic",
-      "evidence": "Valor em aberto"
+      "evidence": "Data da próxima cobrança (label curto)"
     },
     {
-      "surface": "sidebar",
-      "scenarioId": "charge-paid",
-      "field": "lastPaymentDate",
-      "legacy": "14 Jun",
-      "aggregate": "—",
+      "surface": "nextInvoice",
+      "scenarioId": "subscription-cancelled",
+      "field": "cycleId",
+      "legacy": null,
+      "aggregate": "c-last",
       "classification": "semantic",
-      "evidence": "Data do último pagamento"
+      "evidence": "cycleId da próxima cobrança (first eligible)"
     },
     {
-      "surface": "alerts",
-      "scenarioId": "charge-paid",
-      "field": "kinds",
-      "legacy": [],
-      "aggregate": [
-        "client_overdue"
-      ],
-      "classification": "structural",
-      "evidence": "Taxonomias de alerta diferentes (legado UX vs Aggregate)"
-    },
-    {
-      "surface": "alerts",
-      "scenarioId": "charge-paid",
-      "field": "count",
-      "legacy": 0,
-      "aggregate": 1,
+      "surface": "nextInvoice",
+      "scenarioId": "subscription-cancelled",
+      "field": "presence",
+      "legacy": false,
+      "aggregate": true,
       "classification": "semantic",
-      "evidence": "Quantidade de alertas"
-    },
-    {
-      "surface": "events",
-      "scenarioId": "charge-manual",
-      "field": "count",
-      "legacy": 2,
-      "aggregate": 1,
-      "classification": "semantic",
-      "evidence": "Contagem de eventos reais (legado) vs events do Aggregate"
-    },
-    {
-      "surface": "events",
-      "scenarioId": "charge-manual",
-      "field": "cycleIds",
-      "legacy": [
-        "c-manual",
-        "c-manual"
-      ],
-      "aggregate": [
-        "c-manual"
-      ],
-      "classification": "semantic",
-      "evidence": "Conjunto de cycleIds em eventos reais"
-    },
-    {
-      "surface": "calendar",
-      "scenarioId": "charge-manual",
-      "field": "realCount",
-      "legacy": 2,
-      "aggregate": 1,
-      "classification": "semantic",
-      "evidence": "Contagem de eventos reais no calendário"
-    },
-    {
-      "surface": "calendar",
-      "scenarioId": "charge-manual",
-      "field": "totalCount",
-      "legacy": 14,
-      "aggregate": 13,
-      "classification": "semantic",
-      "evidence": "Contagem total do calendário (reais + projeções)"
-    },
-    {
-      "surface": "calendar",
-      "scenarioId": "charge-manual",
-      "field": "realCycleIds",
-      "legacy": [
-        "c-manual",
-        "c-manual"
-      ],
-      "aggregate": [
-        "c-manual"
-      ],
-      "classification": "semantic",
-      "evidence": "cycleIds de eventos reais no calendário"
-    },
-    {
-      "surface": "sidebar",
-      "scenarioId": "charge-manual",
-      "field": "openAmount",
-      "legacy": "R$ 220,00",
-      "aggregate": "R$ 110,00",
-      "classification": "semantic",
-      "evidence": "Valor em aberto"
-    },
-    {
-      "surface": "sidebar",
-      "scenarioId": "charge-manual",
-      "field": "eventCount",
-      "legacy": 2,
-      "aggregate": 1,
-      "classification": "semantic",
-      "evidence": "eventCount do sidebar vs realEvents"
-    },
-    {
-      "surface": "events",
-      "scenarioId": "charge-early-generated",
-      "field": "count",
-      "legacy": 2,
-      "aggregate": 1,
-      "classification": "semantic",
-      "evidence": "Contagem de eventos reais (legado) vs events do Aggregate"
-    },
-    {
-      "surface": "events",
-      "scenarioId": "charge-early-generated",
-      "field": "cycleIds",
-      "legacy": [
-        "c-early",
-        "c-early"
-      ],
-      "aggregate": [
-        "c-early"
-      ],
-      "classification": "semantic",
-      "evidence": "Conjunto de cycleIds em eventos reais"
-    },
-    {
-      "surface": "calendar",
-      "scenarioId": "charge-early-generated",
-      "field": "realCount",
-      "legacy": 2,
-      "aggregate": 1,
-      "classification": "semantic",
-      "evidence": "Contagem de eventos reais no calendário"
-    },
-    {
-      "surface": "calendar",
-      "scenarioId": "charge-early-generated",
-      "field": "totalCount",
-      "legacy": 14,
-      "aggregate": 13,
-      "classification": "semantic",
-      "evidence": "Contagem total do calendário (reais + projeções)"
-    },
-    {
-      "surface": "calendar",
-      "scenarioId": "charge-early-generated",
-      "field": "realCycleIds",
-      "legacy": [
-        "c-early",
-        "c-early"
-      ],
-      "aggregate": [
-        "c-early"
-      ],
-      "classification": "semantic",
-      "evidence": "cycleIds de eventos reais no calendário"
-    },
-    {
-      "surface": "sidebar",
-      "scenarioId": "charge-early-generated",
-      "field": "openAmount",
-      "legacy": "R$ 220,00",
-      "aggregate": "R$ 110,00",
-      "classification": "semantic",
-      "evidence": "Valor em aberto"
-    },
-    {
-      "surface": "sidebar",
-      "scenarioId": "charge-early-generated",
-      "field": "eventCount",
-      "legacy": 2,
-      "aggregate": 1,
-      "classification": "semantic",
-      "evidence": "eventCount do sidebar vs realEvents"
-    },
-    {
-      "surface": "alerts",
-      "scenarioId": "generate-retroactive-months",
-      "field": "kinds",
-      "legacy": [
-        "client_overdue"
-      ],
-      "aggregate": [],
-      "classification": "structural",
-      "evidence": "Taxonomias de alerta diferentes (legado UX vs Aggregate)"
-    },
-    {
-      "surface": "alerts",
-      "scenarioId": "generate-retroactive-months",
-      "field": "count",
-      "legacy": 1,
-      "aggregate": 0,
-      "classification": "semantic",
-      "evidence": "Quantidade de alertas"
-    },
-    {
-      "surface": "events",
-      "scenarioId": "gateway-failed",
-      "field": "count",
-      "legacy": 2,
-      "aggregate": 1,
-      "classification": "semantic",
-      "evidence": "Contagem de eventos reais (legado) vs events do Aggregate"
-    },
-    {
-      "surface": "events",
-      "scenarioId": "gateway-failed",
-      "field": "cycleIds",
-      "legacy": [
-        "c-gw",
-        "c-gw"
-      ],
-      "aggregate": [
-        "c-gw"
-      ],
-      "classification": "semantic",
-      "evidence": "Conjunto de cycleIds em eventos reais"
-    },
-    {
-      "surface": "calendar",
-      "scenarioId": "gateway-failed",
-      "field": "realCount",
-      "legacy": 2,
-      "aggregate": 1,
-      "classification": "semantic",
-      "evidence": "Contagem de eventos reais no calendário"
-    },
-    {
-      "surface": "calendar",
-      "scenarioId": "gateway-failed",
-      "field": "totalCount",
-      "legacy": 14,
-      "aggregate": 13,
-      "classification": "semantic",
-      "evidence": "Contagem total do calendário (reais + projeções)"
-    },
-    {
-      "surface": "calendar",
-      "scenarioId": "gateway-failed",
-      "field": "realCycleIds",
-      "legacy": [
-        "c-gw",
-        "c-gw"
-      ],
-      "aggregate": [
-        "c-gw"
-      ],
-      "classification": "semantic",
-      "evidence": "cycleIds de eventos reais no calendário"
-    },
-    {
-      "surface": "sidebar",
-      "scenarioId": "gateway-failed",
-      "field": "eventCount",
-      "legacy": 2,
-      "aggregate": 1,
-      "classification": "semantic",
-      "evidence": "eventCount do sidebar vs realEvents"
-    },
-    {
-      "surface": "alerts",
-      "scenarioId": "gateway-failed",
-      "field": "kinds",
-      "legacy": [
-        "gateway_failed"
-      ],
-      "aggregate": [],
-      "classification": "structural",
-      "evidence": "Taxonomias de alerta diferentes (legado UX vs Aggregate)"
-    },
-    {
-      "surface": "alerts",
-      "scenarioId": "gateway-failed",
-      "field": "count",
-      "legacy": 1,
-      "aggregate": 0,
-      "classification": "semantic",
-      "evidence": "Quantidade de alertas"
-    },
-    {
-      "surface": "sidebar",
-      "scenarioId": "invoice-refund",
-      "field": "openAmount",
-      "legacy": "R$ 0,00",
-      "aggregate": "R$ 110,00",
-      "classification": "semantic",
-      "evidence": "Valor em aberto"
-    },
-    {
-      "surface": "alerts",
-      "scenarioId": "invoice-only",
-      "field": "kinds",
-      "legacy": [
-        "client_overdue"
-      ],
-      "aggregate": [],
-      "classification": "structural",
-      "evidence": "Taxonomias de alerta diferentes (legado UX vs Aggregate)"
-    },
-    {
-      "surface": "alerts",
-      "scenarioId": "invoice-only",
-      "field": "count",
-      "legacy": 1,
-      "aggregate": 0,
-      "classification": "semantic",
-      "evidence": "Quantidade de alertas"
+      "evidence": "Presença de próxima cobrança (real ou projetada)"
     },
     {
       "surface": "alerts",

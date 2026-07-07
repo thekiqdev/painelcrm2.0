@@ -15,10 +15,11 @@ import { cn } from '@/lib/utils';
 import { ChevronDown, Zap } from 'lucide-react';
 import { focusRingClass } from './FinancialStatCard';
 import type { FinancialBadgeVariant } from '@/lib/financialStatusBadge';
+import type { GenerateBillingTarget } from '@/lib/subscriptionBillingGeneration';
 
 type Props = {
   canViewInvoices?: boolean;
-  onGenerateBilling?: () => void;
+  onGenerateBilling?: (target?: GenerateBillingTarget) => void;
   onChangeDue?: () => void;
   className?: string;
 };
@@ -29,6 +30,8 @@ function ReceiptItem({
   statusLabel,
   badgeVariant,
   invoiceId,
+  cycleId,
+  dueYmd,
   eventType,
   gateway,
   canGenerate,
@@ -42,18 +45,30 @@ function ReceiptItem({
   statusLabel: string;
   badgeVariant: FinancialBadgeVariant;
   invoiceId: string | null;
+  cycleId: string | null;
+  dueYmd: string | null;
   eventType?: import('@/lib/financialEventTypes').FinancialEventType | null;
   gateway?: string | null;
   canGenerate: boolean;
   canViewInvoices?: boolean;
-  onGenerateBilling?: () => void;
+  onGenerateBilling?: (target?: GenerateBillingTarget) => void;
   onChangeDue?: () => void;
   compact?: boolean;
 }) {
+  const generateTarget: GenerateBillingTarget = {
+    cycleId: cycleId!,
+    dueYmd,
+    componentName: 'UpcomingPaymentsList',
+  };
+  const triggerGenerate = () => {
+    if (!cycleId?.trim()) return;
+    onGenerateBilling?.(generateTarget);
+  };
+
   const secondaryActions =
-    canGenerate && onGenerateBilling && !invoiceId ? (
+    canGenerate && cycleId?.trim() && onGenerateBilling ? (
       <div className="flex flex-wrap gap-1">
-        <Button type="button" size="sm" variant="outline" className="gap-1" onClick={onGenerateBilling}>
+        <Button type="button" size="sm" variant="outline" className="gap-1" onClick={triggerGenerate}>
           <Zap className="h-3.5 w-3.5" aria-hidden />
           Gerar agora
         </Button>
@@ -72,7 +87,7 @@ function ReceiptItem({
       eventType={eventType}
       gateway={gateway}
       handlers={{
-        onGenerateBilling,
+        onGenerateBilling: () => onGenerateBilling?.(generateTarget),
         onChangeDue,
       }}
     />
@@ -118,14 +133,20 @@ export function UpcomingPaymentsList({
 
   const enriched = receipts.map((r) => {
     const ev = events.find((e) => e.ymd === r.ymd);
+    const cycleId = ev?.cycleId ?? null;
+    const resolved = store.resolveCyclePresentation(cycleId, 'HISTORY', {
+      eventType: ev?.type ?? null,
+    });
     return {
       ...r,
       invoiceId: ev?.invoiceId ?? null,
+      cycleId,
+      dueYmd: ev?.dueYmd ?? ev?.ymd ?? r.ymd,
       eventType: ev?.type ?? null,
       gateway: ev?.gateway ?? null,
-      failed: ev?.type === 'invoice_failed',
-      canGenerate: ev?.type === 'invoice_failed' || ev?.type === 'upcoming_cycle',
-      badgeVariant: ev?.statusBadge ?? ('pending' as FinancialBadgeVariant),
+      canGenerate: resolved.canGenerate,
+      badgeVariant: resolved.badge,
+      statusLabel: resolved.statusLabel,
     };
   });
 
@@ -149,11 +170,15 @@ export function UpcomingPaymentsList({
       statusLabel={r.statusLabel}
       badgeVariant={r.badgeVariant}
       invoiceId={r.invoiceId}
+      cycleId={r.cycleId}
+      dueYmd={r.dueYmd}
       eventType={r.eventType}
       gateway={r.gateway}
-      canGenerate={r.canGenerate && !r.invoiceId}
+      canGenerate={r.canGenerate}
       canViewInvoices={canViewInvoices}
-      onGenerateBilling={onGenerateBilling}
+      onGenerateBilling={(target) =>
+        onGenerateBilling?.({ ...target, componentName: 'UpcomingPaymentsList' })
+      }
       onChangeDue={onChangeDue}
       compact={isMobile}
     />

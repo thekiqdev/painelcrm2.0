@@ -31,11 +31,8 @@ import type { FinancialHistoryRow } from './billingSubscriptionExperience';
 import { getNextAwaitingGenerationCycle } from './subscriptionNextInvoiceResolver';
 import { buildSubscriptionFinancialEvents, resolveNextChargeEvent } from './subscriptionFinancialEvents';
 
-import { resolveHistoryRowState } from './billingStateMachine';
-
-export function historyRowShowsChargeAction(row: FinancialHistoryRow, todayYmd?: string): boolean {
-  const today = todayYmd ?? new Date().toISOString().slice(0, 10);
-  return resolveHistoryRowState(row, today).showGenerateButton;
+export function historyRowShowsChargeAction(row: FinancialHistoryRow): boolean {
+  return Boolean(row.canGenerateNow);
 }
 
 export function historyRowChargeActionLabel(_row: FinancialHistoryRow): string {
@@ -218,7 +215,7 @@ export function findNextChargeTimelineRow(
   todayYmd: string
 ): CrmSubscriptionTimelineRow | null {
   const events = buildSubscriptionFinancialEvents(detail, todayYmd);
-  const nextEv = resolveNextChargeEvent(events, todayYmd);
+  const nextEv = resolveNextChargeEvent(events, detail);
   if (nextEv?.dueYmd) {
     const fromTimeline = detail.timeline.find(
       (r) =>

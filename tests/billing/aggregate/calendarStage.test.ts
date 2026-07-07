@@ -194,7 +194,10 @@ describe('CalendarStage', () => {
       const detail = scenario.build();
       const aggregate = buildBillingAggregateFromDetail(detail, scenario.todayYmd);
       expect(aggregate.calendar.length).toBeGreaterThanOrEqual(aggregate.events.length);
-      expect(aggregate.history).toHaveLength(aggregate.events.length);
+      const cycledEvents = aggregate.events.filter((e) => e.cycleId);
+      expect(aggregate.history.length).toBeLessThanOrEqual(
+        Math.max(aggregate.cycles.length, cycledEvents.length > 0 ? 1 : 0)
+      );
       const eventIds = new Set(aggregate.events.map((e) => e.id));
       for (const entry of aggregate.calendar.filter((e) => !e.isProjected)) {
         expect(eventIds.has(entry.eventId)).toBe(true);

@@ -24,6 +24,7 @@ export type RenewalPipelineStage =
   | 'TIMELINE'
   | 'HISTORY'
   | 'ADVANCE'
+  | 'POST_MANUAL_ENQUEUE_NEXT'
   | 'COMPLETE'
   | 'ERROR';
 

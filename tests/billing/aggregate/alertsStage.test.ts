@@ -66,7 +66,7 @@ describe('AlertsStage', () => {
     expect(source).not.toMatch(/context\.source/);
   });
 
-  it('AlertsStage usa subscription, events, cycles e nextInvoice', () => {
+  it('AlertsStage usa subscription, events, cycles, invoices e nextInvoice', () => {
     const builder = readModuleSource(BUILDER_MODULE);
     const stageBlock = builder.slice(
       builder.indexOf('export const alertStage'),
@@ -76,6 +76,7 @@ describe('AlertsStage', () => {
     expect(stageBlock).toContain('aggregate.subscription');
     expect(stageBlock).toContain('aggregate.events');
     expect(stageBlock).toContain('aggregate.cycles');
+    expect(stageBlock).toContain('aggregate.invoices');
     expect(stageBlock).not.toContain('context.source');
   });
 
@@ -188,6 +189,7 @@ describe('AlertsStage', () => {
         aggregate.events,
         aggregate.nextInvoice,
         aggregate.cycles,
+        aggregate.invoices,
         context.todayYmd
       )
     );

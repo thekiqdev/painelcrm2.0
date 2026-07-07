@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createFinancialEventStore } from '@/lib/subscriptionFinancialEventStore';
-import { cycleSupportsManualGenerate } from '@/lib/subscriptionCyclesSource';
+import { cycleSupportsManualGenerate } from '@/lib/operationalCompetencyResolver';
 import { resolveInvoiceCapabilities } from '@/lib/invoiceCapabilities';
 import { buildGoldenDetail, timelineRow } from '../golden-dataset';
 

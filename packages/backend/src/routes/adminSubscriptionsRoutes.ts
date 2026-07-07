@@ -9,6 +9,7 @@ import {
   postCrmSubscriptionReprocessHandler,
   postCrmSubscriptionManualRenewHandler,
   postCrmSubscriptionManualReprocessHandler,
+  postCrmSubscriptionRepairCycleInvariantsHandler,
 } from '../controllers/crmSubscriptionsController.js';
 
 const router = Router();
@@ -19,5 +20,6 @@ router.post('/:id/generate-now', postCrmSubscriptionGenerateNowHandler);
 router.post('/:id/reprocess', postCrmSubscriptionReprocessHandler);
 router.post('/:id/manual-renew', postCrmSubscriptionManualRenewHandler);
 router.post('/:id/manual-reprocess', postCrmSubscriptionManualReprocessHandler);
+router.post('/:id/repair-cycle-invariants', postCrmSubscriptionRepairCycleInvariantsHandler);
 
 export default router;

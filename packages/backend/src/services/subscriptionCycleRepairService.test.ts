@@ -14,7 +14,17 @@ vi.mock('./billingLogger.js', () => ({
   billingLog: vi.fn(),
 }));
 
+vi.mock('./subscriptionCycleLifecycleService.js', () => ({
+  repairInvoicedCyclesWithoutInvoice: vi.fn().mockResolvedValue({
+    cycles_reopened: 0,
+    cycle_ids: [],
+    cycle_dates: [],
+    jobs_reset: 0,
+  }),
+}));
+
 import { repairRecoverableSubscriptionCycles, repairCycle } from './subscriptionCycleRepairService.js';
+import { repairInvoicedCyclesWithoutInvoice } from './subscriptionCycleLifecycleService.js';
 
 describe('subscriptionCycleRepairService', () => {
   beforeEach(() => {
@@ -22,6 +32,12 @@ describe('subscriptionCycleRepairService', () => {
   });
 
   it('repairRecoverableSubscriptionCycles updates failed cycles and jobs', async () => {
+    vi.mocked(repairInvoicedCyclesWithoutInvoice).mockResolvedValueOnce({
+      cycles_reopened: 1,
+      cycle_ids: ['cycle-inv'],
+      cycle_dates: ['2026-07-23'],
+      jobs_reset: 0,
+    });
     queryMock
       .mockResolvedValueOnce({
         rowCount: 1,
@@ -30,6 +46,7 @@ describe('subscriptionCycleRepairService', () => {
       .mockResolvedValueOnce({ rowCount: 1 });
 
     const result = await repairRecoverableSubscriptionCycles('t1', 'sub-1');
+    expect(result.invariant_cycles_reopened).toBe(1);
     expect(result.cycles_repaired).toBe(1);
     expect(result.jobs_repaired).toBe(1);
     expect(result.repaired_cycle_dates).toContain('2026-07-14');

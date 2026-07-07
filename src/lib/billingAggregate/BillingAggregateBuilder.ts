@@ -3,6 +3,7 @@ import { buildAlertsFromAggregate } from './alertsSnapshot';
 import { buildCalendarFromEvents } from './calendarSnapshot';
 import { buildCapabilitiesFromAggregate } from './capabilitiesSnapshot';
 import { mapCyclesFromSource } from './cycleSnapshot';
+import { mapInvoicesFromSource } from './invoiceSnapshot';
 import { buildFinancialEventsFromAggregate } from './financialEventSnapshot';
 import { buildHistoryFromEvents } from './historySnapshot';
 import { resolveNextInvoiceFromAggregate } from './nextInvoiceSnapshot';
@@ -16,21 +17,23 @@ export const subscriptionStage: BillingAggregateStage = (context, aggregate) => 
   subscription: mapSubscriptionSnapshot(context.source.subscription),
 });
 
-/** Sprint 5.0-13 — popula `aggregate.cycles`. */
+/** Sprint 5.0-13 — popula `aggregate.cycles` e `aggregate.invoices` (ingress). */
 export const cycleStage: BillingAggregateStage = (context, aggregate) => ({
   ...aggregate,
   cycles: mapCyclesFromSource(context.source.cycles_raw, context.source.subscription.id),
+  invoices: mapInvoicesFromSource(context.source.invoices, context.source.cycles_raw),
 });
 
 /** Placeholder — timeline não é input de decisão. */
 export const timelineStage: BillingAggregateStage = (_context, aggregate) => aggregate;
 
-/** Sprint 5.0-14 / 5.0-21B — eventos reais a partir de subscription + cycles + today. */
+/** Sprint 5.0-14 / 5.0-21D — eventos reais (N por ciclo) + invoice-aware. */
 export const financialEventStage: BillingAggregateStage = (context, aggregate) => ({
   ...aggregate,
   events: buildFinancialEventsFromAggregate(
     aggregate.subscription,
     aggregate.cycles,
+    aggregate.invoices,
     context.todayYmd
   ),
 });
@@ -80,7 +83,7 @@ export const sidebarStage: BillingAggregateStage = (_context, aggregate) => ({
   ),
 });
 
-/** Sprint 5.0-19 / 5.0-21B — taxonomia legada de alertas. */
+/** Sprint 5.0-19 / 5.0-21D — taxonomia legada via events + invoices. */
 export const alertStage: BillingAggregateStage = (context, aggregate) => ({
   ...aggregate,
   alerts: buildAlertsFromAggregate(
@@ -88,6 +91,7 @@ export const alertStage: BillingAggregateStage = (context, aggregate) => ({
     aggregate.events,
     aggregate.nextInvoice,
     aggregate.cycles,
+    aggregate.invoices,
     context.todayYmd
   ),
 });

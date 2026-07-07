@@ -921,9 +921,21 @@ async function repairOrphanCycles(runId: string, dryRun: boolean): Promise<Billi
       ids.push(row.id);
       await pool.query(
         `UPDATE subscription_cycles
-         SET status = 'failed', error_message = 'recovery: invoiced sem invoice_id', updated_at = now()
+         SET status = 'pending',
+             processed_at = NULL,
+             skipped_reason = NULL,
+             error_message = NULL,
+             metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+             updated_at = now()
          WHERE id = $1`,
-        [row.id]
+        [
+          row.id,
+          JSON.stringify({
+            lifecycle: 'reopen_after_invoice_removed',
+            reopen_reason: 'billing_recovery_invoiced_without_invoice',
+            reopened_at: new Date().toISOString(),
+          }),
+        ]
       );
     }
   } else {

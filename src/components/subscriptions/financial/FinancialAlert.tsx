@@ -1,8 +1,6 @@
-import { useMemo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { buildFinancialAlerts, type FinancialAlert } from '@/lib/subscriptionFinancialExperience';
-import { humanizeFinancialAlerts } from '@/lib/subscriptionFinancialOverview';
+import type { FinancialAlert } from '@/lib/subscriptionFinancialExperience';
 import type { CrmSubscriptionDetailPayload } from '@/services/crmSubscriptions';
 import { useFinancialEventStore } from './FinancialEventStoreContext';
 import { cn } from '@/lib/utils';
@@ -16,10 +14,7 @@ type Props = {
 
 export function FinancialAlertList({ detail, onResolve, className }: Props) {
   const store = useFinancialEventStore();
-  const alerts = useMemo(
-    () => humanizeFinancialAlerts(buildFinancialAlerts(detail), detail, store.today),
-    [detail, store.today]
-  );
+  const alerts = store.getFinancialAlerts();
 
   if (alerts.length === 0) return null;
 

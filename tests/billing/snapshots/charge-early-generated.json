@@ -8,7 +8,7 @@
         "cycleId": "c-early",
         "invoiceId": "inv-early",
         "dueYmd": "2026-08-14",
-        "statusPt": "Pendente",
+        "statusPt": "Fatura em aberto",
         "canGenerateNow": false,
         "isProjected": false,
         "eventType": "invoice_due"
@@ -173,7 +173,7 @@
         "cycleId": "c-early",
         "invoiceId": "inv-early",
         "ymd": "2026-06-20",
-        "dueYmd": "2026-08-14"
+        "dueYmd": "2026-06-20"
       },
       {
         "id": "due-c-early-2026-08-14",

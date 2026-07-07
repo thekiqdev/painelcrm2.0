@@ -27,15 +27,19 @@ import { FinancialCalendarPopover } from './FinancialCalendarPopover';
 import { FinancialCalendarTooltipContent } from './FinancialCalendarTooltipContent';
 import { FINANCIAL_CARD_BODY, FINANCIAL_CARD_HEADER, FINANCIAL_CARD_SHELL } from '@/lib/subscriptionFinancialOverview';
 import { cn } from '@/lib/utils';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
 import { focusRingClass } from './FinancialStatCard';
+import type { GenerateBillingTarget } from '@/lib/subscriptionBillingGeneration';
 
 const WEEKDAYS = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
 
 type Props = {
   detail: CrmSubscriptionDetailPayload;
   canViewInvoices?: boolean;
-  onGenerateBilling?: () => void;
+  onGenerateBilling?: (target?: GenerateBillingTarget) => void;
+  onRepairCycleInvariant?: (row?: { cycleId?: string | null; id?: string }) => void;
+  canRepairCycle?: boolean;
+  repairingCycleId?: string | null;
   onChangeDue?: () => void;
   onViewHistory?: () => void;
   className?: string;
@@ -45,6 +49,9 @@ export function FinancialCalendar({
   detail,
   canViewInvoices = true,
   onGenerateBilling,
+  onRepairCycleInvariant,
+  canRepairCycle = true,
+  repairingCycleId = null,
   onChangeDue,
   onViewHistory,
   className,
@@ -136,6 +143,8 @@ export function FinancialCalendar({
                 return <div key={`p-${idx}`} className="min-h-[104px] sm:min-h-[120px]" aria-hidden />;
               }
               const dayEvents = eventsByDay.get(cell.ymd) ?? [];
+              const calEventsForDay = calendarEvents.filter((c) => c.ymd === cell.ymd);
+              const hasInvariantIssue = calEventsForDay.some((c) => c.needsInvariantRepair);
               const isExpanded = expandedDays[cell.ymd];
               const visibleEvents = isExpanded ? dayEvents : dayEvents.slice(0, 2);
               const hiddenCount = dayEvents.length - visibleEvents.length;
@@ -147,7 +156,12 @@ export function FinancialCalendar({
                   dayEvents.length > 0 && 'hover:bg-muted/40 cursor-pointer',
                   focusRingClass()
                 )}>
-                  <span className={cn('text-xs font-semibold tabular-nums', cell.isToday && 'text-crm-primary')}>{cell.day}</span>
+                  <span className={cn('text-xs font-semibold tabular-nums flex items-center gap-0.5', cell.isToday && 'text-crm-primary')}>
+                    {cell.day}
+                    {hasInvariantIssue ? (
+                      <AlertTriangle className="h-3 w-3 text-amber-600 shrink-0" aria-label="Competência inconsistente" />
+                    ) : null}
+                  </span>
                   {dayEvents.length > 0 ? (
                     <div className="mt-auto space-y-0.5 flex-1 flex flex-col justify-end">
                       {visibleEvents.map((ev) => {
@@ -182,7 +196,7 @@ export function FinancialCalendar({
                 );
               }
 
-              const calEvents = calendarEvents.filter((c) => c.ymd === cell.ymd);
+              const calEvents = calEventsForDay;
 
               return (
                 <Popover key={cell.ymd}>
@@ -217,6 +231,9 @@ export function FinancialCalendar({
                       detail={detail}
                       canViewInvoices={canViewInvoices}
                       onGenerateBilling={onGenerateBilling}
+                      onRepairCycleInvariant={onRepairCycleInvariant}
+                      canRepairCycle={canRepairCycle}
+                      repairingCycleId={repairingCycleId}
                       onChangeDue={onChangeDue}
                       onViewHistory={onViewHistory}
                     />

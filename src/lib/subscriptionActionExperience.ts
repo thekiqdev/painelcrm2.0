@@ -119,25 +119,8 @@ export function alertShowsTechnicalDetail(alert: FinancialAlert): boolean {
   return Boolean(alert.technicalDetail?.trim());
 }
 
-export function historyRowCanGenerate(row: FinancialHistoryRow, todayYmd?: string): boolean {
-  if (typeof row.canGenerateNow === 'boolean') return row.canGenerateNow;
-
-  const today = todayYmd ?? new Date().toISOString().slice(0, 10);
-  if (row.invoiceId) return false;
-  if (row.visual === 'future' || row.visual === 'generated') return true;
-  if (row.visual === 'failed') {
-    return isRecoverableCycleFailure(
-      {
-        operational_state: 'failed',
-        invoice_id: null,
-        due_date: row.dueYmd,
-        cycle_date: row.dueYmd,
-        cycle_status: 'failed',
-      },
-      today
-    );
-  }
-  return false;
+export function historyRowCanGenerate(row: FinancialHistoryRow): boolean {
+  return Boolean(row.canGenerateNow);
 }
 
 export function capabilitiesInputFromHistoryRow(
@@ -170,6 +153,7 @@ export function capabilitiesInputFromHistoryRow(
     eventType,
     invoiceStatus,
     gateway: row.gateway,
+    cycleId: row.cycleId,
   };
 }
 

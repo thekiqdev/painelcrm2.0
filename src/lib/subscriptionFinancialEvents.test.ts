@@ -8,6 +8,7 @@ import {
 } from './subscriptionFinancialEvents';
 import { resolveNextChargePresentationFromStore } from './subscriptionFinancialEvents';
 import type { CrmSubscriptionDetailPayload, CrmSubscriptionTimelineRow } from '@/services/crmSubscriptions';
+import { cyclesRawFromTimeline } from './testHelpers/subscriptionCyclesFixture';
 
 const today = '2026-06-30';
 
@@ -34,6 +35,9 @@ function timelineRow(overrides: Partial<CrmSubscriptionTimelineRow> = {}): CrmSu
 }
 
 function detail(overrides: Partial<CrmSubscriptionDetailPayload> = {}): CrmSubscriptionDetailPayload {
+  const timeline = overrides.timeline ?? [timelineRow()];
+  const cycles_raw =
+    overrides.cycles_raw !== undefined ? overrides.cycles_raw : cyclesRawFromTimeline(timeline);
   return {
     subscription: {
       id: 'sub-1',
@@ -73,15 +77,15 @@ function detail(overrides: Partial<CrmSubscriptionDetailPayload> = {}): CrmSubsc
       total_pending_cents: 0,
       charge_count: 0,
     },
-    timeline: [timelineRow()],
+    timeline,
     automation_summary: {
       last_generation_at: null,
       last_generation_label: null,
       next_generation_ymd: '2026-07-14',
       next_charge_ymd: '2026-07-14',
     },
-    cycles_raw: [],
-    cycles_read_enabled: false,
+    cycles_raw,
+    cycles_read_enabled: cycles_raw.length > 0,
     tenant_billing: {
       recurring_invoice_generate_days_before_due: 0,
       recurring_generate_time_local: '08:00',
@@ -93,13 +97,24 @@ function detail(overrides: Partial<CrmSubscriptionDetailPayload> = {}): CrmSubsc
   };
 }
 
-describe('subscriptionFinancialEvents — single source', () => {
-  it('history includes only the next predicted competency', () => {
-    const store = createFinancialEventStore(detail(), today);
-    const rows = store.getHistoryRows();
-    const predicted = rows.filter((r) => r.statusPt === 'Prevista');
-    expect(predicted).toHaveLength(1);
-    expect(predicted[0]?.isNextCharge).toBe(true);
+describe('subscriptionFinancialEvents — single source (cycles_raw)', () => {
+  it('all financial events have cycle_id', () => {
+    const events = buildSubscriptionFinancialEvents(detail(), today);
+    expect(events.every((e) => Boolean(e.cycleId))).toBe(true);
+  });
+
+  it('history shows generate for every eligible real cycle', () => {
+    const d = detail({
+      timeline: [
+        timelineRow({ cycle_id: 'c1', due_date: '2026-07-14' }),
+        timelineRow({ cycle_id: 'c2', due_date: '2026-07-21', cycle_date: '2026-07-21' }),
+        timelineRow({ cycle_id: 'c3', due_date: '2026-10-01', cycle_date: '2026-10-01' }),
+      ],
+    });
+    const store = createFinancialEventStore(d, today);
+    const withButton = store.getHistoryRows().filter((r) => r.canGenerateNow);
+    expect(withButton.length).toBeGreaterThanOrEqual(3);
+    expect(withButton.map((r) => r.cycleId).sort()).toEqual(['c1', 'c2', 'c3']);
   });
 
   it('calendar and history share event collection', () => {
@@ -125,21 +140,23 @@ describe('subscriptionFinancialEvents — single source', () => {
     expect(presentation.dueYmd).toBe(highlighted?.dueYmd);
   });
 
-  it('after invoice highlight migrates to next predicted', () => {
+  it('after invoicing first cycle, next charge advances to second cycle', () => {
     const d = detail({
       timeline: [
         timelineRow({
+          cycle_id: 'c1',
           invoice_id: 'inv-1',
           operational_state: 'generated',
           invoice_status: 'pending',
         }),
+        timelineRow({ cycle_id: 'c2', due_date: '2026-07-21', cycle_date: '2026-07-21' }),
       ],
       latest_invoice_id: 'inv-1',
     });
     const events = buildSubscriptionFinancialEvents(d, today);
-    const next = resolveNextChargeEvent(events, today);
-    expect(next?.dueYmd).not.toBe('2026-07-14');
-    expect(hasFuturePredictedEvents(events, today)).toBe(true);
+    const next = resolveNextChargeEvent(events, d);
+    expect(next?.cycleId).toBe('c2');
+    expect(hasFuturePredictedEvents(events, d)).toBe(true);
 
     const store = createFinancialEventStore(d, today);
     const highlighted = store.getHistoryRows().find((r) => r.isNextCharge);
@@ -147,16 +164,23 @@ describe('subscriptionFinancialEvents — single source', () => {
     expect(highlighted?.invoiceId).toBeNull();
   });
 
-  it('only first predicted has generate button', () => {
-    const store = createFinancialEventStore(detail(), today);
+  it('every eligible real cycle has generate in history', () => {
+    const d = detail({
+      timeline: [
+        timelineRow({ cycle_id: 'c1', due_date: '2026-07-14' }),
+        timelineRow({ cycle_id: 'c2', due_date: '2026-07-21', cycle_date: '2026-07-21' }),
+      ],
+    });
+    const store = createFinancialEventStore(d, today);
     const withButton = store.getHistoryRows().filter((r) => r.canGenerateNow);
-    expect(withButton).toHaveLength(1);
+    expect(withButton).toHaveLength(2);
   });
 
-  it('resolveNextChargePresentation uses events not invoices directly', () => {
+  it('resolveNextChargePresentation uses cycles_raw not next_billing_date alone', () => {
     const events = buildSubscriptionFinancialEvents(detail(), today);
     const p = resolveNextChargePresentation(detail(), events, today);
     expect(p.statusLabel).toBe('Prevista');
     expect(p.hasInvoice).toBe(false);
+    expect(p.cycleId).toBe('c1');
   });
 });

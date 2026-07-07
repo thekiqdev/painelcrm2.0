@@ -392,8 +392,8 @@ describe('historyStatusDisplayLabel recovery', () => {
       detail({ timeline: [timelineRow({ operational_state: 'failed' })] }),
       today
     )[0]!;
-    expect(historyRowCanGenerate({ ...row, canGenerateNow: true }, today)).toBe(true);
-    expect(historyRowCanGenerate(row, today)).toBe(row.canGenerateNow === true);
+    expect(historyRowCanGenerate({ ...row, canGenerateNow: true })).toBe(true);
+    expect(historyRowCanGenerate(row)).toBe(row.canGenerateNow === true);
   });
 });
 

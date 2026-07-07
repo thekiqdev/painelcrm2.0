@@ -1,4 +1,3 @@
-import { useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -8,8 +7,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from '@/components/ui/sheet';
-import { buildFinancialAlerts } from '@/lib/subscriptionFinancialExperience';
-import { humanizeFinancialAlerts, FINANCIAL_CARD_BODY, FINANCIAL_CARD_HEADER, FINANCIAL_CARD_SHELL } from '@/lib/subscriptionFinancialOverview';
+import { FINANCIAL_CARD_BODY, FINANCIAL_CARD_HEADER, FINANCIAL_CARD_SHELL } from '@/lib/subscriptionFinancialOverview';
 import { alertShowsTechnicalDetail } from '@/lib/subscriptionActionExperience';
 import type { CrmSubscriptionDetailPayload } from '@/services/crmSubscriptions';
 import type { FinancialAlert } from '@/lib/subscriptionFinancialExperience';
@@ -17,15 +15,15 @@ import { useFinancialEventStore } from './FinancialEventStoreContext';
 import { resolveAlertScrollTarget, scrollToFinancialTarget } from '@/lib/timelineNavigation';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { cn } from '@/lib/utils';
-import { resolveNextChargePresentationFromStore } from '@/lib/subscriptionFinancialEvents';
 import { formatFinancialAmount } from './financialFormat';
 import { focusRingClass, PaymentBadge } from './FinancialStatCard';
 import { PanelRight } from 'lucide-react';
+import type { GenerateBillingTarget } from '@/lib/subscriptionBillingGeneration';
 
 type Props = {
   detail: CrmSubscriptionDetailPayload;
   onResolveAlert?: (alert: FinancialAlert) => void;
-  onGenerateBilling?: () => void;
+  onGenerateBilling?: (target?: GenerateBillingTarget) => void;
   onViewTechnicalDetail?: (alert: FinancialAlert) => void;
   className?: string;
 };
@@ -38,16 +36,13 @@ function SidebarBody({
 }: {
   detail: CrmSubscriptionDetailPayload;
   onResolveAlert?: (alert: FinancialAlert) => void;
-  onGenerateBilling?: () => void;
+  onGenerateBilling?: (target?: GenerateBillingTarget) => void;
   onViewTechnicalDetail?: (alert: FinancialAlert) => void;
 }) {
   const store = useFinancialEventStore();
   const summary = store.getSidebarSummary();
-  const nextInvoice = resolveNextChargePresentationFromStore(store);
-  const alerts = useMemo(
-    () => humanizeFinancialAlerts(buildFinancialAlerts(detail), detail, store.today),
-    [detail, store.today]
-  );
+  const nextInvoice = store.getNextChargePresentation();
+  const alerts = store.getFinancialAlerts();
 
   const metrics = [
     { label: 'Último pagamento', primary: summary.lastPaymentDate, secondary: summary.lastPaymentAmount },
@@ -58,7 +53,13 @@ function SidebarBody({
 
   const handleAlertAction = (alert: FinancialAlert) => {
     if (alert.kind === 'billing_missing') {
-      onGenerateBilling?.();
+      const resolved = store.resolveCyclePresentation(nextInvoice.cycleId, 'NEXT_GENERATE');
+      if (!resolved.canGenerate || !nextInvoice.cycleId) return;
+      onGenerateBilling?.({
+        cycleId: nextInvoice.cycleId,
+        dueYmd: nextInvoice.dueYmd,
+        componentName: 'FinancialSummarySidebar',
+      });
       return;
     }
     const target = resolveAlertScrollTarget(alert, store.events, store.today);

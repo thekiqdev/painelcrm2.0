@@ -12,6 +12,8 @@ export type InvoiceCapabilitiesInput = {
   invoiceStatus?: string | null;
   /** Contexto do evento financeiro (calendário / histórico). */
   eventType?: FinancialEventType | null;
+  /** Sprint 4.2G — obrigatório para supportsGenerate */
+  cycleId?: string | null;
   gateway?: string | null;
 };
 
@@ -70,7 +72,7 @@ export function resolveInvoiceCapabilities(input: InvoiceCapabilitiesInput): Inv
     supportsGateway: gateway && hasInvoice,
     supportsOpen: hasInvoice && canView,
     supportsRegisterPayment: hasInvoice && canView && actionable && !paid,
-    supportsGenerate: forecast || (failed && !hasInvoice),
+    supportsGenerate: (forecast || (failed && !hasInvoice)) && Boolean(input.cycleId?.trim()),
     supportsChangeDue: forecast,
     supportsViewHistory: canView,
     supportsResolve: failed,

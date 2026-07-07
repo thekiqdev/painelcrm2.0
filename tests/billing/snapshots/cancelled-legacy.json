@@ -17,10 +17,10 @@
         "cycleId": "c-legacy",
         "invoiceId": null,
         "dueYmd": "2026-07-14",
-        "statusPt": "Prevista",
+        "statusPt": "Cancelada",
         "canGenerateNow": true,
         "isProjected": false,
-        "eventType": "upcoming_cycle"
+        "eventType": "invoice_cancelled"
       }
     ],
     "generateCycleIds": [
@@ -32,13 +32,13 @@
     "eventCount": 14,
     "events": [
       {
-        "id": "sched-c-legacy-2026-07-14",
+        "id": "billing-event-c-legacy",
         "ymd": "2026-07-14",
         "cycleId": "c-legacy",
         "invoiceId": null,
         "isProjected": false,
         "supportsGenerate": true,
-        "type": "upcoming_cycle"
+        "type": "invoice_cancelled"
       },
       {
         "id": "sched-c-next-2026-08-14",
@@ -179,8 +179,8 @@
     "projectedCount": 12,
     "events": [
       {
-        "id": "sched-c-legacy-2026-07-14",
-        "type": "upcoming_cycle",
+        "id": "billing-event-c-legacy",
+        "type": "invoice_cancelled",
         "kind": "real",
         "cycleId": "c-legacy",
         "invoiceId": null,

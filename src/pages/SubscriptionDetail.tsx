@@ -27,6 +27,7 @@ import {
 import { crmSubscriptionsService, type CrmSubscriptionBillingInterval, type CrmSubscriptionDetailPayload } from "@/services/crmSubscriptions";
 import { toast } from "@/components/ui/sonner";
 import { formatYmdBrSafe } from "@/lib/billingSafeDate";
+import { executeDeterministicGenerateRenewal, resolveGenerateBillingCycleId, type GenerateBillingTarget } from "@/lib/subscriptionBillingGeneration";
 import { ArrowLeft, ChevronDown } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { SubscriptionContractEditDialog, type SubscriptionContractModalPreset } from "@/components/subscriptions/SubscriptionContractEditDialog";
@@ -133,6 +134,7 @@ const SubscriptionDetail = () => {
   const [resolveAlert, setResolveAlert] = useState<FinancialAlert | null>(null);
   const [generatingBilling, setGeneratingBilling] = useState(false);
   const [generatingRowId, setGeneratingRowId] = useState<string | null>(null);
+  const [repairingRowId, setRepairingRowId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -165,9 +167,15 @@ const SubscriptionDetail = () => {
   }, [detail?.subscription.id, detail?.subscription.cycles_unlimited, detail?.subscription.max_cycles]);
 
   const handleGenerateBilling = useCallback(
-    async (row?: import('@/lib/billingSubscriptionExperience').FinancialHistoryRow) => {
+    async (target?: GenerateBillingTarget | import('@/lib/billingSubscriptionExperience').FinancialHistoryRow) => {
       if (!id || !detail) return;
-      const rowId = row?.id ?? 'next';
+      const row = target && 'competence' in target ? target : undefined;
+      const billingTarget = row ? undefined : (target as GenerateBillingTarget | undefined);
+      const componentName =
+        billingTarget?.componentName ??
+        (row ? 'FinancialHistoryRow' : 'SubscriptionDetail');
+      const cycleId = resolveGenerateBillingCycleId(billingTarget, row?.cycleId);
+      const rowId = row?.id ?? billingTarget?.rowId ?? cycleId ?? 'next';
       if (detail.subscription.status !== 'active') {
         toast.error('Assinatura não está ativa para gerar cobrança');
         return;
@@ -175,7 +183,13 @@ const SubscriptionDetail = () => {
       try {
         setGeneratingBilling(true);
         setGeneratingRowId(rowId);
-        const result = await crmSubscriptionsService.generateRenewalNow(id);
+        const result = await executeDeterministicGenerateRenewal({
+          subscriptionId: id,
+          detail,
+          target: billingTarget,
+          rowCycleId: row?.cycleId,
+          componentName,
+        });
         if (result.success) {
           toast.success(result.invoice_id ? 'Cobrança gerada' : 'Renovação processada');
           await load();
@@ -191,6 +205,34 @@ const SubscriptionDetail = () => {
       }
     },
     [id, detail, load]
+  );
+
+  const handleRepairCycleInvariant = useCallback(
+    async (row?: { cycleId?: string | null; id?: string }) => {
+      if (!id) return;
+      if (!canEditSubscription) {
+        toast.error('Sem permissão para corrigir competência');
+        return;
+      }
+      const rowId = row?.id ?? row?.cycleId ?? 'repair';
+      try {
+        setRepairingRowId(rowId);
+        const result = await crmSubscriptionsService.repairCycleInvariants(id, {
+          cycleId: row?.cycleId ?? undefined,
+        });
+        if (result.cycles_reopened > 0) {
+          toast.success('Competência corrigida — você pode gerar a cobrança novamente');
+        } else {
+          toast.info('Nenhuma competência inconsistente encontrada');
+        }
+        await load();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Erro ao corrigir competência');
+      } finally {
+        setRepairingRowId(null);
+      }
+    },
+    [id, canEditSubscription, load]
   );
 
   const handleOpenInvoice = useCallback(
@@ -423,7 +465,7 @@ const SubscriptionDetail = () => {
   };
 
   const actionHandlers = {
-    onGenerateNext: handleGenerateBilling,
+    onGenerateNext: () => handleGenerateBilling({ componentName: 'SubscriptionActionsPanel' }),
     onChangeNextBilling: () => {
       const gen =
         nextYmd && nextYmd.length === 10
@@ -472,8 +514,6 @@ const SubscriptionDetail = () => {
         </Button>
       </div>
 
-      <FinancialHeader detail={detail} />
-
       {detail.pending_contract ? (
         <SubscriptionPendingContractBanner
           pending={detail.pending_contract}
@@ -482,6 +522,7 @@ const SubscriptionDetail = () => {
       ) : null}
 
       <FinancialEventStoreProvider detail={detail} onPaymentConfirmed={load}>
+      <FinancialHeader detail={detail} />
       <FinancialSmartScroll detail={detail} />
       <RecurringRevenueCard
         latestPaidInvoiceId={latestPaidId}
@@ -491,7 +532,7 @@ const SubscriptionDetail = () => {
       <NextInvoiceCard
         detail={detail}
         generating={generatingBilling}
-        onGenerateBilling={() => handleGenerateBilling()}
+        onGenerateBilling={handleGenerateBilling}
         onOpenInvoice={handleOpenInvoice}
       />
 
@@ -502,6 +543,9 @@ const SubscriptionDetail = () => {
               detail={detail}
               canViewInvoices={canViewInvoices}
               onGenerateBilling={handleGenerateBilling}
+              onRepairCycleInvariant={handleRepairCycleInvariant}
+              canRepairCycle={canEditSubscription}
+              repairingCycleId={repairingRowId}
               onChangeDue={actionHandlers.onChangeNextBilling}
               onViewHistory={scrollToHistory}
             />
@@ -530,7 +574,10 @@ const SubscriptionDetail = () => {
             filter={historyFilter}
             onFilterChange={setHistoryFilter}
             generatingRowId={generatingRowId}
+            repairingRowId={repairingRowId}
             onGenerateBilling={handleGenerateBilling}
+            onRepairCycleInvariant={handleRepairCycleInvariant}
+            canRepairCycle={canEditSubscription}
           />
         </LazyFinancialSection>
       </div>
@@ -629,7 +676,8 @@ const SubscriptionDetail = () => {
       <SubscriptionActionsPanel
         variant="fab"
         handlers={{
-          onGenerateNext: handleGenerateBilling,
+          onGenerateNext: () =>
+            handleGenerateBilling({ componentName: 'SubscriptionActionsPanel' }),
           onChangeNextBilling: actionHandlers.onChangeNextBilling,
           onEdit: actionHandlers.onEdit,
           onPause: actionHandlers.onPause,

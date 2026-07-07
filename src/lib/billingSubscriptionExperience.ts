@@ -85,10 +85,19 @@ export type FinancialHistoryRow = {
   visual: CalendarVisualKind;
   notes?: string | null;
   jobId?: string | null;
+  /** Sprint 4.2D — ciclo canônico para geração determinística */
+  cycleId?: string | null;
   /** Sprint 4.1L — destaque da próxima cobrança na coleção unificada */
   isNextCharge?: boolean;
   canGenerateNow?: boolean;
+  /** Sprint 4.2H — competência projetada (sem cycle_id, sem ações). */
+  isProjected?: boolean;
   eventType?: import('./financialEventTypes').FinancialEventType;
+  /** Sprint 5.0-23C — ações derivadas exclusivamente do OCRE */
+  canOpenNow?: boolean;
+  canReprocessNow?: boolean;
+  /** Sprint 5.0-24D — INV-19 violado; exibir alerta + Corrigir. */
+  needsInvariantRepair?: boolean;
 };
 
 export type FinancialSummary = {

@@ -65,7 +65,7 @@ export function resolveNextInvoiceExperience(
   const today = todayYmd ?? new Date().toISOString().slice(0, 10);
   const events = buildSubscriptionFinancialEvents(detail, today);
   const presentation = resolveNextChargePresentation(detail, events, today);
-  const nextEv = resolveNextChargeEvent(events, today);
+  const nextEv = resolveNextChargeEvent(events, detail);
   const recoverable =
     Boolean(nextEv) &&
     detail.timeline.some(

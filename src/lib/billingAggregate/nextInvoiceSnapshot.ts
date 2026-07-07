@@ -1,4 +1,9 @@
-import { GENERATABLE_CYCLE_STATUSES } from './aggregateDateUtils';
+import { advanceBillingDueYmd } from './aggregateDateUtils';
+import {
+  resolveOperationalCompetencyFromContext,
+  type OperationalCompetencyMode,
+  type ResolvedOperationalCompetency,
+} from '@/lib/operationalCompetencyResolverCore';
 import type {
   BillingCycleSnapshot,
   BillingFinancialEventSnapshot,
@@ -6,22 +11,44 @@ import type {
   BillingSubscriptionSnapshot,
 } from './types';
 
-/** Primeiro ciclo elegível (invoiceId null, status generatable) — paridade resolveFirstEligibleCycle. */
+function aggregateContext(subscription: BillingSubscriptionSnapshot, cycles: BillingCycleSnapshot[]) {
+  return {
+    subscriptionId: subscription.id,
+    subscriptionStatus: subscription.status,
+    billingInterval: subscription.billingInterval,
+    cycles: cycles.map((c) => ({
+      id: c.id,
+      cycle_date: c.cycleDate,
+      period_start: c.periodStart,
+      period_end: c.periodEnd,
+      status: c.status,
+      invoice_id: c.invoiceId,
+      job_id: c.jobId,
+    })),
+  };
+}
+
+function resolveFromAggregate(
+  subscription: BillingSubscriptionSnapshot,
+  cycles: BillingCycleSnapshot[],
+  mode: OperationalCompetencyMode,
+  preferredCycleId?: string | null
+): ResolvedOperationalCompetency {
+  return resolveOperationalCompetencyFromContext(
+    aggregateContext(subscription, cycles),
+    { subscriptionId: subscription.id, mode, preferredCycleId },
+    (fromYmd) => advanceBillingDueYmd(fromYmd, subscription.billingInterval)
+  );
+}
+
+/** OCRE — primeira competência operacional no Aggregate. */
 export function resolveFirstEligibleCycleFromAggregate(
   subscription: BillingSubscriptionSnapshot,
   cycles: BillingCycleSnapshot[]
 ): BillingCycleSnapshot | null {
-  if (subscription.status === 'cancelled') return null;
-  const ordered = [...cycles].sort(
-    (a, b) => a.cycleDate.localeCompare(b.cycleDate) || a.id.localeCompare(b.id)
-  );
-  for (const cycle of ordered) {
-    if (cycle.invoiceId) continue;
-    if (!GENERATABLE_CYCLE_STATUSES.has(cycle.status.trim().toLowerCase())) continue;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(cycle.cycleDate)) continue;
-    return cycle;
-  }
-  return null;
+  const resolved = resolveFromAggregate(subscription, cycles, 'NEXT_GENERATE');
+  if (!resolved.cycleId) return null;
+  return cycles.find((c) => c.id === resolved.cycleId) ?? null;
 }
 
 function firstProjectedEvent(
@@ -36,8 +63,7 @@ function firstProjectedEvent(
 }
 
 /**
- * NextInvoice = evento do first eligible cycle, senão primeira projeção futura.
- * Alinhado a resolveNextChargePresentation (sem timeline).
+ * NextInvoice via OCRE — ciclo operacional resolvido, senão projeção UX.
  */
 export function resolveNextInvoiceFromAggregate(
   subscription: BillingSubscriptionSnapshot,
@@ -45,24 +71,54 @@ export function resolveNextInvoiceFromAggregate(
   events: BillingFinancialEventSnapshot[],
   todayYmd: string
 ): BillingNextInvoiceSnapshot | null {
-  const first = resolveFirstEligibleCycleFromAggregate(subscription, cycles);
-  if (first) {
-    const event = events.find((e) => e.kind === 'real' && e.cycleId === first.id) ?? null;
+  const resolved = resolveFromAggregate(subscription, cycles, 'NEXT_CARD');
+  if (resolved.resolution === 'WAITING_MATERIALIZATION' && resolved.cycleDate) {
     return {
-      eventId: event?.id ?? null,
-      cycleId: first.id,
+      eventId: null,
+      cycleId: null,
       subscriptionId: subscription.id,
-      eventType: event?.eventType ?? 'cycle_pending',
-      date: first.cycleDate,
-      status: first.status,
+      eventType: 'cycle_pending',
+      date: resolved.cycleDate,
+      status: 'pending',
       isProjected: false,
       metadata: {
-        invoiceId: first.invoiceId,
-        jobId: first.jobId,
-        periodStart: first.periodStart,
-        periodEnd: first.periodEnd,
-        skippedReason: first.skippedReason,
-        errorMessage: first.errorMessage,
+        invoiceId: null,
+        jobId: null,
+        periodStart: resolved.cycleDate,
+        periodEnd: advanceBillingDueYmd(resolved.cycleDate, subscription.billingInterval),
+        skippedReason: null,
+        errorMessage: null,
+        amount: subscription.amount,
+        currency: subscription.currency,
+      },
+    };
+  }
+  const first = resolved.cycleId ? cycles.find((c) => c.id === resolved.cycleId) ?? null : null;
+  const fallbackCycle =
+    first ??
+    [...cycles]
+      .filter((c) => !c.invoiceId?.trim())
+      .sort((a, b) => a.cycleDate.localeCompare(b.cycleDate) || a.id.localeCompare(b.id))
+      .find((c) => c.cycleDate >= todayYmd) ??
+    null;
+  const chosen = fallbackCycle;
+  if (chosen) {
+    const event = events.find((e) => e.kind === 'real' && e.cycleId === chosen.id) ?? null;
+    return {
+      eventId: event?.id ?? null,
+      cycleId: chosen.id,
+      subscriptionId: subscription.id,
+      eventType: event?.eventType ?? 'cycle_pending',
+      date: chosen.cycleDate,
+      status: chosen.status,
+      isProjected: false,
+      metadata: {
+        invoiceId: chosen.invoiceId,
+        jobId: chosen.jobId,
+        periodStart: chosen.periodStart,
+        periodEnd: chosen.periodEnd,
+        skippedReason: chosen.skippedReason,
+        errorMessage: chosen.errorMessage,
         amount: subscription.amount,
         currency: subscription.currency,
       },
@@ -122,3 +178,5 @@ export function resolveNextInvoiceFromEvents(
     },
   };
 }
+
+export { resolveFromAggregate as resolveOperationalCompetencyFromAggregate };

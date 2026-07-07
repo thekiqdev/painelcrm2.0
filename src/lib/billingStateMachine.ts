@@ -265,8 +265,9 @@ export function resolveHistoryRowState(
   );
   const showGenerateButton =
     !row.invoiceId &&
-    base.state === 'awaiting_generation' &&
-    (row.isNextCharge || row.canGenerateNow || base.canGenerate);
+    Boolean(row.cycleId?.trim()) &&
+    (base.state === 'awaiting_generation' || base.state === 'failed') &&
+    (base.state !== 'awaiting_generation' || base.canGenerate);
   return { ...base, showGenerateButton };
 }
 

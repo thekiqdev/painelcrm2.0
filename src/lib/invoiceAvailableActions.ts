@@ -25,7 +25,7 @@ export type InvoiceAction = {
 };
 
 export type InvoiceActionHandlers = {
-  onGenerateBilling?: () => void;
+  onGenerateBilling?: (target?: { cycleId?: string | null }) => void;
   onChangeDue?: () => void;
   onViewHistory?: () => void;
   onAddNote?: () => void;

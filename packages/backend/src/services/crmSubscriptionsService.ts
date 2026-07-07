@@ -61,6 +61,8 @@ export interface CrmSubscriptionInvoiceRow {
   created_at: string;
   gateway_status: string | null;
   gateway_reference_id: string | null;
+  paid_at?: string | null;
+  refunded_at?: string | null;
 }
 
 export interface CrmSubscriptionStats {
@@ -111,6 +113,21 @@ export interface CrmSubscriptionDetail {
   automation_summary: CrmSubscriptionAutomationSummary;
   cycles_raw: SubscriptionCycleDbRow[];
   cycles_read_enabled: boolean;
+  invoices: Array<{
+    id: string;
+    subscription_cycle_id: string | null;
+    amount_cents: number;
+    due_date: string;
+    period_start: string | null;
+    period_end: string | null;
+    status: string;
+    created_at: string;
+    gateway_status: string | null;
+    gateway_reference_id: string | null;
+    invoice_type: string | null;
+    paid_at: string | null;
+    refunded_at: string | null;
+  }>;
   tenant_billing: CrmSubscriptionTenantBillingPrefs;
   recent_jobs: CrmSubscriptionJobRow[];
   pending_contract: CrmPendingContractMetadata | null;
@@ -229,7 +246,8 @@ async function listInvoicesForSubscription(
   const r = await pool.query<CrmSubscriptionInvoiceRow>(
     `SELECT id::text, invoice_number, amount_cents, due_date::text, period_start::text, period_end::text,
             status::text, invoice_type::text, description, created_at::text,
-            gateway_status::text, gateway_reference_id::text
+            gateway_status::text, gateway_reference_id::text,
+            paid_at::text, NULL::text AS refunded_at
      FROM customer_invoices
      WHERE tenant_id = $1 AND subscription_id = $2
        AND invoice_type IS DISTINCT FROM 'child'
@@ -237,6 +255,31 @@ async function listInvoicesForSubscription(
     [tenantId, subscriptionId]
   );
   return r.rows;
+}
+
+function mapInvoicesWire(
+  invRows: CrmSubscriptionInvoiceRow[],
+  cycles: SubscriptionCycleDbRow[]
+): CrmSubscriptionDetail['invoices'] {
+  const cycleByInvoice = new Map<string, string>();
+  for (const c of cycles) {
+    if (c.invoice_id) cycleByInvoice.set(c.invoice_id, c.id);
+  }
+  return invRows.map((inv) => ({
+    id: inv.id,
+    subscription_cycle_id: cycleByInvoice.get(inv.id) ?? null,
+    amount_cents: inv.amount_cents,
+    due_date: inv.due_date,
+    period_start: inv.period_start,
+    period_end: inv.period_end,
+    status: inv.status,
+    created_at: inv.created_at,
+    gateway_status: inv.gateway_status,
+    gateway_reference_id: inv.gateway_reference_id,
+    invoice_type: inv.invoice_type,
+    paid_at: inv.paid_at ?? null,
+    refunded_at: inv.refunded_at ?? null,
+  }));
 }
 
 async function computeStats(tenantId: string, subscriptionId: string): Promise<CrmSubscriptionStats> {
@@ -378,6 +421,7 @@ export async function getCrmSubscriptionDetail(
     recentJobs: recent_jobs,
     timeline,
   });
+  const invoices = mapInvoicesWire(invRows, cycles);
 
   return {
     subscription: sub,
@@ -391,6 +435,7 @@ export async function getCrmSubscriptionDetail(
     automation_summary,
     cycles_raw: cycles,
     cycles_read_enabled: cyclesRead,
+    invoices,
     tenant_billing,
     recent_jobs,
     pending_contract,

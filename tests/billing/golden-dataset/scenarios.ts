@@ -264,7 +264,8 @@ export const GOLDEN_SCENARIOS: GoldenScenario[] = [
         ],
       }),
     (ctx) => {
-      expect(ctx.visual.history.generateCycleIds.length).toBeGreaterThanOrEqual(2);
+      expect(ctx.visual.history.generateCycleIds).toHaveLength(2);
+      expect(ctx.visual.history.generateCycleIds).toEqual(expect.arrayContaining(['c-may', 'c-jun']));
     }
   ),
 
@@ -282,7 +283,7 @@ export const GOLDEN_SCENARIOS: GoldenScenario[] = [
         ],
       }),
     (ctx) => {
-      expect(ctx.visual.history.generateCycleIds.length).toBe(3);
+      expect(ctx.visual.history.generateCycleIds.sort()).toEqual(['c-a', 'c-b', 'c-c']);
     }
   ),
 

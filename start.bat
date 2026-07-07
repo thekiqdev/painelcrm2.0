@@ -66,7 +66,18 @@ set "API_PORT=3001"
 for /f "usebackq tokens=1,* delims==" %%a in (`powershell -NoProfile -Command "(Get-Content -LiteralPath '%~dp0.env' | Where-Object { $_ -match '^API_PORT=' } | Select-Object -Last 1) -replace '^API_PORT=','' -replace '\s',''"`) do set "API_PORT=%%a"
 echo [3/4] Abrindo Backend (http://localhost:%API_PORT%)...
 start "Backend - PainelCRM" cmd /k "cd /d "%~dp0packages\backend" && npm run migrate:tsx && npm run dev"
-timeout /t 2 /nobreak >nul
+
+echo     Aguardando backend responder em /health (max 90s)...
+set "API_READY="
+for /f "delims=" %%i in ('powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\wait-api-health.ps1" -Port %API_PORT%') do set "API_READY=%%i"
+if not "%API_READY%"=="OK" (
+    echo     AVISO: Backend nao respondeu a tempo. Verifique a janela "Backend - PainelCRM".
+    echo     O frontend pode exibir erros de proxy ate o backend subir — recarregue a pagina.
+    echo.
+) else (
+    echo     Backend OK.
+    echo.
+)
 
 REM Frontend em nova janela
 echo [3/4] Abrindo Frontend...

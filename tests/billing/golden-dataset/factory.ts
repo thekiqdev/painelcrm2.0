@@ -4,6 +4,7 @@ import type {
   CrmSubscriptionTimelineRow,
 } from '@/services/crmSubscriptions';
 import { cyclesRawFromTimeline } from '@/lib/testHelpers/subscriptionCyclesFixture';
+import { invoicesFromTimeline, supplementInvoicesFromCycles } from '@/lib/testHelpers/subscriptionInvoicesFixture';
 
 export function timelineRow(
   overrides: Partial<CrmSubscriptionTimelineRow> = {}
@@ -120,11 +121,21 @@ export function buildGoldenDetail(
     timeline: timelineOverride,
     subscription: subscriptionOverride,
     cycles_raw: cyclesRawOverride,
+    invoices: invoicesOverride,
     ...rest
   } = overrides;
   const timeline = timelineOverride ?? [timelineRow()];
   const cycles_raw =
     cyclesRawOverride !== undefined ? cyclesRawOverride : cyclesRawFromTimeline(timeline);
+  const subscription = { ...defaultSubscription, ...subscriptionOverride };
+  const invoices =
+    invoicesOverride !== undefined
+      ? invoicesOverride
+      : supplementInvoicesFromCycles(
+          invoicesFromTimeline(timeline, cycles_raw, subscription.amount_cents),
+          cycles_raw,
+          subscription.amount_cents
+        );
 
   return {
     client_name: 'Cliente Golden',
@@ -156,9 +167,10 @@ export function buildGoldenDetail(
     recent_jobs: [],
     meta: { periodicity_label_pt: 'Mensal' },
     ...rest,
-    subscription: { ...defaultSubscription, ...subscriptionOverride },
+    subscription,
     timeline,
     cycles_raw,
+    invoices,
     cycles_read_enabled: overrides.cycles_read_enabled ?? cycles_raw.length > 0,
   };
 }

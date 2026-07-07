@@ -1,8 +1,6 @@
 import type { CrmSubscriptionDetailPayload } from '@/services/crmSubscriptions';
 import { createFinancialEventStore } from '@/lib/subscriptionFinancialEventStore';
-import { buildFinancialAlerts } from '@/lib/subscriptionFinancialExperience';
-import { resolveNextChargePresentationFromStore } from '@/lib/subscriptionFinancialEvents';
-import { resolveInvoiceCapabilities } from '@/lib/invoiceCapabilities';
+import { cycleCanGenerateFromUiCapabilities } from '@/lib/billingCutover/adapters/uiCapabilitiesAdapter';
 import { isProjectedFinancialEvent } from '@/lib/subscriptionFinancialProjection';
 import type { FinancialEvent } from '@/lib/financialEventTypes';
 
@@ -96,9 +94,9 @@ export function captureBillingVisualFixture(
   const allEvents = store.events;
   const historyRows = store.getHistoryRows();
   const calendarEvents = store.getCalendarEvents();
-  const next = resolveNextChargePresentationFromStore(store);
+  const next = store.getNextChargePresentation();
   const summary = store.getSidebarSummary();
-  const alerts = buildFinancialAlerts(detail, todayYmd);
+  const alerts = store.getFinancialAlerts();
 
   const history: HistoryVisualRow[] = historyRows.map((r) => ({
     cycleId: r.cycleId,
@@ -114,19 +112,17 @@ export function captureBillingVisualFixture(
 
   const calendar: CalendarVisualEvent[] = calendarEvents.map((ev) => {
     const source = eventById.get(ev.id);
-    const caps = resolveInvoiceCapabilities({
-      invoiceId: ev.invoiceId,
-      eventType: source?.type ?? null,
-      cycleId: ev.cycleId,
-      canViewInvoices: true,
-    });
+    const caps = store.getUiCapabilities();
+    const supportsGenerate = caps
+      ? cycleCanGenerateFromUiCapabilities(caps, ev.cycleId)
+      : false;
     return {
       id: ev.id,
       ymd: ev.ymd,
       cycleId: ev.cycleId ?? null,
       invoiceId: ev.invoiceId ?? null,
       isProjected: ev.isProjected ?? false,
-      supportsGenerate: caps.supportsGenerate,
+      supportsGenerate,
       type: source?.type ?? ev.kind,
     };
   });

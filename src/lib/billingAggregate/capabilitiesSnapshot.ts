@@ -1,4 +1,4 @@
-import { GENERATABLE_CYCLE_STATUSES } from './aggregateDateUtils';
+import { invoiceVisibilityFromCycle } from '@/lib/resolvedCompetencyPresentation';
 import type {
   BillingAlertSnapshot,
   BillingCalendarSnapshot,
@@ -27,15 +27,14 @@ export function cycleSupportsManualGenerateFromAggregate(
   cycles: BillingCycleSnapshot[],
   cycleId: string | null | undefined
 ): boolean {
-  if (subscription.status === 'cancelled') return false;
   if (!cycleId?.trim()) return false;
   const cycle = cycles.find((c) => c.id === cycleId.trim());
-  if (!cycle || cycle.invoiceId) return false;
-  return GENERATABLE_CYCLE_STATUSES.has(cycle.status.trim().toLowerCase());
+  if (!cycle) return false;
+  return invoiceVisibilityFromCycle(cycle.invoiceId, subscription.status).canGenerate;
 }
 
 /**
- * Capabilities alinhadas a cycleSupportsManualGenerate / status da assinatura.
+ * Capabilities alinhadas ao OCRE.
  */
 export function buildCapabilitiesFromAggregate(
   input: CapabilitiesAggregateInput
@@ -48,12 +47,9 @@ export function buildCapabilitiesFromAggregate(
   const paymentEventCount = real.filter((e) => e.eventType === 'payment').length;
   const eventsWithInvoiceCount = real.filter((e) => Boolean(e.metadata.invoiceId)).length;
 
-  const generatableCycles = cycles.filter(
-    (c) =>
-      !c.invoiceId && GENERATABLE_CYCLE_STATUSES.has(c.status.trim().toLowerCase())
-  );
   const canGenerate =
-    status !== 'cancelled' && generatableCycles.length > 0;
+    status !== 'cancelled' &&
+    cycles.some((c) => invoiceVisibilityFromCycle(c.invoiceId, status).canGenerate);
 
   const hasInvoice =
     eventsWithInvoiceCount > 0 || Boolean(nextInvoice?.metadata.invoiceId);

@@ -21,8 +21,13 @@ export type FinancialEventSurface =
   | 'kpi'
   | 'insights';
 
+/** `real` = subscription_cycles; `projected` = UX-only (Sprint 4.2H). */
+export type FinancialEventKind = 'real' | 'projected';
+
 export type FinancialEvent = {
   id: string;
+  /** Origem do evento — projeções nunca participam do Billing Runtime. */
+  kind?: FinancialEventKind;
   type: FinancialEventType;
   /** Data exibida no calendário / timeline (paridade com histórico). */
   ymd: string;

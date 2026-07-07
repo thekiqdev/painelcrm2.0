@@ -13,6 +13,7 @@ import {
   type TryEnqueueRenewalJobForSubscriptionResult,
 } from './recurringBillingJobService.js';
 import { subscriptionCyclesOnJobCancelled } from './subscriptionCyclesDualWriteService.js';
+import { materializePlannedCycles, planPatchNextBilling } from './subscriptionCyclePlanner.js';
 
 const NEXT_BILLING_YMD = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -76,6 +77,12 @@ export async function patchCustomerSubscriptionNextBillingFromPaidInvoice(params
   );
 
   const cancelled = await cancelPendingRenewalJobsForSubscription(sub.id);
+
+  await materializePlannedCycles(pool, {
+    tenantId,
+    subscriptionId: sub.id,
+    plans: planPatchNextBilling(nextYmd),
+  });
 
   let enqueue_after_patch: PatchNextBillingFromInvoiceResult['enqueue_after_patch'];
   try {

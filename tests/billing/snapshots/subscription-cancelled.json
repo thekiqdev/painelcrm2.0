@@ -14,14 +14,14 @@
   "sidebar": {
     "alertKinds": [],
     "alertCount": 0,
-    "nextReceiptDate": "—",
+    "nextReceiptDate": "14 Jul",
     "openAmount": "R$ 0,00"
   },
   "nextInvoice": {
-    "cycleId": null,
+    "cycleId": "c-last",
     "invoiceId": null,
     "isProjected": false,
-    "dueYmd": null,
+    "dueYmd": "2026-07-14",
     "statusLabel": "Cancelada",
     "showGenerate": false
   },

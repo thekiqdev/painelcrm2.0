@@ -103,6 +103,10 @@ import {
   subscriptionCyclesOnJobFailedAttempt,
   subscriptionCyclesUpsertAfterScheduler,
 } from './subscriptionCyclesDualWriteService.js';
+import {
+  materializePlannedCycles,
+  planSchedulerEligibleCycle,
+} from './subscriptionCyclePlanner.js';
 import { emitBillingWorkerBatchDiagnostic } from './billingWorkerBatchDiagnostic.js';
 import { BillingRenewalEngine } from './billingRenewalEngine/index.js';
 import { executeWorkerCrmRenewal } from './workerCrmRenewalPipeline/index.js';
@@ -361,6 +365,14 @@ export async function insertOrReactivateRenewalJob(
   const tenantId = row.tenant_id;
   const cycleKeyCanonical =
     normalizeBillingCycleKeyYmd(row.next_billing_date) || normalizeSubscriptionNextBillingYmd(row.next_billing_date);
+
+  const schedulingMeta = schedulerCycleSchedulingMeta(row, cycleKeyCanonical);
+  await materializePlannedCycles(db, {
+    tenantId,
+    subscriptionId,
+    plans: planSchedulerEligibleCycle(cycleKeyCanonical),
+    schedulingMeta,
+  });
 
   const activeR = await db.query<{
     id: string;
@@ -999,7 +1011,18 @@ export async function tryEnqueueRenewalJobForSubscriptionId(
       return { ok: false, reason: 'subscription_not_found' };
     }
 
-    const outcome = await insertOrReactivateRenewalJob(pool, desc.enqueue_row);
+    const enqueueRow = desc.enqueue_row;
+    const cycleKey =
+      normalizeBillingCycleKeyYmd(enqueueRow.next_billing_date) ||
+      normalizeSubscriptionNextBillingYmd(enqueueRow.next_billing_date);
+    await materializePlannedCycles(pool, {
+      tenantId: enqueueRow.tenant_id,
+      subscriptionId,
+      plans: planSchedulerEligibleCycle(cycleKey),
+      schedulingMeta: schedulerCycleSchedulingMeta(enqueueRow, cycleKey),
+    });
+
+    const outcome = await insertOrReactivateRenewalJob(pool, enqueueRow);
     if (outcome === 'inserted' || outcome === 'reactivated') {
       billingLog('scheduler', 'enqueue_after_next_billing_manual_patch', {
         subscription_id: subscriptionId,
@@ -1167,6 +1190,12 @@ export async function enqueueRenewalJobs(): Promise<{ enqueued: number; skipped:
         invoice_notify_time_local: row.invoice_notify_time_local,
         recurring_invoice_generate_days_before_due: row.recurring_invoice_generate_days_before_due,
       };
+      await materializePlannedCycles(pool, {
+        tenantId: row.tenant_id,
+        subscriptionId: row.id,
+        plans: planSchedulerEligibleCycle(cycleKey),
+        schedulingMeta: schedulerCycleSchedulingMeta(joinRow, cycleKey),
+      });
       const ins = await insertOrReactivateRenewalJob(pool, joinRow);
       if (ins === 'skipped_active_exists') {
         skipped++;
@@ -1503,7 +1532,12 @@ export async function processNextBatch(
           normalizeSubscriptionNextBillingYmd(subscription.next_billing_date) ||
             String(subscription.next_billing_date ?? '')
         );
-        if (subNextYmd && jobCycleCanonical && subNextYmd !== jobCycleCanonical) {
+        if (
+          subNextYmd &&
+          jobCycleCanonical &&
+          subNextYmd !== jobCycleCanonical &&
+          !options?.manualExecution
+        ) {
           await cancelBillingRecurringJob(
             client,
             job.id,
@@ -1569,6 +1603,20 @@ export async function processNextBatch(
             });
           }
           continue;
+        }
+        if (
+          options?.manualExecution &&
+          subNextYmd &&
+          jobCycleCanonical &&
+          subNextYmd !== jobCycleCanonical
+        ) {
+          billingLog('job', 'manual_execution_cycle_mismatch_bypass', {
+            workerId,
+            jobId: job.id,
+            subscription_id: job.subscription_id,
+            job_cycle_key: jobCycleCanonical,
+            subscription_next_billing: subNextYmd,
+          });
         }
 
         const tzR = await client.query<{

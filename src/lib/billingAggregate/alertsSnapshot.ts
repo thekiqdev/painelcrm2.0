@@ -2,6 +2,7 @@ import type {
   BillingAlertSnapshot,
   BillingCycleSnapshot,
   BillingFinancialEventSnapshot,
+  BillingInvoiceSnapshot,
   BillingNextInvoiceSnapshot,
   BillingSubscriptionSnapshot,
 } from './types';
@@ -20,15 +21,39 @@ function baseMetadata(
   };
 }
 
+function isInvoicePaidStatus(status: string): boolean {
+  return status.trim().toLowerCase() === 'paid';
+}
+
+function isInvoiceRefundedStatus(status: string): boolean {
+  const s = status.trim().toLowerCase();
+  return s === 'refunded' || s === 'chargeback';
+}
+
+function isGatewayChargeFailed(inv: BillingInvoiceSnapshot): boolean {
+  const gs = (inv.gateway_status ?? '').trim().toLowerCase();
+  if (gs === 'failed' || gs === 'refused' || gs === 'chargeback') return true;
+  const st = inv.status.trim().toLowerCase();
+  if (st === 'gateway_failed' || st === 'failed') return true;
+  if (inv.gateway_reference_id?.trim()) return false;
+  return false;
+}
+
+function isOverdueInvoice(inv: BillingInvoiceSnapshot, todayYmd: string): boolean {
+  if (isInvoicePaidStatus(inv.status) || isInvoiceRefundedStatus(inv.status)) return false;
+  return inv.due_date < todayYmd;
+}
+
 /**
- * Alertas alinhados à taxonomia legada (billing_missing, client_overdue, gateway_failed),
- * derivados de cycles/events — sem timeline.
+ * Alertas alinhados à taxonomia legada — events + invoices + cycles (sem timeline).
+ * Lifecycle alerts: omitidos intencionalmente (decisão 4.2R — Sprint 5.0-21D).
  */
 export function buildAlertsFromAggregate(
   subscription: BillingSubscriptionSnapshot,
   events: BillingFinancialEventSnapshot[],
   nextInvoice: BillingNextInvoiceSnapshot | null,
   cycles: BillingCycleSnapshot[],
+  invoices: BillingInvoiceSnapshot[],
   todayYmd: string
 ): BillingAlertSnapshot[] {
   const alerts: BillingAlertSnapshot[] = [];
@@ -74,23 +99,37 @@ export function buildAlertsFromAggregate(
     }
   }
 
-  // client_overdue: fatura em aberto com due < today
-  const overdue = real
+  // client_overdue: fatura em aberto com due < today OU ciclo pending retroativo (RC-4b)
+  const overdueEvent = real
     .filter(
       (e) =>
-        e.metadata.invoiceId &&
+        e.eventType === 'invoice_due' &&
         e.dueYmd < todayYmd &&
-        e.eventType !== 'payment' &&
-        e.eventType !== 'cycle_cancelled' &&
-        e.status.toLowerCase() !== 'paid' &&
-        e.status.toLowerCase() !== 'refunded' &&
-        e.status.toLowerCase() !== 'cancelled'
+        !isInvoicePaidStatus(e.status) &&
+        !isInvoiceRefundedStatus(e.status)
     )
     .sort((a, b) => a.dueYmd.localeCompare(b.dueYmd))[0];
-  if (overdue) {
+
+  const overdueCycle = cycles.find(
+    (c) =>
+      !c.invoiceId &&
+      c.cycleDate < todayYmd &&
+      ['pending', 'queued'].includes(c.status.toLowerCase())
+  );
+
+  const overdueInvoice = invoices
+    .filter((inv) => isOverdueInvoice(inv, todayYmd))
+    .sort((a, b) => a.due_date.localeCompare(b.due_date))[0];
+
+  if (overdueEvent || overdueCycle || overdueInvoice) {
+    const dueYmd =
+      overdueEvent?.dueYmd ??
+      overdueCycle?.cycleDate ??
+      overdueInvoice?.due_date ??
+      todayYmd;
     const days = Math.floor(
       (new Date(`${todayYmd}T12:00:00Z`).getTime() -
-        new Date(`${overdue.dueYmd}T12:00:00Z`).getTime()) /
+        new Date(`${dueYmd}T12:00:00Z`).getTime()) /
         86400000
     );
     alerts.push({
@@ -99,22 +138,20 @@ export function buildAlertsFromAggregate(
       severity: 'warning',
       title: 'Cliente atrasado',
       description: `${days} dia(s).`,
-      eventId: overdue.id,
+      eventId: overdueEvent?.id ?? null,
       metadata: baseMetadata(subscription, {
-        eventType: overdue.eventType,
-        eventStatus: overdue.status,
+        eventType: overdueEvent?.eventType ?? null,
+        eventStatus: overdueEvent?.status ?? overdueCycle?.status ?? overdueInvoice?.status ?? null,
       }),
     });
   }
 
-  // gateway_failed: status gateway_failed no ciclo/evento
+  // gateway_failed: exclusivamente via invoice.status / gateway_status (RC-3)
+  const gwInvoice = invoices.find(isGatewayChargeFailed);
   const gwEvent = real.find(
-    (e) =>
-      e.status.toLowerCase() === 'gateway_failed' ||
-      (e.eventType === 'invoice_failed' && Boolean(e.metadata.invoiceId))
+    (e) => e.status.toLowerCase() === 'gateway_failed' && e.metadata.invoiceId
   );
-  const gwCycle = cycles.find((c) => c.status.toLowerCase() === 'gateway_failed');
-  if (gwEvent || gwCycle) {
+  if (gwInvoice || gwEvent) {
     alerts.push({
       id: 'gateway-failed',
       kind: 'gateway_failed',
@@ -124,16 +161,12 @@ export function buildAlertsFromAggregate(
       eventId: gwEvent?.id ?? null,
       metadata: baseMetadata(subscription, {
         eventType: gwEvent?.eventType ?? null,
-        eventStatus: gwEvent?.status ?? gwCycle?.status ?? null,
+        eventStatus: gwInvoice?.status ?? gwEvent?.status ?? null,
       }),
     });
   }
 
-  // Mantém next_invoice informativo apenas quando não há alertas legados
-  // (não entra na taxonomia legada — removido para paridade de kinds)
-
   void nextInvoice;
-  void subscription;
 
   return alerts.sort((a, b) => a.id.localeCompare(b.id));
 }

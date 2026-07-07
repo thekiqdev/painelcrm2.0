@@ -8,10 +8,10 @@
         "cycleId": "c-official-cancel",
         "invoiceId": null,
         "dueYmd": "2026-07-14",
-        "statusPt": "Prevista",
+        "statusPt": "Cancelada",
         "canGenerateNow": true,
         "isProjected": false,
-        "eventType": "upcoming_cycle"
+        "eventType": "invoice_cancelled"
       }
     ],
     "generateCycleIds": [
@@ -22,13 +22,13 @@
     "eventCount": 13,
     "events": [
       {
-        "id": "sched-c-official-cancel-2026-07-14",
+        "id": "billing-event-c-official-cancel",
         "ymd": "2026-07-14",
         "cycleId": "c-official-cancel",
         "invoiceId": null,
         "isProjected": false,
         "supportsGenerate": true,
-        "type": "upcoming_cycle"
+        "type": "invoice_cancelled"
       },
       {
         "id": "projected-2026-08-14",
@@ -160,8 +160,8 @@
     "projectedCount": 12,
     "events": [
       {
-        "id": "sched-c-official-cancel-2026-07-14",
-        "type": "upcoming_cycle",
+        "id": "billing-event-c-official-cancel",
+        "type": "invoice_cancelled",
         "kind": "real",
         "cycleId": "c-official-cancel",
         "invoiceId": null,

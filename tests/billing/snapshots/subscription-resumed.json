@@ -142,10 +142,8 @@
     "projectedCount": 12
   },
   "sidebar": {
-    "alertKinds": [
-      "client_overdue"
-    ],
-    "alertCount": 1,
+    "alertKinds": [],
+    "alertCount": 0,
     "nextReceiptDate": "14 Jul",
     "openAmount": "R$ 0,00"
   },

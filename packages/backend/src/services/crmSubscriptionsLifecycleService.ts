@@ -5,6 +5,7 @@ import { pool } from '../utils/db.js';
 import { getSubscriptionById, type SubscriptionRow } from './billingSubscriptionService.js';
 import { cancelPendingRenewalJobsForSubscription } from './customerInvoiceRecurrenceNextBillingService.js';
 import { tryEnqueueRenewalJobForSubscriptionId } from './recurringBillingJobService.js';
+import { materializePlannedCycles, planResumeCycle } from './subscriptionCyclePlanner.js';
 import {
   insertSubscriptionChangeEvent,
   listSubscriptionLifecycleEvents,
@@ -140,6 +141,11 @@ export async function resumeCrmSubscription(params: {
   });
 
   try {
+    await materializePlannedCycles(pool, {
+      tenantId: params.tenantId,
+      subscriptionId: sub.id,
+      plans: planResumeCycle(nextYmd),
+    });
     await tryEnqueueRenewalJobForSubscriptionId(sub.id);
   } catch {
     /* enqueue best-effort após retomada */
@@ -200,6 +206,11 @@ export async function reactivateCrmSubscription(params: {
   });
 
   try {
+    await materializePlannedCycles(pool, {
+      tenantId: params.tenantId,
+      subscriptionId: sub.id,
+      plans: planResumeCycle(nextYmd),
+    });
     await tryEnqueueRenewalJobForSubscriptionId(sub.id);
   } catch {
     /* enqueue best-effort após reativação */

@@ -1,8 +1,8 @@
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import type { CrmSubscriptionDetailPayload } from '@/services/crmSubscriptions';
 import { financialTodayYmd, resolveFinancialTimeZone } from '@/lib/billingSafeDate';
+import { createBillingExperienceStore } from '@/lib/billingCutover/createBillingExperienceStore';
 import {
-  createFinancialEventStore,
   financialEventStoreSignature,
   type FinancialEventStore,
 } from '@/lib/subscriptionFinancialEventStore';
@@ -32,7 +32,7 @@ export function FinancialEventStoreProvider({
 
   const value = useMemo(
     () => ({
-      store: createFinancialEventStore(detail, todayYmd),
+      store: createBillingExperienceStore(detail, todayYmd),
       timeZone,
       onPaymentConfirmed,
     }),

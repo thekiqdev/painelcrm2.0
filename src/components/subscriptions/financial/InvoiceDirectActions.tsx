@@ -8,10 +8,13 @@ import {
 } from '@/components/ui/tooltip';
 import type { FinancialEventType } from '@/lib/financialEventTypes';
 import type { InvoiceActionHandlers } from '@/lib/invoiceAvailableActions';
+import { orderedUiInvoiceActions, resolveUiInvoiceActions } from '@/lib/billingCutover/billingUiActions';
 import {
   orderedDirectActions,
   resolveDirectInvoiceActions,
 } from '@/lib/subscriptionActionExperience';
+import type { ResolvedCompetencyPresentation } from '@/lib/resolvedCompetencyPresentation';
+import { useOptionalFinancialEventStore } from './FinancialEventStoreContext';
 import { invoiceCrmPath, openInvoiceInNewTab } from '@/lib/invoiceQuickActions';
 import { invoiceOpensNewTabProps } from '@/lib/subscriptionFinancialRefinement';
 import { executeInvoiceAction } from './invoiceActionHandlers';
@@ -27,12 +30,14 @@ type Props = {
   eventType?: FinancialEventType | null;
   invoiceStatus?: string | null;
   gateway?: string | null;
+  cycleId?: string | null;
   amountCents?: number | null;
   dueYmd?: string | null;
   handlers?: InvoiceActionHandlers;
   onPaymentConfirmed?: () => void | Promise<void>;
   timeZone?: string | null;
   className?: string;
+  cycleResolved?: ResolvedCompetencyPresentation | null;
 };
 
 function ActionIcon({ id }: { id: string }) {
@@ -57,28 +62,60 @@ export function InvoiceDirectActions({
   eventType = null,
   invoiceStatus = null,
   gateway = null,
+  cycleId = null,
   amountCents,
   dueYmd,
   handlers,
   onPaymentConfirmed,
   timeZone,
   className,
+  cycleResolved = null,
 }: Props) {
   const [confirmOpen, setConfirmOpen] = useState(false);
 
-  const actions = orderedDirectActions(
-    resolveDirectInvoiceActions(
-      {
-        invoiceId,
-        paymentToken,
-        canViewInvoices,
-        eventType,
-        invoiceStatus,
-        gateway,
-      },
-      handlers
-    )
-  );
+  const store = useOptionalFinancialEventStore();
+  const caps = store?.getUiCapabilities() ?? null;
+  const resolved =
+    cycleResolved ??
+    (store && cycleId ? store.resolveCyclePresentation(cycleId, 'CALENDAR', { eventType }) : null);
+
+  const actions = caps
+    ? orderedUiInvoiceActions(
+        resolveUiInvoiceActions(
+          caps,
+          {
+            invoiceId,
+            paymentToken,
+            canViewInvoices,
+            eventType,
+            invoiceStatus,
+            gateway,
+            cycleId,
+          },
+          handlers,
+          resolved
+            ? {
+                canGenerate: resolved.canGenerate,
+                canReprocess: resolved.canReprocess,
+                canOpen: resolved.canOpen,
+              }
+            : undefined
+        )
+      )
+    : orderedDirectActions(
+        resolveDirectInvoiceActions(
+          {
+            invoiceId,
+            paymentToken,
+            canViewInvoices,
+            eventType,
+            invoiceStatus,
+            gateway,
+            cycleId,
+          },
+          handlers
+        )
+      );
 
   if (actions.length === 0) return null;
 

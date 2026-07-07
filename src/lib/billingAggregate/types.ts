@@ -38,6 +38,9 @@ export type BillingInvoiceSnapshot = {
   created_at: string;
   gateway_status: string | null;
   gateway_reference_id: string | null;
+  invoice_type: string | null;
+  paid_at: string | null;
+  refunded_at: string | null;
 };
 
 export type BillingSubscriptionMetadata = {
@@ -84,7 +87,9 @@ export type BillingFinancialEventType =
   | 'cycle_processing'
   | 'invoice_generated'
   | 'invoice_due'
+  | 'manual_charge'
   | 'payment'
+  | 'invoice_refunded'
   | 'invoice_failed'
   | 'cycle_cancelled'
   | 'cycle_skipped'

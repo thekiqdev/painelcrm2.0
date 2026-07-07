@@ -2,6 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as recurringBillingJobService from './recurringBillingJobService.js';
 import * as renewalDiagnosisService from './renewalDiagnosisService.js';
 import * as billingNotificationFlush from './notificationsEngine/billingNotificationFlush.js';
+import * as operationalCompetencyResolver from './operationalCompetencyResolver.js';
+import * as subscriptionCyclePlanner from './subscriptionCyclePlanner.js';
+import * as billingSubscriptionService from './billingSubscriptionService.js';
+import * as subscriptionCycleLifecycleService from './subscriptionCycleLifecycleService.js';
 import { manualRenewSubscription } from './billingManualRenewalService.js';
 
 vi.mock('../utils/db.js', () => ({
@@ -14,7 +18,27 @@ describe('billingManualRenewalExecution B0.2.1', () => {
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.spyOn(subscriptionCycleLifecycleService, 'repairInvoicedCyclesWithoutInvoice').mockResolvedValue({
+      cycles_reopened: 0,
+      cycle_ids: [],
+      cycle_dates: [],
+      jobs_reset: 0,
+    });
     vi.spyOn(billingNotificationFlush, 'flushBillingNotificationSideEffects').mockResolvedValue({ drained: 1 });
+    vi.spyOn(operationalCompetencyResolver, 'resolveCycleForManualGeneration').mockResolvedValue({
+      cycle: {
+        id: 'cycle-1',
+        cycle_date: '2026-07-01',
+        period_start: '2026-06-01',
+        period_end: '2026-06-30',
+        status: 'pending',
+        invoice_id: null,
+        job_id: null,
+        processed_at: null,
+        skipped_reason: null,
+        error_message: null,
+      },
+    });
   });
 
   it('manualRenewSubscription chama pipeline síncrono com manualExecution', async () => {
@@ -50,6 +74,14 @@ describe('billingManualRenewalExecution B0.2.1', () => {
       recurring_invoice_generate_days_before_due: 0,
     } as Awaited<ReturnType<typeof recurringBillingJobService.loadRenewalEnqueueJoinRow>>);
     vi.spyOn(recurringBillingJobService, 'insertOrReactivateRenewalJob').mockResolvedValue('inserted');
+    const materializeSpy = vi.spyOn(subscriptionCyclePlanner, 'materializePlannedCycles').mockResolvedValue();
+    vi.spyOn(billingSubscriptionService, 'getSubscriptionById').mockResolvedValue({
+      id: 'sub-1',
+      tenant_id: 't1',
+      next_billing_date: '2026-08-01',
+      billing_interval: 'monthly',
+      status: 'active',
+    } as Awaited<ReturnType<typeof billingSubscriptionService.getSubscriptionById>>);
     const execSpy = vi.spyOn(recurringBillingJobService, 'executeRenewalJobSynchronously').mockResolvedValue({
       processed: 1,
       failed: 0,
@@ -98,6 +130,14 @@ describe('billingManualRenewalExecution B0.2.1', () => {
     expect(result.gateway_status).toBe('pending');
     expect(result.notification_sent).toBe(true);
     expect(result.cycle_key).toBe('2026-07-01');
+    expect(materializeSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        tenantId: 't1',
+        subscriptionId: 'sub-1',
+        plans: [{ cycleDateYmd: '2026-08-01', source: 'manual_generate' }],
+      })
+    );
   });
 
   it('bloqueia quando assinatura não está apta', async () => {
@@ -105,7 +145,7 @@ describe('billingManualRenewalExecution B0.2.1', () => {
       subscription_id: 'sub-1',
       ready_to_bill: false,
       failure_reason: 'customer',
-      validation: { subscription_found: true, status: 'active', type: 'customer', tenant_id: 't1' },
+      validation: { subscription_found: true, status: 'paused', type: 'customer', tenant_id: 't1' },
       dates: {
         next_billing_date: '2026-07-01',
         next_billing_valid: true,
@@ -121,10 +161,12 @@ describe('billingManualRenewalExecution B0.2.1', () => {
       timeline: { enqueue_block_reason: null, can_attempt_insert: false },
     });
     const execSpy = vi.spyOn(recurringBillingJobService, 'executeRenewalJobSynchronously');
+    const materializeSpy = vi.spyOn(subscriptionCyclePlanner, 'materializePlannedCycles');
 
     const result = await manualRenewSubscription('t1', 'sub-1', actor);
 
     expect(execSpy).not.toHaveBeenCalled();
+    expect(materializeSpy).not.toHaveBeenCalled();
     expect(result.success).toBe(false);
     expect(result.result).toBe('not_ready');
     expect(result.execution_mode).toBe('manual');

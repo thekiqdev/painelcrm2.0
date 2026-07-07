@@ -102,7 +102,20 @@ export function groupEventsByDay(events: FinancialEvent[]): Map<string, Financia
 }
 
 export function pickPrimaryEvent(events: FinancialEvent[]): FinancialEvent | undefined {
-  return sortEventsByPriority(events)[0];
+  const sorted = sortEventsByPriority(events);
+  return sorted.find((e) => e.kind !== 'projected') ?? sorted[0];
+}
+
+/** Popover do calendário: prioriza evento real com cycle_id ou invoice (Sprint 4.2I). */
+export function pickCalendarPopoverEvent(events: FinancialEvent[]): FinancialEvent | undefined {
+  const sorted = sortEventsByPriority(events);
+  const billable = sorted.find(
+    (e) => e.kind !== 'projected' && Boolean(e.cycleId?.trim() || e.invoiceId?.trim())
+  );
+  if (billable) return billable;
+  const real = sorted.find((e) => e.kind !== 'projected');
+  if (real) return real;
+  return sorted[0];
 }
 
 export function eventToCalendarKind(type: FinancialEventType, overdue: boolean): FinancialCalendarKind {

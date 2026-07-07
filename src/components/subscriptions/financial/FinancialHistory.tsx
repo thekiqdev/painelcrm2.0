@@ -18,7 +18,10 @@ type Props = {
   filter?: FinancialHistoryFilter;
   onFilterChange?: (filter: FinancialHistoryFilter) => void;
   generatingRowId?: string | null;
+  repairingRowId?: string | null;
   onGenerateBilling?: (row: import('@/lib/billingSubscriptionExperience').FinancialHistoryRow) => void;
+  onRepairCycleInvariant?: (row: import('@/lib/billingSubscriptionExperience').FinancialHistoryRow) => void;
+  canRepairCycle?: boolean;
   className?: string;
 };
 
@@ -36,7 +39,10 @@ export function FinancialHistory({
   filter: controlledFilter,
   onFilterChange,
   generatingRowId,
+  repairingRowId,
   onGenerateBilling,
+  onRepairCycleInvariant,
+  canRepairCycle = true,
   className,
 }: Props) {
   const store = useFinancialEventStore();
@@ -104,7 +110,10 @@ export function FinancialHistory({
                 row={row}
                 canViewInvoices={canViewInvoices}
                 generatingRowId={generatingRowId}
+                repairingRowId={repairingRowId}
                 onGenerateBilling={onGenerateBilling}
+                onRepairCycleInvariant={onRepairCycleInvariant}
+                canRepairCycle={canRepairCycle}
                 variant="card"
               />
             ))
@@ -135,7 +144,10 @@ export function FinancialHistory({
                     row={row}
                     canViewInvoices={canViewInvoices}
                     generatingRowId={generatingRowId}
-                onGenerateBilling={onGenerateBilling}
+                    repairingRowId={repairingRowId}
+                    onGenerateBilling={onGenerateBilling}
+                    onRepairCycleInvariant={onRepairCycleInvariant}
+                    canRepairCycle={canRepairCycle}
                     variant="table"
                   />
                 ))

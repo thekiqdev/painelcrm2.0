@@ -1,13 +1,13 @@
 import { useMemo } from 'react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { ClientEntityLink } from '@/components/entities';
-import { buildFinancialHeaderData } from '@/lib/subscriptionFinancialExperience';
 import { clientInitials } from '@/lib/billingSubscriptionExperiencePolish';
 import { useEntityNavigation } from '@/hooks/useEntityNavigation';
 import { useModulePermissions } from '@/contexts/ModulePermissionsContext';
 import { isValidEntityId } from '@/lib/entityNavigation';
 import type { CrmSubscriptionDetailPayload } from '@/services/crmSubscriptions';
 import { cn } from '@/lib/utils';
+import { useFinancialEventStore } from './FinancialEventStoreContext';
 
 type Props = {
   detail: CrmSubscriptionDetailPayload;
@@ -15,7 +15,9 @@ type Props = {
 };
 
 export function FinancialHeader({ detail, className }: Props) {
-  const data = useMemo(() => buildFinancialHeaderData(detail), [detail]);
+  const store = useFinancialEventStore();
+  const data = useMemo(() => store.getHeaderData(), [store]);
+  if (!data) return null;
   const s = detail.subscription;
   const { openClient } = useEntityNavigation();
   const { canView, loading } = useModulePermissions();

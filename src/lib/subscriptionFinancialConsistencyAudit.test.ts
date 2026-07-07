@@ -8,6 +8,7 @@ import {
 } from './subscriptionFinancialConsistencyAudit';
 import { createFinancialEventStore } from './subscriptionFinancialEventStore';
 import { buildFinancialEvents } from './subscriptionFinancialEventBuilder';
+import { cyclesRawFromTimeline } from './testHelpers/subscriptionCyclesFixture';
 
 const today = '2026-06-30';
 
@@ -37,6 +38,48 @@ function row(overrides: Partial<CrmSubscriptionTimelineRow> = {}): CrmSubscripti
 }
 
 function detail(overrides: Partial<CrmSubscriptionDetailPayload> = {}): CrmSubscriptionDetailPayload {
+  const timeline = [
+      row({
+        due_date: '2026-06-30',
+        invoice_id: 'inv-paid',
+        invoice_status: 'paid',
+        operational_state: 'paid',
+        status_pt: 'Pago',
+        processed_at: '2026-06-30T12:00:00Z',
+        amount_cents: 11000,
+        cycle_id: 'c0',
+      }),
+      row({
+        due_date: '2026-07-07',
+        invoice_id: 'inv-2',
+        invoice_status: 'paid',
+        operational_state: 'paid',
+        status_pt: 'Pago',
+        processed_at: '2026-07-07T12:00:00Z',
+        cycle_id: 'c2',
+      }),
+      row({
+        due_date: '2026-05-01',
+        cycle_date: '2026-05-01',
+        invoice_id: null,
+        operational_state: 'failed',
+        status_pt: 'Falha na geração',
+        job_error_snippet: 'timeout',
+        cycle_id: 'c3',
+      }),
+      row({
+        due_date: '2026-07-21',
+        invoice_id: 'inv-pending',
+        invoice_created_at: '2026-07-18T10:00:00Z',
+        invoice_status: 'pending',
+        operational_state: 'generated',
+        status_pt: 'Aguardando',
+        cycle_id: 'c4',
+      }),
+      ...(overrides.timeline ?? []),
+    ];
+  const cycles_raw =
+    overrides.cycles_raw !== undefined ? overrides.cycles_raw : cyclesRawFromTimeline(timeline);
   return {
     subscription: {
       id: 'sub-1',
@@ -77,53 +120,15 @@ function detail(overrides: Partial<CrmSubscriptionDetailPayload> = {}): CrmSubsc
       charge_count: 2,
       paid_count: 2,
     },
-    timeline: [
-      row({
-        due_date: '2026-06-30',
-        invoice_id: 'inv-paid',
-        invoice_status: 'paid',
-        operational_state: 'paid',
-        status_pt: 'Pago',
-        processed_at: '2026-06-30T12:00:00Z',
-        amount_cents: 11000,
-      }),
-      row({
-        due_date: '2026-07-07',
-        invoice_id: 'inv-2',
-        invoice_status: 'paid',
-        operational_state: 'paid',
-        status_pt: 'Pago',
-        processed_at: '2026-07-07T12:00:00Z',
-        cycle_id: 'c2',
-      }),
-      row({
-        due_date: '2026-05-01',
-        cycle_date: '2026-05-01',
-        invoice_id: null,
-        operational_state: 'failed',
-        status_pt: 'Falha na geração',
-        job_error_snippet: 'timeout',
-        cycle_id: 'c3',
-      }),
-      row({
-        due_date: '2026-07-21',
-        invoice_id: 'inv-pending',
-        invoice_created_at: '2026-07-18T10:00:00Z',
-        invoice_status: 'pending',
-        operational_state: 'generated',
-        status_pt: 'Aguardando',
-        cycle_id: 'c4',
-      }),
-      ...(overrides.timeline ?? []),
-    ],
+    timeline,
     automation_summary: {
       last_generation_at: null,
       last_generation_label: null,
       next_generation_ymd: '2026-07-14',
       next_charge_ymd: '2026-07-21',
     },
-    cycles_raw: [],
-    cycles_read_enabled: false,
+    cycles_raw,
+    cycles_read_enabled: overrides.cycles_read_enabled ?? cycles_raw.length > 0,
     tenant_billing: {
       recurring_invoice_generate_days_before_due: 0,
       recurring_generate_time_local: '08:00',
@@ -517,7 +522,7 @@ describe('auditFinancialConsistency — builder event count stability', () => {
   it('events match buildFinancialEvents', () => {
     const d = detail();
     const store = createFinancialEventStore(d, today);
-    expect(store.events.length).toBe(buildFinancialEvents(d, today).length);
+    expect(store.realEvents.length).toBe(buildFinancialEvents(d, today).length);
   });
 });
 
@@ -550,7 +555,21 @@ describe('auditFinancialConsistency — edge cases', () => {
 
 describe('auditFinancialConsistency — paused subscription', () => {
   it('upcoming shows Pausado for upcoming_cycle', () => {
-    const d = detail({ subscription: { ...detail().subscription, status: 'paused' } });
+    const d = detail({
+      subscription: { ...detail().subscription, status: 'paused' },
+      timeline: [
+        ...detail().timeline,
+        row({
+          cycle_id: 'c-pending',
+          due_date: '2026-08-01',
+          cycle_date: '2026-08-01',
+          invoice_id: null,
+          operational_state: 'awaiting_generation',
+          cycle_status: 'pending',
+          status_pt: 'Prevista',
+        }),
+      ],
+    });
     const store = createFinancialEventStore(d, today);
     const upcoming = store.getUpcomingReceipts().filter((u) => u.statusLabel === 'Pausado');
     expect(upcoming.length).toBeGreaterThan(0);
