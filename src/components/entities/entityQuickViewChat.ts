@@ -3,6 +3,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import type { FloatingChatContextValue } from "@/features/floating-chat/floatingChatContext";
 import { resolveConversationIdForCrmRecord } from "@/lib/resolveChatConversationForCrm";
 import { chatService, type ChatInstance } from "@/services/chat";
+import { ensureChatInstances } from "@/features/chat-core/runtime";
 import { invalidateFloatingChatAggregates } from "@/features/floating-chat/floatingChatQueries";
 
 export function isConnectedChatInstance(instance: ChatInstance): boolean {
@@ -12,7 +13,7 @@ export function isConnectedChatInstance(instance: ChatInstance): boolean {
 }
 
 async function getFirstConnectedInstanceId(): Promise<string | null> {
-  const instances = (await chatService.listInstances()).filter(isConnectedChatInstance);
+  const instances = (await ensureChatInstances({ reason: "bootstrap" })).filter(isConnectedChatInstance);
   return instances[0]?.id ?? null;
 }
 

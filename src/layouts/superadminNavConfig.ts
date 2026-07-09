@@ -31,6 +31,7 @@ import {
   LifeBuoy,
   GitBranch,
   Sprout,
+  MessageCircle,
 } from "lucide-react";
 
 /** Item da sidebar do Super Admin — `to` deve coincidir com rotas em `App.tsx`. */
@@ -317,6 +318,11 @@ export const superAdminNavGroups: SuperAdminNavGroup[] = [
         label: "Feature Flags",
         to: "/superadmin/avancado/feature-flags",
         icon: Flag,
+      },
+      {
+        label: "Otimização do Chat",
+        to: "/superadmin/avancado/feature-flags/chat-optimization",
+        icon: MessageCircle,
       },
       {
         label: "Scripts",

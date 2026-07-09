@@ -4,6 +4,10 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { toast } from '@/components/ui/sonner';
 import { apiClient } from '@/integrations/api/client';
 import { clearAllCachedAppData } from '@/lib/queryClient';
+import {
+  loadChatMigrationFlags,
+  resetChatMigrationFlagsToDefaults,
+} from '@/lib/chatMigrationFlagManager';
 import { clearAuthState, getCurrentUserProfile } from '@/utils/auth-helpers';
 import { getPostAuthHomePath } from '@/utils/superAdminRedirect';
 import { COMMERCIAL_402_REDIRECT_FLAG } from '@/lib/commercialAccessPaths';
@@ -128,6 +132,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     location.pathname,
   ]);
 
+  const bootstrapChatMigrationFlags = async () => {
+    try {
+      await loadChatMigrationFlags();
+    } catch {
+      resetChatMigrationFlagsToDefaults();
+    }
+  };
+
   const fetchCurrentUser = async (): Promise<User | null> => {
     try {
       const response = await apiClient.get<User>('/api/auth/me');
@@ -142,6 +154,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setProfile(null);
           setFeatures([]);
           setRegistrationComplete(false);
+          resetChatMigrationFlagsToDefaults();
         }
         setLoading(false);
         return null;
@@ -153,6 +166,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setProfile(response.data);
         setRegistrationComplete(response.data.registration_complete || false);
         await fetchMeFeatures();
+        await bootstrapChatMigrationFlags();
         setLoading(false);
         return response.data;
       }
@@ -308,6 +322,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setSession(null);
       setFeatures([]);
       clearAllCachedAppData();
+      resetChatMigrationFlagsToDefaults();
 
       // Limpar armazenamento local relacionado à autenticação
       await clearAuthState();

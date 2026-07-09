@@ -1,6 +1,11 @@
 import { io, type Socket } from 'socket.io-client';
 import { getDevApiBaseUrl } from '@/lib/devBackendOrigin';
 import { SOCKET_IO_CLIENT_TRANSPORTS } from '@/lib/socketIoClientOptions';
+import {
+  acquireSharedChatSocket,
+  shouldUseSingleChatSocket,
+  chatRealtimeBridge,
+} from '@/features/chat-core/realtime/bridge';
 
 export const REALTIME_EVENTS = {
   messageCreated: 'message.created',
@@ -21,8 +26,10 @@ export const REALTIME_WINDOW_EVENTS = {
   whatsappInstanceRemoved: 'painelcrm:realtime:whatsapp.instance_removed',
 } as const;
 
-let socket: Socket | null = null;
-let currentToken: string | null = null;
+/** Socket legado (CHAT_SINGLE_SOCKET OFF). */
+let legacySocket: Socket | null = null;
+let legacyToken: string | null = null;
+let legacyForwardersAttached = false;
 
 function getSocketUrl(): string {
   if (import.meta.env.DEV) {
@@ -43,21 +50,9 @@ function emitWindowEvent<T>(name: string, payload: T): void {
   window.dispatchEvent(new CustomEvent(name, { detail: payload }));
 }
 
-export function connectRealtime(token: string): Socket {
-  if (socket && socket.connected && currentToken === token) return socket;
-  if (socket && currentToken !== token) {
-    socket.disconnect();
-    socket = null;
-  }
-
-  currentToken = token;
-  socket = io(getSocketUrl(), {
-    auth: { token },
-    query: { token },
-    transports: [...SOCKET_IO_CLIENT_TRANSPORTS],
-    reconnection: true,
-    path: '/socket.io/',
-  });
+function attachLegacyWindowForwarders(socket: Socket): void {
+  if (legacyForwardersAttached) return;
+  legacyForwardersAttached = true;
 
   socket.on(REALTIME_EVENTS.messageCreated, (payload) =>
     emitWindowEvent(REALTIME_WINDOW_EVENTS.messageCreated, payload)
@@ -80,15 +75,61 @@ export function connectRealtime(token: string): Socket {
   socket.on(REALTIME_EVENTS.whatsappInstanceRemoved, (payload) =>
     emitWindowEvent(REALTIME_WINDOW_EVENTS.whatsappInstanceRemoved, payload)
   );
+}
 
-  return socket;
+function connectLegacy(token: string): Socket {
+  if (legacySocket && legacySocket.connected && legacyToken === token) return legacySocket;
+  if (legacySocket && legacyToken !== token) {
+    legacySocket.removeAllListeners();
+    legacySocket.disconnect();
+    legacySocket = null;
+    legacyForwardersAttached = false;
+  }
+
+  legacyToken = token;
+  legacySocket = io(getSocketUrl(), {
+    auth: { token },
+    query: { token },
+    transports: [...SOCKET_IO_CLIENT_TRANSPORTS],
+    reconnection: true,
+    path: '/socket.io/',
+  });
+
+  attachLegacyWindowForwarders(legacySocket);
+  return legacySocket;
+}
+
+/**
+ * Conecta o realtime da app.
+ * F1 ON → ChatRealtimeBridge (único socket).
+ * F1 OFF → comportamento pré-F1 (socket próprio deste módulo).
+ */
+export function connectRealtime(token: string): Socket {
+  if (shouldUseSingleChatSocket()) {
+    if (legacySocket) {
+      legacySocket.removeAllListeners();
+      legacySocket.disconnect();
+      legacySocket = null;
+      legacyToken = null;
+      legacyForwardersAttached = false;
+    }
+    const shared = acquireSharedChatSocket(token);
+    if (shared) return shared;
+    return connectLegacy(token);
+  }
+  return connectLegacy(token);
 }
 
 export function disconnectRealtime(): void {
-  if (socket) {
-    socket.disconnect();
-    socket = null;
+  if (shouldUseSingleChatSocket()) {
+    chatRealtimeBridge.forceDisconnect();
+    return;
   }
-  currentToken = null;
+  if (legacySocket) {
+    legacySocket.removeAllListeners();
+    legacySocket.disconnect();
+    legacySocket = null;
+  }
+  legacyToken = null;
+  legacyForwardersAttached = false;
 }
-

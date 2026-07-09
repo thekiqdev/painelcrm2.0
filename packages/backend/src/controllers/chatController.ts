@@ -142,6 +142,14 @@ import {
   isWhatsappOfficialTenantEnabled,
 } from '../config/whatsappOfficialEnv.js';
 import { canAccessWhatsappOfficialOperationalChat } from '../utils/whatsappOfficialOperationalAccess.js';
+import {
+  isChatAggregatedApiShadowEnabled,
+  listAggregatedConversations,
+  parseAggregatedConversationsRequest,
+  runAggregatedShadowCompare,
+  shadowRequestFromLegacyQuery,
+  validateAggregatedConversationsAccess,
+} from '../services/chatAggregatedConversations/index.js';
 import { getAccountCredentials } from '../services/whatsappOfficial/whatsappOfficialConfigService.js';
 import { sendTextMessage as graphOfficialSendText } from '../services/whatsappOfficial/whatsappOfficialClient.js';
 import { insertChatGroupAdminAudit } from '../services/chatGroupAdminAuditService.js';
@@ -6070,6 +6078,53 @@ export async function getConversations(req: AuthRequest, res: Response) {
       res.status(403).json({ error: 'Sem permissão para acessar o chat.' });
       return;
     }
+
+    const aggregatedRequest = parseAggregatedConversationsRequest(req);
+    if (aggregatedRequest.useAggregatedApi) {
+      const access = await validateAggregatedConversationsAccess(aggregatedRequest);
+      if (!access.ok) {
+        res.status(access.status).json({ error: access.error });
+        return;
+      }
+      if (
+        aggregatedRequest.channelOrigin === 'official' &&
+        !canAccessWhatsappOfficialOperationalChat(req)
+      ) {
+        const empty =
+          aggregatedRequest.apiVersion === 2
+            ? {
+                apiVersion: 2,
+                items: [],
+                meta: {
+                  apiVersion: 2,
+                  limit: aggregatedRequest.limit,
+                  returned: 0,
+                  hasMore: false,
+                  nextCursor: null,
+                  sort: aggregatedRequest.sort,
+                  view: aggregatedRequest.view,
+                  instanceIds: aggregatedRequest.instanceIds,
+                  generatedAt: new Date().toISOString(),
+                  provider: aggregatedRequest.provider,
+                },
+              }
+            : [];
+        res.json(empty);
+        return;
+      }
+      const aggregatedResult = await listAggregatedConversations(aggregatedRequest);
+      if (aggregatedRequest.apiVersion === 2) {
+        res.json(aggregatedResult.envelope);
+        return;
+      }
+      res.json(aggregatedResult.legacyItems);
+      return;
+    }
+
+    const legacyWallStart = Date.now();
+    let legacySqlCount = 0;
+    let legacyQueryMs = 0;
+
     const { instanceId, search, status, startDate, endDate } = req.query;
     const inboxScope = req.query.inboxScope === 'tenant' ? 'tenant' : 'owner';
     const attendanceFilter = typeof req.query.attendanceFilter === 'string' ? req.query.attendanceFilter : '';
@@ -6445,7 +6500,10 @@ export async function getConversations(req: AuthRequest, res: Response) {
       queryParams: params,
     });
 
+    const legacyQueryStart = Date.now();
     const conversations = await pool.query(query, params);
+    legacyQueryMs = Date.now() - legacyQueryStart;
+    legacySqlCount = 1;
 
     const rowsForClient = conversations.rows.map((r: Record<string, unknown>) => {
       const displayName = resolveCommunicationDisplayIdentity({
@@ -6675,6 +6733,7 @@ export async function getConversations(req: AuthRequest, res: Response) {
             `SELECT id::text, label, color FROM chat_kanban_tags WHERE tenant_id = $1 AND id = ANY($2::uuid[])`,
             [tenantForTags, idList],
           );
+          legacySqlCount += 1;
           const byId = new Map(tr.rows.map((x) => [x.id, x]));
           for (const row of rowsForClient) {
             const rec = row as Record<string, unknown>;
@@ -6698,6 +6757,23 @@ export async function getConversations(req: AuthRequest, res: Response) {
         for (const row of rowsForClient) {
           (row as Record<string, unknown>).tags = [];
         }
+      }
+    }
+
+    if (isChatAggregatedApiShadowEnabled()) {
+      const shadowReq = shadowRequestFromLegacyQuery(req);
+      if (shadowReq.instanceIds.length > 0) {
+        void runAggregatedShadowCompare(shadowReq, {
+          rows: rowsForClient as Record<string, unknown>[],
+          metrics: {
+            totalMs: Date.now() - legacyWallStart,
+            sqlQueryMs: legacyQueryMs,
+            sqlCount: legacySqlCount,
+            responseMs: Date.now() - legacyWallStart,
+          },
+        }).catch(() => {
+          /* shadow best-effort */
+        });
       }
     }
 

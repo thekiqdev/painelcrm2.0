@@ -1,0 +1,38 @@
+/**
+ * F5.2 — Domain Store → ChatConversation (UI legado).
+ */
+
+import type { ChatConversation } from '@/services/chat';
+import type { ChatDomainConversation } from '../domain/types';
+
+export function domainConversationToUi(conversation: ChatDomainConversation): ChatConversation {
+  if (conversation.raw && typeof conversation.raw === 'object') {
+    const raw = conversation.raw as ChatConversation;
+    if (typeof raw.id === 'string') {
+      return {
+        ...raw,
+        id: conversation.id,
+        unreadCount: conversation.unreadCount ?? raw.unreadCount ?? 0,
+        lastMessageAt: conversation.lastMessageAt ?? raw.lastMessageAt ?? null,
+        lastMessagePreview: conversation.lastMessagePreview ?? raw.lastMessagePreview ?? null,
+      };
+    }
+  }
+
+  return {
+    id: conversation.id,
+    user_id: '',
+    external_chat_id: conversation.phoneNumber ?? '',
+    instance_id: conversation.instanceId,
+    contactName: conversation.contactName,
+    phoneNumber: conversation.phoneNumber,
+    lastMessagePreview: conversation.lastMessagePreview,
+    lastMessageAt: conversation.lastMessageAt,
+    unreadCount: conversation.unreadCount,
+    client_id: conversation.clientId,
+    leadId: conversation.leadId,
+    attendance_status: conversation.attendanceStatus as ChatConversation['attendance_status'],
+    assigned_to_user_id: conversation.assignedToUserId,
+    conversation_type: conversation.conversationType as ChatConversation['conversation_type'],
+  };
+}

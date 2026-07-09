@@ -1,17 +1,11 @@
 import type { ReactNode } from 'react';
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useNavigate } from 'react-router-dom';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { resolveChatKanbanTagsForUi, type ChatConversation } from '@/services/chat';
-import { fetchMergedChatConversations } from '@/lib/chatConversationsFetch';
-import {
-  FLOATING_CHAT_LIST_STALE_MS,
-  floatingChatConversationsQueryKey,
-} from './floatingChatQueries';
 import { resolveConversationIdentity } from '@/utils/chatIdentityDisplay';
 import { beginConversationDragSession, endConversationDragSession } from '@/lib/chatKanbanConversationDrag';
 import {
@@ -22,6 +16,7 @@ import { useFloatingChat } from './floatingChatContext';
 import { ChatKanbanTagBadge } from '@/components/chat/ChatKanbanTagBadge';
 import { ConversationListSkeleton } from '@/components/chat/skeletons/ConversationListSkeleton';
 import { FloatingChatListShell } from '@/components/chat/FloatingChatListShell';
+import { useFloatingConversationListData } from '@/features/chat-core/store/public';
 
 type QuickFilter = 'all' | 'mine' | 'unread';
 
@@ -37,18 +32,11 @@ export function FloatingConversationList({ className }: { className?: string }) 
   const [search, setSearch] = useState('');
   const [quick, setQuick] = useState<QuickFilter>('all');
 
-  const { data: conversations = [], isLoading, isFetching } = useQuery({
-    queryKey: floatingChatConversationsQueryKey(instanceIds, inboxScope, quick),
-    /** Lista só quando o painel está aberto; cache pré-aquecido no provider. */
-    enabled: listOpen && instanceIds.length > 0,
-    queryFn: () =>
-      fetchMergedChatConversations({
-        instanceIds,
-        inboxScope,
-        quickFilter: quick,
-      }),
-    staleTime: FLOATING_CHAT_LIST_STALE_MS,
-    placeholderData: (prev) => prev,
+  const { conversations, isLoading, isFetching } = useFloatingConversationListData({
+    instanceIds,
+    inboxScope,
+    quick,
+    listOpen,
   });
 
   const filtered = useMemo(() => {

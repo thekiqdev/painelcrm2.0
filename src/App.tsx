@@ -184,6 +184,7 @@ const SuperAdminTrackingSettings = lazyWithReload(() => import("./pages/superadm
 const SignupSuccess = lazyWithReload(() => import("./pages/SignupSuccess"));
 const SuperAdminAdvancedScriptsPage = lazyWithReload(() => import("./pages/superadmin/SuperAdminAdvancedScriptsPage"));
 const SuperAdminAdvancedFeatureFlagsPage = lazyWithReload(() => import("./pages/superadmin/SuperAdminAdvancedFeatureFlagsPage"));
+const SuperAdminChatMigrationFlagsPage = lazyWithReload(() => import("./pages/superadmin/SuperAdminChatMigrationFlagsPage"));
 const PublicPrivacyPolicyPage = lazyWithReload(() =>
   import("./pages/legal/PublicLegalPage").then((m) => ({ default: m.PublicPrivacyPolicyPage })),
 );
@@ -1042,6 +1043,7 @@ const App = () => (
                 <Route path="avancado" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
                 <Route path="avancado/scripts" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAdvancedScriptsPage /></Suspense>} />
                 <Route path="avancado/feature-flags" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAdvancedFeatureFlagsPage /></Suspense>} />
+                <Route path="avancado/feature-flags/chat-optimization" element={<Suspense fallback={<LoadingFallback />}><SuperAdminChatMigrationFlagsPage /></Suspense>} />
                 <Route path="seguranca" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
                 <Route path="plans" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlans /></Suspense>} />
                 <Route path="plans/:id/features" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlanFeatures /></Suspense>} />

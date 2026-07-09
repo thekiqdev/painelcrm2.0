@@ -24,6 +24,8 @@ import { useChatOutboundQueue } from "@/hooks/useChatOutboundQueue";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { REALTIME_WINDOW_EVENTS } from "@/services/realtimeClient";
 import { chatService, type ChatConversation, type ChatMessage } from "@/services/chat";
+import { findChatConversationById } from "@/repositories/chatConversationsRepository";
+import { ensureChatInstances, filterConnectedChatInstances } from "@/features/chat-core/runtime";
 import {
   classifyChatOutgoingFile,
   inferDocumentMimeForSend,
@@ -135,21 +137,30 @@ export function EmbeddedLeadConversationPanel({
   const { data: connectedInstances = [], isLoading: loadingInstances } = useQuery({
     queryKey: ["lead-profile", "connected-chat-instances"],
     queryFn: async () => {
-      const rows = await chatService.listInstances();
-      return rows.filter(isConnectedInstance);
+      const rows = await ensureChatInstances({ reason: "bootstrap" });
+      return filterConnectedChatInstances(rows);
     },
     enabled: active && canUseChat,
     staleTime: 30_000,
   });
 
   const { data: conversation = null } = useQuery({
-    queryKey: ["lead-profile", "conversation-meta", currentConversationId],
+    queryKey: ["lead-profile", "conversation-meta", currentConversationId, connectedInstances.map((i) => i.id).join(",")],
     queryFn: async (): Promise<ChatConversation | null> => {
       if (!currentConversationId) return null;
+      const instanceIds = connectedInstances.map((i) => i.id);
+      if (instanceIds.length > 0) {
+        return findChatConversationById({
+          surface: "lead",
+          conversationId: currentConversationId,
+          instanceIds,
+          inboxScope,
+        });
+      }
       const rows = await chatService.getConversations({ inboxScope });
       return rows.find((row) => row.id === currentConversationId) ?? null;
     },
-    enabled: active && canUseChat && Boolean(currentConversationId),
+    enabled: active && canUseChat && Boolean(currentConversationId) && !loadingInstances,
     staleTime: 10_000,
   });
 

@@ -59,6 +59,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { prepareLeadsFromCsv, type LeadCsvProfile } from "@/utils/importLeadsCsv";
 import { useFloatingChatOptional } from "@/features/floating-chat";
 import { chatService, type ChatInstance } from "@/services/chat";
+import { ensureChatInstances } from "@/features/chat-core/runtime";
 
 // Schemas for form validation
 const leadFormSchema = z.object({
@@ -323,7 +324,7 @@ const Leads = () => {
         return;
       }
 
-      const instances = (await chatService.listInstances()).filter(isConnectedChatInstance);
+      const instances = (await ensureChatInstances({ reason: "bootstrap" })).filter(isConnectedChatInstance);
       const firstInstance = instances[0];
       if (!firstInstance) {
         toast.info("Conecte uma instância WhatsApp para iniciar conversa com este lead.");

@@ -28,6 +28,7 @@ import connectionsRoutes from './connectionsRoutes.js';
 import superadminChatRoutes from './superadminChatRoutes.js';
 import * as platformFeatureFlagsController from '../controllers/platformFeatureFlagsController.js';
 import * as platformFeatureFlagsAdminController from '../controllers/platformFeatureFlagsAdminController.js';
+import * as superadminChatMigrationFlagsController from '../controllers/superadminChatMigrationFlagsController.js';
 import * as platformSignupEntryController from '../controllers/platformSignupEntryController.js';
 import * as platformGrowthController from '../controllers/platformGrowthController.js';
 import * as superadminWhatsappOfficialController from '../controllers/superadminWhatsappOfficialController.js';
@@ -61,6 +62,14 @@ router.get('/platform/growth/signup-strategy', platformGrowthController.getSuper
 router.patch('/platform/growth/signup-strategy', platformGrowthController.patchSuperadminSignupStrategy);
 router.get('/advanced/feature-flags', platformFeatureFlagsAdminController.listAdvancedFeatureFlags);
 router.patch('/advanced/feature-flags/:key', platformFeatureFlagsAdminController.patchAdvancedFeatureFlag);
+router.get(
+  '/advanced/chat-migration-flags',
+  superadminChatMigrationFlagsController.getSuperadminChatMigrationFlags,
+);
+router.patch(
+  '/advanced/chat-migration-flags/:key',
+  superadminChatMigrationFlagsController.patchSuperadminChatMigrationFlag,
+);
 router.get('/dashboard', superadminDashboardController.getSuperadminDashboard);
 router.get('/commercial/metrics', commercialAnalyticsController.getSuperadminCommercialMetrics);
 router.get(

@@ -8,6 +8,10 @@ import { contractsService } from "@/services/contracts";
 import { Contract } from "@/types/contracts";
 import { getContractDocumentHtml } from "@/utils/contractDocument";
 import { chatService, ChatMessage, normalizeChatMessage } from "@/services/chat";
+import {
+  ensureChatInstances,
+  filterConnectedChatInstances,
+} from "@/features/chat-core/runtime";
 import { customerInvoicesService, type CustomerInvoice } from "@/services/customerInvoices";
 import { crmSubscriptionsService, type CrmSubscriptionListItem } from "@/services/crmSubscriptions";
 import {
@@ -53,6 +57,11 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 import { io, Socket } from "socket.io-client";
 import { SOCKET_IO_CLIENT_TRANSPORTS } from "@/lib/socketIoClientOptions";
+import {
+  acquireSharedChatSocket,
+  chatRealtimeBridge,
+  shouldUseSingleChatSocket,
+} from "@/features/chat-core/realtime/bridge";
 import { format, parseISO, startOfDay, endOfDay, addMonths } from "date-fns";
 import { ClientUpcomingAppointments } from "@/components/clients/ClientUpcomingAppointments";
 import { ClientAppointmentsHistory } from "@/components/clients/ClientAppointmentsHistory";
@@ -882,7 +891,7 @@ const ClientProfile = () => {
   const { data: connectedChatInstances = [] } = useQuery({
     queryKey: ["client-profile", "chat-connected-instances"],
     queryFn: async () => {
-      const rows = await chatService.listInstances();
+      const rows = await ensureChatInstances({ reason: "bootstrap" });
       return rows.filter(isConnectedChatInstance);
     },
     enabled: Boolean(client?.id && canView("chat")),
@@ -1000,34 +1009,47 @@ const ClientProfile = () => {
       return;
     }
 
-    if (socketRef.current?.connected) {
-      return;
+    const useSingle = shouldUseSingleChatSocket();
+    let socket: Socket;
+    let ownsDedicated = false;
+    let unregisterConsumer: (() => void) | undefined;
+
+    if (useSingle) {
+      const shared = acquireSharedChatSocket(session.token);
+      if (!shared) return;
+      socket = shared;
+      socketRef.current = socket;
+      unregisterConsumer = chatRealtimeBridge.registerConsumer("ClientProfile");
+    } else {
+      if (socketRef.current?.connected) {
+        return;
+      }
+
+      const isDev = import.meta.env.DEV;
+      const socketUrl = isDev
+        ? (import.meta.env.VITE_API_URL || "http://localhost:3001")
+        : window.location.origin;
+
+      socket = io(socketUrl, {
+        auth: {
+          token: session.token,
+        },
+        transports: [...SOCKET_IO_CLIENT_TRANSPORTS],
+        path: "/socket.io/",
+      });
+      ownsDedicated = true;
+      socketRef.current = socket;
     }
 
-    const isDev = import.meta.env.DEV;
-    const socketUrl = isDev
-      ? (import.meta.env.VITE_API_URL || 'http://localhost:3001')
-      : window.location.origin;
+    const onConnect = () => {
+      console.log("[ClientProfile] WebSocket connected");
+    };
 
-    const socket = io(socketUrl, {
-      auth: {
-        token: session.token,
-      },
-      transports: [...SOCKET_IO_CLIENT_TRANSPORTS],
-      path: "/socket.io/",
-    });
+    const onDisconnect = () => {
+      console.log("[ClientProfile] WebSocket disconnected");
+    };
 
-    socketRef.current = socket;
-
-    socket.on('connect', () => {
-      console.log('[ClientProfile] WebSocket connected');
-    });
-
-    socket.on('disconnect', () => {
-      console.log('[ClientProfile] WebSocket disconnected');
-    });
-
-    socket.on('new_message', (data: { message?: any; conversationId?: string }) => {
+    const onNewMessage = (data: { message?: any; conversationId?: string }) => {
       const msg = data.message;
       const convId = data.conversationId;
       if (!msg || !convId) return;
@@ -1081,9 +1103,9 @@ const ClientProfile = () => {
           });
         });
       }
-    });
+    };
 
-    socket.on('message_updated', (data: { message?: any; conversationId?: string }) => {
+    const onMessageUpdatedWithClientId = (data: { message?: any; conversationId?: string }) => {
       const msg = data.message;
       const convId = data.conversationId;
       if (!msg || !convId || convId !== conversationId) return;
@@ -1110,20 +1132,33 @@ const ClientProfile = () => {
         };
         return next;
       });
-    });
+    };
 
-    socket.on('conversation_updated', (data: any) => {
-      // Se a conversa atual foi atualizada, recarregar mensagens
+    const onConversationUpdated = (data: any) => {
       const normalizedData = {
         id: data.id || data.conversation_id || data.conversationId,
       };
       if (normalizedData.id === conversationId) {
         loadClientMessages();
       }
-    });
+    };
+
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+    socket.on("new_message", onNewMessage);
+    socket.on("message_updated", onMessageUpdatedWithClientId);
+    socket.on("conversation_updated", onConversationUpdated);
 
     return () => {
-      socket.disconnect();
+      unregisterConsumer?.();
+      socket.off("connect", onConnect);
+      socket.off("disconnect", onDisconnect);
+      socket.off("new_message", onNewMessage);
+      socket.off("message_updated", onMessageUpdatedWithClientId);
+      socket.off("conversation_updated", onConversationUpdated);
+      if (ownsDedicated) {
+        socket.disconnect();
+      }
       socketRef.current = null;
     };
   }, [session?.token, conversationId, loadClientMessages]);

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/contexts/AuthContext';
 import { chatService } from '@/services/chat';
-import { REALTIME_WINDOW_EVENTS } from '@/services/realtimeClient';
+import { REALTIME_WINDOW_EVENTS, REALTIME_EVENTS } from '@/services/realtimeClient';
 import { emitChatNavUnreadRefresh } from '@/lib/chatNavUnreadEvents';
 import { emitKanbanConversationUnread } from '@/lib/kanbanConversationUnreadBridge';
 import { resolveConversationIdForCrmRecord } from '@/lib/resolveChatConversationForCrm';
@@ -24,6 +24,12 @@ import {
   invalidateFloatingChatConversationMeta,
   prefetchFloatingChatLists,
 } from './floatingChatQueries';
+import { tryApplyChatWsPatch } from '@/features/chat-core/ws-patch';
+import {
+  bootstrapChatF3Session,
+  ensureChatInstances,
+  filterEnabledChatInstanceIds,
+} from '@/features/chat-core/runtime';
 
 function countExpanded(panels: FloatingChatPanel[]): number {
   return panels.filter((p) => !p.minimized).length;
@@ -94,20 +100,16 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
     }
     setInstancesLoading(true);
     try {
-      const instances = await chatService.listInstances();
-      const ids = instances
-        .filter(
-          (inst) =>
-            (inst.metadata as Record<string, unknown> | null | undefined)?.enabled_in_chat !== false,
-        )
-        .map((i) => i.id);
+      bootstrapChatF3Session(user.id, user.tenant_id);
+      const instances = await ensureChatInstances({ reason: 'bootstrap' });
+      const ids = filterEnabledChatInstanceIds(instances);
       setInstanceIds(ids);
     } catch {
       setInstanceIds([]);
     } finally {
       setInstancesLoading(false);
     }
-  }, [user?.id]);
+  }, [user?.id, user?.tenant_id]);
 
   useEffect(() => {
     void refreshInstances();
@@ -178,6 +180,17 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
     const onConvUpd = (e: Event) => {
       const d = (e as CustomEvent<Record<string, unknown>>).detail;
       const cid = (d?.conversation_id as string) || (d?.conversationId as string);
+      const patch = tryApplyChatWsPatch(queryClient, REALTIME_EVENTS.conversationUpdated, d, {
+        isMinimizedConversation:
+          typeof cid === 'string' &&
+          panelsRef.current.some((p) => p.conversationId === cid && p.minimized),
+      });
+      if (patch.applied) {
+        if (typeof cid === 'string') {
+          emitChatNavUnreadRefresh();
+        }
+        return;
+      }
       invalidateFloatingChatAggregates(queryClient);
       if (typeof cid === 'string') {
         invalidateFloatingChatConversationMeta(queryClient, cid);
@@ -206,6 +219,29 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
       const list = panelsRef.current;
       const panel = list.find((p) => p.conversationId === cid);
       const active = activeWindowIdRef.current;
+      const isActive = Boolean(panel && !panel.minimized && active === cid);
+      const isMinimized = Boolean(panel?.minimized);
+
+      const patch = tryApplyChatWsPatch(queryClient, REALTIME_EVENTS.messageCreated, d, {
+        isActiveConversation: isActive,
+        isMinimizedConversation: isMinimized,
+      });
+
+      if (patch.applied) {
+        if (!panel) {
+          if (mobileOverlayConversationIdRef.current === cid) {
+            /* overlay tem listener próprio */
+          }
+          emitChatNavUnreadRefresh();
+          return;
+        }
+        if (isMinimized) {
+          const until = Date.now() + 4000;
+          setPulseUntil((prev) => ({ ...prev, [cid]: until }));
+        }
+        emitChatNavUnreadRefresh();
+        return;
+      }
 
       if (!panel) {
         if (mobileOverlayConversationIdRef.current === cid) {

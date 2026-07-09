@@ -127,6 +127,10 @@ import {
   applyConversationDragPreview,
   conversationDragPreviewFromChatConversation,
 } from '@/lib/conversationDragPreview';
+import {
+  isChatMigrationFlagsLoaded,
+  loadChatMigrationFlags,
+} from '@/lib/chatMigrationFlagManager';
 import { buildChatInboxTemplateContext } from '@/utils/chatInboxTemplateContext';
 import { DEFAULT_CHAT_TAG_COLOR, normalizeHexColor } from '@/lib/chatKanbanTagStyle';
 import { ChatKanbanTagBadge } from '@/components/chat/ChatKanbanTagBadge';
@@ -135,6 +139,42 @@ import { patchConversationKanbanTagsEverywhere } from '@/features/floating-chat/
 import { REALTIME_WINDOW_EVENTS } from '@/services/realtimeClient';
 import { SOCKET_IO_CLIENT_TRANSPORTS } from '@/lib/socketIoClientOptions';
 import { io, Socket } from 'socket.io-client';
+import {
+  acquireSharedChatSocket,
+  chatRealtimeBridge,
+  shouldUseSingleChatSocket,
+} from '@/features/chat-core/realtime/bridge';
+import { tryApplyChatWsPatch } from '@/features/chat-core/ws-patch';
+import {
+  bootstrapChatF3Session,
+  ensureChatInstances,
+  fetchChatAttendanceCounts,
+  getChatUnreadEngineCounts,
+  scheduleChatAttendanceReconcile,
+  shouldUseChatUnreadEngine,
+} from '@/features/chat-core/runtime';
+import {
+  shouldUseChatDomainStore,
+  applyStoreMessages,
+  isChatStoreSourceOfTruth,
+  ensureChatDomainStoreSession,
+  readStoreConversationCount,
+  setStoreLoadingConversations,
+  setStoreLoadingMessages,
+  applyFloatingMessagesUpdater,
+  useChatConversationList,
+  useChatMessages,
+  useChatSelection,
+} from '@/features/chat-core/store/public';
+import { loadInboxCommand, clearInboxCommand, loadMessagesCommand } from '@/features/chat-core/core/commands';
+import {
+  bridgeAttendConversation,
+  bridgeCloseAttendance,
+  bridgeMarkConversationRead,
+  bridgeSendMessage,
+  bridgeSystemDeleteConversation,
+  bridgeTransferConversation,
+} from '@/features/chat-core/core/chatCommandBridge';
 import { apiClient } from '@/integrations/api/client';
 import ProposalCreateForm, {
   type ProposalCreateSuccessPayload,
@@ -270,6 +310,16 @@ function mapCrmNoteToPreview(n: Record<string, unknown>): CrmNotePreviewRow {
     message_id: n.message_id != null ? String(n.message_id) : null,
     source_comment_id: n.source_comment_id != null ? String(n.source_comment_id) : null,
   };
+}
+
+/** Instâncias ativas no chat (`metadata.enabled_in_chat !== false`). */
+function pickEnabledChatInstanceIds(instances: ChatInstance[]): string[] {
+  return instances
+    .filter(
+      (inst) =>
+        (inst.metadata as Record<string, unknown> | null | undefined)?.enabled_in_chat !== false,
+    )
+    .map((inst) => inst.id);
 }
 
 function mergeInternalCommentIntoMessage(m: ChatMessage, c: ChatInternalComment): ChatMessage {
@@ -641,9 +691,17 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
   const [enabledInstanceIds, setEnabledInstanceIds] = useState<Set<string>>(new Set());
   const [filtersPopoverOpen, setFiltersPopoverOpen] = useState(false);
-  const [conversations, setConversations] = useState<ChatConversation[]>([]);
+  const [conversations, setConversationsState] = useState<ChatConversation[]>([]);
+  const setConversations = useCallback((action: React.SetStateAction<ChatConversation[]>) => {
+    if (isChatStoreSourceOfTruth()) return;
+    setConversationsState(action);
+  }, []);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessagesState] = useState<ChatMessage[]>([]);
+  const setMessages = useCallback((action: React.SetStateAction<ChatMessage[]>) => {
+    if (isChatStoreSourceOfTruth()) return;
+    setMessagesState(action);
+  }, []);
   const [searchTerm, setSearchTerm] = useState('');
   const [newMessage, setNewMessage] = useState('');
   const newMessageRef = useRef('');
@@ -760,6 +818,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   );
 
   useLayoutEffect(() => {
+    if (isChatStoreSourceOfTruth()) return;
     if (!chatPageCacheScope.userId) return;
     const cached = readChatPageCache(chatPageCacheScope, chatPageFiltersKey);
     if (!cached?.conversations.length) return;
@@ -775,6 +834,12 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     }
   }, [chatPageCacheScope, chatPageFiltersKey, routeConversationId]);
 
+  useLayoutEffect(() => {
+    if (shouldUseChatDomainStore()) {
+      ensureChatDomainStoreSession();
+    }
+  }, []);
+
   useEffect(() => {
     chatRouteMarkChatMount();
     markChatPerf('chat_mount_started');
@@ -784,10 +849,6 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       measureChatPerf('chat_mount_started', 'chat_ready');
     });
   }, []);
-
-  useEffect(() => {
-    conversationsCountRef.current = conversations.length;
-  }, [conversations]);
 
   const [slaUiContext, setSlaUiContext] = useState<SlaContextForUi | null>(null);
   const [operationsRefreshTick, setOperationsRefreshTick] = useState(0);
@@ -877,6 +938,9 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   /** Evita restaurar no primeiro paint com lista vazia e loading=false (race antes do primeiro setLoading(true) aplicar). */
   const conversationsHydratedRef = useRef(false);
   const conversationsCountRef = useRef(0);
+  const loadConversationsRef = useRef<(instanceIds: string | string[]) => Promise<void>>(
+    async () => undefined,
+  );
   /**
    * `/clients` ou `/leads` quando a conversa foi aberta a partir dessas listas (mobile).
    * Mantém o destino de «voltar» se `location.state` se perder (ex.: botão físico «voltar»).
@@ -970,9 +1034,16 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     setLoadingInstances(true);
     let loadedCount = 0;
     try {
-      const data = await chatService.listInstances();
+      bootstrapChatF3Session(user?.id, user?.tenant_id);
+      const data = await ensureChatInstances({ reason: 'bootstrap' });
       loadedCount = data.length;
+      const enabledIds = pickEnabledChatInstanceIds(data);
       setInstances(data);
+      setEnabledInstanceIds(new Set(enabledIds));
+      enabledInstanceIdsRef.current = new Set(enabledIds);
+      if (shouldUseChatDomainStore()) {
+        ensureChatDomainStoreSession();
+      }
     } catch (error) {
       console.error('Erro ao carregar instâncias:', error);
       toast.error('Erro ao carregar instâncias do WhatsApp', {
@@ -982,7 +1053,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       setLoadingInstances(false);
       chatRouteMarkInstancesLoaded(loadedCount);
     }
-  }, []);
+  }, [user?.id, user?.tenant_id, chatChannelOrigin]);
 
   const scheduleOperationsPanelRefresh = useCallback(() => {
     if (operationsPanelDebounceRef.current) clearTimeout(operationsPanelDebounceRef.current);
@@ -1022,134 +1093,78 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   }, []);
 
   const loadConversations = useCallback(async (instanceIds: string | string[]) => {
+    const ids = Array.isArray(instanceIds) ? instanceIds : [instanceIds];
+    const effectiveInboxScope =
+      user?.tenant_id && chatInboxScope === 'tenant' ? 'tenant' : 'owner';
+    const attendanceFilterParam = chatAttendanceFilter || undefined;
+    const origin = chatChannelOrigin;
+
+    if (!isChatMigrationFlagsLoaded()) {
+      await loadChatMigrationFlags();
+    }
+
     const blocking = conversationsCountRef.current === 0;
     let loadedConvCount = 0;
     if (blocking) {
-      setLoadingConversations(true);
+      if (isChatStoreSourceOfTruth()) {
+        setStoreLoadingConversations(true);
+      } else {
+        setLoadingConversations(true);
+      }
     } else {
       setSyncingConversations(true);
     }
-    try {
-      const ids = Array.isArray(instanceIds) ? instanceIds : [instanceIds];
-      const allConversations: ChatConversation[] = [];
-      const effectiveInboxScope =
-        user?.tenant_id && chatInboxScope === 'tenant' ? 'tenant' : 'owner';
-      const attendanceFilterParam = chatAttendanceFilter || undefined;
-      const origin = chatChannelOrigin;
 
+    try {
       const chatListDiag =
         import.meta.env.DEV || import.meta.env.VITE_CHAT_LIST_DIAG === '1';
 
-      const baseListFilters: {
-        inboxScope: 'owner' | 'tenant';
-        attendanceFilter?: typeof attendanceFilterParam;
-        channelOrigin?: 'uazapi' | 'official';
-        conversationFilter?: 'groups';
-      } = {
-        inboxScope: effectiveInboxScope,
-        attendanceFilter: attendanceFilterParam,
-      };
-      if (origin !== 'all') {
-        baseListFilters.channelOrigin = origin;
-      }
-      if (
+      const conversationFilter =
         whatsappGroupsUiEnabled &&
         chatListConversationFilter === 'groups' &&
         origin !== 'official'
-      ) {
-        baseListFilters.conversationFilter = 'groups';
-      }
+          ? ('groups' as const)
+          : undefined;
 
-      if (origin === 'official') {
-        try {
-          const data = await chatService.getConversations({
-            ...baseListFilters,
-            includeWhatsAppOfficial: true,
-            channelOrigin: 'official',
-          });
-          allConversations.push(...data);
-        } catch (error) {
-          console.error('Erro ao carregar conversas WhatsApp Oficial:', error);
-        }
-      } else {
-      for (const instanceId of ids) {
-        try {
-            if (chatListDiag) {
-              console.log('[ChatListDiag] frontend request', {
-                instanceId,
-                inboxScope: effectiveInboxScope,
-                attendanceFilter: attendanceFilterParam ?? '(none)',
-                channelOrigin: origin,
-                activeTab,
-                searchTerm: searchTerm.trim() || '(empty)',
-              });
-            }
-            const data = await chatService.getConversations({
-              instanceId,
-              ...baseListFilters,
-            });
-            if (chatListDiag) {
-              console.log('[ChatListDiag] frontend raw response count', {
-                instanceId,
-                count: data.length,
-              });
-            }
-          allConversations.push(...data);
-        } catch (error) {
-          console.error(`Erro ao carregar conversas da instância ${instanceId}:`, error);
-        }
-      }
-      
-        if (origin === 'all') {
-          try {
-            const officialOnly = await chatService.getConversations({
-              ...baseListFilters,
-              includeWhatsAppOfficial: true,
-            });
-            allConversations.push(...officialOnly);
-          } catch (error) {
-            console.error('Erro ao carregar conversas WhatsApp Oficial:', error);
-          }
-        }
-      }
-
-      // Remover duplicatas por id da conversa (evita colapsar várias linhas com external_chat_id vazio/repetido)
-      const uniqueConversations = Array.from(
-        new Map(allConversations.map((conv) => [conv.id, conv])).values()
-      ).sort((a, b) => {
-        const ta = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
-        const tb = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
-        if (ta && tb) return tb - ta;
-        if (ta && !tb) return -1;
-        if (!ta && tb) return 1;
-        const ca = a.created_at ? new Date(a.created_at).getTime() : 0;
-        const cb = b.created_at ? new Date(b.created_at).getTime() : 0;
-        return cb - ca;
+      const result = await loadInboxCommand({
+        instanceIds: ids,
+        inboxScope: effectiveInboxScope,
+        surface: 'chat',
+        quickFilter: 'all',
+        attendanceFilter: attendanceFilterParam,
+        channelOrigin: origin,
+        conversationFilter,
+        includeOfficialWhenAll: origin === 'all',
       });
 
+      const uniqueConversations = result.items;
+      loadedConvCount = uniqueConversations.length;
+
       if (chatListDiag) {
-        console.log('[ChatListDiag] frontend after merge+dedupe', {
-          mergedCount: allConversations.length,
-          uniqueCount: uniqueConversations.length,
+        console.log('[ChatListDiag] loadInboxCommand', {
+          count: uniqueConversations.length,
+          applied: result.applied,
+          stale: result.stale,
         });
       }
-      
-      loadedConvCount = uniqueConversations.length;
-      setConversations(uniqueConversations);
-      saveChatPageConversations(
-        chatPageCacheScope,
-        chatPageFiltersKey,
-        uniqueConversations,
-        selectedConversationIdRef.current,
-      );
+
+      if (!isChatStoreSourceOfTruth()) {
+        setConversations(uniqueConversations);
+        saveChatPageConversations(
+          chatPageCacheScope,
+          chatPageFiltersKey,
+          uniqueConversations,
+          selectedConversationIdRef.current,
+        );
+      }
 
       try {
         const scope =
           user?.tenant_id && chatInboxScope === 'tenant' ? ('tenant' as const) : ('owner' as const);
-        const c = await chatService.getConversationAttendanceCounts({
-          instanceIds: ids,
-          inboxScope: scope,
-        });
+        const c = await fetchChatAttendanceCounts(
+          { instanceIds: ids, inboxScope: scope },
+          { reason: 'bootstrap' },
+        );
         setAttendanceCounts(c);
       } catch {
         /* contagens são auxiliares */
@@ -1164,8 +1179,15 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
         });
       }
     } finally {
-      setLoadingConversations(false);
-      setSyncingConversations(false);
+      if (blocking) {
+        if (isChatStoreSourceOfTruth()) {
+          setStoreLoadingConversations(false);
+        } else {
+          setLoadingConversations(false);
+        }
+      } else {
+        setSyncingConversations(false);
+      }
       conversationsHydratedRef.current = true;
       chatRouteMarkConversationsLoaded(loadedConvCount);
       if (loadedConvCount > 0 || !blocking) {
@@ -1181,7 +1203,11 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     chatChannelOrigin,
     whatsappGroupsUiEnabled,
     chatListConversationFilter,
+    chatAttendanceFilter,
+    chatInboxScope,
   ]);
+
+  loadConversationsRef.current = loadConversations;
 
   const handleAfterGroupLeave = useCallback(() => {
     setContactProfileOpen(false);
@@ -1226,29 +1252,87 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     async (conversationId: string, opts?: { silent?: boolean }) => {
       const silent = opts?.silent === true;
       if (!silent) {
-    setLoadingMessages(true);
+        if (isChatStoreSourceOfTruth()) {
+          setStoreLoadingMessages(conversationId, true);
+        } else {
+          setLoadingMessages(true);
+        }
       }
-    try {
-      const data = await chatService.getConversationMessages(conversationId);
+      try {
         if (selectedConversationIdRef.current !== conversationId) {
           return;
         }
-      setMessages(data);
-      saveChatPageMessages(chatPageCacheScope, conversationId, data);
-    } catch (error) {
-      console.error('Erro ao carregar mensagens:', error);
-        if (!silent) {
-      toast.error('Erro ao carregar mensagens', {
-        description: error instanceof Error ? error.message : undefined,
-      });
+        if (isChatStoreSourceOfTruth()) {
+          await loadMessagesCommand(conversationId);
+        } else {
+          const data = await chatService.getConversationMessages(conversationId);
+          if (selectedConversationIdRef.current !== conversationId) {
+            return;
+          }
+          setMessages(data);
+          saveChatPageMessages(chatPageCacheScope, conversationId, data);
         }
-    } finally {
+      } catch (error) {
+        console.error('Erro ao carregar mensagens:', error);
         if (!silent) {
-      setLoadingMessages(false);
-    }
+          toast.error('Erro ao carregar mensagens', {
+            description: error instanceof Error ? error.message : undefined,
+          });
+        }
+      } finally {
+        if (!silent) {
+          if (isChatStoreSourceOfTruth()) {
+            setStoreLoadingMessages(conversationId, false);
+          } else {
+            setLoadingMessages(false);
+          }
+        }
       }
     },
-    [],
+    [chatPageCacheScope],
+  );
+
+  const chatCoreStoreReadEnabled = shouldUseChatDomainStore();
+  const chatStoreList = useChatConversationList({
+    enabled: chatCoreStoreReadEnabled,
+    repositoryLoading: loadingConversations,
+    repositorySyncing: syncingConversations,
+  });
+  const chatStoreMessages = useChatMessages(selectedConversationId, {
+    enabled: chatCoreStoreReadEnabled,
+    repositoryLoading: loadingMessages,
+  });
+  const chatStoreSelection = useChatSelection(selectedConversationId, {
+    enabled: chatCoreStoreReadEnabled,
+  });
+
+  const conversationsView = chatCoreStoreReadEnabled ? chatStoreList.conversations : conversations;
+  const messagesView = chatCoreStoreReadEnabled ? chatStoreMessages.messages : messages;
+  const loadingConversationsView = chatCoreStoreReadEnabled
+    ? chatStoreList.isLoading
+    : loadingConversations;
+  const syncingConversationsView = chatCoreStoreReadEnabled
+    ? chatStoreList.isSyncing
+    : syncingConversations;
+  const loadingMessagesView = chatCoreStoreReadEnabled
+    ? chatStoreMessages.isLoading
+    : loadingMessages;
+
+  useEffect(() => {
+    conversationsCountRef.current = chatCoreStoreReadEnabled
+      ? chatStoreList.conversations.length
+      : conversations.length;
+  }, [chatCoreStoreReadEnabled, chatStoreList.conversations.length, conversations.length]);
+
+  const applyMessagesForQueue = useCallback(
+    (updater: (prev: ChatMessage[]) => ChatMessage[]) => {
+      if (chatCoreStoreReadEnabled && selectedConversationId) {
+        applyFloatingMessagesUpdater(selectedConversationId, updater);
+        return;
+      }
+      setMessages(updater);
+    },
+    [chatCoreStoreReadEnabled, selectedConversationId],
   );
 
   /** Não recarregar a lista após cada texto — o Socket já emite `new_message` / `conversation.updated`. */
@@ -1258,7 +1342,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
 
   const { enqueueText, retryFailed } = useChatOutboundQueue({
     conversationId: selectedConversationId,
-    applyMessages: setMessages,
+    applyMessages: applyMessagesForQueue,
     pendingWsFifoRef: pendingOutgoingOptimisticQueueRef,
     afterItemDone: afterOutboundSendDone,
   });
@@ -1384,69 +1468,14 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       return;
     }
 
-    // Se já existe uma conexão, não criar nova
-    if (socketRef.current?.connected) {
+    const useSingleSocket = shouldUseSingleChatSocket();
+
+    // Legado: se já existe uma conexão própria, não criar nova.
+    // F1 ON: sempre reutiliza o Bridge (não cria io forceNew).
+    if (!useSingleSocket && socketRef.current?.connected) {
       console.log('[Chat] WebSocket: Already connected');
       return;
     }
-
-    const isDev = import.meta.env.DEV;
-    // Em produção usamos URL relativa para garantir mesmo host e sticky session no proxy
-    const socketUrl = isDev
-      ? (import.meta.env.VITE_API_URL || 'http://localhost:3001')
-      : window.location.origin;
-
-    console.log('[Chat] WebSocket: Connecting to', socketUrl, 'with token:', session.token ? 'present' : 'missing');
-    console.log('[Chat] WebSocket: Token length', session.token.length);
-    console.log('[Chat] WebSocket: Full URL will be', `${socketUrl}/socket.io/`);
-
-    // Testar endpoint antes de conectar para verificar se está acessível
-    const testUrl = `${socketUrl}/socket.io/?EIO=4&transport=polling`;
-    console.log('[Chat] Testing endpoint accessibility:', testUrl);
-    
-    fetch(testUrl, {
-      method: 'GET',
-      credentials: 'include',
-      headers: {
-        'Authorization': `Bearer ${session.token}`,
-      },
-    })
-      .then(async (res) => {
-        const text = await res.text();
-        console.log('[Chat] Endpoint test response:', {
-          status: res.status,
-          statusText: res.statusText,
-          contentType: res.headers.get('content-type'),
-          bodyPreview: text.substring(0, 100),
-          bodyLength: text.length,
-        });
-        
-        // Se a resposta não começa com "0{" (handshake do Socket.IO), há problema
-        if (!text.startsWith('0{')) {
-          console.error('[Chat] Invalid Socket.IO handshake response:', text);
-        }
-      })
-      .catch((err) => {
-        console.error('[Chat] Endpoint test failed:', err);
-      });
-
-    // Polling primeiro: proxies (Nginx, etc.) costumam falhar no WSS direto; o engine faz
-    // upgrade para websocket quando suportado.
-    const socketOptions = {
-      auth: { token: session.token },
-      transports: [...SOCKET_IO_CLIENT_TRANSPORTS] as ('polling' | 'websocket')[],
-      reconnection: true,
-      reconnectionDelay: 2000,
-      reconnectionDelayMax: 10000,
-      reconnectionAttempts: 8,
-      timeout: 20000,
-      forceNew: true,
-      path: '/socket.io/',
-      query: {
-        token: session.token,
-      },
-      withCredentials: true,
-    };
 
     const preferRealtimeV2Raw = String(import.meta.env.VITE_CHAT_REALTIME_V2 ?? '1').toLowerCase();
     const preferRealtimeV2 = preferRealtimeV2Raw !== '0' && preferRealtimeV2Raw !== 'false';
@@ -1456,8 +1485,95 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     ).toLowerCase();
     const enableLegacyFallback = legacyFallbackRaw === '1' || legacyFallbackRaw === 'true';
 
-    const socket: Socket = io(socketUrl, socketOptions);
-    socketRef.current = socket;
+    let socket: Socket;
+    let ownsDedicatedSocket = false;
+    let unregisterConsumer: (() => void) | undefined;
+    const isDev = import.meta.env.DEV;
+    const socketUrl = isDev
+      ? (import.meta.env.VITE_API_URL || 'http://localhost:3001')
+      : window.location.origin;
+
+    if (useSingleSocket) {
+      const shared = acquireSharedChatSocket(session.token);
+      if (!shared) {
+        console.error('[Chat] WebSocket: F1 flag ON but Bridge returned no socket');
+        return;
+      }
+      socket = shared;
+      socketRef.current = socket;
+      unregisterConsumer = chatRealtimeBridge.registerConsumer('Chat.tsx');
+      if (import.meta.env.DEV) {
+        console.info('[Chat] WebSocket: using ChatRealtimeBridge (CHAT_SINGLE_SOCKET=ON)', {
+          socketId: socket.id,
+          connected: socket.connected,
+        });
+      }
+    } else {
+      // Se já existe uma conexão, não criar nova (caminho legado)
+      if (socketRef.current?.connected) {
+        console.log('[Chat] WebSocket: Already connected');
+        return;
+      }
+
+      // Em produção usamos URL relativa para garantir mesmo host e sticky session no proxy
+      void 0;
+
+      console.log('[Chat] WebSocket: Connecting to', socketUrl, 'with token:', session.token ? 'present' : 'missing');
+      console.log('[Chat] WebSocket: Token length', session.token.length);
+      console.log('[Chat] WebSocket: Full URL will be', `${socketUrl}/socket.io/`);
+
+      // Testar endpoint antes de conectar para verificar se está acessível
+      const testUrl = `${socketUrl}/socket.io/?EIO=4&transport=polling`;
+      console.log('[Chat] Testing endpoint accessibility:', testUrl);
+
+      fetch(testUrl, {
+        method: 'GET',
+        credentials: 'include',
+        headers: {
+          'Authorization': `Bearer ${session.token}`,
+        },
+      })
+        .then(async (res) => {
+          const text = await res.text();
+          console.log('[Chat] Endpoint test response:', {
+            status: res.status,
+            statusText: res.statusText,
+            contentType: res.headers.get('content-type'),
+            bodyPreview: text.substring(0, 100),
+            bodyLength: text.length,
+          });
+
+          // Se a resposta não começa com "0{" (handshake do Socket.IO), há problema
+          if (!text.startsWith('0{')) {
+            console.error('[Chat] Invalid Socket.IO handshake response:', text);
+          }
+        })
+        .catch((err) => {
+          console.error('[Chat] Endpoint test failed:', err);
+        });
+
+      // Polling primeiro: proxies (Nginx, etc.) costumam falhar no WSS direto; o engine faz
+      // upgrade para websocket quando suportado.
+      const socketOptions = {
+        auth: { token: session.token },
+        transports: [...SOCKET_IO_CLIENT_TRANSPORTS] as ('polling' | 'websocket')[],
+        reconnection: true,
+        reconnectionDelay: 2000,
+        reconnectionDelayMax: 10000,
+        reconnectionAttempts: 8,
+        timeout: 20000,
+        forceNew: true,
+        path: '/socket.io/',
+        query: {
+          token: session.token,
+        },
+        withCredentials: true,
+      };
+
+      socket = io(socketUrl, socketOptions);
+      ownsDedicatedSocket = true;
+      socketRef.current = socket;
+    }
 
     // Logs detalhados para debug
     socket.on('connect', () => {
@@ -1695,7 +1811,9 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       scheduleOperationsPanelRefresh();
     };
 
-    socket.on('conversation_attendance_updated', (payload: { conversation?: Record<string, unknown> }) => {
+    const onAttendanceUpdated = (payload: { conversation?: Record<string, unknown> }) => {
+      void tryApplyChatWsPatch(queryClient, 'conversation_attendance_updated', payload);
+
       const conv = payload?.conversation;
       if (!conv || typeof conv.id !== 'string') return;
       setConversations((prev) =>
@@ -1728,12 +1846,18 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       const ids = Array.from(enabledInstanceIdsRef.current);
       if (ids.length === 0) return;
       const scope = user?.tenant_id && chatInboxScope === 'tenant' ? ('tenant' as const) : ('owner' as const);
-      void chatService
-        .getConversationAttendanceCounts({ instanceIds: ids, inboxScope: scope })
-        .then(setAttendanceCounts)
-        .catch(() => {});
+      if (shouldUseChatUnreadEngine()) {
+        scheduleChatAttendanceReconcile('attendance_ws_dirty');
+        const cached = getChatUnreadEngineCounts();
+        if (cached) setAttendanceCounts(cached);
+      } else {
+        void fetchChatAttendanceCounts({ instanceIds: ids, inboxScope: scope }, { reason: 'attendance_ws_dirty' })
+          .then(setAttendanceCounts)
+          .catch(() => {});
+      }
       scheduleOperationsPanelRefresh();
-    });
+    };
+    socket.on('conversation_attendance_updated', onAttendanceUpdated);
 
     const handleNewMessage = (
       data: { message: any; conversationId: string },
@@ -1906,66 +2030,64 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
           navigate(chatRouteBase, { replace: true });
         }
       }
-      void queryClient.invalidateQueries({ queryKey: ['floating-chat'] });
-      void queryClient.invalidateQueries({ queryKey: ['chat-conversations'] });
+      const deletePatch = tryApplyChatWsPatch(queryClient, 'conversation.deleted', payload);
+      if (!deletePatch.applied) {
+        void queryClient.invalidateQueries({ queryKey: ['floating-chat'] });
+        void queryClient.invalidateQueries({ queryKey: ['chat-conversations'] });
+      }
       emitChatNavUnreadRefresh();
       scheduleOperationsPanelRefresh();
     };
 
-    if (preferRealtimeV2) {
-      socket.on('conversation.updated', (evt: any) => {
-        if (!evt || typeof evt !== 'object') return;
-        handleConversationUpdated(
-          {
-            id: evt.conversation_id,
-            provider: evt.provider,
-            last_message_preview: evt.last_message_preview,
-            last_message_at: evt.last_message_at,
-            unread_count: evt.unread_count,
-            status: evt.status,
-            assigned_to_user_id: evt.assigned_user_id,
-            assigned_team_id: evt.assigned_team_id,
-            display_name: evt.display_name,
-            avatar_url: evt.avatar_url,
-          },
-          'v2',
-        );
-      });
-
-      socket.on('message.created', (evt: any) => {
-        if (!evt || typeof evt !== 'object' || typeof evt.conversation_id !== 'string') return;
-        handleNewMessage(
-          {
-            conversationId: evt.conversation_id,
-            message: {
-              id: evt.message_id || evt.provider_message_id,
-              conversation_id: evt.conversation_id,
-              direction: evt.direction,
-              body: evt.body,
-              sent_at: evt.sent_at,
-              external_message_id: evt.provider_message_id,
-              media: evt.media_url ? [{ type: evt.message_type || 'unknown', url: evt.media_url }] : [],
-              reply_to_message_id: evt.reply_to_message_id ?? null,
-              reply_preview: evt.reply_preview ?? null,
-              reply_sender_name: evt.reply_sender_name ?? null,
-              reply_message_type: evt.reply_message_type ?? null,
-            },
-          },
-          'v2',
-        );
-      });
-      socket.on('conversation.deleted', handleConversationDeleted);
-    }
-
-    if (!preferRealtimeV2 || enableLegacyFallback) {
-      socket.on('conversation_updated', (raw: any) => handleConversationUpdated(raw, 'legacy'));
-      socket.on('conversation_deleted', handleConversationDeleted);
-      socket.on('new_message', (payload: { message: any; conversationId: string }) =>
-        handleNewMessage(payload, 'legacy'),
+    const onConversationUpdatedV2 = (evt: any) => {
+      if (!evt || typeof evt !== 'object') return;
+      handleConversationUpdated(
+        {
+          id: evt.conversation_id,
+          provider: evt.provider,
+          last_message_preview: evt.last_message_preview,
+          last_message_at: evt.last_message_at,
+          unread_count: evt.unread_count,
+          status: evt.status,
+          assigned_to_user_id: evt.assigned_user_id,
+          assigned_team_id: evt.assigned_team_id,
+          display_name: evt.display_name,
+          avatar_url: evt.avatar_url,
+        },
+        'v2',
       );
-    }
+    };
 
-    socket.on('message_updated', (data: { message: any; conversationId: string }) => {
+    const onMessageCreatedV2 = (evt: any) => {
+      if (!evt || typeof evt !== 'object' || typeof evt.conversation_id !== 'string') return;
+      handleNewMessage(
+        {
+          conversationId: evt.conversation_id,
+          message: {
+            id: evt.message_id || evt.provider_message_id,
+            conversation_id: evt.conversation_id,
+            direction: evt.direction,
+            body: evt.body,
+            sent_at: evt.sent_at,
+            external_message_id: evt.provider_message_id,
+            media: evt.media_url ? [{ type: evt.message_type || 'unknown', url: evt.media_url }] : [],
+            reply_to_message_id: evt.reply_to_message_id ?? null,
+            reply_preview: evt.reply_preview ?? null,
+            reply_sender_name: evt.reply_sender_name ?? null,
+            reply_message_type: evt.reply_message_type ?? null,
+          },
+        },
+        'v2',
+      );
+    };
+
+    const onConversationUpdatedLegacy = (raw: any) => handleConversationUpdated(raw, 'legacy');
+    const onNewMessageLegacy = (payload: { message: any; conversationId: string }) =>
+      handleNewMessage(payload, 'legacy');
+
+    const onMessageUpdated = (data: { message: any; conversationId: string }) => {
+      void tryApplyChatWsPatch(queryClient, 'message_updated', data);
+
       const normalizedMessage = normalizeChatMessage({
         ...data.message,
         conversation_id: data.message?.conversation_id || data.conversationId,
@@ -1986,9 +2108,9 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
           return next;
         });
       }
-    });
+    };
 
-    socket.on('chat.message_comment.created', (payload: any) => {
+    const onMessageCommentCreated = (payload: any) => {
       const mid = payload?.message_id;
       const cid = payload?.conversation_id;
       const raw = payload?.comment;
@@ -1999,9 +2121,9 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       setMessages((prev) =>
         prev.map((m) => (m.id === mid ? mergeInternalCommentIntoMessage(m, c) : m)),
       );
-    });
+    };
 
-    socket.on('crm.note.created', () => {
+    const onCrmNoteCreated = () => {
       if (!contactProfileOpenRef.current) return;
       const { clientId, leadId } = chatProfileCrmLinkRef.current;
       if (!clientId && !leadId) return;
@@ -2015,17 +2137,48 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
           /* ignore */
         }
       })();
-    });
+    };
+
+    if (preferRealtimeV2) {
+      socket.on('conversation.updated', onConversationUpdatedV2);
+      socket.on('message.created', onMessageCreatedV2);
+      socket.on('conversation.deleted', handleConversationDeleted);
+    }
+
+    if (!preferRealtimeV2 || enableLegacyFallback) {
+      socket.on('conversation_updated', onConversationUpdatedLegacy);
+      socket.on('conversation_deleted', handleConversationDeleted);
+      socket.on('new_message', onNewMessageLegacy);
+    }
+
+    socket.on('message_updated', onMessageUpdated);
+    socket.on('chat.message_comment.created', onMessageCommentCreated);
+    socket.on('crm.note.created', onCrmNoteCreated);
 
     return () => {
       if (conversationUpdatedReloadTimerRef.current) {
         clearTimeout(conversationUpdatedReloadTimerRef.current);
         conversationUpdatedReloadTimerRef.current = null;
       }
-      // Limpar socket quando token mudar ou componente desmontar
-      if (socketRef.current) {
-        console.log('[Chat] WebSocket: Cleaning up socket');
+      unregisterConsumer?.();
+
+      socket.off('conversation_attendance_updated', onAttendanceUpdated);
+      socket.off('conversation.updated', onConversationUpdatedV2);
+      socket.off('message.created', onMessageCreatedV2);
+      socket.off('conversation.deleted', handleConversationDeleted);
+      socket.off('conversation_updated', onConversationUpdatedLegacy);
+      socket.off('conversation_deleted', handleConversationDeleted);
+      socket.off('new_message', onNewMessageLegacy);
+      socket.off('message_updated', onMessageUpdated);
+      socket.off('chat.message_comment.created', onMessageCommentCreated);
+      socket.off('crm.note.created', onCrmNoteCreated);
+
+      // F1 ON: não disconnect do Bridge (owned até logout).
+      if (ownsDedicatedSocket && socketRef.current) {
+        console.log('[Chat] WebSocket: Cleaning up dedicated socket');
         socketRef.current.disconnect();
+        socketRef.current = null;
+      } else {
         socketRef.current = null;
       }
     };
@@ -2073,20 +2226,28 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   /** Ativas no chat: `metadata.enabled_in_chat !== false` (persistido no backend). */
   useEffect(() => {
     if (instances.length === 0) {
+      if (loadingInstances) {
+        return;
+      }
       setSelectedInstanceId(null);
       setEnabledInstanceIds(new Set());
-      setConversations([]);
+      enabledInstanceIdsRef.current = new Set();
+      if (isChatStoreSourceOfTruth()) {
+        if (readStoreConversationCount() === 0) {
+          clearInboxCommand();
+        }
+      } else {
+        setConversations([]);
+      }
       setSelectedConversationId(null);
       setMessages([]);
-          return;
-        }
-        
-    const enabledIds = instances
-      .filter((inst) => (inst.metadata as Record<string, unknown> | null | undefined)?.enabled_in_chat !== false)
-      .map((inst) => inst.id);
+      return;
+    }
 
+    const enabledIds = pickEnabledChatInstanceIds(instances);
     setEnabledInstanceIds(new Set(enabledIds));
-  }, [instances]);
+    enabledInstanceIdsRef.current = new Set(enabledIds);
+  }, [instances, loadingInstances]);
 
   useEffect(() => {
     if (enabledInstanceIds.size === 0) {
@@ -2125,9 +2286,16 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   }, [instances, loadingInstances, enabledInstanceIds]);
 
   useEffect(() => {
+    if (loadingInstances) return;
     const origin = chatChannelOrigin;
     if (enabledInstanceIds.size === 0 && origin !== 'official') {
-      setConversations([]);
+      if (isChatStoreSourceOfTruth()) {
+        if (readStoreConversationCount() === 0) {
+          clearInboxCommand();
+        }
+      } else {
+        setConversations([]);
+      }
       if (!pendingConversationRestoreRef.current) {
         setSelectedConversationId(null);
       }
@@ -2138,8 +2306,9 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       }
       return;
     }
-    loadConversations(Array.from(enabledInstanceIds));
+    void loadConversations(Array.from(enabledInstanceIds));
   }, [
+    loadingInstances,
     enabledInstanceIds,
     chatChannelOrigin,
     loadConversations,
@@ -2156,31 +2325,31 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     // Evita ciclo infinito de fetch (ERR_INSUFFICIENT_RESOURCES): a rota `/chat/:id` fixa a
     // conversa antes da lista hidratar; limpar aqui fazia o efeito da URL voltar a chamar
     // handleSelectConversation em rajada.
-    if (loadingConversations) return;
+    if (loadingConversationsView) return;
     if (!conversationsHydratedRef.current) return;
     if (routeConversationId && routeConversationId === selectedConversationId) {
       return;
     }
-    if (!conversations.some((conversation) => conversation.id === selectedConversationId)) {
+    if (!conversationsView.some((conversation) => conversation.id === selectedConversationId)) {
       setSelectedConversationId(null);
       setMessages([]);
     }
-  }, [conversations, selectedConversationId, loadingConversations, routeConversationId]);
+  }, [conversationsView, selectedConversationId, loadingConversationsView, routeConversationId]);
 
   useEffect(() => {
     replaceChatInboxAvatarCache(
-      conversations.map((c) => ({
+      conversationsView.map((c) => ({
         id: c.id,
         avatarUrl: c.avatarUrl ?? c.avatar_url ?? c.communication_avatar_url ?? null,
       })),
     );
-  }, [conversations]);
+  }, [conversationsView]);
 
   const messageVirtualEnabled =
-    isChatMessageVirtualizationEnabled(messages.length) && viewMode === 'conversation';
+    isChatMessageVirtualizationEnabled(messagesView.length) && viewMode === 'conversation';
 
   const messageVirtual = useVirtualizedMessages({
-    messages,
+    messages: messagesView,
     scrollRef: messagesScrollContainerRef,
     conversationKey: selectedConversationId ?? '',
     variant: 'page',
@@ -2224,7 +2393,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   // Não forçar scroll quando o utilizador subiu no histórico (ex.: socket / reload silencioso).
   useLayoutEffect(() => {
     if (messageVirtual.enabled) return;
-    if (messages.length === 0 || loadingMessages) return;
+    if (messagesView.length === 0 || loadingMessagesView) return;
     if (viewMode !== 'conversation') return;
 
     const conversationChanged = scrollMessagesConversationKeyRef.current !== selectedConversationId;
@@ -2234,9 +2403,9 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       scrollMessagesToBottom();
     }
   }, [
-    messages,
+    messagesView,
     selectedConversationId,
-    loadingMessages,
+    loadingMessagesView,
     viewMode,
     scrollMessagesToBottom,
     messageVirtual.enabled,
@@ -2244,8 +2413,8 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   ]);
 
   const searchFilteredConversations = useMemo(() => {
-    if (!searchTerm.trim()) return conversations;
-    return conversations.filter((conversation) => {
+    if (!searchTerm.trim()) return conversationsView;
+    return conversationsView.filter((conversation) => {
       const term = searchTerm.toLowerCase();
       return (
         conversation.contactName?.toLowerCase().includes(term) ||
@@ -2254,7 +2423,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
         conversation.external_chat_id.toLowerCase().includes(term)
       );
     });
-  }, [conversations, searchTerm]);
+  }, [conversationsView, searchTerm]);
 
   const {
     selectedTagId: chatSidebarTagId,
@@ -2262,7 +2431,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     tagCounts: chatTagCounts,
     filterConversationsByTag,
   } = useChatTagFilters({
-    conversations,
+    conversations: conversationsView,
     catalogTags: tenantKanbanTagsCatalog,
   });
 
@@ -2354,13 +2523,15 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     if (!chatListDiag) return;
     console.log('[ChatListDiag] render pipeline', {
       activeTab,
-      conversationsState: conversations.length,
+      conversationsState: conversationsView.length,
+      storeSource: chatCoreStoreReadEnabled ? 'store' : 'legacy',
       afterSearch: filteredConversations.length,
       conversationsToShow: conversationsToShow.length,
     });
   }, [
     activeTab,
-    conversations.length,
+    conversationsView.length,
+    chatCoreStoreReadEnabled,
     filteredConversations.length,
     conversationsToShow.length,
   ]);
@@ -2377,9 +2548,10 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     }
   }, [attendanceCounts.team, chatAttendanceFilter]);
 
-  const selectedConversation = conversations.find(
-    (conversation) => conversation.id === selectedConversationId,
-  );
+  const selectedConversation = chatCoreStoreReadEnabled
+    ? chatStoreSelection.selectedConversation ??
+      conversationsView.find((conversation) => conversation.id === selectedConversationId)
+    : conversationsView.find((conversation) => conversation.id === selectedConversationId);
   const selectedIsGroupChat =
     whatsappGroupsUiEnabled &&
     Boolean(
@@ -2499,8 +2671,8 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   useEffect(() => {
     const mid = focusMessageIdParam;
     const convId = selectedConversationId;
-    if (!mid || !convId || loadingMessages) return;
-    if (!messages.some((m) => m.id === mid)) return;
+    if (!mid || !convId || loadingMessagesView) return;
+    if (!messagesView.some((m) => m.id === mid)) return;
 
     let cancelled = false;
     let attempts = 0;
@@ -2535,7 +2707,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       cancelled = true;
       window.clearTimeout(t);
     };
-  }, [focusMessageIdParam, selectedConversationId, loadingMessages, messages, setSearchParams, messageVirtual]);
+  }, [focusMessageIdParam, selectedConversationId, loadingMessagesView, messagesView, setSearchParams, messageVirtual]);
 
   useEffect(() => {
     if (!contactProfileOpen || !selectedConversation) {
@@ -3661,7 +3833,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     if (!selectedConversationId) return;
     try {
       emitKanbanConversationUnread(selectedConversationId, 0);
-      await chatService.markConversationRead(selectedConversationId, true);
+      await bridgeMarkConversationRead(selectedConversationId, true);
       toast.success('Conversa marcada como lida');
       setConversations((prev) =>
         prev.map((c) => (c.id === selectedConversationId ? { ...c, unreadCount: 0 } : c)),
@@ -3740,7 +3912,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     if (!selectedConversation) return;
     const conversationId = selectedConversation.id;
     try {
-      await chatService.systemDeleteConversation(conversationId);
+      await bridgeSystemDeleteConversation(conversationId);
       setConversations((prev) => prev.filter((conversation) => conversation.id !== conversationId));
       setSelectedConversationId(null);
       setMessages([]);
@@ -4333,7 +4505,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
 
       if (selectedConversation.id) {
         const publicTicketUrl = `${window.location.origin}/ticket/${encodeURIComponent(publicAccessToken)}`;
-        await chatService.sendMessage(
+        await bridgeSendMessage(
           selectedConversation.id,
           `✅ Seu ticket foi criado com sucesso.\n\nProtocolo: ${ticket.ticket_number ?? ticket.id.substring(0, 8).toUpperCase()}\n\nAcompanhe seu atendimento:\n${publicTicketUrl}`,
         );
@@ -4583,7 +4755,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     if (!selectedConversationId || !user?.id) return;
     setAttendingConversation(true);
     try {
-      await chatService.attendConversation(selectedConversationId);
+      await bridgeAttendConversation(selectedConversationId);
       toast.success('Você assumiu o atendimento desta conversa');
       mergeAttendanceFromPayload({
         id: selectedConversationId,
@@ -4611,7 +4783,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   const handleCloseAttendance = useCallback(async () => {
     if (!selectedConversationId) return;
     try {
-      await chatService.patchConversationAttendance(selectedConversationId, { action: 'close' });
+      await bridgeCloseAttendance(selectedConversationId);
       toast.success('Atendimento encerrado');
       mergeAttendanceFromPayload({
         id: selectedConversationId,
@@ -5014,10 +5186,10 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     setTransferSubmitting(true);
     try {
       if (transferMode === 'operator') {
-        await chatService.transferConversation(selectedConversationId, { toUserId: transferTargetId });
+        await bridgeTransferConversation(selectedConversationId, { toUserId: transferTargetId });
         toast.success('Atendimento transferido para o operador');
       } else {
-        await chatService.transferConversation(selectedConversationId, { toTeamId: transferTeamId });
+        await bridgeTransferConversation(selectedConversationId, { toTeamId: transferTeamId });
         toast.success('Conversa transferida para a equipe');
       }
       setTransferDialogOpen(false);
@@ -5737,9 +5909,10 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                           ) : null}
                         </div>
                       ) : null}
-                      {(loadingInstances || loadingConversations) && conversations.length === 0 ? (
+                      {(loadingInstances || loadingConversationsView) && conversationsView.length === 0 ? (
                         <ConversationListSkeleton />
                       ) : enabledInstanceIds.size === 0 &&
+                        conversationsView.length === 0 &&
                         chatChannelOrigin !== 'official' &&
                         !(isPlatformScope && chatChannelOrigin === 'all') ? (
                         <div className="flex min-h-[12rem] flex-col items-center justify-center gap-3 px-6 py-10 text-center">
@@ -6273,9 +6446,9 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                           )}
                         >
                           <div className="min-w-0 max-w-full px-2 py-2 md:px-4 md:pb-2 md:pt-3">
-                            {loadingMessages && messages.length === 0 ? (
+                            {loadingMessagesView && messagesView.length === 0 ? (
                               <MessageListSkeleton />
-                            ) : messages.length === 0 ? (
+                            ) : messagesView.length === 0 ? (
                               <div className="flex min-h-[10rem] flex-col items-center justify-center gap-2 px-4 py-10 text-center">
                                 <MessageSquare className="h-8 w-8 text-muted-foreground/80" aria-hidden />
                                 <p className="text-sm font-medium text-foreground">Sem mensagens ainda</p>
@@ -6283,7 +6456,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                         </div>
                       ) : (
                               <VirtualizedMessageList
-                                messages={messages}
+                                messages={messagesView}
                                 virtual={messageVirtual}
                                 renderMessage={(message) => {
                                     const mc = message.message_contract;

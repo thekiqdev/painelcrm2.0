@@ -1,0 +1,262 @@
+# Chat Enterprise — Legacy Removal Tracker
+
+| Campo | Valor |
+|---|---|
+| **Documento** | Inventário oficial de código legado do módulo Chat |
+| **Versão** | 1.0 |
+| **Última atualização** | 2026-07-08 (pós F5.7) |
+| **Plano mestre** | [`CHAT_ENTERPRISE_MIGRATION_MASTER_PLAN.md`](../CHAT_ENTERPRISE_MIGRATION_MASTER_PLAN.md) |
+| **Governança** | Atualizar **ao final de cada sprint** F0→F7 |
+
+---
+
+## Como usar este documento
+
+1. **Não remover código legado** antes da sprint indicada e sem flag correspondente **ON em produção** por período de canário acordado.
+2. Ao concluir uma sprint, atualizar a coluna **Status** e registrar entrada na **§ Changelog**.
+3. Itens **Migrado** ainda **não** podem ser apagados — existem para rollback.
+4. Remoção física só ocorre quando status passa para **Removido** (com PR dedicado e testes).
+
+### Legenda de status
+
+| Status | Significado |
+|---|---|
+| **Ativo** | Caminho primário hoje (flag OFF ou sem substituto estável). |
+| **Migrado** | Substituto implementado atrás de feature flag; legado mantido para rollback. |
+| **Removido** | Eliminado do repositório. |
+
+### Legenda — sprint de remoção
+
+| Sprint | Condição para remoção |
+|---|---|
+| **Pós-Fn** | Flag da fase Fn estável em produção; canário concluído. |
+| **F5+** | Depende de consolidação do Chat Core (SoT única). |
+| **F6+** | Depende de paginação/cursor na UI. |
+| **F7+** | Depende de escala horizontal WS. |
+| **Manter** | Escopo legítimo permanente (admin, settings, rollback de longo prazo). |
+
+---
+
+## Resumo executivo (2026-07-08, pós F5.7)
+
+| Métrica | Valor |
+|---|---|
+| Itens rastreados | 48 |
+| **Ativo** | 28 |
+| **Migrado** | 20 |
+| **Removido** | 0 |
+| Próxima remoção em massa prevista | **Pós-F6** (cursor UI) → **F7** (WS horizontal) |
+
+---
+
+## 1. HTTP — listas de conversas (N+1)
+
+| ID | Artefato | Local | Status | Introduzido em | Remover em | Notas |
+|---|---|---|---|---|---|---|
+| L-HTTP-01 | `fetchMergedChatConversations()` | `src/lib/chatConversationsFetch.ts` | **Migrado** | pré-F0 | **Pós-F4b** | Fallback do `chatConversationsRepository`; loop N+1 + dedupe + sort |
+| L-HTTP-02 | `sortConversationsByRecent()` | `src/lib/chatConversationsFetch.ts` | **Ativo** | pré-F0 | **Pós-F4b** | Merge client-side; bypass quando API agregada ON |
+| L-HTTP-03 | `fetchBubbleRecentConversations()` | `src/lib/chatConversationsFetch.ts` | **Migrado** | pré-F0 | **Pós-F4b** | Wrapper de L-HTTP-01; substituído por `listBubbleChatConversations` |
+| L-HTTP-04 | Loop `for (instanceId)` + `getConversations` | `src/pages/Chat.tsx` `loadConversations` | **Migrado** | pré-F0 | **Pós-F4b** | Branch legado quando `VITE_CHAT_FF_AGGREGATED_CHAT` OFF |
+| L-HTTP-05 | Dedupe `Map` + `sort` pós-merge | `src/pages/Chat.tsx` | **Migrado** | pré-F0 | **Pós-F4b** | ~L1156–1167; bypass no branch agregado |
+| L-HTTP-06 | Loop instância + `getConversations` (fallback) | `src/features/floating-chat/MinimizedChatDock.tsx` | **Migrado** | pré-F0 | **Pós-F4b** | Após falha ou flag float OFF |
+| L-HTTP-07 | `getConversations({ inboxScope })` broad | `EmbeddedLeadConversationPanel.tsx` | **Ativo** | pré-F0 | **Pós-F4b** | Só quando `instanceIds` vazio |
+| L-HTTP-08 | `getConversations` direto | `ChatKanbanAddCardDialog.tsx` | **Ativo** | pré-F4 | **F5** | 1× HTTP por instância escolhida; migrar para repository |
+| L-HTTP-09 | `getConversations` direto | `InstanceDetailsDialog.tsx` | **Ativo** | pré-F4 | **Manter** | Admin por instância — escopo settings |
+| L-HTTP-10 | `chatService.getConversations()` (API legada) | `src/services/chat.ts` | **Ativo** | pré-F0 | **Pós-F4b** | Manter até backend desligar path single-instance |
+| L-HTTP-11 | `getConversationsAggregated()` | `src/services/chat.ts` | **Migrado** | F4b | — | Caminho novo; não remover |
+| L-HTTP-12 | Branch legado `listLegacyChatConversations` | `src/repositories/chatConversationsRepository.ts` | **Migrado** | F4b | **Pós-F4b** | Fallback automático em erro |
+| L-HTTP-13 | Prefetch com merge N+1 | `src/lib/chatPrefetch.ts` | **Migrado** | pré-F0 | **Pós-F4b** | Surface `sidebar` + flag `AGGREGATED_SIDEBAR` |
+| L-HTTP-14 | CRM resolve loop por instância | `src/lib/resolveChatConversationForCrm.ts` | **Migrado** | pré-F0 | **Pós-F4b** | `listChatConversationsForCrmResolve` |
+
+### Backend — listas
+
+| ID | Artefato | Local | Status | Remover em | Notas |
+|---|---|---|---|---|---|
+| L-HTTP-B01 | Path legado `getConversations` (single `instanceId`) | `packages/backend/src/controllers/chatController.ts` | **Ativo** | **Pós-F4b** | Default quando `CHAT_AGGREGATED_CONVERSATIONS=0` |
+| L-HTTP-B02 | Módulo agregado F4a | `packages/backend/src/services/chatAggregatedConversations/` | **Migrado** | — | SoT alvo pós-rollout |
+| L-HTTP-B03 | Shadow compare | `shadowCompare.ts`, `shadowMetrics.ts` | **Migrado** | **Pós-F4b** | `CHAT_AGGREGATED_API_SHADOW=1`; remover após paridade validada |
+
+---
+
+## 2. Feature flags de transição
+
+| ID | Flag (env) | Fase | Status | Remover em | Notas |
+|---|---|---|---|---|---|
+| L-FF-01 | `VITE_CHAT_FF_SINGLE_SOCKET` | F1 | **Migrado** | **Pós-F1** | Consolidar ON em prod antes de apagar socket legado |
+| L-FF-02 | `VITE_CHAT_FF_WS_PATCH_*` (5 sub-flags) | F2 | **Migrado** | **Pós-F2** | Remover branches `invalidate` quando estáveis |
+| L-FF-03 | `VITE_CHAT_FF_INSTANCE_REGISTRY` | F3 | **Migrado** | **Pós-F3** | |
+| L-FF-04 | `VITE_CHAT_FF_UNREAD_ENGINE` | F3 | **Migrado** | **Pós-F3** | |
+| L-FF-05 | `VITE_CHAT_FF_ATTENDANCE_RECONCILE` | F3 | **Migrado** | **Pós-F3** | |
+| L-FF-06 | `VITE_CHAT_FF_AGGREGATED_FLOAT` | F4b | **Migrado** | **Pós-F4b** | Unificar em flag única após canário |
+| L-FF-07 | `VITE_CHAT_FF_AGGREGATED_LEAD` | F4b | **Migrado** | **Pós-F4b** | |
+| L-FF-08 | `VITE_CHAT_FF_AGGREGATED_SIDEBAR` | F4b | **Migrado** | **Pós-F4b** | |
+| L-FF-09 | `VITE_CHAT_FF_AGGREGATED_CHAT` | F4b | **Migrado** | **Pós-F4b** | |
+| L-FF-10 | `CHAT_AGGREGATED_CONVERSATIONS` (backend) | F4a | **Migrado** | **Pós-F4b** | |
+| L-FF-11 | `CHAT_AGGREGATED_API_SHADOW` (backend) | F4a | **Migrado** | **Pós-F4b** | |
+| L-FF-12 | `VITE_CHAT_FF_CORE_STORE` | F5 | **Ativo** | — | Ainda não implementado |
+| L-FF-13 | `VITE_CHAT_FF_INBOX_CURSOR` | F6 | **Ativo** | — | Ainda não implementado |
+| L-FF-14 | `VITE_CHAT_FF_REDIS_WS` | F7 | **Ativo** | — | Ainda não implementado |
+| L-FF-15 | `src/lib/chatAggregatedFlags.ts` | F4b | **Migrado** | **Pós-F4b** | Pode fundir em `feature-flags.ts` após rollout |
+
+---
+
+## 3. Realtime — sockets
+
+| ID | Artefato | Local | Status | Remover em | Notas |
+|---|---|---|---|---|---|
+| L-RT-01 | `legacySocket` + `io()` dedicado | `src/services/realtimeClient.ts` | **Migrado** | **Pós-F1** | Quando `CHAT_SINGLE_SOCKET` ON usa Bridge |
+| L-RT-02 | `io({ forceNew: true })` página Chat | `src/pages/Chat.tsx` ~L1521 | **Migrado** | **Pós-F1** | Segundo socket em `/chat` |
+| L-RT-03 | `io()` dedicado | `src/pages/ClientProfile.tsx` | **Migrado** | **Pós-F1** | |
+| L-RT-04 | Socket kanban attendance | `src/hooks/useKanbanAttendanceSocketRefresh.ts` | **Migrado** | **Pós-F1** | |
+| L-RT-05 | `ChatRealtimeBridge` | `src/features/chat-core/realtime/bridge.ts` | **Migrado** | — | Substituto F1; não remover |
+| L-RT-06 | Handlers eventos **legado** WS | `CHAT_WS_EVENTS_LEGACY` em `contracts.ts` | **Ativo** | **F7+** | Remover quando backend emitir só v2 |
+| L-RT-07 | `useNotifications` socket próprio | `src/hooks/useNotifications.ts` | **Ativo** | **Fora F0–F7** | Módulo Notifications — ADR separada |
+| L-RT-08 | Redis WS adapter ausente | backend Socket.IO | **Ativo** | **F7** | Single-node hoje |
+
+---
+
+## 4. Realtime — invalidate / refetch (anti-patch)
+
+| ID | Artefato | Local | Status | Remover em | Notas |
+|---|---|---|---|---|---|
+| L-INV-01 | `invalidateQueries(['floating-chat', …])` pós-WS | `FloatingChatProvider.tsx` | **Ativo** | **Pós-F2** | Patch F2 tenta antes; invalidate é fallback |
+| L-INV-02 | Idem | `FloatingConversationWindow.tsx` | **Ativo** | **Pós-F2** | |
+| L-INV-03 | Idem | `MobileConversationOverlay.tsx` | **Ativo** | **Pós-F2** | |
+| L-INV-04 | `invalidateFloatingChatLists()` | `floatingChatQueries.ts` | **Ativo** | **Pós-F2** | |
+| L-INV-05 | `invalidateQueries(['floating-chat'])` CRM | `ClientProfile.tsx`, `Leads.tsx`, `EmbeddedLeadConversationPanel.tsx` | **Ativo** | **F5** | Após SoT única |
+| L-INV-06 | Lista/mensagens `useState` + refetch WS | `src/pages/Chat.tsx` | **Migrado** | **Pós-F5.6** | Guardado quando `CHAT_CORE_STORE` ON; legado só com flag OFF |
+| L-INV-07 | `refreshCards()` kanban pós-WS | Kanban attendance hook | **Ativo** | **F5** | Board estado local |
+| L-INV-08 | HTTP `attendance-counts` pós-evento | `Chat.tsx`, `useChatNavUnreadCount.ts` | **Migrado** | **Pós-F3** | Unread Engine reduz; não elimina reconcile |
+
+### Substituto F2 (manter)
+
+| Artefato | Local | Status |
+|---|---|---|
+| `tryApplyChatWsPatch()` | `src/features/chat-core/ws-patch/` | **Migrado** |
+
+---
+
+## 5. Instâncias — registry e HTTP redundante
+
+| ID | Artefato | Local | Status | Remover em | Notas |
+|---|---|---|---|---|---|
+| L-INST-01 | `chatService.listInstances()` direto nos consumidores | vários (flag OFF) | **Migrado** | **Pós-F3** | `ensureChatInstances` com registry ON |
+| L-INST-02 | Branch legado registry | `instance-registry/registry.ts` | **Migrado** | **Pós-F3** | Fallback `listInstances()` |
+| L-INST-03 | `listInstances` em Settings | `InstancesList.tsx` | **Ativo** | **Manter** | Bootstrap conexão WhatsApp (escopo settings) |
+| L-INST-04 | Superadmin instances | `SuperAdminPlatformWhatsAppPanel.tsx` | **Ativo** | **Manter** | Escopo platform admin |
+
+---
+
+## 6. Unread / contadores
+
+| ID | Artefato | Local | Status | Remover em | Notas |
+|---|---|---|---|---|---|
+| L-UNR-01 | Poll 120s nav badge | `useChatNavUnreadCount.ts` | **Migrado** | **Pós-F3** | Mantido quando `CHAT_UNREAD_ENGINE` OFF |
+| L-UNR-02 | HTTP direto `attendance-counts` | `useChatNavUnreadCount.ts`, prefetch | **Migrado** | **Pós-F3** | Unread Engine + reconcile |
+| L-UNR-03 | Branch legado unread | `unread-engine/engine.ts` | **Migrado** | **Pós-F3** | |
+| L-UNR-04 | `fetchChatAttendanceCounts` no prefetch | `chatPrefetch.ts` | **Migrado** | **Pós-F3** | |
+
+---
+
+## 7. Estado e cache paralelos (SoT)
+
+| ID | Artefato | Local | Status | Remover em | Notas |
+|---|---|---|---|---|---|
+| L-CACHE-01 | `chatPageCache` (localStorage) | `src/lib/chatPageCache.ts` + `Chat.tsx` | **Migrado** | **Pós-F5.6** | Bypass quando `CHAT_CORE_STORE` ON |
+| L-CACHE-02 | `useState` conversas/mensagens Chat | `src/pages/Chat.tsx` | **Migrado** | **Pós-F5.6** | SoT = Domain Store quando flag ON |
+| L-CACHE-03 | React Query `floating-chat/*` | vários float | **Migrado** | **Pós-F5.6** | RQ só com `CHAT_CORE_STORE` OFF |
+| L-CACHE-04 | React Query `lead-profile/*` | lead embed | **Ativo** | **F5** | |
+| L-CACHE-05 | `chatRepository` stub F0 | `chat-core/repository/chatRepository.ts` | **Ativo** | **F5** | Substituir por store real |
+| L-CACHE-06 | Dump completo inbox (sem cursor UI) | `Chat.tsx` load | **Migrado** | **F6** | API retorna cursor; UI load-more pendente |
+| L-CACHE-07 | `clearChatPageCacheForSession` | `queryClient.ts` | **Ativo** | **F5** | Ligado ao cache v1/v2 |
+
+---
+
+## 8. Métricas e instrumentação transitória
+
+| ID | Artefato | Local | Status | Remover em | Notas |
+|---|---|---|---|---|---|
+| L-MET-01 | `chatConversationsMetrics.ts` | `src/lib/` | **Migrado** | **F5** | Simplificar após legado HTTP removido |
+| L-MET-02 | Shadow metrics F4a | `shadowMetrics.ts` | **Migrado** | **Pós-F4b** | |
+| L-MET-03 | `chat-core/metrics/baseline.ts` | F0–F3 | **Migrado** | **F5** | Manter observabilidade core |
+
+---
+
+## 9. Mapa sprint → remoções previstas
+
+```
+F0  ✓ contrato/baseline        → nada a remover
+F1  ✓ single socket           → L-RT-01..04 (Pós-F1)
+F2  ✓ ws-patch                 → L-INV-01..04 (Pós-F2)
+F3  ✓ registry + unread        → L-INST-01..02, L-UNR-* (Pós-F3)
+F4a ✓ API agregada backend      → L-HTTP-B03 shadow (Pós-F4b)
+F4b ✓ repository frontend      → L-HTTP-01..14, L-FF-06..11 (Pós-F4b)
+─────────────────────────────────────────────────────────
+F5  ○ Chat Core store           → L-CACHE-*, L-INV-05..07, Chat.tsx estado
+F6  ○ cursor / load-more UI     → dump completo, paginação local residual
+F7  ○ Redis WS adapter           → L-RT-08, eventos legacy se aplicável
+```
+
+---
+
+## 10. Ordem recomendada de remoção (pós-canário)
+
+| Ordem | Bloco | Pré-requisito |
+|---|---|---|
+| 1 | Shadow backend F4a (L-HTTP-B03, L-FF-11) | Paridade agregado ≈ legado em staging |
+| 2 | HTTP N+1 frontend (L-HTTP-01..14) | Todas flags F4b ON + backend ON |
+| 3 | Flags F4b por superfície (L-FF-06..09) | Unificar em flag única |
+| 4 | Sockets duplicados (L-RT-01..04) | F1 ON em produção |
+| 5 | Invalidate float (L-INV-01..04) | F2 sub-flags ON |
+| 6 | Registry/unread legado (L-INST-01..02, L-UNR-*) | F3 ON em produção |
+| 7 | chatPageCache + useState Chat (L-CACHE-01..02) | **F5.6** completo — remoção física pós-canário F6 |
+| 8 | Keys RQ fragmentadas (L-CACHE-03..04) | **F5.6** + **F6** cursor |
+| 9 | Cursor UI + janela quente | **F6** |
+| 10 | WS horizontal + eventos legacy | **F7** |
+
+---
+
+## 11. Itens explicitamente fora do escopo de remoção
+
+| Item | Motivo |
+|---|---|
+| `chatService` como cliente HTTP genérico | Permanece; só muda quem chama |
+| `FloatingChatProvider` (UI state) | Painéis/minimize — não é SoT de domínio |
+| `InstancesList` / QR polling | Settings — não é inbox |
+| `useNotifications` socket | Módulo Notifications |
+| Fluxo legado CRM (notas, faturas) | Domínio CRM, não Chat |
+
+---
+
+## 12. Changelog
+
+| Data | Sprint | Alteração |
+|---|---|---|
+| 2026-07-09 | **F5.10** | Messages Command Unification: `loadMessagesCommand` único (Chat + Floating); `repositorySync.listMessages` usa `toDomainMessage()`; `applyStoreMessagesInternal`; removidos pipelines `surface: 'core'|'float'`. Corrige thread vazia `/chat`. |
+| 2026-07-09 | **F5.9** | Inbox Command Unification: `loadInboxCommand` único; `applyStoreConversationList` removido da UI; bootstrap/refresh unificados. |
+| 2026-07-08 | **F5.7** | Estabilização: `store/public.ts` (API UI); shadow logs gated `CHAT_CORE_METRICS`; cleanup código morto; wiring validado. **0** mudanças de status no inventário. |
+| 2026-07-08 | **F5.6** | Consolidação Domain Store: `CHAT_CORE_STORE` ON = SoT única; removido shadow parity/dual-write na UI; `consolidation.ts`; L-CACHE-01..03 e L-INV-06 → **Migrado**. |
+| 2026-07-08 | **F4b** | Documento criado. 20 itens **Migrado** (F1–F4b). 28 **Ativo**. 0 **Removido**. |
+
+---
+
+## 13. Template de atualização (copiar ao fechar sprint)
+
+```markdown
+### YYYY-MM-DD — Sprint FX
+
+**Itens migrados nesta sprint:**
+- L-XXX-NN: descrição → status **Migrado**
+
+**Itens removidos nesta sprint:**
+- L-XXX-NN: descrição → status **Removido** (PR #____)
+
+**Ainda ativos (bloqueados):**
+- L-XXX-NN: motivo / sprint alvo
+
+**Resumo:** X Ativo | Y Migrado | Z Removido
+```
+
+---
+
+*Este tracker é a fonte oficial para PRs de remoção de legado. Qualquer remoção antecipada exige ADR e atualização deste documento.*

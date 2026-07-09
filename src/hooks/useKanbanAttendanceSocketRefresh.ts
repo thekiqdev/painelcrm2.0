@@ -1,6 +1,11 @@
 import { useEffect, useRef } from 'react';
 import { io, type Socket } from 'socket.io-client';
 import { SOCKET_IO_CLIENT_TRANSPORTS } from '@/lib/socketIoClientOptions';
+import {
+  acquireSharedChatSocket,
+  chatRealtimeBridge,
+  shouldUseSingleChatSocket,
+} from '@/features/chat-core/realtime/bridge';
 
 type AttendancePayload = { conversation?: { id?: string } };
 
@@ -8,6 +13,8 @@ type AttendancePayload = { conversation?: { id?: string } };
  * Mantém o quadro Kanban alinhado com o servidor sem F5:
  * - atendimento / metadata (`conversation_attendance_updated`)
  * - nova mensagem ou última mensagem da conversa (`new_message`, `conversation_updated`), ex.: automação por template
+ *
+ * F1: com CHAT_SINGLE_SOCKET=ON reutiliza ChatRealtimeBridge (sem io() extra).
  */
 export function useKanbanAttendanceSocketRefresh(
   token: string | undefined,
@@ -23,19 +30,32 @@ export function useKanbanAttendanceSocketRefresh(
   useEffect(() => {
     if (!token || !boardActive) return;
 
-    const isDev = import.meta.env.DEV;
-    const socketUrl = isDev
-      ? (import.meta.env.VITE_API_URL || 'http://localhost:3001')
-      : window.location.origin;
+    const useSingle = shouldUseSingleChatSocket();
+    let socket: Socket;
+    let ownsDedicated = false;
+    let unregisterConsumer: (() => void) | undefined;
 
-    const socket: Socket = io(socketUrl, {
-      auth: { token },
-      transports: [...SOCKET_IO_CLIENT_TRANSPORTS],
-      reconnection: true,
-      path: '/socket.io/',
-      query: { token },
-      withCredentials: true,
-    });
+    if (useSingle) {
+      const shared = acquireSharedChatSocket(token);
+      if (!shared) return;
+      socket = shared;
+      unregisterConsumer = chatRealtimeBridge.registerConsumer('KanbanAttendance');
+    } else {
+      const isDev = import.meta.env.DEV;
+      const socketUrl = isDev
+        ? (import.meta.env.VITE_API_URL || 'http://localhost:3001')
+        : window.location.origin;
+
+      socket = io(socketUrl, {
+        auth: { token },
+        transports: [...SOCKET_IO_CLIENT_TRANSPORTS],
+        reconnection: true,
+        path: '/socket.io/',
+        query: { token },
+        withCredentials: true,
+      });
+      ownsDedicated = true;
+    }
 
     let debounce: ReturnType<typeof setTimeout> | null = null;
     const scheduleRefresh = () => {
@@ -72,10 +92,13 @@ export function useKanbanAttendanceSocketRefresh(
 
     return () => {
       if (debounce) clearTimeout(debounce);
+      unregisterConsumer?.();
       socket.off('conversation_attendance_updated', onAttendance);
       socket.off('new_message', onNewMessage);
       socket.off('conversation_updated', onConversationUpdated);
-      socket.disconnect();
+      if (ownsDedicated) {
+        socket.disconnect();
+      }
     };
   }, [token, boardActive]);
 }

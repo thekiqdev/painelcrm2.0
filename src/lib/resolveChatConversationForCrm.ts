@@ -1,4 +1,8 @@
-import { chatService, type ChatConversation } from '@/services/chat';
+import type { ChatConversation } from '@/services/chat';
+import {
+  listChatConversationsForCrmResolve,
+  type ChatAggregatedSurface,
+} from '@/repositories/chatConversationsRepository';
 
 function normEq(a: string | null | undefined, b: string): boolean {
   return Boolean(a && b && String(a).toLowerCase() === String(b).toLowerCase());
@@ -12,20 +16,18 @@ export async function resolveConversationIdForCrmRecord(params: {
   leadId?: string;
   instanceIds: string[];
   inboxScope: 'tenant' | 'owner';
+  surface?: ChatAggregatedSurface;
 }): Promise<string | null> {
   const { clientId, leadId, instanceIds, inboxScope } = params;
+  const surface = params.surface ?? 'lead';
   if (!clientId && !leadId) return null;
   if (instanceIds.length === 0) return null;
 
-  const buckets: ChatConversation[] = [];
-  for (const instanceId of instanceIds) {
-    try {
-      const rows = await chatService.getConversations({ instanceId, inboxScope });
-      buckets.push(...rows);
-    } catch {
-      /* ignora instância */
-    }
-  }
+  const buckets = await listChatConversationsForCrmResolve({
+    surface,
+    instanceIds,
+    inboxScope,
+  });
 
   if (leadId) {
     return (

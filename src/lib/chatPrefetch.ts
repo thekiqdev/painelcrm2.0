@@ -3,13 +3,21 @@ import { preloadChatPageChunk } from '@/pages/chatLazy';
 import { queryClient } from '@/lib/queryClient';
 import { chatService } from '@/services/chat';
 import {
+  ensureChatInstances as loadChatInstancesFromCore,
+  fetchChatAttendanceCounts,
+  filterEnabledChatInstanceIds,
+} from '@/features/chat-core/runtime';
+import {
   prefetchFloatingChatLists,
   floatingChatBubbleQueryKey,
   floatingChatConversationsQueryKey,
   FLOATING_CHAT_LIST_STALE_MS,
   FLOATING_CHAT_MESSAGES_STALE_MS,
 } from '@/features/floating-chat/floatingChatQueries';
-import { fetchBubbleRecentConversations } from '@/lib/chatConversationsFetch';
+import {
+  listBubbleChatConversations,
+  listChatConversationsItems,
+} from '@/repositories/chatConversationsRepository';
 
 export const CHAT_INSTANCES_STALE_MS = 2 * 60_000;
 export const CHAT_CONVERSATIONS_STALE_MS = 90_000;
@@ -40,14 +48,9 @@ export function scheduleIdleChatPrefetch(run: () => void | Promise<void>): void 
 }
 
 function enabledInstanceIdsFromList(
-  instances: Awaited<ReturnType<typeof chatService.listInstances>>,
+  instances: Awaited<ReturnType<typeof loadChatInstancesFromCore>>,
 ): string[] {
-  return instances
-    .filter(
-      (inst) =>
-        (inst.metadata as Record<string, unknown> | null | undefined)?.enabled_in_chat !== false,
-    )
-    .map((i) => i.id);
+  return filterEnabledChatInstanceIds(instances);
 }
 
 export async function ensureChatInstances(
@@ -57,7 +60,7 @@ export async function ensureChatInstances(
 ): Promise<string[]> {
   const instances = await qc.ensureQueryData({
     queryKey: chatInstancesQueryKey(tenantId, userId),
-    queryFn: () => chatService.listInstances(),
+    queryFn: () => loadChatInstancesFromCore({ reason: 'prefetch' }),
     staleTime: CHAT_INSTANCES_STALE_MS,
   });
   return enabledInstanceIdsFromList(instances);
@@ -79,10 +82,10 @@ export async function prefetchChatUnread(
   await qc.prefetchQuery({
     queryKey: chatUnreadQueryKey(tenantId, userId, key, inboxScope),
     queryFn: async () => {
-      const c = await chatService.getConversationAttendanceCounts({
-        instanceIds,
-        inboxScope,
-      });
+      const c = await fetchChatAttendanceCounts(
+        { instanceIds, inboxScope },
+        { reason: 'prefetch' },
+      );
       return typeof c.unread === 'number' ? c.unread : 0;
     },
     staleTime: CHAT_UNREAD_STALE_MS,
@@ -127,32 +130,34 @@ export async function prefetchChatCore(
     prefetchChatUnread(qc, tenantId, userId, instanceIds, inboxScope),
     qc.prefetchQuery({
       queryKey: floatingChatConversationsQueryKey(instanceIds, inboxScope, 'mine'),
-      queryFn: async () => {
-        const { fetchMergedChatConversations } = await import('@/lib/chatConversationsFetch');
-        return fetchMergedChatConversations({
+      queryFn: () =>
+        listChatConversationsItems({
+          surface: 'sidebar',
           instanceIds,
           inboxScope,
           quickFilter: 'mine',
-        });
-      },
+        }),
       staleTime: CHAT_CONVERSATIONS_STALE_MS,
     }),
     qc.prefetchQuery({
       queryKey: floatingChatConversationsQueryKey(instanceIds, inboxScope, 'unread'),
-      queryFn: async () => {
-        const { fetchMergedChatConversations } = await import('@/lib/chatConversationsFetch');
-        return fetchMergedChatConversations({
+      queryFn: () =>
+        listChatConversationsItems({
+          surface: 'sidebar',
           instanceIds,
           inboxScope,
           quickFilter: 'unread',
-        });
-      },
+        }),
       staleTime: CHAT_CONVERSATIONS_STALE_MS,
     }),
     qc.prefetchQuery({
       queryKey: floatingChatBubbleQueryKey(instanceIds, inboxScope),
       queryFn: async () => {
-        const recent = await fetchBubbleRecentConversations(instanceIds, inboxScope);
+        const recent = await listBubbleChatConversations({
+          surface: 'sidebar',
+          instanceIds,
+          inboxScope,
+        });
         await prefetchRecentConversationMessages(
           qc,
           recent.map((c) => c.id),

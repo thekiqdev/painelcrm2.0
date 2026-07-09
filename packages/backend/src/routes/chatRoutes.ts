@@ -116,6 +116,7 @@ import {
   postChatGroupParticipantSyncProfile,
   postChatGroupParticipantsSyncMissing,
 } from '../controllers/chatGroupController.js';
+import { getChatMigrationFlags } from '../controllers/chatMigrationFlagsController.js';
 
 const router = Router();
 
@@ -138,6 +139,7 @@ router.post('/instances/:id/webhook/reconfigure', reconfigureInstanceWebhook);
 router.post('/instances/:id/webhook/rotate-secret', rotateInstanceWebhookSecret);
 router.post('/instances/:id/repair-webhook', repairInstanceWebhook);
 router.get('/runtime-config', getChatRuntimeConfig);
+router.get('/migration-flags', getChatMigrationFlags);
 router.get('/tenant-users-for-group', getChatTenantUsersForGroupInvite);
 router.post('/conversations/sync', syncConversations);
 router.get('/conversations/attendance-counts', getConversationAttendanceCounts);

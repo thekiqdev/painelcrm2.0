@@ -12,7 +12,10 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { ChatBubbleContent } from '@/components/chat/ChatBubbleContent';
 import { MessageStatusIndicator } from '@/components/chat/MessageStatusIndicator';
 import { chatService, resolveChatKanbanTagsForUi, type ChatConversation, type ChatMessage } from '@/services/chat';
+import { findChatConversationById } from '@/repositories/chatConversationsRepository';
 import { REALTIME_WINDOW_EVENTS } from '@/services/realtimeClient';
+import { tryApplyChatWsPatch } from '@/features/chat-core/ws-patch';
+import { ensureChatInstances, filterConnectedChatInstances } from '@/features/chat-core/runtime';
 import { cn } from '@/lib/utils';
 import { useFloatingChat } from './floatingChatContext';
 import { useFloatingConversationIdentity } from './useFloatingConversationIdentity';
@@ -20,7 +23,8 @@ import { floatingAttendanceRowModel } from './attendanceUi';
 import { Badge } from '@/components/ui/badge';
 import { FloatingCompactProfile } from './FloatingCompactProfile';
 import { getCachedFloatingConversationById } from './queryCache';
-import { FLOATING_CHAT_MESSAGES_STALE_MS, FLOATING_CHAT_META_STALE_MS } from './floatingChatQueries';
+import { FLOATING_CHAT_META_STALE_MS } from './floatingChatQueries';
+import { useFloatingConversationMessages } from '@/features/chat-core/store/public';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -103,17 +107,7 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
     closeAppointmentPanel,
   } = useFloatingChat();
 
-  const messagesQueryKey = useMemo(
-    () => ['floating-chat', 'messages', conversationId] as const,
-    [conversationId],
-  );
-
-  const applyMessages = useCallback(
-    (updater: (prev: ChatMessage[]) => ChatMessage[]) => {
-      queryClient.setQueryData<ChatMessage[]>(messagesQueryKey, (old) => updater(old ?? []));
-    },
-    [queryClient, messagesQueryKey],
-  );
+  const { messages, isLoading, applyMessages } = useFloatingConversationMessages(conversationId);
 
   const afterSend = useCallback(() => {
     void queryClient.invalidateQueries({
@@ -134,46 +128,22 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
     queryFn: async (): Promise<ChatConversation | null> => {
       const cached = getCachedFloatingConversationById(queryClient, conversationId);
       if (cached) return cached;
-      for (const instanceId of instanceIds) {
-        try {
-          const rows = await chatService.getConversations({ instanceId, inboxScope });
-          const hit = rows.find((r) => r.id === conversationId);
-          if (hit) return hit;
-        } catch {
-          /* ignora instância */
-        }
-      }
-      try {
-        const rows = await chatService.getConversations({ inboxScope });
-        return rows.find((r) => r.id === conversationId) ?? null;
-      } catch {
-        return null;
-      }
+      return findChatConversationById({
+        surface: 'float',
+        conversationId,
+        instanceIds,
+        inboxScope,
+      });
     },
     staleTime: FLOATING_CHAT_META_STALE_MS,
     placeholderData: () => getCachedFloatingConversationById(queryClient, conversationId),
   });
 
-  const { data: messages = [], isLoading } = useQuery({
-    queryKey: ['floating-chat', 'messages', conversationId],
-    queryFn: async () => {
-      const rows = await chatService.getConversationMessages(conversationId);
-      void chatService.syncConversationMessages(conversationId, {}).catch(() => {});
-      return rows;
-    },
-    staleTime: FLOATING_CHAT_MESSAGES_STALE_MS,
-    placeholderData: (prev) => prev,
-  });
-
   const { data: connectedInstances = [] } = useQuery({
     queryKey: ['floating-chat', 'connected-instances'],
     queryFn: async () => {
-      const rows = await chatService.listInstances();
-      return rows.filter((instance) => {
-        const status = String(instance.status || '').toLowerCase();
-        const enabled = (instance.metadata as Record<string, unknown> | null | undefined)?.enabled_in_chat !== false;
-        return enabled && (status === 'connected' || status === 'open');
-      });
+      const rows = await ensureChatInstances({ reason: 'bootstrap' });
+      return filterConnectedChatInstances(rows);
     },
     staleTime: 30_000,
   });
@@ -183,6 +153,10 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
       const d = (e as CustomEvent<Record<string, unknown>>).detail;
       const cid = (d?.conversation_id as string) || (d?.conversationId as string);
       if (typeof cid !== 'string' || cid !== conversationId) return;
+      const patch = tryApplyChatWsPatch(queryClient, 'message.created', d, {
+        isActiveConversation: true,
+      });
+      if (patch.applied) return;
       void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'messages', conversationId] });
       void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'conversation-meta', conversationId] });
     };
@@ -190,6 +164,8 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
       const d = (e as CustomEvent<Record<string, unknown>>).detail;
       const cid = (d?.conversation_id as string) || (d?.conversationId as string);
       if (typeof cid === 'string' && cid !== conversationId) return;
+      const patch = tryApplyChatWsPatch(queryClient, 'conversation.updated', d);
+      if (patch.applied) return;
       void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'messages', conversationId] });
       void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'conversation-meta', conversationId] });
       void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'conversations'] });

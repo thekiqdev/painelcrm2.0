@@ -221,6 +221,13 @@ export const superAdminHubAreas: SuperAdminHubAreaDef[] = [
         icon: Flag,
       },
       {
+        to: "/superadmin/avancado/feature-flags/chat-optimization",
+        title: "Otimização do Chat",
+        description:
+          "Feature Flags da migração F1–F4 do Chat (socket único, WS patch, registry, API agregada).",
+        icon: MessageCircle,
+      },
+      {
         to: "/superadmin/avancado/scripts",
         title: "Scripts de manutenção",
         description:

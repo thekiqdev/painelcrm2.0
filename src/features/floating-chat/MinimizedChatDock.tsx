@@ -4,6 +4,10 @@ import { X } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { chatService, type ChatConversation } from '@/services/chat';
+import {
+  isChatAggregatedSurfaceEnabled,
+} from '@/lib/chatAggregatedFlags';
+import { listChatConversations } from '@/repositories/chatConversationsRepository';
 import { resolveConversationIdentity } from '@/utils/chatIdentityDisplay';
 import { cn } from '@/lib/utils';
 import { useFloatingChat } from './floatingChatContext';
@@ -69,9 +73,30 @@ export function MinimizedChatDock({
         .map((p) => p.conversationId)
         .filter((id) => !out[id]);
       if (missingIds.length === 0) return out;
+
+      if (isChatAggregatedSurfaceEnabled('float') && instanceIds.length > 0) {
+        try {
+          const { items } = await listChatConversations({
+            surface: 'float',
+            instanceIds,
+            inboxScope,
+            quickFilter: 'all',
+          });
+          for (const conversationId of missingIds) {
+            const hit = items.find((r) => r.id === conversationId);
+            if (hit) out[conversationId] = hit;
+          }
+        } catch {
+          /* fallback legado abaixo */
+        }
+      }
+
+      const stillAfterAgg = missingIds.filter((id) => !out[id]);
+      if (stillAfterAgg.length === 0) return out;
+
       for (const instanceId of instanceIds) {
         const rows = await chatService.getConversations({ instanceId, inboxScope });
-        for (const conversationId of missingIds) {
+        for (const conversationId of stillAfterAgg) {
           if (out[conversationId]) continue;
           const hit = rows.find((r) => r.id === conversationId);
           if (hit) out[conversationId] = hit;

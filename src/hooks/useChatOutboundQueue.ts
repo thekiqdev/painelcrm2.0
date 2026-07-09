@@ -1,5 +1,6 @@
 import { useCallback, useRef, type MutableRefObject } from 'react';
 import { chatService, type ChatMessage } from '@/services/chat';
+import { bridgeSendMessage } from '@/features/chat-core/core/chatCommandBridge';
 
 export type ChatReplySnap = {
   messageId: string;
@@ -46,9 +47,10 @@ export function useChatOutboundQueue(options: {
           );
 
           try {
-            const { message: serverMsg } = await chatService.sendMessage(cid, text, {
+            const { message: serverMsg } = await bridgeSendMessage(cid, text, {
               replyToMessageId: item.replyToMessageId,
               clientMessageId,
+              optimisticId: optimisticLocalId,
             });
             pendingWsFifoRef.current = pendingWsFifoRef.current.filter((id) => id !== optimisticLocalId);
             if (serverMsg) {

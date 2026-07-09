@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { apiClient } from '@/integrations/api/client';
 import { toast } from '@/components/ui/sonner';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import {
   Select,
@@ -12,6 +13,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Input } from '@/components/ui/input';
+import { MessageCircle } from 'lucide-react';
 import {
   Table,
   TableBody,
@@ -174,6 +177,23 @@ export default function SuperAdminAdvancedFeatureFlagsPage() {
 
   return (
     <div className="space-y-4">
+      <Card className="border-primary/30 bg-primary/5 shadow-sm">
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <MessageCircle className="h-5 w-5" />
+            Otimização do Chat
+          </CardTitle>
+          <CardDescription>
+            Feature Flags dedicadas da migração F1–F4 (socket único, WS patch, registry, API agregada).
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button variant="secondary" size="sm" asChild>
+            <Link to="/superadmin/avancado/feature-flags/chat-optimization">Abrir painel do Chat</Link>
+          </Button>
+        </CardContent>
+      </Card>
+
       <Card className="border-border/60 bg-card/70 shadow-sm">
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center justify-between gap-3">

@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { chatService } from '@/services/chat';
+import {
+  bootstrapChatF3Session,
+  ensureChatF3RuntimeWired,
+  ensureChatInstances,
+  fetchChatAttendanceCounts,
+  getChatGlobalUnreadCount,
+  shouldUseChatAttendanceReconcile,
+  shouldUseChatUnreadEngine,
+  subscribeChatUnreadEngine,
+} from '@/features/chat-core/runtime';
+import { filterEnabledChatInstanceIds } from '@/features/chat-core/instance-registry';
 import { REALTIME_WINDOW_EVENTS } from '@/services/realtimeClient';
 import { CHAT_NAV_UNREAD_REFRESH_EVENT } from '@/lib/chatNavUnreadEvents';
 
@@ -17,6 +27,10 @@ export function useChatNavUnreadCount(enabled: boolean): number {
   const debounceRef = useRef<number | null>(null);
   const inFlightRef = useRef(false);
 
+  useEffect(() => {
+    bootstrapChatF3Session(user?.id, user?.tenant_id);
+  }, [user?.id, user?.tenant_id]);
+
   const refresh = useCallback(async () => {
     if (!enabled || !user?.id) {
       setCount(0);
@@ -24,21 +38,20 @@ export function useChatNavUnreadCount(enabled: boolean): number {
     }
     if (inFlightRef.current) return;
     inFlightRef.current = true;
+    ensureChatF3RuntimeWired();
     try {
-      const instances = await chatService.listInstances();
-      const ids = instances
-        .filter((inst) => (inst.metadata as Record<string, unknown> | null | undefined)?.enabled_in_chat !== false)
-        .map((i) => i.id);
+      const instances = await ensureChatInstances({ reason: 'bootstrap' });
+      const ids = filterEnabledChatInstanceIds(instances);
       if (ids.length === 0) {
         setCount(0);
         return;
       }
       const inboxScope = user.tenant_id ? ('tenant' as const) : ('owner' as const);
-      const c = await chatService.getConversationAttendanceCounts({
-        instanceIds: ids,
-        inboxScope,
-      });
-      setCount(typeof c.unread === 'number' ? c.unread : 0);
+      const c = await fetchChatAttendanceCounts(
+        { instanceIds: ids, inboxScope },
+        { reason: 'bootstrap' },
+      );
+      setCount(shouldUseChatUnreadEngine() ? getChatGlobalUnreadCount() : c.unread);
     } catch {
       setCount(0);
     } finally {
@@ -61,19 +74,47 @@ export function useChatNavUnreadCount(enabled: boolean): number {
   }, [refresh]);
 
   useEffect(() => {
+    if (!enabled || !shouldUseChatUnreadEngine()) return;
+    return subscribeChatUnreadEngine(() => {
+      setCount(getChatGlobalUnreadCount());
+    });
+  }, [enabled]);
+
+  useEffect(() => {
     if (!enabled) return;
-    const onRefresh = () => scheduleRefresh();
+
+    const onRealtime = () => {
+      if (shouldUseChatUnreadEngine()) {
+        setCount(getChatGlobalUnreadCount());
+        return;
+      }
+      scheduleRefresh();
+    };
+
+    const onRefresh = () => {
+      if (shouldUseChatUnreadEngine()) {
+        setCount(getChatGlobalUnreadCount());
+        return;
+      }
+      scheduleRefresh();
+    };
+
     window.addEventListener(CHAT_NAV_UNREAD_REFRESH_EVENT, onRefresh);
-    window.addEventListener(REALTIME_WINDOW_EVENTS.messageCreated, onRefresh);
-    window.addEventListener(REALTIME_WINDOW_EVENTS.conversationUpdated, onRefresh);
+    window.addEventListener(REALTIME_WINDOW_EVENTS.messageCreated, onRealtime);
+    window.addEventListener(REALTIME_WINDOW_EVENTS.conversationUpdated, onRealtime);
     window.addEventListener(REALTIME_WINDOW_EVENTS.notificationCreated, onRefresh);
-    const t = window.setInterval(() => void refresh(), POLL_MS);
+
+    const useLegacyPoll =
+      !shouldUseChatUnreadEngine() ||
+      (!shouldUseChatAttendanceReconcile() && shouldUseChatUnreadEngine());
+    const t = useLegacyPoll ? window.setInterval(() => void refresh(), POLL_MS) : undefined;
+
     return () => {
       window.removeEventListener(CHAT_NAV_UNREAD_REFRESH_EVENT, onRefresh);
-      window.removeEventListener(REALTIME_WINDOW_EVENTS.messageCreated, onRefresh);
-      window.removeEventListener(REALTIME_WINDOW_EVENTS.conversationUpdated, onRefresh);
+      window.removeEventListener(REALTIME_WINDOW_EVENTS.messageCreated, onRealtime);
+      window.removeEventListener(REALTIME_WINDOW_EVENTS.conversationUpdated, onRealtime);
       window.removeEventListener(REALTIME_WINDOW_EVENTS.notificationCreated, onRefresh);
-      window.clearInterval(t);
+      if (t !== undefined) window.clearInterval(t);
       if (debounceRef.current !== null) {
         window.clearTimeout(debounceRef.current);
         debounceRef.current = null;

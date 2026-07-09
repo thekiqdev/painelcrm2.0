@@ -498,9 +498,20 @@ export function normalizeConversation(raw: any): ChatConversation {
     history_sync_status,
     last_history_sync_reason,
     status: raw.status ?? null,
-    lastMessagePreview: raw.last_message_preview ?? null,
+    lastMessagePreview:
+      (typeof raw.last_message_preview === 'string' && raw.last_message_preview.trim()
+        ? raw.last_message_preview.trim()
+        : null) ??
+      (typeof raw.lastMessagePreview === 'string' && raw.lastMessagePreview.trim()
+        ? raw.lastMessagePreview.trim()
+        : null),
     lastMessageAt: listLastActivityAt,
-    unreadCount: typeof raw.unread_count === 'number' ? raw.unread_count : 0,
+    unreadCount:
+      typeof raw.unread_count === 'number'
+        ? raw.unread_count
+        : typeof raw.unreadCount === 'number'
+          ? raw.unreadCount
+          : 0,
     link_state: raw.link_state ?? metadata.link_state ?? null,
     link_source: raw.link_source ?? metadata.link_source ?? null,
     link_confidence: raw.link_confidence ?? metadata.link_confidence ?? null,
@@ -1250,6 +1261,96 @@ export const chatService = {
       throw new Error(response.error);
     }
     return (response.data || []).map(normalizeConversation);
+  },
+
+  /** F4a/F4.1 — lista agregada multi-instância (apiVersion=2). Produção: UazAPI only. */
+  async getConversationsAggregated(filters: {
+    instanceIds: string[];
+    inboxScope?: 'owner' | 'tenant';
+    /** @deprecated Ignorado pelo backend agregado F4.1+ — use channelOrigin. */
+    includeWhatsAppOfficial?: boolean;
+    channelOrigin?: 'all' | 'uazapi' | 'official';
+    search?: string;
+    startDate?: string;
+    endDate?: string;
+    attendanceFilter?: 'mine' | 'unassigned' | 'queue' | 'queued' | 'closed' | 'team' | 'waiting';
+    conversationFilter?: 'all' | 'groups';
+    unreadOnly?: boolean;
+    tagIds?: string[];
+    view?: 'list' | 'full';
+    sort?: 'last_message_at' | 'priority' | 'unread' | 'sla' | 'pinned';
+    cursor?: string | null;
+    limit?: number;
+  }): Promise<{
+    items: ChatConversation[];
+    meta: {
+      apiVersion: 2;
+      limit: number;
+      returned: number;
+      hasMore: boolean;
+      nextCursor: string | null;
+      sort: string;
+      view: string;
+      instanceIds: string[];
+      generatedAt: string;
+      provider?: 'uazapi' | 'whatsapp_official';
+    };
+  }> {
+    const params = new URLSearchParams();
+    params.append('apiVersion', '2');
+    params.append('view', filters.view ?? 'list');
+    if (filters.instanceIds.length > 0) {
+      params.append('instanceIds', filters.instanceIds.join(','));
+    }
+    if (filters.channelOrigin && filters.channelOrigin !== 'all') {
+      params.append('channelOrigin', filters.channelOrigin);
+    }
+    if (filters.search) params.append('search', filters.search);
+    if (filters.startDate) params.append('startDate', filters.startDate);
+    if (filters.endDate) params.append('endDate', filters.endDate);
+    if (filters.inboxScope) params.append('inboxScope', filters.inboxScope);
+    if (filters.attendanceFilter) {
+      const af = filters.attendanceFilter === 'queued' ? 'queue' : filters.attendanceFilter;
+      params.append('attendanceFilter', af);
+    }
+    if (filters.conversationFilter === 'groups') params.append('conversationFilter', 'groups');
+    if (filters.unreadOnly) params.append('unreadOnly', '1');
+    if (filters.tagIds?.length) params.append('tagIds', filters.tagIds.join(','));
+    if (filters.sort) params.append('sort', filters.sort);
+    if (filters.cursor) params.append('cursor', filters.cursor);
+    if (filters.limit != null) params.append('limit', String(filters.limit));
+
+    const url = `/api/chat/conversations?${params.toString()}`;
+    const response = await apiClient.get<{
+      apiVersion: 2;
+      items: unknown[];
+      meta: {
+        apiVersion: 2;
+        limit: number;
+        returned: number;
+        hasMore: boolean;
+        nextCursor: string | null;
+        sort: string;
+        view: string;
+        instanceIds: string[];
+        generatedAt: string;
+      };
+    }>(url);
+    if (response.error) throw new Error(response.error);
+    const body = response.data;
+    const items = (body?.items ?? []).map((row) => normalizeConversation(row));
+    const meta = body?.meta ?? {
+      apiVersion: 2 as const,
+      limit: filters.limit ?? 200,
+      returned: items.length,
+      hasMore: false,
+      nextCursor: null,
+      sort: filters.sort ?? 'last_message_at',
+      view: filters.view ?? 'list',
+      instanceIds: filters.instanceIds,
+      generatedAt: new Date().toISOString(),
+    };
+    return { items, meta };
   },
 
   /** Etapa 5 — contagens por filtro (mesmo escopo que a listagem). */

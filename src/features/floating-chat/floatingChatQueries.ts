@@ -1,9 +1,9 @@
 import type { QueryClient } from '@tanstack/react-query';
 import {
-  fetchBubbleRecentConversations,
-  fetchMergedChatConversations,
+  listBubbleChatConversations,
+  listChatConversationsItems,
   type ChatInboxScope,
-} from '@/lib/chatConversationsFetch';
+} from '@/repositories/chatConversationsRepository';
 
 /** Lista quente — reutilizar ao reabrir float/lista. */
 export const FLOATING_CHAT_LIST_STALE_MS = 3 * 60_000;
@@ -50,13 +50,19 @@ export async function prefetchFloatingChatLists(
   await Promise.all([
     queryClient.prefetchQuery({
       queryKey: floatingChatBubbleQueryKey(instanceIds, inboxScope),
-      queryFn: () => fetchBubbleRecentConversations(instanceIds, inboxScope),
+      queryFn: () =>
+        listBubbleChatConversations({
+          surface: 'float',
+          instanceIds,
+          inboxScope,
+        }),
       staleTime: FLOATING_CHAT_LIST_STALE_MS,
     }),
     queryClient.prefetchQuery({
       queryKey: floatingChatConversationsQueryKey(instanceIds, inboxScope, 'all'),
       queryFn: () =>
-        fetchMergedChatConversations({
+        listChatConversationsItems({
+          surface: 'float',
           instanceIds,
           inboxScope,
           quickFilter: 'all',
