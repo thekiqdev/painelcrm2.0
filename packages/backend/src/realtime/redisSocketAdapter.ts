@@ -3,7 +3,7 @@
  */
 import type { Server as SocketIOServer } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
-import Redis from 'ioredis';
+import { Redis } from 'ioredis';
 import { appLogger } from '../observability/appLogger.js';
 import {
   buildRedisConnectionOptions,
@@ -24,8 +24,10 @@ export type RedisAdapterAttachResult =
   | { mode: 'memory'; reason: string; nodeId: string }
   | { mode: 'memory-fallback'; reason: string; nodeId: string };
 
-let pubClient: Redis | null = null;
-let subClient: Redis | null = null;
+type RedisClient = InstanceType<typeof Redis>;
+
+let pubClient: RedisClient | null = null;
+let subClient: RedisClient | null = null;
 let healthTimer: ReturnType<typeof setInterval> | null = null;
 let attachedIo: SocketIOServer | null = null;
 
@@ -40,7 +42,7 @@ export function shouldAttemptRedisAdapter(): boolean {
   }
 }
 
-function createRedisClient(label: string): Redis {
+function createRedisClient(label: string): RedisClient {
   const cfg = getRedisSocketAdapterConfig();
   const opts = buildRedisConnectionOptions(cfg);
   const client = 'url' in opts && opts.url
@@ -61,7 +63,7 @@ function createRedisClient(label: string): Redis {
         lazyConnect: true,
       });
 
-  client.on('error', (err) => {
+  client.on('error', (err: Error) => {
     appLogger.warn('redis-adapter', `${label} error`, { err: String(err?.message || err) });
     markRedisAdapterHealth(false);
   });
@@ -74,7 +76,7 @@ function createRedisClient(label: string): Redis {
   return client;
 }
 
-async function connectWithTimeout(client: Redis, ms: number): Promise<void> {
+async function connectWithTimeout(client: RedisClient, ms: number): Promise<void> {
   await Promise.race([
     client.connect(),
     new Promise<never>((_, reject) => {

@@ -1,4 +1,4 @@
-import { monitorEventLoopDelay, PerformanceObserver } from 'perf_hooks';
+import { monitorEventLoopDelay, PerformanceObserver, type PerformanceEntry } from 'perf_hooks';
 import { getObservabilityConfig } from './config.js';
 import { ensureCounter, ensureGauge, setGauge, incCounter } from './registry.js';
 
