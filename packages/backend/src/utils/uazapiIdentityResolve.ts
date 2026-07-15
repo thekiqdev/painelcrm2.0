@@ -311,14 +311,22 @@ export function conversationRowForClientApi(row: Record<string, unknown>): Recor
     typeof row.avatar_url === 'string' && row.avatar_url.trim() ? row.avatar_url.trim() : null;
   const fromMeta = extractUazapiChatImageUrl(baseMeta);
   const layered = resolveFinalConversationAvatarUrl(row);
-  const av = layered ?? mergeAvatarUrlForPersistence(fromCol, fromMeta);
-  if (av) {
-    baseMeta.whatsapp_profile_photo = av;
+  /** Persistível (catálogo/CRM) — nunca grava CDN/proxy como final. */
+  const persisted = layered ?? mergeAvatarUrlForPersistence(fromCol, fromMeta);
+  /**
+   * TF3.3 — Exibição para o cliente: se só há CDN/meta (comum em listagem sem cache local),
+   * ainda devolver URL para o FE proxiar. Antes: `merge` → null e `view=list` apagava metadata
+   * → F5/inbox sem foto; WS full ainda trazia metadata e a foto “aparecia” só na sessão.
+   */
+  const av = persisted ?? fromCol ?? fromMeta;
+  if (persisted) {
+    baseMeta.whatsapp_profile_photo = persisted;
   }
   return {
     ...row,
     avatar_url: av ?? null,
-    final_avatar_url: av ?? null,
+    /** Só URL estável (catálogo/CRM); CDN fica em `avatar_url` para o FE proxiar. */
+    final_avatar_url: persisted ?? null,
     contact_name: display ?? row.contact_name ?? null,
     metadata: Object.keys(baseMeta).length > 0 ? baseMeta : row.metadata ?? null,
   };

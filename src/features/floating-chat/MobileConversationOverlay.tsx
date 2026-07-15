@@ -12,7 +12,6 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { ChatBubbleContent } from '@/components/chat/ChatBubbleContent';
 import { MessageStatusIndicator } from '@/components/chat/MessageStatusIndicator';
 import { chatService, resolveChatKanbanTagsForUi, type ChatConversation, type ChatMessage } from '@/services/chat';
-import { findChatConversationById } from '@/repositories/chatConversationsRepository';
 import { REALTIME_WINDOW_EVENTS } from '@/services/realtimeClient';
 import { tryApplyChatWsPatch } from '@/features/chat-core/ws-patch';
 import { shouldUseChatDomainStore } from '@/features/chat-core/store/flags';
@@ -23,9 +22,12 @@ import { useFloatingConversationIdentity } from './useFloatingConversationIdenti
 import { floatingAttendanceRowModel } from './attendanceUi';
 import { Badge } from '@/components/ui/badge';
 import { FloatingCompactProfile } from './FloatingCompactProfile';
-import { getCachedFloatingConversationById } from './queryCache';
-import { FLOATING_CHAT_META_STALE_MS, scheduleInvalidateFloatingChatAggregates } from './floatingChatQueries';
-import { useFloatingConversationMessages } from '@/features/chat-core/store/public';
+import { scheduleInvalidateFloatingChatAggregates } from './floatingChatQueries';
+import {
+  applyStoreConversationPartialPatch,
+  useFloatingConversationMessages,
+  useFloatingConversationMeta,
+} from '@/features/chat-core/store/public';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -111,9 +113,11 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
   const { messages, isLoading, applyMessages } = useFloatingConversationMessages(conversationId);
 
   const afterSend = useCallback(() => {
-    void queryClient.invalidateQueries({
-      queryKey: ['floating-chat', 'conversation-meta', conversationId],
-    });
+    if (!shouldUseChatDomainStore()) {
+      void queryClient.invalidateQueries({
+        queryKey: ['floating-chat', 'conversation-meta', conversationId],
+      });
+    }
     void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'conversations'] });
   }, [queryClient, conversationId]);
 
@@ -124,20 +128,10 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
     afterItemDone: afterSend,
   });
 
-  const { data: conversation } = useQuery({
-    queryKey: ['floating-chat', 'conversation-meta', conversationId],
-    queryFn: async (): Promise<ChatConversation | null> => {
-      const cached = getCachedFloatingConversationById(queryClient, conversationId);
-      if (cached) return cached;
-      return findChatConversationById({
-        surface: 'float',
-        conversationId,
-        instanceIds,
-        inboxScope,
-      });
-    },
-    staleTime: FLOATING_CHAT_META_STALE_MS,
-    placeholderData: () => getCachedFloatingConversationById(queryClient, conversationId),
+  const { conversation } = useFloatingConversationMeta({
+    conversationId,
+    instanceIds,
+    inboxScope,
   });
 
   const { data: connectedInstances = [] } = useQuery({
@@ -369,7 +363,11 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
       if (!nextInstanceId || nextInstanceId === selectedInstanceId || messages.length > 0) return;
       try {
         const updated = await chatService.patchPreparedConversationInstance(conversationId, nextInstanceId);
-        queryClient.setQueryData(['floating-chat', 'conversation-meta', conversationId], updated);
+        if (shouldUseChatDomainStore()) {
+          applyStoreConversationPartialPatch(conversationId, updated);
+        } else {
+          queryClient.setQueryData(['floating-chat', 'conversation-meta', conversationId], updated);
+        }
         scheduleInvalidateFloatingChatAggregates(queryClient);
       } catch (e) {
         toast.error(e instanceof Error ? e.message : 'Não foi possível alterar a instância');

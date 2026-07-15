@@ -460,7 +460,7 @@ export function normalizeConversation(raw: any): ChatConversation {
   const normalizedTags = normalizeConversationTagsFromApi(raw?.tags);
 
   return {
-    id: raw.id,
+    id: raw.id ?? raw.conversation_id,
     user_id: raw.user_id,
     instance_id: raw.instance_id ?? null,
     whatsapp_official_account_id: raw.whatsapp_official_account_id ?? null,
@@ -662,7 +662,7 @@ export function normalizeChatMessage(raw: any): ChatMessage {
     external_message_id: raw.external_message_id ?? null,
     body: coerceChatPlainText(raw.body) || null,
     status: raw.status ?? null,
-    sentAt: raw.sent_at ?? raw.created_at ?? null,
+    sentAt: raw.sent_at ?? raw.sentAt ?? raw.created_at ?? null,
     metadata: raw.metadata ?? null,
     created_at: raw.created_at,
     media: sanitizeMediaItems(parseMediaField(raw.media)),

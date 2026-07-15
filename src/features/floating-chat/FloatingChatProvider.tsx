@@ -28,8 +28,9 @@ import { tryApplyChatWsPatch } from '@/features/chat-core/ws-patch';
 import { shouldUseChatDomainStore } from '@/features/chat-core/store/flags';
 import {
   bootstrapChatF3Session,
-  ensureChatInstances,
-  filterEnabledChatInstanceIds,
+  refreshInboxInstanceVisibility,
+  resetInboxInstanceVisibility,
+  useInboxInstanceVisibility,
 } from '@/features/chat-core/runtime';
 
 function countExpanded(panels: FloatingChatPanel[]): number {
@@ -72,8 +73,11 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
   const [appointmentPanelOpenByConversationId, setAppointmentPanelOpenByConversationId] = useState<
     Record<string, boolean>
   >({});
-  const [instanceIds, setInstanceIds] = useState<string[]>([]);
-  const [instancesLoading, setInstancesLoading] = useState(true);
+  /** Sprint 1 / 10F — mesmos enabled IDs que o Chat (snapshot compartilhado). */
+  const inboxVisibility = useInboxInstanceVisibility();
+  const instanceIds = inboxVisibility.enabledInstanceIds as string[];
+  const [instancesBootstrapped, setInstancesBootstrapped] = useState(false);
+  const instancesLoading = !instancesBootstrapped || inboxVisibility.loading;
   const [mobileOverlayConversationId, setMobileOverlayConversationId] = useState<string | null>(null);
   const mobileOverlayConversationIdRef = useRef<string | null>(null);
   const mobileOverlayPushedRef = useRef(false);
@@ -95,20 +99,17 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
 
   const refreshInstances = useCallback(async () => {
     if (!user?.id) {
-      setInstanceIds([]);
-      setInstancesLoading(false);
+      resetInboxInstanceVisibility();
+      setInstancesBootstrapped(true);
       return;
     }
-    setInstancesLoading(true);
     try {
       bootstrapChatF3Session(user.id, user.tenant_id);
-      const instances = await ensureChatInstances({ reason: 'bootstrap' });
-      const ids = filterEnabledChatInstanceIds(instances);
-      setInstanceIds(ids);
+      await refreshInboxInstanceVisibility({ reason: 'bootstrap' });
     } catch {
-      setInstanceIds([]);
+      resetInboxInstanceVisibility();
     } finally {
-      setInstancesLoading(false);
+      setInstancesBootstrapped(true);
     }
   }, [user?.id, user?.tenant_id]);
 

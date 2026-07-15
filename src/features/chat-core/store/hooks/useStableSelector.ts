@@ -16,6 +16,7 @@ import {
   recordSelectorMiss,
   recordSubscriptionSkip,
 } from '../../metrics/renderOptimizationMetrics';
+import { recordConversationSelectorUpdate } from '../../metrics/conversationRuntimeMetrics';
 import { recordStoreSubscription } from '../consolidatedMetrics';
 import {
   recordSubscriptionAttach,
@@ -111,6 +112,13 @@ export function useStableSelector<T>(
 
         cacheRef.current = { state, value: next, primed: true };
         recordSelectorMiss(name);
+        if (
+          name === 'useChatConversationList' ||
+          name === 'useChatSelection' ||
+          name === 'useFloatingConversationListData'
+        ) {
+          recordConversationSelectorUpdate();
+        }
         if (trackSubscription) {
           recordStoreSubscription();
           recordSubscriptionNotify(name);

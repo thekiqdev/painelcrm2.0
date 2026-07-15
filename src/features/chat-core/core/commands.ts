@@ -22,7 +22,7 @@ import {
 } from '../store/optimistic';
 import { executeChatCommand, mapLegacyConversationResult } from './commandDispatcher';
 import { loadInboxCommand, clearInboxCommand } from './loadInbox';
-import { loadMessagesCommand } from './loadMessages';
+import { loadMessagesCommand, openConversationMessagesCommand } from './loadMessages';
 import {
   loadMessagesCursorCommand,
   resetConversationCursorCommand,
@@ -37,7 +37,9 @@ export {
 } from './loadInbox';
 export {
   loadMessagesCommand,
+  openConversationMessagesCommand,
   type LoadMessagesResult,
+  type LoadMessagesCommandOptions,
 } from './loadMessages';
 export {
   loadMessagesCursorCommand,

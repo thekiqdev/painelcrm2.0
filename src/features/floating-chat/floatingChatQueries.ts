@@ -50,7 +50,7 @@ export function invalidateFloatingChatMessages(
   });
 }
 
-/** CRM profile + listas — nunca root `['floating-chat']`. */
+/** CRM profile + listas — nunca root `['floating-chat']`. Prefixo cobre keys com link SoT (Sprint 4). */
 export function invalidateFloatingChatCrmSurfaces(
   queryClient: QueryClient,
   conversationId?: string,

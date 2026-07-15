@@ -7,7 +7,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ChatMessage } from '@/services/chat';
 import { chatService } from '@/services/chat';
 import { FLOATING_CHAT_MESSAGES_STALE_MS } from '@/features/floating-chat/floatingChatQueries';
-import { loadMessagesCommand } from '../../core/commands';
+import { openConversationMessagesCommand } from '../../core/commands';
 import { shouldUseChatDomainStore } from '../flags';
 import { getChatDomainStoreSession } from '../session';
 import { EMPTY_CHAT_DOMAIN_STATE } from '../state';
@@ -94,7 +94,7 @@ export function useFloatingConversationMessages(
     setStoreFetching(true);
     const start = performance.now();
     try {
-      await loadMessagesCommand(
+      await openConversationMessagesCommand(
         conversationId,
         shouldFloatDumpAllMessages() ? { latestPage: false } : undefined,
       );

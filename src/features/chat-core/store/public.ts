@@ -13,6 +13,7 @@ export {
   applyStoreMessages,
   applyStoreConversationsUiUpdate,
   applyStoreConversationUpsert,
+  applyStoreConversationPartialPatch,
   applyStoreConversationRemove,
   setStoreLoadingConversations,
   setStoreLoadingMessages,
@@ -23,6 +24,7 @@ export { useChatMessages } from './hooks/useChatMessages';
 export { useChatSelection } from './hooks/useChatSelection';
 export { useFloatingConversationListData } from './hooks/useFloatingConversationListData';
 export { useFloatingConversationMessages } from './hooks/useFloatingConversationMessages';
+export { useFloatingConversationMeta } from './hooks/useFloatingConversationMeta';
 export { useConversationCursor } from './hooks/useConversationCursor';
 export { useLoadMoreMessages } from './hooks/useLoadMoreMessages';
 export { useConversationWindow } from './hooks/useConversationWindow';

@@ -19,3 +19,13 @@ export {
   filterEnabledChatInstanceIds,
   filterConnectedChatInstances,
 } from './helpers';
+export {
+  getInboxInstanceVisibilitySnapshot,
+  subscribeInboxInstanceVisibility,
+  refreshInboxInstanceVisibility,
+  applyInboxInstanceVisibilityFromInstances,
+  resetInboxInstanceVisibility,
+  resetInboxInstanceVisibilityForTests,
+} from './inboxVisibility';
+export type { InboxInstanceVisibilitySnapshot } from './inboxVisibility';
+export { useInboxInstanceVisibility } from './useInboxInstanceVisibility';

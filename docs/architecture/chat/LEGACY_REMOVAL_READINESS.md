@@ -5,6 +5,7 @@
 | **Documento** | LEGACY_REMOVAL_READINESS |
 | **Data** | 2026-07-13 |
 | **Inventário mestre** | [`LEGACY_REMOVAL_TRACKER.md`](./LEGACY_REMOVAL_TRACKER.md) |
+| **Phase 11 / Runtime Core** | [`ADR-013`](./ADR-013-DOMAIN-STORE-RUNTIME-CORE.md) + [`PHASE11_LEGACY_RETIREMENT.md`](../sprints/PHASE11_LEGACY_RETIREMENT.md) |
 | **Certificação F6** | [`AUDIT_F6_PERFORMANCE_CERTIFICATION.md`](./AUDIT_F6_PERFORMANCE_CERTIFICATION.md) |
 | **Código removido nesta sprint** | **Nenhum** (audit-only) |
 

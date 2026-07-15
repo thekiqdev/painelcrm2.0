@@ -4,6 +4,7 @@
 
 import type { ChatConversation } from '@/services/chat';
 import type { ChatDomainConversation } from '../domain/types';
+import { recordConversationDivergenceIfAny } from '../metrics/conversationRuntimeMetrics';
 
 export function domainConversationToUi(conversation: ChatDomainConversation): ChatConversation {
   const waArchived =
@@ -14,15 +15,29 @@ export function domainConversationToUi(conversation: ChatDomainConversation): Ch
   if (conversation.raw && typeof conversation.raw === 'object') {
     const raw = conversation.raw as ChatConversation;
     if (typeof raw.id === 'string') {
+      const client_id = conversation.clientId ?? raw.client_id ?? null;
+      const leadId = conversation.leadId ?? raw.leadId ?? null;
+      const lastMessagePreview =
+        conversation.lastMessagePreview ?? raw.lastMessagePreview ?? null;
+      recordConversationDivergenceIfAny({
+        conversationId: conversation.id,
+        pipeline: 'domainToUi',
+        origin: 'store.raw_vs_domain',
+        storeLeadId: conversation.leadId,
+        uiLeadId: raw.leadId,
+        storeClientId: conversation.clientId,
+        uiClientId: raw.client_id,
+        storePreview: conversation.lastMessagePreview,
+        uiPreview: raw.lastMessagePreview,
+      });
       return {
         ...raw,
         id: conversation.id,
         unreadCount: conversation.unreadCount ?? raw.unreadCount ?? 0,
         lastMessageAt: conversation.lastMessageAt ?? raw.lastMessageAt ?? null,
-        lastMessagePreview: conversation.lastMessagePreview ?? raw.lastMessagePreview ?? null,
-        // Domain fields vencem o raw (evita leadId/client_id stale após upsert).
-        client_id: conversation.clientId ?? raw.client_id ?? null,
-        leadId: conversation.leadId ?? raw.leadId ?? null,
+        lastMessagePreview,
+        client_id,
+        leadId,
         wa_archived: waArchived,
       };
     }

@@ -18,14 +18,12 @@ import { ConversationListSkeleton } from '@/components/chat/skeletons/Conversati
 import { FloatingChatListShell } from '@/components/chat/FloatingChatListShell';
 import { useFloatingConversationListData } from '@/features/chat-core/store/public';
 import { useChatPerfRender } from '@/features/chat-core/metrics/renderMetrics';
+import {
+  conversationListPreviewText,
+  conversationListTimeLabel,
+} from '@/features/chat-core/ui/conversationListCopy';
 
 type QuickFilter = 'all' | 'mine' | 'unread';
-
-function previewLine(c: ChatConversation): string {
-  const p = c.lastMessagePreview?.trim();
-  if (p) return p.length > 72 ? `${p.slice(0, 72)}…` : p;
-  return 'Sem mensagens recentes';
-}
 
 export function FloatingConversationList({ className }: { className?: string }) {
   useChatPerfRender('FloatingConversationList');
@@ -111,7 +109,7 @@ export function FloatingConversationList({ className }: { className?: string }) 
                     ) : null}
                   </div>
                   <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-muted-foreground">
-                    {previewLine(c)}
+                    {conversationListPreviewText(c.lastMessagePreview)}
                   </p>
                   {tagVisible.length > 0 ? (
                     <div className="mt-0.5 flex max-w-full flex-wrap items-center gap-1">
@@ -131,12 +129,12 @@ export function FloatingConversationList({ className }: { className?: string }) 
                     </div>
                   ) : null}
                   <p className="mt-0.5 text-[10px] text-muted-foreground/90">
-                    {c.lastMessageAt
-                      ? formatDistanceToNow(new Date(c.lastMessageAt), {
-                          addSuffix: true,
-                          locale: ptBR,
-                        })
-                      : 'Sem mensagens recentes'}
+                    {conversationListTimeLabel(c.lastMessageAt, (at) =>
+                      formatDistanceToNow(new Date(at), {
+                        addSuffix: true,
+                        locale: ptBR,
+                      }),
+                    )}
                   </p>
                 </div>
               </button>

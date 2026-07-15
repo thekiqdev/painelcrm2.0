@@ -28,6 +28,10 @@ import { chatKanbanService } from '@/services/chatKanban';
 import { tasksService } from '@/services/tasks';
 import { useFloatingConversationIdentity } from './useFloatingConversationIdentity';
 import { invalidateFloatingChatCrmSurfaces } from './floatingChatQueries';
+import { shouldUseChatDomainStore } from '@/features/chat-core/store/flags';
+import { applyStoreConversationPartialPatch } from '@/features/chat-core/store/public';
+import { conversationCrmProfileQueryKey } from '@/features/chat-core/crm/crmDetailProjection';
+import { recordCrmDetailFetchScheduled } from '@/features/chat-core/metrics/crmDetailProjectionMetrics';
 import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
 import { assigneeInitials } from '@/utils/chatKanbanCardDisplay';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -107,9 +111,19 @@ export function FloatingCompactProfile({
     staleTime: 30_000,
   });
   const { data: crmProfile } = useQuery({
-    queryKey: ['floating-chat', 'conversation-crm-profile', conversationId],
-    queryFn: () => chatService.getConversationProfile(conversationId),
-    enabled: !isGroup,
+    queryKey: conversationCrmProfileQueryKey(
+      conversationId,
+      conversation?.client_id ?? null,
+      conversation?.leadId ?? null,
+    ),
+    queryFn: async () => {
+      recordCrmDetailFetchScheduled();
+      return chatService.getConversationProfile(conversationId);
+    },
+    enabled:
+      !isGroup &&
+      Boolean(conversationId) &&
+      Boolean(conversation?.client_id || conversation?.leadId),
     staleTime: 30_000,
   });
 
@@ -166,6 +180,11 @@ export function FloatingCompactProfile({
   const isLeadOnly = !isGroup && !conversation?.client_id && Boolean(conversation?.leadId);
   const applyConversationCrmPatch = useCallback(
     (patch: Partial<ChatConversation>) => {
+      // Sprint 2 / 10E — header/meta na Store ON; RQ só OFF.
+      if (shouldUseChatDomainStore()) {
+        applyStoreConversationPartialPatch(conversationId, patch);
+        return;
+      }
       queryClient.setQueryData<ChatConversation | null>(
         ['floating-chat', 'conversation-meta', conversationId],
         (prev) => (prev ? { ...prev, ...patch } : prev),

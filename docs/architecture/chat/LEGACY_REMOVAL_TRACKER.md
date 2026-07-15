@@ -4,7 +4,7 @@
 |---|---|
 | **Documento** | Inventário oficial de código legado do módulo Chat |
 | **Versão** | 1.0 |
-| **Última atualização** | 2026-07-13 (pós F6.8 Architecture Freeze) |
+| **Última atualização** | 2026-07-15 (Phase 11 / Sprint 6 — Runtime Core declaration; sem remoção física) |
 | **Plano mestre** | [`CHAT_ENTERPRISE_MIGRATION_MASTER_PLAN.md`](../CHAT_ENTERPRISE_MIGRATION_MASTER_PLAN.md) |
 | **Governança** | Atualizar **ao final de cada sprint** F0→F7 |
 
@@ -51,6 +51,7 @@
 | **REMOVED** | 0 |
 | **DEPRECATED / REMOVE_READY** | ver §0 (candidatos — ainda não deletados) |
 | Architecture Freeze | [`F6_ARCHITECTURE_FREEZE_REPORT.md`](./F6_ARCHITECTURE_FREEZE_REPORT.md) + [`ADR-010-CHAT-ARCHITECTURE-FREEZE.md`](./ADR-010-CHAT-ARCHITECTURE-FREEZE.md) |
+| Runtime Core | [`ADR-013-DOMAIN-STORE-RUNTIME-CORE.md`](./ADR-013-DOMAIN-STORE-RUNTIME-CORE.md) — physical delete → MB-028 |
 | Certificação F5 | [`AUDIT_F5_FINAL.md`](./AUDIT_F5_FINAL.md) |
 | Certificação F6 | [`AUDIT_F6_PERFORMANCE_CERTIFICATION.md`](./AUDIT_F6_PERFORMANCE_CERTIFICATION.md) |
 | F7 liberação | [`F7_READINESS_REPORT.md`](./F7_READINESS_REPORT.md) |
@@ -278,6 +279,7 @@ F7  ✓ Redis WS adapter           → L-RT-08 / L-FF-14 Migrado (PHASE8_CLOSEOU
 
 | Data | Sprint | Alteração |
 |---|---|---|
+| 2026-07-15 | **Phase 11 / Sprint 6** | ADR-013 Domain Store = Runtime Core. Dual-path Store OFF permanece **ROLLBACK**. Checklist MB-028 em `PHASE11_LEGACY_RETIREMENT.md`. **Sem remoção física.** |
 | 2026-07-14 | **Phase 5** | Store/Legacy coexistence: ADR-011 Float latest-page; invalidate coalesce; cache precedence; socket telemetry; `check:chat-sot-guards`. **Sem remoção física.** |
 | 2026-07-13 | **F6.8** | Architecture Freeze: ADR-010 + contratos/API/store/flags/deps docs. Classificação ACTIVE/ROLLBACK/DEPRECATED/REMOVE_READY. Sem remoção de código. 202 testes store. |
 | 2026-07-13 | **F6.7** | Performance Certification: AUDIT_F6 + baseline F6 + legacy readiness + F7 liberada. Sem alteração de código. 202 testes store. |

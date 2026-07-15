@@ -13,6 +13,11 @@ import { getChatDomainStoreSession } from './session';
 import { recordStoreUpdate } from './consolidatedMetrics';
 import { auditLogApplyStoreConversationList } from './f5HydrationAudit';
 import { selectConversationsForUi } from './conversationSelectors';
+import { mergeDomainConversationFullUpsert } from './conversationUpsertMerge';
+import {
+  recordConversationStoreUpdate,
+  recordConversationUiUpdate,
+} from '../metrics/conversationRuntimeMetrics';
 
 export function isChatStoreSourceOfTruth(): boolean {
   return shouldUseChatDomainStore();
@@ -44,6 +49,7 @@ export function applyStoreConversationListInternal(
   });
   store.dispatch(chatDomainActionCreators.setConversations(domain));
   recordStoreUpdate('conversations');
+  recordConversationStoreUpdate();
 }
 
 /** @deprecated F5.9 — use loadInboxCommand. Mantido para testes legados. */
@@ -61,21 +67,11 @@ export function applyStoreConversationUpsert(conversation: ChatConversation): bo
   if (!store) return false;
   const existing = store.getState().conversations.byId[conversation.id];
   const mapped = mapLegacyConversationToDomain(conversation);
-  const merged = existing
-    ? {
-        ...existing,
-        ...mapped,
-        raw:
-          mapped.raw &&
-          existing.raw &&
-          typeof existing.raw === 'object' &&
-          typeof mapped.raw === 'object'
-            ? { ...(existing.raw as Record<string, unknown>), ...(mapped.raw as Record<string, unknown>) }
-            : (mapped.raw ?? existing.raw),
-      }
-    : mapped;
+  const merged = existing ? mergeDomainConversationFullUpsert(existing, mapped) : mapped;
   store.dispatch(chatDomainActionCreators.upsertConversation(merged));
   recordStoreUpdate('conversations');
+  recordConversationStoreUpdate();
+  recordConversationUiUpdate();
   return true;
 }
 
@@ -85,12 +81,29 @@ export function applyStoreConversationRemove(conversationId: string): boolean {
   if (!store) return false;
   store.dispatch(chatDomainActionCreators.removeConversation(conversationId));
   recordStoreUpdate('conversations');
+  recordConversationStoreUpdate();
   return true;
 }
 
 /**
+ * Patch parcial sobre a Conversation na Store (CRM Floating / bumps).
+ * Lê a row SoT atual, faz merge e upsert — sem cópia paralela.
+ */
+export function applyStoreConversationPartialPatch(
+  conversationId: string,
+  patch: Partial<ChatConversation>,
+): boolean {
+  if (!shouldUseChatDomainStore()) return false;
+  const store = getChatDomainStoreSession();
+  if (!store) return false;
+  const prev = selectConversationsForUi(store.getState()).find((c) => c.id === conversationId);
+  if (!prev) return false;
+  return applyStoreConversationUpsert({ ...prev, ...patch, id: conversationId });
+}
+
+/**
  * Ponte para o `setConversations` legado do Chat.tsx quando o store é SoT.
- * Evita no-ops silenciosos em vínculo CRM / archive / badge.
+ * Evita no-ops silenciosos em vínculo CRM / archive / badge / bumps.
  */
 export function applyStoreConversationsUiUpdate(
   action: ChatConversation[] | ((prev: ChatConversation[]) => ChatConversation[]),
@@ -101,6 +114,7 @@ export function applyStoreConversationsUiUpdate(
   const prev = selectConversationsForUi(store.getState());
   const next = typeof action === 'function' ? action(prev) : action;
   applyStoreConversationListInternal(next);
+  recordConversationUiUpdate();
   return true;
 }
 

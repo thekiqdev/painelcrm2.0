@@ -131,7 +131,7 @@ describe('F5.10 messages command unification', () => {
     expect(afterSecond).toEqual(afterFirst);
   });
 
-  it('concurrency — last generation wins per conversation', async () => {
+  it('concurrency — coalesce same open; force supersedes stale flight', async () => {
     const { getMessagesPage } = await import('../core/messagesPageFetch');
     let resolveFirst: (v: Awaited<ReturnType<typeof getMessagesPage>>) => void;
     const firstPromise = new Promise<Awaited<ReturnType<typeof getMessagesPage>>>((r) => {
@@ -148,9 +148,10 @@ describe('F5.10 messages command unification', () => {
       }));
 
     const p1 = loadMessagesCommand('conv-1');
-    const p2 = loadMessagesCommand('conv-1');
+    const p2 = loadMessagesCommand('conv-1'); // Sprint 3 — coalesce into p1
+    const p3 = loadMessagesCommand('conv-1', { force: true });
 
-    await p2;
+    await p3;
     expect(selectChatMessagesForUi(getChatDomainStoreSession()!.getState(), 'conv-1').map((m) => m.id)).toEqual(
       ['only-last'],
     );
@@ -162,7 +163,7 @@ describe('F5.10 messages command unification', () => {
       hasMore: false,
       source: 'legacy',
     });
-    await p1;
+    await Promise.all([p1, p2]);
     expect(selectChatMessagesForUi(getChatDomainStoreSession()!.getState(), 'conv-1').map((m) => m.id)).toEqual(
       ['only-last'],
     );

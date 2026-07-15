@@ -16,19 +16,18 @@ import {
   type ChatKanbanTagUi,
   type ChatMessage,
 } from '@/services/chat';
-import { findChatConversationById } from '@/repositories/chatConversationsRepository';
 import { chatKanbanService } from '@/services/chatKanban';
 import { apiClient } from '@/integrations/api/client';
 import { DEFAULT_CHAT_TAG_COLOR, normalizeHexColor } from '@/lib/chatKanbanTagStyle';
 import { REALTIME_WINDOW_EVENTS } from '@/services/realtimeClient';
 import { tryApplyChatWsPatch } from '@/features/chat-core/ws-patch';
 import { shouldUseChatDomainStore } from '@/features/chat-core/store/flags';
+import { applyStoreConversationPartialPatch, useFloatingConversationMessages, useFloatingConversationMeta } from '@/features/chat-core/store/public';
 import { useLoadMoreMessages } from '@/features/chat-core/store/hooks/useLoadMoreMessages';
 import { ensureChatInstances, filterConnectedChatInstances } from '@/features/chat-core/runtime';
 import { cn } from '@/lib/utils';
 import { useFloatingChat } from './floatingChatContext';
 import {
-  FLOATING_CHAT_META_STALE_MS,
   invalidateFloatingChatAggregates,
   invalidateFloatingChatCrmSurfaces,
   scheduleInvalidateFloatingChatAggregates,
@@ -54,8 +53,6 @@ import {
   conversationDragPreviewFromChatConversation,
 } from '@/lib/conversationDragPreview';
 import { FloatingCompactProfile } from './FloatingCompactProfile';
-import { getCachedFloatingConversationById } from './queryCache';
-import { useFloatingConversationMessages } from '@/features/chat-core/store/public';
 import { useChatPerfRender } from '@/features/chat-core/metrics/renderMetrics';
 import { useNavigate } from 'react-router-dom';
 import { useModulePermissions } from '@/contexts/ModulePermissionsContext';
@@ -155,20 +152,10 @@ export function FloatingConversationWindow({
   const commercial = useMemo(() => chatCommercialGates(hasPermissionKey), [hasPermissionKey]);
   const permDenied = 'Seu perfil não tem permissão para esta ação.';
 
-  const { data: conversation } = useQuery({
-    queryKey: ['floating-chat', 'conversation-meta', conversationId],
-    queryFn: async (): Promise<ChatConversation | null> => {
-      const cached = getCachedFloatingConversationById(queryClient, conversationId);
-      if (cached) return cached;
-      return findChatConversationById({
-        surface: 'float',
-        conversationId,
-        instanceIds,
-        inboxScope,
-      });
-    },
-    staleTime: FLOATING_CHAT_META_STALE_MS,
-    placeholderData: () => getCachedFloatingConversationById(queryClient, conversationId),
+  const { conversation } = useFloatingConversationMeta({
+    conversationId,
+    instanceIds,
+    inboxScope,
   });
 
   const dispatchCompactAction = useCallback(
@@ -286,12 +273,14 @@ export function FloatingConversationWindow({
 
   const { messages, isLoading, applyMessages } = useFloatingConversationMessages(conversationId);
   const loadMoreMessages = useLoadMoreMessages(conversationId);
-  const messageHistoryScrollRef = useRef<HTMLDivElement | null>(null);
+  /** Único scroll container: virt + Load More + auto-scroll (Sprint TF1 — dual ref quebrava paint). */
 
   const afterFloatingSend = useCallback(() => {
-    void queryClient.invalidateQueries({
-      queryKey: ['floating-chat', 'conversation-meta', conversationId],
-    });
+    if (!shouldUseChatDomainStore()) {
+      void queryClient.invalidateQueries({
+        queryKey: ['floating-chat', 'conversation-meta', conversationId],
+      });
+    }
     invalidateFloatingChatAggregates(queryClient);
   }, [queryClient, conversationId]);
 
@@ -353,13 +342,23 @@ export function FloatingConversationWindow({
     enabled: messageVirtualEnabled,
   });
 
+  // Virt OFF: scroll nativo ao fim.
+  // Virt ON: virtualizer cuida de append/prepend; TF1 só garante pin no open (ref vivo).
   useEffect(() => {
     if (messageVirtual.enabled) return;
+    if (messages.length === 0) return;
     const el = scrollRef.current;
-    if (el) {
-      el.scrollTop = el.scrollHeight;
-    }
+    if (el) el.scrollTop = el.scrollHeight;
   }, [messages.length, messageVirtual.enabled]);
+
+  const hasFloatingMessages = messages.length > 0;
+  useEffect(() => {
+    if (!messageVirtual.enabled || !hasFloatingMessages) return;
+    const id = requestAnimationFrame(() => {
+      messageVirtual.scrollToBottom('auto');
+    });
+    return () => cancelAnimationFrame(id);
+  }, [conversationId, messageVirtual.enabled, hasFloatingMessages, messageVirtual.scrollToBottom]);
 
   const identity = useFloatingConversationIdentity(conversationId, conversation);
   const headerTags = resolveChatKanbanTagsForUi(conversation);
@@ -451,6 +450,11 @@ export function FloatingConversationWindow({
 
   const applyFloatingCrmPatch = useCallback(
     (patch: Partial<ChatConversation>) => {
+      // Sprint 2 / 10E — header lê Store ON; RQ meta só legado OFF.
+      if (shouldUseChatDomainStore()) {
+        applyStoreConversationPartialPatch(conversationId, patch);
+        return;
+      }
       queryClient.setQueryData<ChatConversation | null>(
         ['floating-chat', 'conversation-meta', conversationId],
         (prev) => (prev ? { ...prev, ...patch } : prev),
@@ -572,13 +576,19 @@ export function FloatingConversationWindow({
             };
         const res = await chatService.addConversationKanbanTag(conversationId, body);
         const tag: ChatKanbanTagUi = res.tag;
-        const conv = queryClient.getQueryData<ChatConversation | null>([
-          'floating-chat',
-          'conversation-meta',
-          conversationId,
-        ]);
-        const cur = resolveChatKanbanTagsForUi(conv);
+        const cur = resolveChatKanbanTagsForUi(conversation);
         const next = cur.some((t) => t.id === tag.id) ? cur : [...cur, tag];
+        if (shouldUseChatDomainStore()) {
+          applyStoreConversationPartialPatch(conversationId, {
+            tags: next,
+            metadata: {
+              ...((conversation?.metadata && typeof conversation.metadata === 'object'
+                ? conversation.metadata
+                : {}) as Record<string, unknown>),
+              kanban_tags: next.map((t) => ({ id: t.id, label: t.label, color: t.color })),
+            },
+          } as Partial<ChatConversation>);
+        }
         patchConversationKanbanTagsEverywhere(queryClient, conversationId, next);
         setTenantKanbanTagsCatalog((prev) =>
           prev.some((t) => t.id === tag.id)
@@ -593,7 +603,7 @@ export function FloatingConversationWindow({
         setKanbanTagsBusy(false);
       }
     },
-    [conversationId, queryClient],
+    [conversationId, conversation, queryClient],
   );
 
   const draft = composerDrafts[conversationId] ?? '';
@@ -615,7 +625,11 @@ export function FloatingConversationWindow({
       if (!nextInstanceId || nextInstanceId === selectedInstanceId || messages.length > 0) return;
       try {
         const updated = await chatService.patchPreparedConversationInstance(conversationId, nextInstanceId);
-        queryClient.setQueryData(['floating-chat', 'conversation-meta', conversationId], updated);
+        if (shouldUseChatDomainStore()) {
+          applyStoreConversationPartialPatch(conversationId, updated);
+        } else {
+          queryClient.setQueryData(['floating-chat', 'conversation-meta', conversationId], updated);
+        }
         invalidateFloatingChatCrmSurfaces(queryClient, conversationId);
       } catch (e) {
         toast.error(e instanceof Error ? e.message : 'Não foi possível alterar a instância');
@@ -844,7 +858,6 @@ export function FloatingConversationWindow({
           '[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
           'touch-pan-y [&_img]:max-h-[min(200px,38dvh)] [&_img]:w-auto [&_img]:max-w-full [&_img]:rounded-md [&_img]:object-contain',
         )}
-        ref={messageHistoryScrollRef}
       >
         <div className="space-y-1.5 px-2 py-1.5">
           {isLoading && messages.length === 0 ? (
@@ -890,7 +903,7 @@ export function FloatingConversationWindow({
                 loading: loadMoreMessages.isLoadingMore,
                 disabled: !loadMoreMessages.enabled,
                 onLoadMore: () => {
-                  void loadMoreMessages.loadMore(messageHistoryScrollRef.current);
+                  void loadMoreMessages.loadMore(scrollRef.current);
                 },
               }}
               renderMessage={(message) => (

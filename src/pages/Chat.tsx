@@ -152,7 +152,9 @@ import { recordDedicatedChatSocketOpen } from '@/features/chat-core/realtime/ded
 import { tryApplyChatWsPatch } from '@/features/chat-core/ws-patch';
 import {
   bootstrapChatF3Session,
-  ensureChatInstances,
+  refreshInboxInstanceVisibility,
+  getInboxInstanceVisibilitySnapshot,
+  subscribeInboxInstanceVisibility,
   fetchChatAttendanceCounts,
   getChatUnreadEngineCounts,
   shouldUseChatUnreadEngine,
@@ -162,6 +164,14 @@ import {
   recordManualRefresh,
   recordSocketUpdate,
 } from '@/features/chat-core/metrics/zeroPollingMetrics';
+import { recordOpenPipelineStaleAbort } from '@/features/chat-core/metrics/openConversationPipelineMetrics';
+import { reconcileCrmDetailWithConversationLink } from '@/features/chat-core/crm/crmDetailProjection';
+import {
+  recordCrmDetailClearedBySot,
+  recordCrmDetailFetchScheduled,
+  recordCrmDetailReconcile,
+  recordCrmDetailStaleIgnored,
+} from '@/features/chat-core/metrics/crmDetailProjectionMetrics';
 import {
   shouldUseChatDomainStore,
   applyStoreMessages,
@@ -171,6 +181,7 @@ import {
   setStoreLoadingConversations,
   setStoreLoadingMessages,
   applyFloatingMessagesUpdater,
+  applyStoreConversationsUiUpdate,
   applyStoreConversationUpsert,
   applyStoreConversationRemove,
   useChatConversationList,
@@ -180,7 +191,11 @@ import {
   useConversationVirtualization,
   useConversationWarmup,
 } from '@/features/chat-core/store/public';
-import { loadInboxCommand, clearInboxCommand, loadMessagesCommand } from '@/features/chat-core/core/commands';
+import {
+  conversationListPreviewText,
+  conversationListTimeLabel,
+} from '@/features/chat-core/ui/conversationListCopy';
+import { loadInboxCommand, clearInboxCommand, loadMessagesCommand, openConversationMessagesCommand } from '@/features/chat-core/core/commands';
 import { useChatPerfRender } from '@/features/chat-core/metrics/renderMetrics';
 import {
   beginPerfScenario,
@@ -370,8 +385,12 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   const [enabledInstanceIds, setEnabledInstanceIds] = useState<Set<string>>(new Set());
   const [filtersPopoverOpen, setFiltersPopoverOpen] = useState(false);
   const [conversations, setConversationsState] = useState<ChatConversation[]>([]);
+  /** Phase 10B — com Store SoT, escritas legadas alimentam a Domain Store (única SoT). */
   const setConversations = useCallback((action: React.SetStateAction<ChatConversation[]>) => {
-    if (isChatStoreSourceOfTruth()) return;
+    if (isChatStoreSourceOfTruth()) {
+      applyStoreConversationsUiUpdate(action);
+      return;
+    }
     setConversationsState(action);
   }, []);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
@@ -596,6 +615,8 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   /** Lista de mensagens (overflow-y-auto) — scroll direto evita scrollIntoView no fim, que no mobile tira foco do composer. */
   const messagesScrollContainerRef = useRef<HTMLDivElement>(null);
+  /** TF4 — pin pós-open sem fechar `loadMessages` sobre `messageVirtual`. */
+  const scrollMessagesToBottomRef = useRef<(() => void) | null>(null);
   const conversationListScrollRef = useRef<HTMLDivElement>(null);
   /** Mobile: última rota `chat_conversations` da URL (`/chat/:id`) para detectar volta lista → não reabrir por query stale. */
   const mobileChatRouteConversationPrevRef = useRef<string | null>(null);
@@ -606,6 +627,17 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   const selectedConversationIdRef = useRef<string | null>(null);
   /** Evita aplicar perfil CRM de um fetch antigo após troca rápida de conversa. */
   const profileLoadGenRef = useRef(0);
+  /** Sprint 4 — vínculo SoT (Store/row) para soft-hold do detail sob erro de GET. */
+  const crmLinkSoTRef = useRef<{ conversationId: string | null; clientId: string | null; leadId: string | null }>({
+    conversationId: null,
+    clientId: null,
+    leadId: null,
+  });
+  const crmDetailProjectionRef = useRef<{ client: any | null; lead: any | null }>({
+    client: null,
+    lead: null,
+  });
+  crmDetailProjectionRef.current = { client: currentClient, lead: currentLead };
   const enabledInstanceIdsRef = useRef<Set<string>>(new Set());
   type PendingConversationRestore = {
     internalId?: string;
@@ -710,17 +742,19 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   const [clients, setClients] = useState<any[]>([]);
   const [ticketCategories, setTicketCategories] = useState<any[]>([]);
 
-  const loadInstances = useCallback(async () => {
+  const loadInstances = useCallback(async (options?: { force?: boolean }) => {
     setLoadingInstances(true);
     let loadedCount = 0;
     try {
       bootstrapChatF3Session(user?.id, user?.tenant_id);
-      const data = await ensureChatInstances({ reason: 'bootstrap' });
-      loadedCount = data.length;
-      const enabledIds = pickEnabledChatInstanceIds(data);
-      setInstances(data);
-      setEnabledInstanceIds(new Set(enabledIds));
-      enabledInstanceIdsRef.current = new Set(enabledIds);
+      const snap = await refreshInboxInstanceVisibility({
+        force: options?.force === true,
+        reason: options?.force ? 'manual' : 'bootstrap',
+      });
+      loadedCount = snap.instances.length;
+      setInstances([...snap.instances]);
+      setEnabledInstanceIds(new Set(snap.enabledInstanceIds));
+      enabledInstanceIdsRef.current = new Set(snap.enabledInstanceIds);
       if (shouldUseChatDomainStore()) {
         ensureChatDomainStoreSession();
       }
@@ -734,6 +768,16 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       chatRouteMarkInstancesLoaded(loadedCount);
     }
   }, [user?.id, user?.tenant_id, chatChannelOrigin]);
+
+  /** Sprint 1 / 10F — espelha snapshot compartilhado (ex.: refresh do Floating). */
+  useEffect(() => {
+    return subscribeInboxInstanceVisibility(() => {
+      const snap = getInboxInstanceVisibilitySnapshot();
+      setInstances([...snap.instances]);
+      setEnabledInstanceIds(new Set(snap.enabledInstanceIds));
+      enabledInstanceIdsRef.current = new Set(snap.enabledInstanceIds);
+    });
+  }, []);
 
   /** Phase 9 — sem refetch periódico do ops dashboard; Socket atualiza conversas localmente. */
   const scheduleOperationsPanelRefresh = useCallback(() => {
@@ -929,13 +973,29 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       }
       try {
         if (selectedConversationIdRef.current !== conversationId) {
+          recordOpenPipelineStaleAbort();
           return;
         }
         if (isChatStoreSourceOfTruth()) {
-          await loadMessagesCommand(conversationId);
+          // TF4: open = sync→force hydrate (não paralelo). Silent refresh = só force load.
+          if (silent) {
+            await loadMessagesCommand(conversationId, { force: true });
+          } else {
+            await openConversationMessagesCommand(conversationId);
+          }
+          // Sprint 3 — se o usuário trocou a seleção durante o fetch, não tratar como open ativo.
+          if (selectedConversationIdRef.current !== conversationId) {
+            recordOpenPipelineStaleAbort();
+            return;
+          }
+          // Pin viewport após hydrate (virt core: layout de append não cobre replace).
+          requestAnimationFrame(() => {
+            scrollMessagesToBottomRef.current?.();
+          });
         } else {
           const data = await chatService.getConversationMessages(conversationId);
           if (selectedConversationIdRef.current !== conversationId) {
+            recordOpenPipelineStaleAbort();
             return;
           }
           setMessages(data);
@@ -1130,11 +1190,17 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     if (!selectedConversationId) setContactProfileOpen(false);
   }, [selectedConversationId]);
 
-  // Carregar mensagens quando uma conversa é selecionada
-  // Nota: Não usamos polling automático pois os webhooks atualizam em tempo real
+  // Carregar mensagens quando uma conversa é selecionada.
+  // TF4 / Store ON: open = sync→force load via openConversationMessagesCommand (sem warm IDB).
   useEffect(() => {
     if (!selectedConversationId) {
-      setMessages([]);
+      if (!isChatStoreSourceOfTruth()) {
+        setMessages([]);
+      }
+      return;
+    }
+    if (isChatStoreSourceOfTruth()) {
+      void loadMessages(selectedConversationId);
       return;
     }
     const cachedMsgs = readChatPageMessages(chatPageCacheScope, selectedConversationId);
@@ -1144,7 +1210,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     } else {
       void loadMessages(selectedConversationId);
     }
-  }, [selectedConversationId, loadMessages]);
+  }, [selectedConversationId, loadMessages, chatPageCacheScope]);
 
   // WebSocket para atualização em tempo real de conversas
   useEffect(() => {
@@ -2076,6 +2142,8 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     });
   }, [messageVirtual]);
 
+  scrollMessagesToBottomRef.current = scrollMessagesToBottom;
+
   // Scroll para o fim: troca de conversa, carga inicial, ou novas mensagens enquanto o utilizador está no fim.
   // Não forçar scroll quando o utilizador subiu no histórico (ex.: socket / reload silencioso).
   useLayoutEffect(() => {
@@ -2806,9 +2874,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     setSelectedConversationId(conversationId);
     saveChatPageLastConversation(chatPageCacheScope, conversationId);
 
-    void chatService.syncConversationMessages(conversationId, {}).catch((error) => {
-      console.error('Erro ao sincronizar mensagens ao selecionar conversa:', error);
-    });
+    // TF4: sync WA passa a correr dentro de `openConversationMessagesCommand` (não em paralelo ao GET).
 
     const conversation =
       conversationsView.find((item) => item.id === conversationId) ??
@@ -2853,9 +2919,16 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     setLoadingClient(true);
     setLoadingLead(true);
     try {
+      recordCrmDetailFetchScheduled();
       const profile = await chatService.getConversationProfile(conversationId);
-      if (profileLoadGenRef.current !== gen) return;
-      if (selectedConversationIdRef.current !== conversationId) return;
+      if (profileLoadGenRef.current !== gen) {
+        recordCrmDetailStaleIgnored();
+        return;
+      }
+      if (selectedConversationIdRef.current !== conversationId) {
+        recordCrmDetailStaleIgnored();
+        return;
+      }
       if (profile.type === 'client' && profile.profile) {
         setCurrentClient(profile.profile);
         setCurrentLead(null);
@@ -2868,8 +2941,22 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       }
     } catch (error) {
       console.error('Erro ao carregar perfil da conversa:', error);
-      if (profileLoadGenRef.current !== gen) return;
-      if (selectedConversationIdRef.current !== conversationId) return;
+      if (profileLoadGenRef.current !== gen) {
+        recordCrmDetailStaleIgnored();
+        return;
+      }
+      if (selectedConversationIdRef.current !== conversationId) {
+        recordCrmDetailStaleIgnored();
+        return;
+      }
+      // Sprint 4 — em erro, não apaga projeção se o SoT ainda indica vínculo (soft-hold).
+      const link = crmLinkSoTRef.current;
+      if (
+        link.conversationId === conversationId &&
+        (link.clientId || link.leadId)
+      ) {
+        return;
+      }
       setCurrentClient(null);
       setCurrentLead(null);
     } finally {
@@ -2889,12 +2976,13 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   );
 
   /**
-   * Phase 10A — sync CRM a partir da conversa SoT (Store/view), nunca do `conversations` local.
-   * Evita wipe de currentLead/currentClient com estado legado stale.
+   * Phase 10A / Sprint 4 — sync CRM detail a partir do vínculo SoT (Conversation Store/view).
+   * Detail GET = projeção; nunca limpa lead/client se o SoT ainda aponta para o mesmo id.
    */
   useEffect(() => {
     const convId = selectedConversationId;
     if (!convId) {
+      crmLinkSoTRef.current = { conversationId: null, clientId: null, leadId: null };
       setCurrentClient(null);
       setCurrentLead(null);
       return;
@@ -2903,17 +2991,40 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     if (!conv || conv.id !== convId) {
       return;
     }
+    crmLinkSoTRef.current = {
+      conversationId: convId,
+      clientId: conv.client_id ?? null,
+      leadId: conv.leadId ?? null,
+    };
     const skipCrm =
       whatsappGroupsUiEnabled &&
       (conv.conversation_type === 'group' || Boolean(conv.external_chat_id?.endsWith('@g.us')));
-    if (!skipCrm && !conv.client_id && !conv.leadId) {
+    if (skipCrm) {
       setCurrentClient(null);
       setCurrentLead(null);
       setLoadingClient(false);
       setLoadingLead(false);
       return;
     }
-    void loadConversationProfile(convId, skipCrm ? { skipCrm: true } : undefined);
+
+    recordCrmDetailReconcile();
+    const reconciled = reconcileCrmDetailWithConversationLink({
+      conversationClientId: conv.client_id,
+      conversationLeadId: conv.leadId,
+      currentClient: crmDetailProjectionRef.current.client,
+      currentLead: crmDetailProjectionRef.current.lead,
+    });
+    if (reconciled.clearedMismatch) {
+      recordCrmDetailClearedBySot();
+      setCurrentClient(reconciled.nextClient ?? null);
+      setCurrentLead(reconciled.nextLead ?? null);
+    }
+    if (!reconciled.shouldFetchProfile) {
+      setLoadingClient(false);
+      setLoadingLead(false);
+      return;
+    }
+    void loadConversationProfile(convId);
   }, [
     selectedConversationId,
     selectedConversation,
@@ -4997,7 +5108,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     try {
       await chatService.patchInstance(instanceId, { enabledInChat: enabling });
       recordManualRefresh();
-      await loadInstances();
+      await loadInstances({ force: true });
     } catch (error) {
       console.error('Erro ao atualizar instância no chat:', error);
       toast.error('Não foi possível alterar a instância', {
@@ -5152,14 +5263,14 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                 </span>
               ) : null}
               <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-                {conversation.lastMessageAt ? formatRelativeDate(conversation.lastMessageAt) : 'Sem mensagens recentes'}
+                {conversationListTimeLabel(conversation.lastMessageAt, formatRelativeDate)}
             </span>
           </div>
             {showPhoneRow ? (
               <p className="mt-0.5 truncate text-[11px] leading-tight text-muted-foreground">{identity.phoneLine}</p>
             ) : null}
             <p className="mt-0.5 line-clamp-1 text-[12px] leading-snug text-muted-foreground md:text-xs">
-              {conversation.lastMessagePreview || 'Sem mensagens recentes'}
+              {conversationListPreviewText(conversation.lastMessagePreview, 0)}
           </p>
             {(() => {
               const tagUi = resolveChatKanbanTagsForUi(conversation);

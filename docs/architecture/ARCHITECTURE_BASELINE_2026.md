@@ -30,6 +30,7 @@ PainelCRM é um CRM multi-tenant SaaS (clientes, leads, funil, propostas, contra
 |---|---|
 | Programa MASTER Phases 0–8 | **CLOSED** |
 | Phase 9 Zero Polling Chat | **CLOSED** — runtime event-driven (Socket / manual / bootstrap) |
+| Phase 10A/10B Conversation runtime | **CLOSED** — Store SoT writes Chat/Float; normalize idempotent |
 | Produção single-node | Ready (defaults seguros) |
 | Escala horizontal WebSocket | Ready **com** Redis Adapter ON + Redis HA |
 | Chat Domain Store | Implementado; SoT quando `CHAT_CORE_STORE` ON |

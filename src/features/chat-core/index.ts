@@ -13,12 +13,13 @@ export {
   loadInboxCommand,
   clearInboxCommand,
   loadMessagesCommand,
+  openConversationMessagesCommand,
   loadMessagesCursorCommand,
   resetConversationCursorCommand,
   chatCoreCommands,
 } from './core/commands';
 export type { LoadInboxParams, LoadInboxResult, LoadInboxSurface } from './core/loadInbox';
-export type { LoadMessagesResult } from './core/loadMessages';
+export type { LoadMessagesResult, LoadMessagesCommandOptions } from './core/loadMessages';
 export type {
   LoadMessagesCursorParams,
   LoadMessagesCursorResult,
@@ -177,6 +178,33 @@ export {
   recordRuntimeCacheMiss,
 } from './metrics/zeroPollingMetrics';
 export type { ZeroPollingMetricsSnapshot } from './metrics/zeroPollingMetrics';
+export {
+  getConversationRuntimeMetricsSnapshot,
+  resetConversationRuntimeMetricsForTests,
+  recordConversationDivergenceIfAny,
+} from './metrics/conversationRuntimeMetrics';
+export type { ConversationRuntimeMetricsSnapshot } from './metrics/conversationRuntimeMetrics';
+export {
+  getPreviewMessagesMetricsSnapshot,
+  resetPreviewMessagesMetricsForTests,
+} from './metrics/previewMessagesMetrics';
+export type { PreviewMessagesMetricsSnapshot } from './metrics/previewMessagesMetrics';
+export {
+  getOpenConversationPipelineMetricsSnapshot,
+  resetOpenConversationPipelineMetricsForTests,
+  OPEN_CONVERSATION_PIPELINE_ORDER,
+} from './metrics/openConversationPipelineMetrics';
+export type { OpenConversationPipelineMetricsSnapshot } from './metrics/openConversationPipelineMetrics';
+export {
+  getCrmDetailProjectionMetricsSnapshot,
+  resetCrmDetailProjectionMetricsForTests,
+} from './metrics/crmDetailProjectionMetrics';
+export type { CrmDetailProjectionMetricsSnapshot } from './metrics/crmDetailProjectionMetrics';
+export {
+  reconcileCrmDetailWithConversationLink,
+  resolveCrmLinkKind,
+  conversationCrmProfileQueryKey,
+} from './crm/crmDetailProjection';
 
 export {
   tryApplyChatWsPatch,

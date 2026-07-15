@@ -102,9 +102,11 @@ describe('chat-core F5.0 domain store', () => {
     expect(messages).toHaveLength(2);
     expect(messages[0]?.body).toBe('updated');
     expect(messages[0]?.status).toBe('read');
+    expect(store.getState().conversations.byId.c1?.lastMessagePreview).toBe('body-m2');
 
     store.dispatch(chatDomainActionCreators.removeMessage('c1', 'm2'));
     expect(chatDomainSelectors.selectMessages(store.getState(), 'c1')).toHaveLength(1);
+    expect(store.getState().conversations.byId.c1?.lastMessagePreview).toBe('updated');
   });
 
   it('notifies subscribers on dispatch and allows unsubscribe', () => {

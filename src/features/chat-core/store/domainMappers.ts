@@ -10,6 +10,10 @@ import type {
   ChatDomainMessage,
   ChatChannelKind,
 } from '../domain/types';
+import {
+  recordConversationMapperCall,
+  recordConversationNormalization,
+} from '../metrics/conversationRuntimeMetrics';
 
 function toChannelKind(raw: unknown): ChatChannelKind {
   if (typeof raw === 'string' && raw.trim()) return raw;
@@ -17,6 +21,8 @@ function toChannelKind(raw: unknown): ChatChannelKind {
 }
 
 export function mapLegacyConversationToDomain(raw: ChatConversation): ChatDomainConversation {
+  recordConversationMapperCall();
+  recordConversationNormalization();
   const normalized = adaptLegacyConversation(raw);
   const leadId = normalized.leadId ?? raw.leadId ?? null;
   const clientId = normalized.client_id ?? raw.client_id ?? null;
@@ -60,7 +66,8 @@ export function mapLegacyMessageToDomain(raw: ChatMessage): ChatDomainMessage {
     direction,
     body: normalized.body ?? normalized.content ?? null,
     status: normalized.status ?? null,
-    sentAt: normalized.sent_at ?? normalized.created_at ?? null,
+    // normalizeChatMessage grava `sentAt` (camelCase); não perde sent_at real em favor de created_at.
+    sentAt: normalized.sentAt ?? (normalized as { sent_at?: string | null }).sent_at ?? normalized.created_at ?? null,
     externalMessageId: normalized.external_message_id ?? null,
     clientMessageId: normalized.client_message_id ?? null,
     raw: normalized,

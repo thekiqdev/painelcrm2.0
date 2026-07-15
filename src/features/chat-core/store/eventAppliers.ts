@@ -2,7 +2,7 @@
  * F5.1 — aplica ChatDomainEvent ao Domain Store (shadow).
  */
 
-import { adaptLegacyChatMessage, adaptLegacyConversation } from '../domain/adapters';
+import { adaptLegacyChatMessage } from '../domain/adapters';
 import type { ChatDomainEvent } from '../domain/types';
 import { chatDomainActionCreators } from './actions';
 import { mapLegacyConversationToDomain, mapLegacyMessageToDomain } from './domainMappers';
@@ -12,35 +12,115 @@ function asRecord(payload: unknown): Record<string, unknown> {
   return payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
 }
 
+/** Tenant v2 lean: `conversation_id` sem row completa (`id` / external_chat_id / user_id). */
+function isLeanConversationRealtimePayload(src: Record<string, unknown>): boolean {
+  const conversationId =
+    typeof src.conversation_id === 'string' && src.conversation_id.length > 0
+      ? src.conversation_id
+      : null;
+  if (!conversationId) return false;
+  const hasRowId = typeof src.id === 'string' && src.id.length > 0;
+  if (hasRowId) return false;
+  const hasUser = typeof src.user_id === 'string' && src.user_id.length > 0;
+  const hasExternal =
+    typeof src.external_chat_id === 'string' && src.external_chat_id.length > 0;
+  return !hasUser && !hasExternal;
+}
+
+function resolveConversationPatchId(src: Record<string, unknown>, raw: Record<string, unknown>): string | null {
+  const candidates = [src.id, src.conversation_id, raw.id, raw.conversation_id];
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.length > 0) return c;
+  }
+  return null;
+}
+
 function pickConversationPatch(payload: unknown) {
   const raw = asRecord(payload);
-  const conversation = raw.conversation ?? raw;
-  try {
-    return mapLegacyConversationToDomain(adaptLegacyConversation(conversation));
-  } catch {
-    const id =
-      typeof raw.id === 'string'
-        ? raw.id
-        : typeof raw.conversation_id === 'string'
-          ? raw.conversation_id
+  const src = asRecord(raw.conversation ?? raw);
+  const id = resolveConversationPatchId(src, raw);
+  if (!id) return null;
+
+  // TF3.1 — payload lean do tenant: só preview/at/unread (+ display_name); nunca inventar row magra.
+  if (isLeanConversationRealtimePayload(src) || isLeanConversationRealtimePayload(raw)) {
+    const lastMessageAt =
+      typeof src.last_message_at === 'string'
+        ? src.last_message_at
+        : typeof src.lastMessageAt === 'string'
+          ? src.lastMessageAt
+          : src.last_message_at instanceof Date
+            ? src.last_message_at.toISOString()
+            : null;
+    const lastMessagePreview =
+      typeof src.last_message_preview === 'string'
+        ? src.last_message_preview
+        : typeof src.lastMessagePreview === 'string'
+          ? src.lastMessagePreview
           : null;
-    if (!id) return null;
+    const unreadCount =
+      typeof src.unread_count === 'number'
+        ? src.unread_count
+        : typeof src.unreadCount === 'number'
+          ? src.unreadCount
+          : undefined;
+    const displayName =
+      typeof src.display_name === 'string'
+        ? src.display_name
+        : typeof src.displayName === 'string'
+          ? src.displayName
+          : null;
+
     return {
       id,
       instanceId: null,
       channel: 'uazapi' as const,
-      unreadCount: typeof raw.unread_count === 'number' ? raw.unread_count : 0,
+      unreadCount: unreadCount ?? 0,
+      lastMessageAt,
+      lastMessagePreview,
+      contactName: displayName,
+      phoneNumber: null,
+      attendanceStatus: null,
+      assignedToUserId: null,
+      clientId: null,
+      leadId: null,
+      conversationType: null,
+      waArchived: typeof src.wa_archived === 'boolean' ? src.wa_archived : undefined,
+      raw: {
+        conversation_id: id,
+        last_message_preview: lastMessagePreview,
+        last_message_at: lastMessageAt,
+        unread_count: unreadCount,
+        display_name: displayName,
+        __leanRealtimePatch: true,
+      },
+    };
+  }
+
+  try {
+    // Phase 10B — uma normalização: mapLegacy já chama adapt/normalize.
+    const mapped = mapLegacyConversationToDomain({
+      ...(src as Parameters<typeof mapLegacyConversationToDomain>[0]),
+      id,
+    } as Parameters<typeof mapLegacyConversationToDomain>[0]);
+    if (typeof mapped.id !== 'string' || !mapped.id) return null;
+    return mapped;
+  } catch {
+    return {
+      id,
+      instanceId: null,
+      channel: 'uazapi' as const,
+      unreadCount: typeof src.unread_count === 'number' ? src.unread_count : 0,
       lastMessageAt:
-        typeof raw.last_message_at === 'string'
-          ? raw.last_message_at
-          : typeof raw.lastMessageAt === 'string'
-            ? raw.lastMessageAt
+        typeof src.last_message_at === 'string'
+          ? src.last_message_at
+          : typeof src.lastMessageAt === 'string'
+            ? src.lastMessageAt
             : null,
       lastMessagePreview:
-        typeof raw.last_message_preview === 'string'
-          ? raw.last_message_preview
-          : typeof raw.lastMessagePreview === 'string'
-            ? raw.lastMessagePreview
+        typeof src.last_message_preview === 'string'
+          ? src.last_message_preview
+          : typeof src.lastMessagePreview === 'string'
+            ? src.lastMessagePreview
             : null,
       contactName: null,
       phoneNumber: null,
@@ -49,7 +129,7 @@ function pickConversationPatch(payload: unknown) {
       clientId: null,
       leadId: null,
       conversationType: null,
-      raw: conversation,
+      raw: { ...src, id, __leanRealtimePatch: true },
     };
   }
 }
@@ -103,7 +183,7 @@ export function mapDomainEventToActions(event: ChatDomainEvent): ChatDomainActio
     case 'conversation.updated':
     case 'conversation.attendance_updated': {
       const conversation = pickConversationPatch(event.payload);
-      if (!conversation) return [];
+      if (!conversation || typeof conversation.id !== 'string' || !conversation.id) return [];
       return [{ type: 'conversations/upsert' as const, conversation }];
     }
     case 'conversation.deleted': {

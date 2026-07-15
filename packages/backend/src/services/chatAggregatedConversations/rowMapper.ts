@@ -48,6 +48,8 @@ export function mapConversationRowsForClient(
 
 function toListViewItem(full: Record<string, unknown>): Record<string, unknown> {
   const tags = Array.isArray(full.tags) ? full.tags : [];
+  /** TF3.3 — avatar de exibição (persistido ou CDN/meta já resolvido em conversationRowForClientApi). */
+  const avatarUrl = full.avatar_url ?? null;
   return {
     id: full.id,
     user_id: full.user_id,
@@ -59,7 +61,8 @@ function toListViewItem(full: Record<string, unknown>): Record<string, unknown> 
     display_name: full.display_name ?? full.contact_name ?? null,
     contact_name: full.contact_name ?? null,
     phone_number: full.phone_number ?? null,
-    avatar_url: full.avatar_url ?? full.final_avatar_url ?? null,
+    avatar_url: avatarUrl,
+    final_avatar_url: full.final_avatar_url ?? null,
     last_message_preview: full.last_message_preview ?? null,
     last_message_at: full.last_message_at ?? null,
     unread_count: full.unread_count ?? 0,

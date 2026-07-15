@@ -6,6 +6,7 @@ import type {
 } from '@/services/chat';
 import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
 import { formatPhoneBrDigits } from '@/lib/brazilInputMasks';
+import { filterEnabledChatInstanceIds } from '@/features/chat-core/runtime';
 
 export const formatHour = (value?: string | null) => {
   if (!value) return '--:--';
@@ -38,14 +39,9 @@ export function mapCrmNoteToPreview(n: Record<string, unknown>): CrmNotePreviewR
   };
 }
 
-/** Instâncias ativas no chat (`metadata.enabled_in_chat !== false`). */
+/** Instâncias ativas no chat — helper canônico chat-core (Sprint 1 / 10F). */
 export function pickEnabledChatInstanceIds(instances: ChatInstance[]): string[] {
-  return instances
-    .filter(
-      (inst) =>
-        (inst.metadata as Record<string, unknown> | null | undefined)?.enabled_in_chat !== false,
-    )
-    .map((inst) => inst.id);
+  return filterEnabledChatInstanceIds(instances);
 }
 
 export function mergeInternalCommentIntoMessage(m: ChatMessage, c: ChatInternalComment): ChatMessage {

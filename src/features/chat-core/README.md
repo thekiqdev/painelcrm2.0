@@ -262,3 +262,15 @@ Contratos e camadas F1–F6 **congelados** (sem mudança funcional):
 
 Ver sub-sprints F5.1–F5.12 e F6.0–F6.8 em `docs/architecture/chat/`.
 Ver também [`AUDIT_F5_FINAL.md`](../../../docs/architecture/chat/AUDIT_F5_FINAL.md).
+
+## Phase 11 — Runtime Core (Sprint 6)
+
+Com `CHAT_CORE_STORE` **ON**, o **Domain Store é o Runtime Core** (ADR-013).  
+Path Store OFF permanece para rollback até **MB-028** (remoção física pós-canário).
+
+| Doc |
+|---|
+| [`ADR-013-DOMAIN-STORE-RUNTIME-CORE.md`](../../../docs/architecture/chat/ADR-013-DOMAIN-STORE-RUNTIME-CORE.md) |
+| [`PHASE11_LEGACY_RETIREMENT.md`](../../../docs/architecture/sprints/PHASE11_LEGACY_RETIREMENT.md) |
+| [`SPRINT_6_CLOSEOUT.md`](../../../docs/architecture/sprints/SPRINT_6_CLOSEOUT.md) |
+| `runtime/cachePrecedence.ts` — camada primária + aliases Phase 11 |

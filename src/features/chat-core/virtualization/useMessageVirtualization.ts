@@ -235,8 +235,12 @@ export function useMessageVirtualization<T extends { id: string }>(
         delta += mid ? engineRef.current!.heightCache.get(mid) : estimated;
       }
       el.scrollTop = el.scrollTop + delta;
-    } else if (appended && isNearBottomRef.current) {
-      recordMessageAppend(count - prevCount);
+    } else if (
+      (appended || (lastId !== prevLastIdRef.current && lastId != null)) &&
+      isNearBottomRef.current
+    ) {
+      // TF4: replace da cauda (mesmo count, lastId novo) também pin — open/hydrate.
+      if (appended) recordMessageAppend(count - prevCount);
       scrollToBottomRef.current('auto');
     } else if (prevCount === 0) {
       scrollToBottomRef.current('auto');

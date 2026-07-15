@@ -39,6 +39,9 @@ import {
 import type { MessagePageId, MessagePageRecord } from './windowCacheTypes';
 import type { ConversationVirtualizationState } from './conversationVirtualizationState';
 import type { MessageVirtualizationState } from './messageVirtualizationState';
+import { syncConversationPreviewFromMessages } from './previewFromMessages';
+import { mergeDomainConversationFullUpsert } from './conversationUpsertMerge';
+import { recordMessageAppend } from '../metrics/previewMessagesMetrics';
 
 function removeMessageIdsFromConversation(
   state: ChatDomainState,
@@ -140,17 +143,66 @@ export function reduceChatDomainState(
 
     case 'conversations/upsert': {
       const { conversation } = action;
-      const orderedIds = state.conversations.orderedIds.includes(conversation.id)
+      if (typeof conversation.id !== 'string' || !conversation.id) {
+        return state;
+      }
+
+      const existing = state.conversations.byId[conversation.id];
+      const rawIn =
+        conversation.raw && typeof conversation.raw === 'object'
+          ? (conversation.raw as Record<string, unknown>)
+          : null;
+      const leanPatch = rawIn?.__leanRealtimePatch === true;
+
+      // TF3.1 — lean tenant patch: não cria row fantasma; só atualiza preview/at/unread na existente.
+      if (leanPatch && !existing) {
+        return state;
+      }
+
+      const merged = existing
+        ? leanPatch
+          ? {
+              ...existing,
+              lastMessagePreview:
+                conversation.lastMessagePreview ?? existing.lastMessagePreview,
+              lastMessageAt: conversation.lastMessageAt ?? existing.lastMessageAt,
+              unreadCount: conversation.unreadCount ?? existing.unreadCount,
+              contactName: existing.contactName ?? conversation.contactName,
+              waArchived:
+                typeof conversation.waArchived === 'boolean'
+                  ? conversation.waArchived
+                  : existing.waArchived,
+              raw:
+                existing.raw && typeof existing.raw === 'object'
+                  ? {
+                      ...(existing.raw as Record<string, unknown>),
+                      lastMessagePreview:
+                        conversation.lastMessagePreview ?? existing.lastMessagePreview,
+                      last_message_preview:
+                        conversation.lastMessagePreview ?? existing.lastMessagePreview,
+                      lastMessageAt: conversation.lastMessageAt ?? existing.lastMessageAt,
+                      last_message_at: conversation.lastMessageAt ?? existing.lastMessageAt,
+                      unreadCount: conversation.unreadCount ?? existing.unreadCount,
+                      unread_count: conversation.unreadCount ?? existing.unreadCount,
+                    }
+                  : existing.raw,
+            }
+          : mergeDomainConversationFullUpsert(existing, conversation)
+        : conversation;
+
+      const orderedIds = state.conversations.orderedIds.includes(merged.id)
         ? state.conversations.orderedIds
-        : [conversation.id, ...state.conversations.orderedIds];
-      return {
+        : [merged.id, ...state.conversations.orderedIds];
+      const next: ChatDomainState = {
         ...state,
         conversations: {
           ...state.conversations,
-          byId: { ...state.conversations.byId, [conversation.id]: conversation },
+          byId: { ...state.conversations.byId, [merged.id]: merged },
           orderedIds,
         },
       };
+      // Phase 10D — se a thread já está hydrated, Preview deriva das Messages (não do patch).
+      return syncConversationPreviewFromMessages(next, merged.id);
     }
 
     case 'conversations/remove': {
@@ -240,7 +292,7 @@ export function reduceChatDomainState(
         logWindowEvent('register', { conversationId: cid, pageId: page.id, position: 'replace' });
         logWindowEvent('pin', { conversationId: cid, pageId: page.id });
       }
-      return { ...state, messages };
+      return syncConversationPreviewFromMessages({ ...state, messages }, cid);
     }
 
     case 'messages/prepend': {
@@ -255,7 +307,7 @@ export function reduceChatDomainState(
         }
       }
       if (prependIds.length === 0) return state;
-      return {
+      const next: ChatDomainState = {
         ...state,
         messages: {
           ...state.messages,
@@ -267,6 +319,7 @@ export function reduceChatDomainState(
           versionByConversationId: bumpMessageVersion(state, conversationId),
         },
       };
+      return syncConversationPreviewFromMessages(next, conversationId);
     }
 
     case 'messages/prependPage': {
@@ -371,7 +424,7 @@ export function reduceChatDomainState(
         nextState = applyWindowTrim(nextState, conversationId);
       }
 
-      return nextState;
+      return syncConversationPreviewFromMessages(nextState, conversationId);
     }
 
     case 'messages/setCursor': {
@@ -619,7 +672,7 @@ export function reduceChatDomainState(
         },
       };
       nextState = applyWindowTrim(nextState, conversationId);
-      return nextState;
+      return syncConversationPreviewFromMessages(nextState, conversationId);
     }
 
     case 'messages/trimWindow': {
@@ -630,7 +683,8 @@ export function reduceChatDomainState(
       const { conversationId, message } = action;
       const existingIds = state.messages.byConversationId[conversationId] ?? [];
       if (existingIds.includes(message.id)) return state;
-      return {
+      recordMessageAppend();
+      const next: ChatDomainState = {
         ...state,
         messages: {
           ...state.messages,
@@ -642,12 +696,13 @@ export function reduceChatDomainState(
           versionByConversationId: bumpMessageVersion(state, conversationId),
         },
       };
+      return syncConversationPreviewFromMessages(next, conversationId);
     }
 
     case 'messages/update': {
       const current = state.messages.byId[action.messageId];
       if (!current) return state;
-      return {
+      const next: ChatDomainState = {
         ...state,
         messages: {
           ...state.messages,
@@ -658,6 +713,7 @@ export function reduceChatDomainState(
           versionByConversationId: bumpMessageVersion(state, action.conversationId),
         },
       };
+      return syncConversationPreviewFromMessages(next, action.conversationId);
     }
 
     case 'messages/remove': {
@@ -668,7 +724,7 @@ export function reduceChatDomainState(
       const ids = (state.messages.byConversationId[conversationId] ?? []).filter(
         (id) => id !== messageId,
       );
-      return {
+      const next: ChatDomainState = {
         ...state,
         messages: {
           ...state.messages,
@@ -680,6 +736,7 @@ export function reduceChatDomainState(
           versionByConversationId: bumpMessageVersion(state, conversationId),
         },
       };
+      return syncConversationPreviewFromMessages(next, conversationId);
     }
 
     case 'selection/setConversation': {

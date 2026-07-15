@@ -8,7 +8,15 @@ export {
   getChatEnabledInstanceIdsFromRegistry,
   filterConnectedChatInstances,
   filterEnabledChatInstanceIds,
+  refreshInboxInstanceVisibility,
+  getInboxInstanceVisibilitySnapshot,
+  subscribeInboxInstanceVisibility,
+  applyInboxInstanceVisibilityFromInstances,
+  resetInboxInstanceVisibility,
+  resetInboxInstanceVisibilityForTests,
+  useInboxInstanceVisibility,
 } from '../instance-registry';
+export type { InboxInstanceVisibilitySnapshot } from '../instance-registry';
 export {
   fetchChatAttendanceCounts,
   reconcileChatAttendanceCounts,

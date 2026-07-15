@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { X } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -18,6 +18,10 @@ import {
   conversationDragPreviewFromChatConversation,
 } from '@/lib/conversationDragPreview';
 import { getCachedFloatingConversationById } from './queryCache';
+import { shouldUseChatDomainStore } from '@/features/chat-core/store/flags';
+import { getChatDomainStoreSession } from '@/features/chat-core/store/session';
+import { EMPTY_CHAT_DOMAIN_STATE } from '@/features/chat-core/store/state';
+import { selectCurrentConversation } from '@/features/chat-core/store/chatSelectors';
 
 function shortName(displayName: string): string {
   const first = displayName.split(/\s+/)[0]?.trim();
@@ -60,10 +64,31 @@ export function MinimizedChatDock({
   }, [minimized.length, minimizedIdsKey, onDockWidthChange]);
 
   const idsKey = minimizedIdsKey;
+  const useStore = shouldUseChatDomainStore();
 
-  const { data: metas = {} } = useQuery({
+  const subscribeStore = useCallback((onChange: () => void) => {
+    const store = getChatDomainStoreSession();
+    if (!store) return () => undefined;
+    return store.subscribe(() => onChange());
+  }, []);
+  const getStoreSnapshot = useCallback(
+    () => getChatDomainStoreSession()?.getState() ?? EMPTY_CHAT_DOMAIN_STATE,
+    [],
+  );
+  const storeState = useSyncExternalStore(subscribeStore, getStoreSnapshot, getStoreSnapshot);
+
+  const storeMetas = useMemo(() => {
+    if (!useStore || minimized.length === 0) return {} as Record<string, ChatConversation | null>;
+    const out: Record<string, ChatConversation | null> = {};
+    for (const p of minimized) {
+      out[p.conversationId] = selectCurrentConversation(storeState, p.conversationId);
+    }
+    return out;
+  }, [useStore, minimized, storeState]);
+
+  const { data: rqMetas = {} } = useQuery({
     queryKey: ['floating-chat', 'minimized-meta', idsKey, instanceIds.join(','), inboxScope],
-    enabled: minimized.length > 0,
+    enabled: !useStore && minimized.length > 0,
     queryFn: async (): Promise<Record<string, ChatConversation | null>> => {
       const out: Record<string, ChatConversation | null> = {};
       for (const p of minimized) {
@@ -125,6 +150,8 @@ export function MinimizedChatDock({
       return out;
     },
   });
+
+  const metas = useStore ? storeMetas : rqMetas;
 
   if (minimized.length === 0) return null;
 
