@@ -14,6 +14,12 @@ import { isChatAggregatedSurfaceEnabled, type ChatAggregatedSurface } from '@/li
 import { recordChatConversationsFetch } from '@/lib/chatConversationsMetrics';
 import { chatService, type ChatConversation } from '@/services/chat';
 
+/** TF6 — 1ª página da inbox (agregada); paginação via cursor / “Carregar mais”. */
+export const DEFAULT_INBOX_PAGE_SIZE = 50;
+
+/** Lookup pontual (dock / find-by-id): sobe a 200 só se 50 não achar. */
+export const INBOX_LOOKUP_MAX_LIMIT = 200;
+
 function filterWaArchivedList(
   items: ChatConversation[],
   attendanceFilter: FetchMergedConversationsParams['attendanceFilter'],
@@ -59,7 +65,7 @@ function buildAggregatedFilters(params: ChatConversationsListParams) {
     unreadOnly: params.quickFilter === 'unread',
     search: params.search,
     cursor: params.cursor ?? undefined,
-    limit: params.limit,
+    limit: params.limit ?? DEFAULT_INBOX_PAGE_SIZE,
     view: 'list' as const,
     sort: 'last_message_at' as const,
   };
@@ -201,19 +207,23 @@ export async function findChatConversationById(
   const { surface, conversationId, instanceIds, inboxScope } = params;
 
   if (isChatAggregatedSurfaceEnabled(surface) && instanceIds.length > 0) {
-    try {
-      const { items } = await chatService.getConversationsAggregated({
-        instanceIds,
-        inboxScope,
-        channelOrigin: 'uazapi',
-        view: 'list',
-        limit: 200,
-      });
-      const hit = items.find((r) => r.id === conversationId);
-      if (hit) return hit;
-    } catch {
-      /* fallback abaixo */
+    // TF6 — 1 GET agregado (50→200); sem fan-out por instanceId.
+    for (const limit of [DEFAULT_INBOX_PAGE_SIZE, INBOX_LOOKUP_MAX_LIMIT] as const) {
+      try {
+        const { items } = await listChatConversations({
+          surface,
+          instanceIds,
+          inboxScope,
+          quickFilter: 'all',
+          limit,
+        });
+        const hit = items.find((r) => r.id === conversationId);
+        if (hit) return hit;
+      } catch {
+        break;
+      }
     }
+    return null;
   }
 
   if (instanceIds.length > 0) {

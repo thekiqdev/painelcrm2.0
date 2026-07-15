@@ -21,7 +21,11 @@ import {
   applyOptimisticSendMessagePreApplied,
 } from '../store/optimistic';
 import { executeChatCommand, mapLegacyConversationResult } from './commandDispatcher';
-import { loadInboxCommand, clearInboxCommand } from './loadInbox';
+import {
+  loadInboxCommand,
+  clearInboxCommand,
+  loadMoreInboxCommand,
+} from './loadInbox';
 import { loadMessagesCommand, openConversationMessagesCommand } from './loadMessages';
 import {
   loadMessagesCursorCommand,
@@ -31,6 +35,11 @@ import {
 export {
   loadInboxCommand,
   clearInboxCommand,
+  loadMoreInboxCommand,
+  getInboxPageMeta,
+  DEFAULT_INBOX_PAGE_SIZE,
+  INBOX_LOAD_TTL_MS,
+  mergeConversationLists,
   type LoadInboxParams,
   type LoadInboxResult,
   type LoadInboxSurface,
@@ -299,6 +308,7 @@ export async function updateConversationStatusCommand(
 /** Namespace de commands para a UI (F5.5 / F5.9 / F5.10). */
 export const chatCoreCommands = {
   loadInbox: loadInboxCommand,
+  loadMoreInbox: loadMoreInboxCommand,
   clearInbox: clearInboxCommand,
   loadMessages: loadMessagesCommand,
   loadMessagesCursor: loadMessagesCursorCommand,

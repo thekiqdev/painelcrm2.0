@@ -12,6 +12,7 @@ export { chatCore, bootstrapChatCoreFoundation } from './core/chatCore';
 export {
   loadInboxCommand,
   clearInboxCommand,
+  loadMoreInboxCommand,
   loadMessagesCommand,
   openConversationMessagesCommand,
   loadMessagesCursorCommand,
@@ -19,6 +20,12 @@ export {
   chatCoreCommands,
 } from './core/commands';
 export type { LoadInboxParams, LoadInboxResult, LoadInboxSurface } from './core/loadInbox';
+export {
+  getInboxPageMeta,
+  DEFAULT_INBOX_PAGE_SIZE,
+  INBOX_LOAD_TTL_MS,
+  mergeConversationLists,
+} from './core/loadInbox';
 export type { LoadMessagesResult, LoadMessagesCommandOptions } from './core/loadMessages';
 export type {
   LoadMessagesCursorParams,

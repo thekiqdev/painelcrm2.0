@@ -100,20 +100,28 @@ export function MinimizedChatDock({
       if (missingIds.length === 0) return out;
 
       if (isChatAggregatedSurfaceEnabled('float') && instanceIds.length > 0) {
-        try {
-          const { items } = await listChatConversations({
-            surface: 'float',
-            instanceIds,
-            inboxScope,
-            quickFilter: 'all',
-          });
-          for (const conversationId of missingIds) {
-            const hit = items.find((r) => r.id === conversationId);
-            if (hit) out[conversationId] = hit;
+        // TF6 — no máximo 2 GETs agregados (50 → 200); sem loop por instanceId.
+        for (const limit of [50, 200] as const) {
+          try {
+            const { items } = await listChatConversations({
+              surface: 'float',
+              instanceIds,
+              inboxScope,
+              quickFilter: 'all',
+              limit,
+            });
+            for (const conversationId of missingIds) {
+              if (out[conversationId]) continue;
+              const hit = items.find((r) => r.id === conversationId);
+              if (hit) out[conversationId] = hit;
+            }
+            const still = missingIds.filter((id) => !out[id]);
+            if (still.length === 0) return out;
+          } catch {
+            break;
           }
-        } catch {
-          /* fallback legado abaixo */
         }
+        return out;
       }
 
       const stillAfterAgg = missingIds.filter((id) => !out[id]);

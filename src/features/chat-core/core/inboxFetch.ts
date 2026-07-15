@@ -2,7 +2,11 @@
  * F5.9 — fetch unificado de inbox (Repository only, sem escrita no Store).
  */
 
-import { listChatConversations } from '@/repositories/chatConversationsRepository';
+import {
+  DEFAULT_INBOX_PAGE_SIZE,
+  listChatConversations,
+  type ChatConversationsListResult,
+} from '@/repositories/chatConversationsRepository';
 import type { ChatAggregatedSurface } from '@/lib/chatAggregatedFlags';
 import type { FetchMergedConversationsParams } from '@/lib/chatConversationsFetch';
 import type { ChatConversation } from '@/services/chat';
@@ -14,6 +18,9 @@ export type LoadInboxSurface = ChatAggregatedSurface | 'core' | 'bootstrap';
 
 export type LoadInboxFetchParams = FetchMergedConversationsParams & {
   surface?: LoadInboxSurface;
+  cursor?: string | null;
+  limit?: number;
+  search?: string;
 };
 
 function resolveAggregatedSurface(surface: LoadInboxSurface | undefined): ChatAggregatedSurface {
@@ -24,9 +31,9 @@ function resolveAggregatedSurface(surface: LoadInboxSurface | undefined): ChatAg
 }
 
 /** Busca lista de conversas via Repository (agregado ou legado por superfície). */
-export async function fetchInboxConversations(
+export async function fetchInboxConversationsPage(
   params: LoadInboxFetchParams,
-): Promise<ChatConversation[]> {
+): Promise<ChatConversationsListResult> {
   const {
     instanceIds,
     inboxScope,
@@ -36,6 +43,9 @@ export async function fetchInboxConversations(
     conversationFilter,
     includeOfficialWhenAll = channelOrigin === 'all',
     surface,
+    cursor,
+    limit = DEFAULT_INBOX_PAGE_SIZE,
+    search,
   } = params;
 
   const t0 = nowMs();
@@ -48,6 +58,9 @@ export async function fetchInboxConversations(
     channelOrigin,
     conversationFilter,
     includeOfficialWhenAll,
+    cursor,
+    limit,
+    search,
   });
 
   recordHttpMetric({
@@ -58,5 +71,13 @@ export async function fetchInboxConversations(
     durationMs: Math.round(nowMs() - t0),
   });
 
+  return result;
+}
+
+/** Compat — só items (1ª página / limit default). */
+export async function fetchInboxConversations(
+  params: LoadInboxFetchParams,
+): Promise<ChatConversation[]> {
+  const result = await fetchInboxConversationsPage(params);
   return result.items;
 }

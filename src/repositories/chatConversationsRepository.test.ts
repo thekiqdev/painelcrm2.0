@@ -79,9 +79,32 @@ describe('chatConversationsRepository F4b', () => {
     });
     expect(result.source).toBe('aggregated');
     expect(chatService.getConversationsAggregated).toHaveBeenCalledTimes(1);
+    expect(chatService.getConversationsAggregated).toHaveBeenCalledWith(
+      expect.objectContaining({
+        limit: 50,
+        view: 'list',
+      }),
+    );
     expect(fetchMergedChatConversations).not.toHaveBeenCalled();
     const stats = getChatConversationsMetricsSnapshot();
     expect(stats.aggregatedCalls).toBe(1);
+  });
+
+  it('TF6 respects explicit limit and cursor', async () => {
+    vi.mocked(isChatAggregatedSurfaceEnabled).mockReturnValue(true);
+    await listChatConversations({
+      surface: 'chat',
+      instanceIds: [instanceId],
+      inboxScope: 'tenant',
+      limit: 50,
+      cursor: 'cur-1',
+    });
+    expect(chatService.getConversationsAggregated).toHaveBeenCalledWith(
+      expect.objectContaining({
+        limit: 50,
+        cursor: 'cur-1',
+      }),
+    );
   });
 
   it('falls back to legacy when aggregated throws', async () => {

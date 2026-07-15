@@ -156,7 +156,8 @@ export function reduceChatDomainState(
 ): ChatDomainState {
   switch (action.type) {
     case 'conversations/set': {
-      const byId = { ...state.conversations.byId };
+      // TF6 — replace byId (não acumular páginas/filtros anteriores).
+      const byId: typeof state.conversations.byId = {};
       for (const conversation of action.conversations) {
         byId[conversation.id] = conversation;
       }

@@ -32,7 +32,8 @@ export function FloatingConversationList({ className }: { className?: string }) 
   const [search, setSearch] = useState('');
   const [quick, setQuick] = useState<QuickFilter>('all');
 
-  const { conversations, isLoading, isFetching } = useFloatingConversationListData({
+  const { conversations, isLoading, isFetching, hasMore, isLoadingMore, loadMore } =
+    useFloatingConversationListData({
     instanceIds,
     inboxScope,
     quick,
@@ -59,89 +60,103 @@ export function FloatingConversationList({ className }: { className?: string }) 
     listBody = <p className="px-2 py-5 text-center text-xs text-muted-foreground">Nenhuma conversa.</p>;
   } else {
     listBody = (
-      <ul className="space-y-0">
-        {filtered.map((c) => {
-          const id = resolveConversationIdentity(c, null, null);
-          const unread = c.unreadCount ?? 0;
-          const tagUi = resolveChatKanbanTagsForUi(c);
-          const tagVisible = tagUi.slice(0, 3);
-          const tagMore = tagUi.length - tagVisible.length;
-          return (
-            <li key={c.id}>
-              <button
-                type="button"
-                draggable
-                className="flex w-full cursor-grab items-start gap-2 rounded-lg px-1.5 py-1.5 text-left transition-colors hover:bg-neutral-100 active:cursor-grabbing dark:hover:bg-slate-800"
-                title="Arrastar para o Kanban"
-                onDragStart={(e) => {
-                  beginConversationDragSession(e.dataTransfer, {
-                    type: 'conversation',
-                    conversationId: c.id,
-                    hasClient: Boolean(c.client_id),
-                    hasLead: Boolean(c.leadId),
-                  });
-                  applyConversationDragPreview(
-                    e,
-                    conversationDragPreviewFromChatConversation(c, c.id),
-                  );
-                }}
-                onDragEnd={() => endConversationDragSession()}
-                onClick={() => openOrFocusConversation(c.id)}
-              >
-                <Avatar className="h-9 w-9 shrink-0 border border-border/50">
-                  {id.avatarUrl ? (
-                    <AvatarImage src={id.avatarUrl} alt="" className="object-cover" />
-                  ) : null}
-                  <AvatarFallback className="bg-primary/15 text-[10px] font-medium text-primary">
-                    {id.initials}
-                  </AvatarFallback>
-                </Avatar>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1">
-                    <span className="truncate text-[13px] font-medium leading-tight">{id.displayName}</span>
-                    {unread > 0 ? (
-                      <Badge
-                        variant="secondary"
-                        className="h-4 min-w-[1rem] justify-center px-1 text-[9px] tabular-nums"
-                      >
-                        {unread > 99 ? '99+' : unread}
-                      </Badge>
+      <div className="space-y-1">
+        <ul className="space-y-0">
+          {filtered.map((c) => {
+            const id = resolveConversationIdentity(c, null, null);
+            const unread = c.unreadCount ?? 0;
+            const tagUi = resolveChatKanbanTagsForUi(c);
+            const tagVisible = tagUi.slice(0, 3);
+            const tagMore = tagUi.length - tagVisible.length;
+            return (
+              <li key={c.id}>
+                <button
+                  type="button"
+                  draggable
+                  className="flex w-full cursor-grab items-start gap-2 rounded-lg px-1.5 py-1.5 text-left transition-colors hover:bg-neutral-100 active:cursor-grabbing dark:hover:bg-slate-800"
+                  title="Arrastar para o Kanban"
+                  onDragStart={(e) => {
+                    beginConversationDragSession(e.dataTransfer, {
+                      type: 'conversation',
+                      conversationId: c.id,
+                      hasClient: Boolean(c.client_id),
+                      hasLead: Boolean(c.leadId),
+                    });
+                    applyConversationDragPreview(
+                      e,
+                      conversationDragPreviewFromChatConversation(c, c.id),
+                    );
+                  }}
+                  onDragEnd={() => endConversationDragSession()}
+                  onClick={() => openOrFocusConversation(c.id)}
+                >
+                  <Avatar className="h-9 w-9 shrink-0 border border-border/50">
+                    {id.avatarUrl ? (
+                      <AvatarImage src={id.avatarUrl} alt="" className="object-cover" />
                     ) : null}
-                  </div>
-                  <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-muted-foreground">
-                    {conversationListPreviewText(c.lastMessagePreview)}
-                  </p>
-                  {tagVisible.length > 0 ? (
-                    <div className="mt-0.5 flex max-w-full flex-wrap items-center gap-1">
-                      {tagVisible.map((t) => (
-                        <ChatKanbanTagBadge
-                          key={t.id}
-                          label={t.label}
-                          color={t.color}
-                          className="max-w-[44%]"
-                        />
-                      ))}
-                      {tagMore > 0 ? (
-                        <span className="shrink-0 text-[10px] font-medium tabular-nums text-muted-foreground">
-                          +{tagMore}
-                        </span>
+                    <AvatarFallback className="bg-primary/15 text-[10px] font-medium text-primary">
+                      {id.initials}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1">
+                      <span className="truncate text-[13px] font-medium leading-tight">{id.displayName}</span>
+                      {unread > 0 ? (
+                        <Badge
+                          variant="secondary"
+                          className="h-4 min-w-[1rem] justify-center px-1 text-[9px] tabular-nums"
+                        >
+                          {unread > 99 ? '99+' : unread}
+                        </Badge>
                       ) : null}
                     </div>
-                  ) : null}
-                  <p className="mt-0.5 text-[10px] text-muted-foreground/90">
-                    {conversationListTimeLabel(c.lastMessageAt, (at) =>
-                      formatDistanceToNow(new Date(at), {
-                        addSuffix: true,
-                        locale: ptBR,
-                      }),
-                    )}
-                  </p>
-                </div>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
+                    <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-muted-foreground">
+                      {conversationListPreviewText(c.lastMessagePreview)}
+                    </p>
+                    {tagVisible.length > 0 ? (
+                      <div className="mt-0.5 flex max-w-full flex-wrap items-center gap-1">
+                        {tagVisible.map((t) => (
+                          <ChatKanbanTagBadge
+                            key={t.id}
+                            label={t.label}
+                            color={t.color}
+                            className="max-w-[44%]"
+                          />
+                        ))}
+                        {tagMore > 0 ? (
+                          <span className="shrink-0 text-[10px] font-medium tabular-nums text-muted-foreground">
+                            +{tagMore}
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    <p className="mt-0.5 text-[10px] text-muted-foreground/90">
+                      {conversationListTimeLabel(c.lastMessageAt, (at) =>
+                        formatDistanceToNow(new Date(at), {
+                          addSuffix: true,
+                          locale: ptBR,
+                        }),
+                      )}
+                    </p>
+                  </div>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+        {hasMore ? (
+          <div className="px-1.5 pb-1">
+            <button
+              type="button"
+              className="w-full rounded-md px-2 py-1.5 text-center text-[11px] font-medium text-muted-foreground hover:bg-muted/60 disabled:opacity-50"
+              disabled={isLoadingMore}
+              onClick={() => void loadMore()}
+            >
+              {isLoadingMore ? 'Carregando…' : 'Carregar mais'}
+            </button>
+          </div>
+        ) : null}
+      </div>
     );
   }
 

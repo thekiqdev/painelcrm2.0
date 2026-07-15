@@ -305,6 +305,7 @@ Se latest page / race / geração descartada / scroll, a bolha mais recente do p
 | 3.3 · Avatar F5 / view=list | `SPRINT_TF3.3_CLOSEOUT.md` | **CLOSED** (aguardando teste) |
 | 4 · Chat latest parity | `SPRINT_TF4_CLOSEOUT.md` | **CLOSED** (aguardando teste) |
 | **TF5** · Dup WS + ordem lista | `SPRINT_TF5_CLOSEOUT.md` (+ [`AUDIT_TF5_…`](./AUDIT_TF5_DUPLICATE_MESSAGES_INBOX_ORDER.md)) | **CLOSED** (aguardando teste) |
+| **TF6** · Pressão load inbox | [`SPRINT_TF6_CLOSEOUT.md`](./SPRINT_TF6_CLOSEOUT.md) (+ audit/plan) | **CLOSED** (aguardando teste + ops) |
 
 ---
 
@@ -312,7 +313,7 @@ Se latest page / race / geração descartada / scroll, a bolha mais recente do p
 
 | | |
 |---|---|
-| Plano | **ATIVO** (sprints 1–4 + TF5 entregues; aguarda QA) |
+| Plano | **ATIVO** (TF1–TF6 entregues; aguarda QA) |
 | Predecessor | Ownership Closure **CLOSED** |
-| Ordem | **… → TF4 Chat parity → TF5 dedupe + orderedIds** |
-| Próximo comando | Teste manual TF5 A+B; sintomas → novo hotfix / plano |
+| Ordem | **… → TF5 dedupe → TF6 inbox load (flag + limit50 + coalesce)** |
+| Próximo comando | **Ops:** confirmar shadow OFF → teste manual TF6 |

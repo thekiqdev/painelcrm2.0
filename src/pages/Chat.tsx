@@ -195,7 +195,15 @@ import {
   conversationListPreviewText,
   conversationListTimeLabel,
 } from '@/features/chat-core/ui/conversationListCopy';
-import { loadInboxCommand, clearInboxCommand, loadMessagesCommand, openConversationMessagesCommand } from '@/features/chat-core/core/commands';
+import {
+  loadInboxCommand,
+  loadMoreInboxCommand,
+  clearInboxCommand,
+  mergeConversationLists,
+  loadMessagesCommand,
+  openConversationMessagesCommand,
+} from '@/features/chat-core/core/commands';
+import { DEFAULT_INBOX_PAGE_SIZE } from '@/repositories/chatConversationsRepository';
 import { useChatPerfRender } from '@/features/chat-core/metrics/renderMetrics';
 import {
   beginPerfScenario,
@@ -651,9 +659,11 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   /** Evita restaurar no primeiro paint com lista vazia e loading=false (race antes do primeiro setLoading(true) aplicar). */
   const conversationsHydratedRef = useRef(false);
   const conversationsCountRef = useRef(0);
-  const loadConversationsRef = useRef<(instanceIds: string | string[]) => Promise<void>>(
-    async () => undefined,
-  );
+  const loadConversationsRef = useRef<
+    (instanceIds: string | string[], options?: { force?: boolean }) => Promise<void>
+  >(async () => undefined);
+  const [inboxHasMore, setInboxHasMore] = useState(false);
+  const [inboxLoadingMore, setInboxLoadingMore] = useState(false);
   /**
    * `/clients` ou `/leads` quando a conversa foi aberta a partir dessas listas (mobile).
    * Mantém o destino de «voltar» se `location.state` se perder (ex.: botão físico «voltar»).
@@ -804,7 +814,10 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     };
   }, [user?.tenant_id, modulePermLoading, canView]);
 
-  const loadConversations = useCallback(async (instanceIds: string | string[]) => {
+  const loadConversations = useCallback(async (
+    instanceIds: string | string[],
+    options?: { force?: boolean },
+  ) => {
     const ids = Array.isArray(instanceIds) ? instanceIds : [instanceIds];
     const effectiveInboxScope =
       user?.tenant_id && chatInboxScope === 'tenant' ? 'tenant' : 'owner';
@@ -847,20 +860,28 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
         channelOrigin: origin,
         conversationFilter,
         includeOfficialWhenAll: origin === 'all',
+        limit: DEFAULT_INBOX_PAGE_SIZE,
+        force: options?.force === true,
       });
 
       const uniqueConversations = result.items;
-      loadedConvCount = uniqueConversations.length;
+      loadedConvCount =
+        isChatStoreSourceOfTruth() && result.source === 'cache'
+          ? conversationsCountRef.current
+          : uniqueConversations.length;
+      setInboxHasMore(result.hasMore);
 
       if (chatListDiag) {
         console.log('[ChatListDiag] loadInboxCommand', {
           count: uniqueConversations.length,
           applied: result.applied,
           stale: result.stale,
+          hasMore: result.hasMore,
+          source: result.source,
         });
       }
 
-      if (!isChatStoreSourceOfTruth()) {
+      if (!isChatStoreSourceOfTruth() && result.source !== 'cache') {
         setConversations(uniqueConversations);
         saveChatPageConversations(
           chatPageCacheScope,
@@ -919,6 +940,52 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     chatInboxScope,
   ]);
 
+  const loadMoreConversations = useCallback(async () => {
+    if (inboxLoadingMore || !inboxHasMore) return;
+    const ids = Array.from(enabledInstanceIdsRef.current);
+    if (ids.length === 0) return;
+    const effectiveInboxScope =
+      user?.tenant_id && chatInboxScope === 'tenant' ? 'tenant' : 'owner';
+    const origin = chatChannelOrigin;
+    const conversationFilter =
+      whatsappGroupsUiEnabled &&
+      chatListConversationFilter === 'groups' &&
+      origin !== 'official'
+        ? ('groups' as const)
+        : undefined;
+
+    setInboxLoadingMore(true);
+    try {
+      const result = await loadMoreInboxCommand({
+        instanceIds: ids,
+        inboxScope: effectiveInboxScope,
+        surface: 'chat',
+        quickFilter: 'all',
+        attendanceFilter: chatAttendanceFilter || undefined,
+        channelOrigin: origin,
+        conversationFilter,
+        includeOfficialWhenAll: origin === 'all',
+        limit: DEFAULT_INBOX_PAGE_SIZE,
+      });
+      setInboxHasMore(result.hasMore);
+      if (!isChatStoreSourceOfTruth() && result.items.length > 0) {
+        setConversations((prev) => mergeConversationLists(prev, result.items));
+      }
+    } catch (error) {
+      console.error('Erro ao carregar mais conversas:', error);
+    } finally {
+      setInboxLoadingMore(false);
+    }
+  }, [
+    inboxLoadingMore,
+    inboxHasMore,
+    user?.tenant_id,
+    chatInboxScope,
+    chatAttendanceFilter,
+    chatChannelOrigin,
+    whatsappGroupsUiEnabled,
+    chatListConversationFilter,
+  ]);
   loadConversationsRef.current = loadConversations;
 
   const handleAfterGroupLeave = useCallback(() => {
@@ -927,7 +994,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     if (isMobile) {
       navigate(chatRouteBase, { replace: true });
     }
-    void loadConversations(Array.from(enabledInstanceIdsRef.current));
+    void loadConversations(Array.from(enabledInstanceIdsRef.current), { force: true });
   }, [isMobile, navigate, loadConversations]);
 
   /** Ordenação da lista lateral — mesma regra que nos handlers realtime. */
@@ -3619,7 +3686,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
         return;
       }
       if (enabledInstanceIds.size > 0) {
-        loadConversations(Array.from(enabledInstanceIds));
+        void loadConversations(Array.from(enabledInstanceIds), { force: true });
       }
       toast.success('Conversas sincronizadas com o WhatsApp', {
         description: `Total encontrado: ${summary?.total ?? 0}`,
@@ -3646,7 +3713,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       if (syncResult.conversation) {
         applyChatCrmConversationUpdate(syncResult.conversation);
       } else if (enabledInstanceIds.size > 0) {
-        await loadConversations(Array.from(enabledInstanceIds));
+        await loadConversations(Array.from(enabledInstanceIds), { force: true });
       }
       const summary = syncResult.chat_sync_summary as { identity_refreshed?: boolean; identity_skipped_cooldown?: boolean } | undefined;
       const identityOk = summary?.identity_refreshed === true;
@@ -5092,7 +5159,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       setTransferDialogOpen(false);
       const ids = Array.from(enabledInstanceIdsRef.current);
       if (ids.length > 0) {
-        await loadConversations(ids);
+        await loadConversations(ids, { force: true });
       }
     } catch (error) {
       toast.error('Não foi possível transferir', {
@@ -5861,6 +5928,20 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                       ) : (
                         <div className="min-w-0 px-1 pb-1 pt-0.5">{conversationsToShow.map(renderConversationItem)}</div>
                       )}
+                      {inboxHasMore && conversationsToShow.length > 0 ? (
+                        <div className="sticky bottom-0 border-t border-border/60 bg-card/95 px-2 py-1.5 backdrop-blur-sm">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-full text-xs text-muted-foreground"
+                            disabled={inboxLoadingMore}
+                            onClick={() => void loadMoreConversations()}
+                          >
+                            {inboxLoadingMore ? 'Carregando…' : 'Carregar mais'}
+                          </Button>
+                        </div>
+                      ) : null}
                     </div>
                   </CardContent>
                 </Card>

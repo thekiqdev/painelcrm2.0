@@ -54,11 +54,25 @@ export function isChatAggregatedConversationsEnabled(): boolean {
   return CHAT_AGGREGATED_SURFACE_FLAG_KEYS.some((k) => cache[k]);
 }
 
+/** TF6 — shadow nunca no hot path de produção (mesmo se flag ON no painel). */
+let shadowProdFailSafeWarned = false;
+
 export function isChatAggregatedApiShadowEnabled(): boolean {
+  if (process.env.NODE_ENV === 'production') {
+    if (isChatMigrationFlagEnabled('CHAT_AGGREGATED_API_SHADOW') && !shadowProdFailSafeWarned) {
+      shadowProdFailSafeWarned = true;
+      console.warn(
+        '[chat-migration] CHAT_AGGREGATED_API_SHADOW ignored in production (TF6 fail-safe)',
+      );
+    }
+    return false;
+  }
   return isChatMigrationFlagEnabled('CHAT_AGGREGATED_API_SHADOW');
 }
 
 export function isChatAggregatedDevLogEnabled(): boolean {
+  // TF6 — dumps `rowIds×200` não devem rodar no hot path de produção.
+  if (process.env.NODE_ENV === 'production') return false;
   return isChatMigrationFlagEnabled('CHAT_AGGREGATED_DEV_LOG');
 }
 

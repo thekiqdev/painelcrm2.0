@@ -1,15 +1,25 @@
 /**
  * F5.2 — hook da lista de conversas do Floating Chat (Store ou React Query).
+ * TF6 — limit=50 + load more + page meta.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   FLOATING_CHAT_LIST_STALE_MS,
   floatingChatConversationsQueryKey,
 } from '@/features/floating-chat/floatingChatQueries';
-import { listChatConversationsItems, type ChatInboxScope } from '@/repositories/chatConversationsRepository';
-import { loadInboxCommand } from '../../core/commands';
+import {
+  DEFAULT_INBOX_PAGE_SIZE,
+  listChatConversations,
+  type ChatInboxScope,
+} from '@/repositories/chatConversationsRepository';
+import {
+  getInboxPageMeta,
+  loadInboxCommand,
+  loadMoreInboxCommand,
+  mergeConversationLists,
+} from '../../core/commands';
 import { shouldUseChatDomainStore } from '../flags';
 import { getChatDomainStoreSession } from '../session';
 import { EMPTY_CHAT_DOMAIN_STATE } from '../state';
@@ -30,6 +40,9 @@ export type FloatingConversationListData = {
   isLoading: boolean;
   isFetching: boolean;
   source: 'store' | 'react-query';
+  hasMore: boolean;
+  isLoadingMore: boolean;
+  loadMore: () => Promise<void>;
 };
 
 export function useFloatingConversationListData(params: {
@@ -40,17 +53,29 @@ export function useFloatingConversationListData(params: {
 }): FloatingConversationListData {
   const useStore = shouldUseChatDomainStore();
   const { instanceIds, inboxScope, quick, listOpen } = params;
+  const queryClient = useQueryClient();
+
+  const [rqHasMore, setRqHasMore] = useState(false);
+  const [rqNextCursor, setRqNextCursor] = useState<string | null>(null);
+  const [rqLoadingMore, setRqLoadingMore] = useState(false);
+  const [storeHasMore, setStoreHasMore] = useState(false);
+  const [storeLoadingMore, setStoreLoadingMore] = useState(false);
 
   const rq = useQuery({
     queryKey: floatingChatConversationsQueryKey(instanceIds, inboxScope, quick),
     enabled: !useStore && listOpen && instanceIds.length > 0,
-    queryFn: () =>
-      listChatConversationsItems({
+    queryFn: async () => {
+      const page = await listChatConversations({
         surface: 'float',
         instanceIds,
         inboxScope,
         quickFilter: quick,
-      }),
+        limit: DEFAULT_INBOX_PAGE_SIZE,
+      });
+      setRqHasMore(page.hasMore);
+      setRqNextCursor(page.nextCursor);
+      return page.items;
+    },
     staleTime: FLOATING_CHAT_LIST_STALE_MS,
     placeholderData: (prev) => prev,
   });
@@ -81,6 +106,16 @@ export function useFloatingConversationListData(params: {
 
   const storeState = useSyncExternalStore(subscribeStore, getStoreSnapshot, getStoreSnapshot);
 
+  const inboxParams = useMemo(
+    () => ({
+      instanceIds,
+      inboxScope,
+      quickFilter: quick,
+      surface: 'float' as const,
+    }),
+    [instanceIds, inboxScope, quick],
+  );
+
   const loadStoreInbox = useCallback(async () => {
     if (!useStore || !listOpen || instanceIds.length === 0) return;
     const generation = ++loadGenerationRef.current;
@@ -89,13 +124,10 @@ export function useFloatingConversationListData(params: {
     setStoreFetching(true);
     const start = performance.now();
     try {
-      const result = await loadInboxCommand({
-        instanceIds,
-        inboxScope,
-        quickFilter: quick,
-        surface: 'float',
-      });
+      const result = await loadInboxCommand(inboxParams);
       if (generation !== loadGenerationRef.current) return;
+
+      setStoreHasMore(result.hasMore || getInboxPageMeta(inboxParams).hasMore);
 
       const durationMs = Math.round(performance.now() - start);
       const store = getChatDomainStoreSession();
@@ -116,7 +148,7 @@ export function useFloatingConversationListData(params: {
         setStoreFetching(false);
       }
     }
-  }, [useStore, listOpen, instanceIds, inboxScope, quick]);
+  }, [useStore, listOpen, instanceIds, inboxParams, quick]);
 
   useEffect(() => {
     if (!useStore) return;
@@ -128,12 +160,58 @@ export function useFloatingConversationListData(params: {
     return selectConversationsForUi(storeState, { quickFilter: quick });
   }, [useStore, storeState, quick]);
 
+  const loadMoreStore = useCallback(async () => {
+    if (!useStore || storeLoadingMore) return;
+    const meta = getInboxPageMeta(inboxParams);
+    if (!meta.hasMore && !storeHasMore) return;
+    setStoreLoadingMore(true);
+    try {
+      const result = await loadMoreInboxCommand(inboxParams);
+      setStoreHasMore(result.hasMore);
+    } finally {
+      setStoreLoadingMore(false);
+    }
+  }, [useStore, storeLoadingMore, inboxParams, storeHasMore]);
+
+  const loadMoreRq = useCallback(async () => {
+    if (useStore || rqLoadingMore || !rqNextCursor) return;
+    setRqLoadingMore(true);
+    try {
+      const page = await listChatConversations({
+        surface: 'float',
+        instanceIds,
+        inboxScope,
+        quickFilter: quick,
+        limit: DEFAULT_INBOX_PAGE_SIZE,
+        cursor: rqNextCursor,
+      });
+      const key = floatingChatConversationsQueryKey(instanceIds, inboxScope, quick);
+      const prev = queryClient.getQueryData(key) as typeof page.items | undefined;
+      queryClient.setQueryData(key, mergeConversationLists(prev ?? [], page.items));
+      setRqHasMore(page.hasMore);
+      setRqNextCursor(page.nextCursor);
+    } finally {
+      setRqLoadingMore(false);
+    }
+  }, [
+    useStore,
+    rqLoadingMore,
+    rqNextCursor,
+    instanceIds,
+    inboxScope,
+    quick,
+    queryClient,
+  ]);
+
   if (!useStore) {
     return {
       conversations: rq.data ?? [],
       isLoading: rq.isLoading,
       isFetching: rq.isFetching,
       source: 'react-query',
+      hasMore: rqHasMore,
+      isLoadingMore: rqLoadingMore,
+      loadMore: loadMoreRq,
     };
   }
 
@@ -142,5 +220,8 @@ export function useFloatingConversationListData(params: {
     isLoading: storeLoading && storeConversations.length === 0,
     isFetching: storeFetching,
     source: 'store',
+    hasMore: storeHasMore,
+    isLoadingMore: storeLoadingMore,
+    loadMore: loadMoreStore,
   };
 }

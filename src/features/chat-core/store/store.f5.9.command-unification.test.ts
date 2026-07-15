@@ -20,6 +20,7 @@ import {
   setChatMigrationFlagsForTests,
 } from '@/lib/chatMigrationFlagManager';
 import type { ChatConversation } from '@/services/chat';
+import type { ChatConversationsListResult } from '@/repositories/chatConversationsRepository';
 
 const legacyConversation = (id: string, preview?: string): ChatConversation =>
   ({
@@ -35,10 +36,28 @@ const legacyConversation = (id: string, preview?: string): ChatConversation =>
 
 const mockItems = (ids: string[]) => ids.map((id) => legacyConversation(id));
 
+function pageOf(
+  items: ChatConversation[],
+  meta?: Partial<ChatConversationsListResult>,
+): ChatConversationsListResult {
+  return {
+    items,
+    nextCursor: meta?.nextCursor ?? null,
+    hasMore: meta?.hasMore ?? false,
+    source: meta?.source ?? 'aggregated',
+  };
+}
+
 vi.mock('../core/inboxFetch', () => ({
-  fetchInboxConversations: vi.fn(async (params: { instanceIds: string[]; surface?: string }) => {
+  fetchInboxConversations: vi.fn(async () => []),
+  fetchInboxConversationsPage: vi.fn(async (params: { surface?: string }) => {
     const n = params.surface === 'float' ? 3 : 50;
-    return mockItems(Array.from({ length: n }, (_, i) => `conv-${i}`));
+    return {
+      items: mockItems(Array.from({ length: n }, (_, i) => `conv-${i}`)),
+      nextCursor: null,
+      hasMore: false,
+      source: 'aggregated' as const,
+    };
   }),
 }));
 
@@ -48,10 +67,10 @@ describe('F5.9 command unification', () => {
     resetLoadInboxStateForTests();
     setChatMigrationFlagsForTests({ CHAT_CORE_STORE: true });
     setChatDomainStoreSessionForTests(createChatDomainStore());
-    const { fetchInboxConversations } = await import('../core/inboxFetch');
-    vi.mocked(fetchInboxConversations).mockImplementation(async (params) => {
+    const { fetchInboxConversationsPage } = await import('../core/inboxFetch');
+    vi.mocked(fetchInboxConversationsPage).mockImplementation(async (params) => {
       const n = params.surface === 'float' ? 3 : 50;
-      return mockItems(Array.from({ length: n }, (_, i) => `conv-${i}`));
+      return pageOf(mockItems(Array.from({ length: n }, (_, i) => `conv-${i}`)));
     });
   });
 
@@ -86,14 +105,14 @@ describe('F5.9 command unification', () => {
   });
 
   it('concurrency — last generation wins', async () => {
-    const { fetchInboxConversations } = await import('../core/inboxFetch');
-    let resolveFirst: (v: ChatConversation[]) => void;
-    const firstPromise = new Promise<ChatConversation[]>((r) => {
+    const { fetchInboxConversationsPage } = await import('../core/inboxFetch');
+    let resolveFirst: (v: ChatConversationsListResult) => void;
+    const firstPromise = new Promise<ChatConversationsListResult>((r) => {
       resolveFirst = r;
     });
-    vi.mocked(fetchInboxConversations)
+    vi.mocked(fetchInboxConversationsPage)
       .mockImplementationOnce(() => firstPromise)
-      .mockImplementationOnce(async () => mockItems(['only-last']));
+      .mockImplementationOnce(async () => pageOf(mockItems(['only-last'])));
 
     const p1 = loadInboxCommand({
       instanceIds: ['inst-1'],
@@ -112,7 +131,9 @@ describe('F5.9 command unification', () => {
       'only-last',
     ]);
 
-    resolveFirst!(mockItems(Array.from({ length: 50 }, (_, i) => `stale-${i}`)));
+    resolveFirst!(
+      pageOf(mockItems(Array.from({ length: 50 }, (_, i) => `stale-${i}`))),
+    );
     const r1 = await p1;
     expect(r1.stale).toBe(true);
     expect(selectChatConversationsForUi(getChatDomainStoreSession()!.getState()).map((c) => c.id)).toEqual([
@@ -121,8 +142,8 @@ describe('F5.9 command unification', () => {
   });
 
   it('does not wipe store with empty fetch unless allowEmpty', async () => {
-    const { fetchInboxConversations } = await import('../core/inboxFetch');
-    vi.mocked(fetchInboxConversations).mockResolvedValueOnce(mockItems(['keep-1', 'keep-2']));
+    const { fetchInboxConversationsPage } = await import('../core/inboxFetch');
+    vi.mocked(fetchInboxConversationsPage).mockResolvedValueOnce(pageOf(mockItems(['keep-1', 'keep-2'])));
 
     await loadInboxCommand({
       instanceIds: ['inst-1'],
@@ -131,11 +152,12 @@ describe('F5.9 command unification', () => {
     });
     expect(selectChatConversationsForUi(getChatDomainStoreSession()!.getState())).toHaveLength(2);
 
-    vi.mocked(fetchInboxConversations).mockResolvedValueOnce([]);
+    vi.mocked(fetchInboxConversationsPage).mockResolvedValueOnce(pageOf([]));
     const empty = await loadInboxCommand({
       instanceIds: ['inst-1'],
       inboxScope: 'tenant',
       surface: 'chat',
+      force: true,
     });
     expect(empty.applied).toBe(false);
     expect(selectChatConversationsForUi(getChatDomainStoreSession()!.getState())).toHaveLength(2);
@@ -153,8 +175,8 @@ describe('F5.9 command unification', () => {
   });
 
   it('parity — chat and float same context share orderedIds', async () => {
-    const { fetchInboxConversations } = await import('../core/inboxFetch');
-    vi.mocked(fetchInboxConversations).mockResolvedValue(mockItems(['a', 'b', 'c']));
+    const { fetchInboxConversationsPage } = await import('../core/inboxFetch');
+    vi.mocked(fetchInboxConversationsPage).mockResolvedValue(pageOf(mockItems(['a', 'b', 'c'])));
 
     await loadInboxCommand({
       instanceIds: ['inst-1'],
@@ -171,6 +193,7 @@ describe('F5.9 command unification', () => {
       inboxScope: 'tenant',
       surface: 'float',
       quickFilter: 'all',
+      force: true,
     });
     const afterFloat = selectChatConversationsForUi(getChatDomainStoreSession()!.getState()).map(
       (c) => c.id,

@@ -1,7 +1,9 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import {
   clearChatMigrationFlagsCacheForTests,
+  isChatAggregatedApiShadowEnabled,
   isChatAggregatedConversationsEnabled,
+  isChatAggregatedDevLogEnabled,
   isChatMigrationFlagEnabled,
   setChatMigrationFlagsCacheForTests,
 } from './service.js';
@@ -32,5 +34,21 @@ describe('chatMigrationFlags service', () => {
     expect(isChatMigrationFlagEnabled('CHAT_WS_PATCH_MESSAGE')).toBe(true);
     expect(isChatMigrationFlagEnabled('CHAT_AGGREGATED_API_SHADOW')).toBe(true);
     expect(isChatMigrationFlagEnabled('CHAT_WS_PATCH_DELETE')).toBe(false);
+  });
+
+  it('TF6 fail-safe: shadow and dev log off in production even if flag ON', () => {
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      setChatMigrationFlagsCacheForTests({
+        CHAT_AGGREGATED_API_SHADOW: true,
+        CHAT_AGGREGATED_DEV_LOG: true,
+      });
+      expect(isChatAggregatedApiShadowEnabled()).toBe(false);
+      expect(isChatAggregatedDevLogEnabled()).toBe(false);
+      expect(isChatMigrationFlagEnabled('CHAT_AGGREGATED_API_SHADOW')).toBe(true);
+    } finally {
+      process.env.NODE_ENV = prev;
+    }
   });
 });
