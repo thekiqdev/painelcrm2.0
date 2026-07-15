@@ -42,6 +42,51 @@ import type { MessageVirtualizationState } from './messageVirtualizationState';
 import { syncConversationPreviewFromMessages } from './previewFromMessages';
 import { mergeDomainConversationFullUpsert } from './conversationUpsertMerge';
 import { recordMessageAppend } from '../metrics/previewMessagesMetrics';
+import { sortDomainConversations } from './conversationSelectors';
+
+function rebuildConversationOrderedIds(
+  byId: Record<ChatConversationId, ChatDomainConversation>,
+  preferredIds?: readonly ChatConversationId[],
+): ChatConversationId[] {
+  const list =
+    preferredIds && preferredIds.length > 0
+      ? preferredIds
+          .map((id) => byId[id])
+          .filter((c): c is ChatDomainConversation => Boolean(c))
+      : Object.values(byId);
+  return sortDomainConversations(list).map((c) => c.id);
+}
+
+/** TF5 — merge append when same logical message already exists (external / client id). */
+function findAppendDedupeMatchId(
+  state: ChatDomainState,
+  conversationId: ChatConversationId,
+  message: ChatDomainMessage,
+  existingIds: readonly ChatMessageId[],
+): ChatMessageId | null {
+  const ext = message.externalMessageId;
+  const client = message.clientMessageId;
+  if (!ext && !client) return null;
+
+  for (const id of existingIds) {
+    const existing = state.messages.byId[id];
+    if (!existing) continue;
+    if (ext && existing.externalMessageId && existing.externalMessageId === ext) {
+      return id;
+    }
+    if (client && existing.clientMessageId && existing.clientMessageId === client) {
+      return id;
+    }
+  }
+  return null;
+}
+
+function resolveAppendKeepId(existingId: ChatMessageId, incomingId: ChatMessageId): ChatMessageId {
+  const existingTemp = existingId.startsWith('temp-');
+  const incomingTemp = incomingId.startsWith('temp-');
+  if (existingTemp && !incomingTemp) return incomingId;
+  return existingId;
+}
 
 function removeMessageIdsFromConversation(
   state: ChatDomainState,
@@ -126,11 +171,11 @@ export function reduceChatDomainState(
   switch (action.type) {
     case 'conversations/set': {
       const byId = { ...state.conversations.byId };
-      const orderedIds: ChatConversationId[] = [];
       for (const conversation of action.conversations) {
         byId[conversation.id] = conversation;
-        orderedIds.push(conversation.id);
       }
+      // TF5 — Store SoT of inbox order (lastMessageAt DESC / pinned).
+      const orderedIds = rebuildConversationOrderedIds(byId, action.conversations.map((c) => c.id));
       return {
         ...state,
         conversations: {
@@ -190,14 +235,17 @@ export function reduceChatDomainState(
           : mergeDomainConversationFullUpsert(existing, conversation)
         : conversation;
 
-      const orderedIds = state.conversations.orderedIds.includes(merged.id)
+      const byId = { ...state.conversations.byId, [merged.id]: merged };
+      const preferredIds = state.conversations.orderedIds.includes(merged.id)
         ? state.conversations.orderedIds
         : [merged.id, ...state.conversations.orderedIds];
+      // TF5 — reposition on lastMessageAt / pin changes (full re-sort of inbox order).
+      const orderedIds = rebuildConversationOrderedIds(byId, preferredIds);
       const next: ChatDomainState = {
         ...state,
         conversations: {
           ...state.conversations,
-          byId: { ...state.conversations.byId, [merged.id]: merged },
+          byId,
           orderedIds,
         },
       };
@@ -683,6 +731,48 @@ export function reduceChatDomainState(
       const { conversationId, message } = action;
       const existingIds = state.messages.byConversationId[conversationId] ?? [];
       if (existingIds.includes(message.id)) return state;
+
+      // TF5 — dedupe by externalMessageId / clientMessageId (new_message + message.created).
+      const matchId = findAppendDedupeMatchId(state, conversationId, message, existingIds);
+      if (matchId) {
+        const existing = state.messages.byId[matchId];
+        if (!existing) return state;
+        const keepId = resolveAppendKeepId(matchId, message.id);
+        const merged: ChatDomainMessage = {
+          ...existing,
+          ...message,
+          id: keepId,
+          // Prefer non-null identity fields from either side.
+          externalMessageId: message.externalMessageId ?? existing.externalMessageId,
+          clientMessageId: message.clientMessageId ?? existing.clientMessageId,
+          sentAt: message.sentAt ?? existing.sentAt,
+          body: message.body ?? existing.body,
+          status: message.status ?? existing.status,
+        };
+        const nextById = { ...state.messages.byId };
+        if (keepId !== matchId) {
+          delete nextById[matchId];
+        }
+        nextById[keepId] = merged;
+        const nextIds =
+          keepId !== matchId
+            ? existingIds.map((id) => (id === matchId ? keepId : id))
+            : existingIds;
+        const next: ChatDomainState = {
+          ...state,
+          messages: {
+            ...state.messages,
+            byId: nextById,
+            byConversationId: {
+              ...state.messages.byConversationId,
+              [conversationId]: nextIds,
+            },
+            versionByConversationId: bumpMessageVersion(state, conversationId),
+          },
+        };
+        return syncConversationPreviewFromMessages(next, conversationId);
+      }
+
       recordMessageAppend();
       const next: ChatDomainState = {
         ...state,

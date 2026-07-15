@@ -134,9 +134,41 @@ function pickConversationPatch(payload: unknown) {
   }
 }
 
-function pickMessageFromPayload(payload: unknown) {
+/**
+ * TF5 — flatten payload v2 (message_id / provider_message_id flat, sem nested `.message`)
+ * so normalizeChatMessage / mapLegacyMessageToDomain receive stable ids + sent_at.
+ */
+function flattenMessagePayload(payload: unknown): Record<string, unknown> {
   const raw = asRecord(payload);
-  const message = raw.message ?? payload;
+  const nested =
+    raw.message && typeof raw.message === 'object' ? asRecord(raw.message) : null;
+  const src = nested ?? raw;
+
+  return {
+    ...src,
+    id: src.id ?? src.message_id ?? raw.message_id ?? raw.id,
+    message_id: src.message_id ?? raw.message_id,
+    conversation_id: src.conversation_id ?? raw.conversation_id,
+    direction: src.direction ?? raw.direction,
+    body: src.body ?? raw.body,
+    status: src.status ?? raw.status,
+    sent_at: src.sent_at ?? src.sentAt ?? raw.sent_at ?? raw.sentAt,
+    sentAt: src.sentAt ?? src.sent_at ?? raw.sentAt ?? raw.sent_at,
+    external_message_id:
+      src.external_message_id ??
+      src.provider_message_id ??
+      raw.external_message_id ??
+      raw.provider_message_id ??
+      null,
+    provider_message_id: src.provider_message_id ?? raw.provider_message_id ?? null,
+    client_message_id: src.client_message_id ?? raw.client_message_id ?? null,
+    media: src.media ?? raw.media,
+    metadata: src.metadata ?? raw.metadata,
+  };
+}
+
+function pickMessageFromPayload(payload: unknown) {
+  const message = flattenMessagePayload(payload);
   try {
     return mapLegacyMessageToDomain(adaptLegacyChatMessage(message));
   } catch {

@@ -643,6 +643,20 @@ function sanitizeMessageContract(c: ChatMessageContract | null | undefined): Cha
 }
 
 /** Normaliza uma linha de mensagem (API REST ou WebSocket) para o estado da UI. */
+function coerceChatMessageId(raw: any): string {
+  const resolved = raw?.id ?? raw?.message_id;
+  if (resolved == null || resolved === '') return resolved as string;
+  return String(resolved);
+}
+
+function coerceChatMessageSentAt(raw: any): string | null {
+  const v = raw?.sent_at ?? raw?.sentAt ?? raw?.created_at ?? null;
+  if (v instanceof Date) return v.toISOString();
+  if (typeof v === 'string') return v;
+  if (v == null) return null;
+  return String(v);
+}
+
 export function normalizeChatMessage(raw: any): ChatMessage {
   const contract = (raw.message_contract as ChatMessageContract | undefined) ?? null;
   const icc = raw.internal_comment_count;
@@ -655,16 +669,16 @@ export function normalizeChatMessage(raw: any): ChatMessage {
   const clientFromMeta =
     meta && typeof meta.client_message_id === 'string' ? meta.client_message_id : null;
   return {
-    id: raw.id,
+    id: coerceChatMessageId(raw),
     conversation_id: raw.conversation_id,
     direction: raw.direction === 'outgoing' ? 'outgoing' : 'incoming',
     client_message_id: raw.client_message_id ?? clientFromMeta ?? null,
-    external_message_id: raw.external_message_id ?? null,
+    external_message_id: raw.external_message_id ?? raw.provider_message_id ?? null,
     body: coerceChatPlainText(raw.body) || null,
     status: raw.status ?? null,
-    sentAt: raw.sent_at ?? raw.sentAt ?? raw.created_at ?? null,
+    sentAt: coerceChatMessageSentAt(raw),
     metadata: raw.metadata ?? null,
-    created_at: raw.created_at,
+    created_at: raw.created_at instanceof Date ? raw.created_at.toISOString() : raw.created_at,
     media: sanitizeMediaItems(parseMediaField(raw.media)),
     message_contract: sanitizeMessageContract(contract),
     reply_to_message_id: raw.reply_to_message_id ?? null,
