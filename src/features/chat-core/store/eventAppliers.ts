@@ -134,41 +134,30 @@ function pickConversationPatch(payload: unknown) {
   }
 }
 
-/**
- * TF5 — flatten payload v2 (message_id / provider_message_id flat, sem nested `.message`)
- * so normalizeChatMessage / mapLegacyMessageToDomain receive stable ids + sent_at.
- */
-function flattenMessagePayload(payload: unknown): Record<string, unknown> {
-  const raw = asRecord(payload);
-  const nested =
-    raw.message && typeof raw.message === 'object' ? asRecord(raw.message) : null;
-  const src = nested ?? raw;
-
-  return {
-    ...src,
-    id: src.id ?? src.message_id ?? raw.message_id ?? raw.id,
-    message_id: src.message_id ?? raw.message_id,
-    conversation_id: src.conversation_id ?? raw.conversation_id,
-    direction: src.direction ?? raw.direction,
-    body: src.body ?? raw.body,
-    status: src.status ?? raw.status,
-    sent_at: src.sent_at ?? src.sentAt ?? raw.sent_at ?? raw.sentAt,
-    sentAt: src.sentAt ?? src.sent_at ?? raw.sentAt ?? raw.sent_at,
-    external_message_id:
-      src.external_message_id ??
-      src.provider_message_id ??
-      raw.external_message_id ??
-      raw.provider_message_id ??
-      null,
-    provider_message_id: src.provider_message_id ?? raw.provider_message_id ?? null,
-    client_message_id: src.client_message_id ?? raw.client_message_id ?? null,
-    media: src.media ?? raw.media,
-    metadata: src.metadata ?? raw.metadata,
-  };
-}
-
 function pickMessageFromPayload(payload: unknown) {
-  const message = flattenMessagePayload(payload);
+  const raw = asRecord(payload);
+  let message = raw.message ?? payload;
+  const msg = asRecord(message);
+  // Flat v2 tenant message.created — message_id / conversation_id at top without nested .message
+  if (!msg.id && typeof raw.message_id === 'string') {
+    message = {
+      ...msg,
+      id: raw.message_id ?? msg.message_id,
+      conversation_id: msg.conversation_id ?? raw.conversation_id,
+      external_message_id:
+        msg.external_message_id ?? raw.provider_message_id ?? msg.provider_message_id,
+      sent_at: msg.sent_at ?? raw.sent_at,
+      body: msg.body ?? raw.body,
+      direction: msg.direction ?? raw.direction,
+    };
+  } else if (!asRecord(message).id && typeof asRecord(message).message_id === 'string') {
+    const m = asRecord(message);
+    message = {
+      ...m,
+      id: m.message_id,
+      external_message_id: m.external_message_id ?? m.provider_message_id,
+    };
+  }
   try {
     return mapLegacyMessageToDomain(adaptLegacyChatMessage(message));
   } catch {

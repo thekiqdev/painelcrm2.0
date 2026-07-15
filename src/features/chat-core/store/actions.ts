@@ -44,23 +44,9 @@ import { mergeDomainConversationFullUpsert } from './conversationUpsertMerge';
 import { recordMessageAppend } from '../metrics/previewMessagesMetrics';
 import { sortDomainConversations } from './conversationSelectors';
 
-function rebuildConversationOrderedIds(
-  byId: Record<ChatConversationId, ChatDomainConversation>,
-  preferredIds?: readonly ChatConversationId[],
-): ChatConversationId[] {
-  const list =
-    preferredIds && preferredIds.length > 0
-      ? preferredIds
-          .map((id) => byId[id])
-          .filter((c): c is ChatDomainConversation => Boolean(c))
-      : Object.values(byId);
-  return sortDomainConversations(list).map((c) => c.id);
-}
-
 /** TF5 — merge append when same logical message already exists (external / client id). */
 function findAppendDedupeMatchId(
   state: ChatDomainState,
-  conversationId: ChatConversationId,
   message: ChatDomainMessage,
   existingIds: readonly ChatMessageId[],
 ): ChatMessageId | null {
@@ -175,7 +161,7 @@ export function reduceChatDomainState(
         byId[conversation.id] = conversation;
       }
       // TF5 — Store SoT of inbox order (lastMessageAt DESC / pinned).
-      const orderedIds = rebuildConversationOrderedIds(byId, action.conversations.map((c) => c.id));
+      const orderedIds = sortDomainConversations(action.conversations).map((c) => c.id);
       return {
         ...state,
         conversations: {
@@ -235,17 +221,14 @@ export function reduceChatDomainState(
           : mergeDomainConversationFullUpsert(existing, conversation)
         : conversation;
 
-      const byId = { ...state.conversations.byId, [merged.id]: merged };
-      const preferredIds = state.conversations.orderedIds.includes(merged.id)
-        ? state.conversations.orderedIds
-        : [merged.id, ...state.conversations.orderedIds];
+      const nextById = { ...state.conversations.byId, [merged.id]: merged };
       // TF5 — reposition on lastMessageAt / pin changes (full re-sort of inbox order).
-      const orderedIds = rebuildConversationOrderedIds(byId, preferredIds);
+      const orderedIds = sortDomainConversations(Object.values(nextById)).map((c) => c.id);
       const next: ChatDomainState = {
         ...state,
         conversations: {
           ...state.conversations,
-          byId,
+          byId: nextById,
           orderedIds,
         },
       };
@@ -733,7 +716,7 @@ export function reduceChatDomainState(
       if (existingIds.includes(message.id)) return state;
 
       // TF5 — dedupe by externalMessageId / clientMessageId (new_message + message.created).
-      const matchId = findAppendDedupeMatchId(state, conversationId, message, existingIds);
+      const matchId = findAppendDedupeMatchId(state, message, existingIds);
       if (matchId) {
         const existing = state.messages.byId[matchId];
         if (!existing) return state;
