@@ -304,7 +304,7 @@ Se latest page / race / geração descartada / scroll, a bolha mais recente do p
 | 3.2 · Avatar upsert preserve | `SPRINT_TF3.2_CLOSEOUT.md` | **CLOSED** (teste manual) |
 | 3.3 · Avatar F5 / view=list | `SPRINT_TF3.3_CLOSEOUT.md` | **CLOSED** (aguardando teste) |
 | 4 · Chat latest parity | `SPRINT_TF4_CLOSEOUT.md` | **CLOSED** (aguardando teste) |
-| 5 · WS dedupe + inbox order (hotfix) | `SPRINT_TF5_CLOSEOUT.md` | **CLOSED** (aguardando teste) |
+| **TF5** · Dup WS + ordem lista | `SPRINT_TF5_CLOSEOUT.md` (+ [`AUDIT_TF5_…`](./AUDIT_TF5_DUPLICATE_MESSAGES_INBOX_ORDER.md)) | **CLOSED** (aguardando teste) |
 
 ---
 
@@ -312,7 +312,7 @@ Se latest page / race / geração descartada / scroll, a bolha mais recente do p
 
 | | |
 |---|---|
-| Plano | **ATIVO** (sprints 1–4 + hotfix TF5; aguarda QA) |
+| Plano | **ATIVO** (sprints 1–4 + TF5 entregues; aguarda QA) |
 | Predecessor | Ownership Closure **CLOSED** |
-| Ordem | **Float paint → … → TF4 Chat parity → TF5 WS dedupe/order** |
-| Próximo comando | Teste manual TF4 + TF5; sintomas → hotfix / novo plano |
+| Ordem | **… → TF4 Chat parity → TF5 dedupe + orderedIds** |
+| Próximo comando | Teste manual TF5 A+B; sintomas → novo hotfix / plano |
