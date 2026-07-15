@@ -18,6 +18,8 @@ function toChannelKind(raw: unknown): ChatChannelKind {
 
 export function mapLegacyConversationToDomain(raw: ChatConversation): ChatDomainConversation {
   const normalized = adaptLegacyConversation(raw);
+  const leadId = normalized.leadId ?? raw.leadId ?? null;
+  const clientId = normalized.client_id ?? raw.client_id ?? null;
   return {
     id: normalized.id,
     instanceId: normalized.instance_id ?? null,
@@ -33,11 +35,16 @@ export function mapLegacyConversationToDomain(raw: ChatConversation): ChatDomain
       null,
     phoneNumber: normalized.phoneNumber ?? normalized.canonicalPhone ?? null,
     attendanceStatus: normalized.attendance_status ?? null,
+    waArchived: Boolean(normalized.wa_archived),
     assignedToUserId: normalized.assigned_to_user_id ?? null,
-    clientId: normalized.client_id ?? null,
-    leadId: normalized.leadId ?? null,
-    conversationType: normalized.conversation_type ?? null,
-    raw: normalized,
+    clientId,
+    leadId,
+    conversationType: normalized.conversation_type ?? raw.conversation_type ?? null,
+    raw: {
+      ...normalized,
+      leadId,
+      client_id: clientId,
+    },
   };
 }
 

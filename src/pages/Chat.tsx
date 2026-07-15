@@ -1,5 +1,14 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState, useRef } from 'react';
-import { useNavigate, useLocation, useParams, useSearchParams, Link } from 'react-router-dom';
+import React, {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+  useRef,
+} from 'react';
+import { useLocation, useParams, useSearchParams, Link } from 'react-router-dom';
 import { useQueryClient, useQuery } from '@tanstack/react-query';
 import { addMinutes, format, parse, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -82,7 +91,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Label } from '@/components/ui/label';
-import { ChatAppointmentSchedulePanel } from '@/components/chat/ChatAppointmentSchedulePanel';
 import {
   Select,
   SelectContent,
@@ -108,10 +116,6 @@ import { whatsappOfficialAdminService } from '@/services/whatsappOfficialAdmin';
 import { chatKanbanService } from '@/services/chatKanban';
 import { ChatSidebarTagFilters } from '@/components/chat/ChatSidebarTagFilters';
 import { useChatTagFilters } from '@/hooks/useChatTagFilters';
-import { useAuth } from '@/contexts/AuthContext';
-import { useModulePermissions } from '@/contexts/ModulePermissionsContext';
-import { chatCommercialGates } from '@/utils/chatCommercialGates';
-import { useFeatureFlag } from '@/hooks/useFeatureFlag';
 import { ChatWhatsappModelPickerDialog } from '@/components/chat/ChatWhatsappModelPickerDialog';
 import {
   buildSlaContextFromDashboard,
@@ -134,8 +138,8 @@ import {
 import { buildChatInboxTemplateContext } from '@/utils/chatInboxTemplateContext';
 import { DEFAULT_CHAT_TAG_COLOR, normalizeHexColor } from '@/lib/chatKanbanTagStyle';
 import { ChatKanbanTagBadge } from '@/components/chat/ChatKanbanTagBadge';
-import { ChatKanbanTagQuickPicker } from '@/components/chat/ChatKanbanTagQuickPicker';
 import { patchConversationKanbanTagsEverywhere } from '@/features/floating-chat/conversationKanbanTagsCache';
+import { scheduleInvalidateFloatingChatAggregates } from '@/features/floating-chat/floatingChatQueries';
 import { REALTIME_WINDOW_EVENTS } from '@/services/realtimeClient';
 import { SOCKET_IO_CLIENT_TRANSPORTS } from '@/lib/socketIoClientOptions';
 import { io, Socket } from 'socket.io-client';
@@ -144,15 +148,20 @@ import {
   chatRealtimeBridge,
   shouldUseSingleChatSocket,
 } from '@/features/chat-core/realtime/bridge';
+import { recordDedicatedChatSocketOpen } from '@/features/chat-core/realtime/dedicatedSocketTelemetry';
 import { tryApplyChatWsPatch } from '@/features/chat-core/ws-patch';
 import {
   bootstrapChatF3Session,
   ensureChatInstances,
   fetchChatAttendanceCounts,
   getChatUnreadEngineCounts,
-  scheduleChatAttendanceReconcile,
   shouldUseChatUnreadEngine,
 } from '@/features/chat-core/runtime';
+import { applyChatUnreadFromConversationPayload } from '@/features/chat-core/unread-engine';
+import {
+  recordManualRefresh,
+  recordSocketUpdate,
+} from '@/features/chat-core/metrics/zeroPollingMetrics';
 import {
   shouldUseChatDomainStore,
   applyStoreMessages,
@@ -162,11 +171,21 @@ import {
   setStoreLoadingConversations,
   setStoreLoadingMessages,
   applyFloatingMessagesUpdater,
+  applyStoreConversationUpsert,
+  applyStoreConversationRemove,
   useChatConversationList,
   useChatMessages,
   useChatSelection,
+  useLoadMoreMessages,
+  useConversationVirtualization,
+  useConversationWarmup,
 } from '@/features/chat-core/store/public';
 import { loadInboxCommand, clearInboxCommand, loadMessagesCommand } from '@/features/chat-core/core/commands';
+import { useChatPerfRender } from '@/features/chat-core/metrics/renderMetrics';
+import {
+  beginPerfScenario,
+  endPerfScenario,
+} from '@/features/chat-core/metrics/performanceMetrics';
 import {
   bridgeAttendConversation,
   bridgeCloseAttendance,
@@ -176,20 +195,31 @@ import {
   bridgeTransferConversation,
 } from '@/features/chat-core/core/chatCommandBridge';
 import { apiClient } from '@/integrations/api/client';
-import ProposalCreateForm, {
-  type ProposalCreateSuccessPayload,
-} from '@/components/proposals/ProposalCreateForm';
+import type { ProposalCreateSuccessPayload } from '@/components/proposals/ProposalCreateForm';
 import { tasksService } from '@/services/tasks';
 import { ticketsService } from '@/services/tickets';
 import { normalizeBrazilTaxIdInput } from '@/utils/brazilTaxId';
-import ContractCreateForm from '@/components/contracts/ContractCreateForm';
 import type { Contract } from '@/types/contracts';
 import { clientsService, type Client } from '@/services/clients';
 import { recordClientTimelineEvent } from '@/services/clientTimeline';
 import { messagesService } from '@/services/messages';
 import { customerInvoicesService } from '@/services/customerInvoices';
 import { buildInvoiceLink } from '@/services/chatFinancialAdapter';
-import CustomerInvoiceNew from '@/pages/CustomerInvoiceNew';
+
+/** MB-023 — formulários comerciais só entram no chunk quando o viewMode abre. */
+const ProposalCreateForm = lazy(() => import('@/components/proposals/ProposalCreateForm'));
+const ContractCreateForm = lazy(() => import('@/components/contracts/ContractCreateForm'));
+const CustomerInvoiceNew = lazy(() => import('@/pages/CustomerInvoiceNew'));
+const ScheduleChatMessageDialogLazy = lazy(() =>
+  import('@/components/chat/ScheduleChatMessageDialog').then((m) => ({
+    default: m.ScheduleChatMessageDialog,
+  })),
+);
+const ChatAppointmentSchedulePanelLazy = lazy(() =>
+  import('@/components/chat/ChatAppointmentSchedulePanel').then((m) => ({
+    default: m.ChatAppointmentSchedulePanel,
+  })),
+);
 import {
   ChatContactProfilePanel,
   ChatContactProfileSheet,
@@ -254,6 +284,8 @@ import {
   isChatMessageVirtualizationEnabled,
   useVirtualizedMessages,
 } from '@/components/chat/virtualized/useVirtualizedMessages';
+import { ChatConversationRow } from '@/components/chat/ChatConversationRow';
+import { ChatMessageRow } from '@/components/chat/ChatMessageRow';
 import { ChatBubbleContent } from '@/components/chat/ChatBubbleContent';
 import { MessageStatusIndicator } from '@/components/chat/MessageStatusIndicator';
 import {
@@ -269,7 +301,6 @@ import {
   ChatScheduledMessagesStrip,
   chatScheduledMessagesQueryKey,
 } from '@/components/chat/ChatScheduledMessagesStrip';
-import { ScheduleChatMessageDialog } from '@/components/chat/ScheduleChatMessageDialog';
 import {
   classifyChatOutgoingFile,
   inferDocumentMimeForSend,
@@ -278,413 +309,60 @@ import {
 import { useChatOutboundQueue } from '@/hooks/useChatOutboundQueue';
 import { getMyTenantUsers, type TenantUser } from '@/services/tenantLimits';
 import { teamsService, type Team } from '@/services/teams';
-import { formatPhoneBrDigits } from '@/lib/brazilInputMasks';
 import type { TicketCategory } from '@/types/tickets';
-
-const formatHour = (value?: string | null) => {
-  if (!value) return '--:--';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '--:--';
-  return date.toLocaleTimeString('pt-BR', {
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-};
-
-/** Preview de notas CRM no painel lateral (inclui deep link para conversa). */
-type CrmNotePreviewRow = {
-  id: string;
-  note_text: string;
-  created_at: string;
-  conversation_id: string | null;
-  message_id: string | null;
-  source_comment_id: string | null;
-};
-
-function mapCrmNoteToPreview(n: Record<string, unknown>): CrmNotePreviewRow {
-  return {
-    id: String(n.id ?? ''),
-    note_text: String(n.note_text ?? ''),
-    created_at: String(n.created_at ?? ''),
-    conversation_id: n.conversation_id != null ? String(n.conversation_id) : null,
-    message_id: n.message_id != null ? String(n.message_id) : null,
-    source_comment_id: n.source_comment_id != null ? String(n.source_comment_id) : null,
-  };
-}
-
-/** Instâncias ativas no chat (`metadata.enabled_in_chat !== false`). */
-function pickEnabledChatInstanceIds(instances: ChatInstance[]): string[] {
-  return instances
-    .filter(
-      (inst) =>
-        (inst.metadata as Record<string, unknown> | null | undefined)?.enabled_in_chat !== false,
-    )
-    .map((inst) => inst.id);
-}
-
-function mergeInternalCommentIntoMessage(m: ChatMessage, c: ChatInternalComment): ChatMessage {
-  const ex = m.internal_comments ?? [];
-  if (ex.some((x) => x.id === c.id)) return m;
-  const next = [...ex, c].sort(
-    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
-  );
-  return {
-    ...m,
-    internal_comments: next,
-    internal_comment_count: next.length,
-  };
-}
-
-const formatRelativeDate = (value?: string | null) => {
-  if (!value) return 'Sem data';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return 'Sem data';
-  
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const messageDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  const diff = now.getTime() - date.getTime();
-  const daysDiff = Math.floor((today.getTime() - messageDate.getTime()) / (1000 * 60 * 60 * 24));
-
-  // Menos de 1 minuto
-  if (diff < 60_000) return 'Agora mesmo';
-  
-  // Menos de 1 hora
-  if (diff < 3_600_000) {
-    const minutes = Math.floor(diff / 60_000);
-    return `${minutes} min atrás`;
-  }
-  
-  // Hoje
-  if (daysDiff === 0) {
-    return `Hoje ${date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
-  }
-  
-  // Ontem
-  if (daysDiff === 1) {
-    return `Ontem ${date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
-  }
-  
-  // Esta semana (últimos 7 dias)
-  if (daysDiff < 7) {
-    return date.toLocaleDateString('pt-BR', { 
-      weekday: 'short', 
-      day: '2-digit', 
-      month: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  }
-  
-  // Este ano
-  if (date.getFullYear() === now.getFullYear()) {
-    return date.toLocaleDateString('pt-BR', { 
-      day: '2-digit', 
-      month: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  }
-  
-  // Outro ano
-  return date.toLocaleDateString('pt-BR', { 
-    day: '2-digit', 
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
-  });
-};
-
-/** Etapa 5 — rótulo curto para badge de atendimento (evita confundir com `status` da conversa Uaz). */
-/** Compat: backend Fase 5 usa `in_progress`; valores antigos `in_service`. */
-const attendanceIsInProgress = (s?: string | null) => s === 'in_progress' || s === 'in_service';
-
-const attendanceStatusLabel = (s?: string | null) => {
-  switch (s) {
-    case 'open':
-    case 'pending':
-      return 'Aberto';
-    case 'unassigned':
-      return 'Sem resp.';
-    case 'queued':
-      return 'Na fila';
-    case 'in_progress':
-    case 'in_service':
-      return 'Em atendimento';
-    case 'waiting_customer':
-      return 'Aguardando';
-    case 'closed':
-      return 'Encerrada';
-    case 'archived':
-      return 'Arquivada';
-    default:
-      return null;
-  }
-};
-
-/** Nome curto do operador (lista / cabeçalho). */
-const shortOperatorName = (display?: string | null) => {
-  if (!display?.trim()) return '';
-  const first = display.trim().split(/\s+/)[0];
-  return first.length > 18 ? `${first.slice(0, 16)}…` : first;
-};
-
-function readInstanceMetaString(
-  metadata: Record<string, unknown> | null | undefined,
-  keys: string[],
-): string | null {
-  for (const k of keys) {
-    const v = metadata?.[k];
-    if (typeof v === 'string' && v.trim()) return v.trim();
-  }
-  return null;
-}
-
-/** Telefone da linha conectada formatado (BR; inclui +55 quando o metadata traz código do país). */
-function formatConnectedPhoneForDisplay(raw: string | null | undefined): string {
-  if (!raw) return '';
-  const d = String(raw).replace(/\D/g, '');
-  if (d.length === 0) return '';
-  if (d.length > 11 && d.startsWith('55')) {
-    const local = d.slice(2, 13);
-    const formatted = formatPhoneBrDigits(local);
-    return formatted ? `+55 ${formatted}` : `+${d}`;
-  }
-  if (d.length <= 11) {
-    return formatPhoneBrDigits(d);
-  }
-  return `+${d}`;
-}
-
-function resolveInstanceConnectionUi(instance: ChatInstance | null): {
-  avatarUrl: string | null;
-  displayName: string;
-  phoneDisplay: string;
-} {
-  if (!instance) {
-    return { avatarUrl: null, displayName: 'Selecione uma instância', phoneDisplay: '' };
-  }
-  const m = instance.metadata as Record<string, unknown> | null | undefined;
-  const pic = readInstanceMetaString(m, [
-    'connectedProfilePicUrl',
-    'connected_profile_pic_url',
-    'profilePicUrl',
-    'whatsapp_profile_photo',
-  ]);
-  const name =
-    readInstanceMetaString(m, ['connectedProfileName', 'connected_profile_name', 'profileName']) ||
-    instance.external_instance_name ||
-    instance.name;
-  const phoneRaw = readInstanceMetaString(m, ['connectedPhone', 'connected_phone', 'phone']);
-  return {
-    avatarUrl: chatAvatarUrlForImgSrc(pic),
-    displayName: name,
-    phoneDisplay: formatConnectedPhoneForDisplay(phoneRaw || ''),
-  };
-}
-
-const CHAT_COMPOSER_MAX_HEIGHT_PX = 120;
-
-/** Eventos realtime enviam payloads parciais — não apagar `instance_id` / vínculos quando o patch vem sem esses campos. */
-function mergeChatConversationRealtimePatch(
-  prev: ChatConversation,
-  incoming: ChatConversation,
-): ChatConversation {
-  return {
-    ...prev,
-    ...incoming,
-    instance_id: incoming.instance_id ?? prev.instance_id ?? null,
-    whatsapp_official_account_id:
-      incoming.whatsapp_official_account_id ?? prev.whatsapp_official_account_id ?? null,
-    client_id: incoming.client_id ?? prev.client_id ?? null,
-    leadId: incoming.leadId ?? prev.leadId ?? null,
-    external_chat_id: incoming.external_chat_id || prev.external_chat_id,
-    phoneNumber: incoming.phoneNumber ?? prev.phoneNumber,
-    canonicalPhone: incoming.canonicalPhone ?? prev.canonicalPhone,
-    canonical_phone: incoming.canonical_phone ?? prev.canonical_phone,
-    conversation_type: incoming.conversation_type ?? prev.conversation_type,
-    provider: incoming.provider || prev.provider,
-    contactName: incoming.contactName ?? prev.contactName ?? null,
-    profileName: incoming.profileName ?? prev.profileName ?? null,
-    displayName: incoming.displayName ?? prev.displayName ?? null,
-    display_name: incoming.display_name ?? prev.display_name ?? null,
-    avatarUrl: incoming.avatarUrl ?? prev.avatarUrl ?? null,
-    avatar_url: incoming.avatar_url ?? prev.avatar_url ?? null,
-    final_avatar_url: incoming.final_avatar_url ?? prev.final_avatar_url ?? null,
-    avatar_cached_url: incoming.avatar_cached_url ?? prev.avatar_cached_url ?? null,
-    tags: incoming.tags !== undefined ? incoming.tags : prev.tags,
-    metadata: incoming.metadata !== undefined ? incoming.metadata : prev.metadata,
-  };
-}
-
-/** Cabeçalho da thread: pills de tags Kanban, + (lista / criar) e nome do operador. */
-function ChatHeaderKanbanThreadExtras({
-  conversation,
-  conversationKanbanTags,
-  tenantOptions,
-  tenantLoading,
-  busy,
-  showTagPicker,
-  onAddTag,
-}: {
-  conversation: ChatConversation;
-  conversationKanbanTags: ChatKanbanTagUi[];
-  tenantOptions: ChatKanbanTagUi[];
-  tenantLoading: boolean;
-  busy: boolean;
-  showTagPicker: boolean;
-  onAddTag: (opts: { tagId?: string; newLabel?: string; newColor?: string }) => Promise<void>;
-}) {
-  const hasTags = conversationKanbanTags.length > 0;
-  const showAssignee =
-    attendanceIsInProgress(conversation.attendance_status) && Boolean(conversation.assignee_display?.trim());
-
-  if (!hasTags && !showAssignee && !showTagPicker) return null;
-
-  return (
-    <span
-      className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-1"
-      onClick={(e) => e.stopPropagation()}
-      onPointerDown={(e) => e.stopPropagation()}
-    >
-      {(hasTags || showTagPicker || showAssignee) ? (
-        <span className="shrink-0 text-[10px] text-muted-foreground" aria-hidden>
-          |
-        </span>
-      ) : null}
-      {hasTags ? (
-        <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-1">
-          {conversationKanbanTags.map((tag) => (
-            <ChatKanbanTagBadge
-              key={tag.id}
-              label={tag.label}
-              color={tag.color}
-              className="h-4 max-w-[min(120px,28vw)]"
-            />
-          ))}
-        </span>
-      ) : null}
-      {showTagPicker ? (
-        <ChatKanbanTagQuickPicker
-          tenantOptions={tenantOptions}
-          tenantLoading={tenantLoading}
-          busy={busy}
-          conversationKanbanTags={conversationKanbanTags}
-          onAddTag={onAddTag}
-        />
-      ) : null}
-      {showAssignee ? (
-        <>
-          {(hasTags || showTagPicker) ? (
-            <span className="shrink-0 text-[10px] text-muted-foreground" aria-hidden>
-              |
-            </span>
-          ) : null}
-          <span
-            className="inline-flex min-w-0 max-w-[min(220px,50vw)] items-center gap-1"
-            title={conversation.assignee_display?.trim() ?? undefined}
-          >
-            <Headphones className="h-2.5 w-2.5 shrink-0 text-muted-foreground" aria-hidden />
-            <Avatar className="h-4 w-4 shrink-0 border border-border/60">
-              {chatAvatarUrlForImgSrc(conversation.assignee_avatar_url) ? (
-                <AvatarImage
-                  src={chatAvatarUrlForImgSrc(conversation.assignee_avatar_url)!}
-                  alt=""
-                  className="object-cover"
-                />
-              ) : null}
-              <AvatarFallback className="bg-primary/15 text-[7px] font-semibold text-primary">
-                {assigneeInitials(conversation.assignee_display || '')}
-              </AvatarFallback>
-            </Avatar>
-            <span className="min-w-0 truncate text-[10px] font-medium text-foreground">
-              {shortOperatorName(conversation.assignee_display)}
-            </span>
-          </span>
-        </>
-      ) : null}
-    </span>
-  );
-}
-
-type ChatPageScope = 'tenant' | 'platform';
+import {
+  formatHour,
+  mapCrmNoteToPreview,
+  pickEnabledChatInstanceIds,
+  mergeInternalCommentIntoMessage,
+  formatRelativeDate,
+  attendanceIsInProgress,
+  attendanceStatusLabel,
+  shortOperatorName,
+  resolveInstanceConnectionUi,
+  CHAT_COMPOSER_MAX_HEIGHT_PX,
+  mergeChatConversationRealtimePatch,
+  type CrmNotePreviewRow,
+} from '@/pages/chat/chatPageHelpers';
+import { ChatHeaderKanbanThreadExtras } from '@/pages/chat/ChatHeaderKanbanThreadExtras';
+import { useChatPageAccess, type ChatPageScope } from '@/pages/chat/useChatPageAccess';
 
 type ChatProps = {
   scope?: ChatPageScope;
 };
 
 const Chat = ({ scope = 'tenant' }: ChatProps) => {
-  const { user, session, profile } = useAuth();
+  useChatPerfRender('Chat.tsx');
   const {
+    user,
+    session,
+    profile,
     canView,
     canEdit,
-    canChatReply: rawCanChatReply,
-    hasPermissionKey: rawHasPermissionKey,
-    permissions,
-    loading: modulePermLoading,
-  } = useModulePermissions();
-  const isPlatformScope = scope === 'platform';
-  const isPlatformSuperAdmin = Boolean(isPlatformScope && user?.is_super_admin);
-  const hasPermissionKey = useCallback(
-    (key: Parameters<typeof rawHasPermissionKey>[0]) => {
-      if (!isPlatformScope) return rawHasPermissionKey(key);
-      if (!isPlatformSuperAdmin) return false;
-      return key === 'chat.view' || key === 'chat.send_message';
-    },
-    [isPlatformScope, isPlatformSuperAdmin, rawHasPermissionKey],
-  );
-  const canChatReply = useCallback(
-    () => (isPlatformScope ? isPlatformSuperAdmin : rawCanChatReply()),
-    [isPlatformScope, isPlatformSuperAdmin, rawCanChatReply],
-  );
-
-  const crmAllowGroupManage = useMemo(
-    () =>
-      hasPermissionKey('chat.manage_groups') ||
-      hasPermissionKey('chat.manage_group_settings') ||
-      hasPermissionKey('chat.manage_group_participants'),
-    [hasPermissionKey, permissions.chat?.module_extras],
-  );
-
-  const canViewAttendanceQueue = !isPlatformScope && hasPermissionKey('chat.view_queue');
-  const hasChatFeature = useFeatureFlag('chat');
-  const hasAgendaFeature = useFeatureFlag('agenda');
-  const commercial = useMemo(() => chatCommercialGates(hasPermissionKey), [hasPermissionKey]);
-  const canCreateAgendaInChat =
-    !isPlatformScope && hasAgendaFeature && hasPermissionKey('chat.schedule_from_chat') && !modulePermLoading;
-  const canCreateProposalsInChat =
-    !isPlatformScope && commercial.canCreateProposalFromChatFull && !modulePermLoading;
-  const canCreateContractsInChat =
-    !isPlatformScope && commercial.canCreateContractFromChatFull && !modulePermLoading;
-  const canCreateInvoicesInChat =
-    !isPlatformScope && commercial.canCreateInvoiceFromChatFull && !modulePermLoading;
-  const navigate = useNavigate();
+    modulePermLoading,
+    isPlatformScope,
+    isPlatformSuperAdmin,
+    hasPermissionKey,
+    canChatReply,
+    crmAllowGroupManage,
+    canViewAttendanceQueue,
+    hasChatFeature,
+    commercial,
+    canCreateAgendaInChat,
+    canCreateProposalsInChat,
+    canCreateContractsInChat,
+    canCreateInvoicesInChat,
+    chatRouteBase,
+    navigate,
+  } = useChatPageAccess(scope);
   const location = useLocation();
-  const chatRouteBase = isPlatformScope ? '/superadmin/chat' : '/chat';
-
-  useEffect(() => {
-    if (isPlatformScope) {
-      if (!isPlatformSuperAdmin) {
-        toast.error('Acesso restrito a Super Admin');
-        navigate('/superadmin', { replace: true });
-      }
-      return;
-    }
-    if (!hasChatFeature || modulePermLoading) return;
-    if (user?.is_tenant_admin) return;
-    if (!canView('chat')) {
-      toast.error('Sem permissão para acessar o Chat');
-      navigate('/dashboard', { replace: true });
-    }
-  }, [isPlatformScope, isPlatformSuperAdmin, hasChatFeature, modulePermLoading, user?.is_tenant_admin, canView, navigate]);
   const [searchParams, setSearchParams] = useSearchParams();
   const focusMessageIdParam = searchParams.get('focusMessageId')?.trim() ?? '';
   const { conversationId: routeConversationId } = useParams<{ conversationId: string }>();
   const isMobile = useIsMobile();
   const queryClient = useQueryClient();
   const handleGroupConversationSynced = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: ['floating-chat'] });
+    scheduleInvalidateFloatingChatAggregates(queryClient);
   }, [queryClient]);
 
   const [instances, setInstances] = useState<ChatInstance[]>([]);
@@ -715,7 +393,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     isPlatformScope ? 'owner' : 'tenant',
   );
   const [chatAttendanceFilter, setChatAttendanceFilter] = useState<
-    '' | 'queue' | 'team' | 'mine' | 'closed'
+    '' | 'queue' | 'team' | 'mine' | 'closed' | 'wa_archived'
   >('');
   useEffect(() => {
     if (modulePermLoading) return;
@@ -732,6 +410,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     mine: 0,
     unassigned: 0,
     closed: 0,
+    wa_archived: 0,
     unread: 0,
   });
   const [operationalPanelFilter, setOperationalPanelFilter] = useState<OperationalPanelFilter>('');
@@ -841,17 +520,18 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   }, []);
 
   useEffect(() => {
+    beginPerfScenario('chat_open');
     chatRouteMarkChatMount();
     markChatPerf('chat_mount_started');
     requestAnimationFrame(() => {
       markChatPerf('chat_first_paint');
       markChatPerf('chat_ready');
       measureChatPerf('chat_mount_started', 'chat_ready');
+      endPerfScenario('chat_open');
     });
   }, []);
 
   const [slaUiContext, setSlaUiContext] = useState<SlaContextForUi | null>(null);
-  const [operationsRefreshTick, setOperationsRefreshTick] = useState(0);
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [transferUsers, setTransferUsers] = useState<TenantUser[]>([]);
   const [transferTeams, setTransferTeams] = useState<Team[]>([]);
@@ -916,6 +596,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   /** Lista de mensagens (overflow-y-auto) — scroll direto evita scrollIntoView no fim, que no mobile tira foco do composer. */
   const messagesScrollContainerRef = useRef<HTMLDivElement>(null);
+  const conversationListScrollRef = useRef<HTMLDivElement>(null);
   /** Mobile: última rota `chat_conversations` da URL (`/chat/:id`) para detectar volta lista → não reabrir por query stale. */
   const mobileChatRouteConversationPrevRef = useRef<string | null>(null);
   const attachComboInputRef = useRef<HTMLInputElement>(null);
@@ -982,7 +663,6 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     preview: string | null;
   }>({ id: null, lastAt: null, preview: null });
   const conversationUpdatedReloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const operationsPanelDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Estados para dialogs
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
@@ -1055,15 +735,12 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     }
   }, [user?.id, user?.tenant_id, chatChannelOrigin]);
 
+  /** Phase 9 — sem refetch periódico do ops dashboard; Socket atualiza conversas localmente. */
   const scheduleOperationsPanelRefresh = useCallback(() => {
-    if (operationsPanelDebounceRef.current) clearTimeout(operationsPanelDebounceRef.current);
-    operationsPanelDebounceRef.current = setTimeout(() => {
-      operationsPanelDebounceRef.current = null;
-      setOperationsRefreshTick((n) => n + 1);
-    }, 550);
+    recordSocketUpdate();
   }, []);
 
-  /** Mantém contexto SLA para badges sem renderizar o painel operacional na página de chat. */
+  /** Contexto SLA: uma carga por sessão/tenant (invalida só com remount / troca de tenant). */
   useEffect(() => {
     if (!user?.tenant_id || modulePermLoading || !canView('chat')) {
       return;
@@ -1081,16 +758,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     return () => {
       cancelled = true;
     };
-  }, [user?.tenant_id, modulePermLoading, operationsRefreshTick, canView]);
-
-  useEffect(() => {
-    return () => {
-      if (operationsPanelDebounceRef.current) {
-        clearTimeout(operationsPanelDebounceRef.current);
-        operationsPanelDebounceRef.current = null;
-      }
-    };
-  }, []);
+  }, [user?.tenant_id, modulePermLoading, canView]);
 
   const loadConversations = useCallback(async (instanceIds: string | string[]) => {
     const ids = Array.isArray(instanceIds) ? instanceIds : [instanceIds];
@@ -1251,6 +919,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   const loadMessages = useCallback(
     async (conversationId: string, opts?: { silent?: boolean }) => {
       const silent = opts?.silent === true;
+      if (!silent) beginPerfScenario('conversation_open');
       if (!silent) {
         if (isChatStoreSourceOfTruth()) {
           setStoreLoadingMessages(conversationId, true);
@@ -1286,6 +955,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
           } else {
             setLoadingMessages(false);
           }
+          endPerfScenario('conversation_open');
         }
       }
     },
@@ -1305,8 +975,23 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   const chatStoreSelection = useChatSelection(selectedConversationId, {
     enabled: chatCoreStoreReadEnabled,
   });
+  const chatLoadMore = useLoadMoreMessages(
+    chatCoreStoreReadEnabled ? selectedConversationId : null,
+  );
 
-  const conversationsView = chatCoreStoreReadEnabled ? chatStoreList.conversations : conversations;
+  const handleLoadMoreMessages = useCallback(() => {
+    if (!chatCoreStoreReadEnabled) return;
+    void chatLoadMore.loadMore(messagesScrollContainerRef.current);
+  }, [chatCoreStoreReadEnabled, chatLoadMore.loadMore]);
+
+  const conversationsViewRaw = chatCoreStoreReadEnabled ? chatStoreList.conversations : conversations;
+  /** MB-003/039 — archived only visible when Arquivadas filter is active (incl. groups). */
+  const conversationsView = useMemo(() => {
+    if (chatAttendanceFilter === 'wa_archived') {
+      return conversationsViewRaw.filter((c) => Boolean(c.wa_archived));
+    }
+    return conversationsViewRaw.filter((c) => !c.wa_archived);
+  }, [conversationsViewRaw, chatAttendanceFilter]);
   const messagesView = chatCoreStoreReadEnabled ? chatStoreMessages.messages : messages;
   const loadingConversationsView = chatCoreStoreReadEnabled
     ? chatStoreList.isLoading
@@ -1572,6 +1257,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
 
       socket = io(socketUrl, socketOptions);
       ownsDedicatedSocket = true;
+      recordDedicatedChatSocketOpen('Chat.tsx');
       socketRef.current = socket;
     }
 
@@ -1701,6 +1387,10 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     });
 
     const handleConversationUpdated = (raw: any, source: 'v2' | 'legacy') => {
+      if (isChatStoreSourceOfTruth()) {
+        scheduleOperationsPanelRefresh();
+        return;
+      }
       const conversationId =
         typeof raw?.id === 'string' ? raw.id : typeof raw?.conversation_id === 'string' ? raw.conversation_id : null;
       if (source === 'v2') {
@@ -1785,36 +1475,25 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
         return sorted;
       });
 
-      // Se a conversa atualizada é a selecionada, recarregar mensagens só quando o “último
-      // conteúdo” mudou (evita rajadas de GET por eventos repetidos / campos só de lista).
-      if (selectedConversationIdRef.current === updatedConversation.id) {
-        const lastAt = updatedConversation.lastMessageAt ?? null;
-        const preview = updatedConversation.lastMessagePreview ?? null;
-        const sig = conversationUpdatedReloadSigRef.current;
-        if (sig.id === updatedConversation.id && sig.lastAt === lastAt && sig.preview === preview) {
-          return;
-        }
-        conversationUpdatedReloadSigRef.current = {
-          id: updatedConversation.id,
-          lastAt,
-          preview,
-        };
-        if (conversationUpdatedReloadTimerRef.current) {
-          clearTimeout(conversationUpdatedReloadTimerRef.current);
-        }
-        conversationUpdatedReloadTimerRef.current = setTimeout(() => {
-          conversationUpdatedReloadTimerRef.current = null;
-          if (selectedConversationIdRef.current !== updatedConversation.id) return;
-        void loadMessages(updatedConversation.id, { silent: true });
-        }, 650);
-      }
+      // Phase 9 — sem GET pós conversation_updated; mensagens chegam via message_created / Store patch.
       scheduleOperationsPanelRefresh();
     };
 
     const onAttendanceUpdated = (payload: { conversation?: Record<string, unknown> }) => {
+      const conv = payload?.conversation;
+      if (conv && typeof conv === 'object') {
+        applyChatUnreadFromConversationPayload(conv);
+        if (shouldUseChatUnreadEngine()) {
+          const cached = getChatUnreadEngineCounts();
+          if (cached) setAttendanceCounts(cached);
+        }
+      }
+      if (isChatStoreSourceOfTruth()) {
+        scheduleOperationsPanelRefresh();
+        return;
+      }
       void tryApplyChatWsPatch(queryClient, 'conversation_attendance_updated', payload);
 
-      const conv = payload?.conversation;
       if (!conv || typeof conv.id !== 'string') return;
       setConversations((prev) =>
         prev.map((c) => {
@@ -1843,18 +1522,6 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
           };
         }),
       );
-      const ids = Array.from(enabledInstanceIdsRef.current);
-      if (ids.length === 0) return;
-      const scope = user?.tenant_id && chatInboxScope === 'tenant' ? ('tenant' as const) : ('owner' as const);
-      if (shouldUseChatUnreadEngine()) {
-        scheduleChatAttendanceReconcile('attendance_ws_dirty');
-        const cached = getChatUnreadEngineCounts();
-        if (cached) setAttendanceCounts(cached);
-      } else {
-        void fetchChatAttendanceCounts({ instanceIds: ids, inboxScope: scope }, { reason: 'attendance_ws_dirty' })
-          .then(setAttendanceCounts)
-          .catch(() => {});
-      }
       scheduleOperationsPanelRefresh();
     };
     socket.on('conversation_attendance_updated', onAttendanceUpdated);
@@ -1863,6 +1530,10 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       data: { message: any; conversationId: string },
       source: 'v2' | 'legacy',
     ) => {
+      if (isChatStoreSourceOfTruth()) {
+        scheduleOperationsPanelRefresh();
+        return;
+      }
       console.log('[Chat] New message via WebSocket (raw):', data.message);
       
       const normalizedMessage = normalizeChatMessage({
@@ -2019,7 +1690,9 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
           ? payload.id
           : null;
       if (!cid) return;
-      setConversations((prev) => prev.filter((conversation) => conversation.id !== cid));
+      if (!isChatStoreSourceOfTruth()) {
+        setConversations((prev) => prev.filter((conversation) => conversation.id !== cid));
+      }
       if (selectedConversationIdRef.current === cid) {
         setSelectedConversationId(null);
         setMessages([]);
@@ -2030,10 +1703,12 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
           navigate(chatRouteBase, { replace: true });
         }
       }
-      const deletePatch = tryApplyChatWsPatch(queryClient, 'conversation.deleted', payload);
-      if (!deletePatch.applied) {
-        void queryClient.invalidateQueries({ queryKey: ['floating-chat'] });
-        void queryClient.invalidateQueries({ queryKey: ['chat-conversations'] });
+      if (!isChatStoreSourceOfTruth()) {
+        const deletePatch = tryApplyChatWsPatch(queryClient, 'conversation.deleted', payload);
+        if (!deletePatch.applied) {
+          scheduleInvalidateFloatingChatAggregates(queryClient);
+          void queryClient.invalidateQueries({ queryKey: ['chat-conversations'] });
+        }
       }
       emitChatNavUnreadRefresh();
       scheduleOperationsPanelRefresh();
@@ -2086,6 +1761,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       handleNewMessage(payload, 'legacy');
 
     const onMessageUpdated = (data: { message: any; conversationId: string }) => {
+      if (isChatStoreSourceOfTruth()) return;
       void tryApplyChatWsPatch(queryClient, 'message_updated', data);
 
       const normalizedMessage = normalizeChatMessage({
@@ -2118,6 +1794,12 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       if (selectedConversationIdRef.current !== cid) return;
       const c = normalizeInternalComment(raw);
       if (!c) return;
+      if (isChatStoreSourceOfTruth()) {
+        applyMessagesForQueue((prev) =>
+          prev.map((m) => (m.id === mid ? mergeInternalCommentIntoMessage(m, c) : m)),
+        );
+        return;
+      }
       setMessages((prev) =>
         prev.map((m) => (m.id === mid ? mergeInternalCommentIntoMessage(m, c) : m)),
       );
@@ -2218,10 +1900,15 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
 
   useEffect(() => {
     loadInstances();
-    loadClients();
-    loadLeads();
     loadTicketCategories();
-  }, [loadInstances, loadClients, loadLeads, loadTicketCategories]);
+  }, [loadInstances, loadTicketCategories]);
+
+  /** MB-009: clients/leads só quando o dialog Vincular precisa da lista CRM. */
+  useEffect(() => {
+    if (!linkDialogOpen) return;
+    void loadClients();
+    void loadLeads();
+  }, [linkDialogOpen, loadClients, loadLeads]);
 
   /** Ativas no chat: `metadata.enabled_in_chat !== false` (persistido no backend). */
   useEffect(() => {
@@ -2516,6 +2203,23 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     // Garantir que está ordenado por última mensagem (mais recente primeiro)
     return sortConversationsByLastMessage(result);
   }, [activeTab, unreadConversations, filteredConversations, leadConversations, clientConversations]);
+
+  const conversationVirtual = useConversationVirtualization({
+    items: conversationsToShow,
+    scrollRef: conversationListScrollRef,
+    enabled: chatCoreStoreReadEnabled,
+  });
+
+  const conversationWarmOrderedIds = useMemo(
+    () => conversationsToShow.map((c) => c.id),
+    [conversationsToShow],
+  );
+  useConversationWarmup({
+    selectedConversationId,
+    orderedIds: conversationWarmOrderedIds,
+    conversations: conversationsToShow,
+    enabled: chatCoreStoreReadEnabled,
+  });
 
   useEffect(() => {
     const chatListDiag =
@@ -3065,6 +2769,15 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     [activeInstance],
   );
 
+  /** Phase 10A — patch imediato lista/seleção (Store SoT ou legado), sem GET inbox. */
+  const applyChatCrmConversationUpdate = useCallback((updated: ChatConversation) => {
+    if (isChatStoreSourceOfTruth()) {
+      applyStoreConversationUpsert(updated);
+      return;
+    }
+    setConversations((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+  }, []);
+
   type SelectConversationOpts = { chatListReturn?: string; clientProfileReturnId?: string };
 
   const handleSelectConversation = (conversationId: string, opts?: SelectConversationOpts) => {
@@ -3097,15 +2810,15 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       console.error('Erro ao sincronizar mensagens ao selecionar conversa:', error);
     });
 
-    const conversation = conversations.find((item) => item.id === conversationId);
+    const conversation =
+      conversationsView.find((item) => item.id === conversationId) ??
+      conversations.find((item) => item.id === conversationId);
     if (conversation && (conversation.unreadCount ?? 0) > 0) {
       emitKanbanConversationUnread(conversationId, 0);
       void chatService
         .markConversationRead(conversationId)
         .then(() => {
-          setConversations((prev) =>
-            prev.map((c) => (c.id === conversationId ? { ...c, unreadCount: 0 } : c)),
-          );
+          applyChatCrmConversationUpdate({ ...conversation, unreadCount: 0 });
         })
         .catch((error) => {
         console.error('Erro ao marcar conversa como lida:', error);
@@ -3167,7 +2880,18 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     }
   }, []);
 
-  /** Garante perfil CRM após refresh, cache ou vínculo novo sem re-selecionar a conversa. */
+  const refreshCrmProfileAfterConversationChange = useCallback(
+    async (conversationId: string) => {
+      if (selectedConversationIdRef.current !== conversationId) return;
+      await loadConversationProfile(conversationId);
+    },
+    [loadConversationProfile],
+  );
+
+  /**
+   * Phase 10A — sync CRM a partir da conversa SoT (Store/view), nunca do `conversations` local.
+   * Evita wipe de currentLead/currentClient com estado legado stale.
+   */
   useEffect(() => {
     const convId = selectedConversationId;
     if (!convId) {
@@ -3175,12 +2899,14 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       setCurrentLead(null);
       return;
     }
-    const conv = conversations.find((c) => c.id === convId);
+    const conv = selectedConversation;
+    if (!conv || conv.id !== convId) {
+      return;
+    }
     const skipCrm =
       whatsappGroupsUiEnabled &&
-      !!conv &&
       (conv.conversation_type === 'group' || Boolean(conv.external_chat_id?.endsWith('@g.us')));
-    if (conv && !skipCrm && !conv.client_id && !conv.leadId) {
+    if (!skipCrm && !conv.client_id && !conv.leadId) {
       setCurrentClient(null);
       setCurrentLead(null);
       setLoadingClient(false);
@@ -3190,6 +2916,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     void loadConversationProfile(convId, skipCrm ? { skipCrm: true } : undefined);
   }, [
     selectedConversationId,
+    selectedConversation,
     selectedConversation?.client_id,
     selectedConversation?.leadId,
     selectedConversation?.conversation_type,
@@ -3286,17 +3013,16 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
           if (prev.some((t) => t.id === tag.id)) return prev;
           return [...prev, tag].sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
         });
-        setConversations((prev) => {
-          const idx = prev.findIndex((c) => c.id === selectedConversationId);
-          if (idx < 0) return prev;
-          const row = prev[idx]!;
-          const cur = row.tags ?? [];
+        const base =
+          selectedConversation?.id === selectedConversationId
+            ? selectedConversation
+            : conversationsView.find((c) => c.id === selectedConversationId);
+        if (base) {
+          const cur = base.tags ?? [];
           const merged = cur.some((t) => t.id === tag.id) ? cur : [...cur, tag];
           patchConversationKanbanTagsEverywhere(queryClient, selectedConversationId, merged);
-          const next = [...prev];
-          next[idx] = { ...row, tags: merged };
-          return next;
-        });
+          applyChatCrmConversationUpdate({ ...base, tags: merged });
+        }
         toast.success('Tag adicionada');
       } catch (e) {
         toast.error(e instanceof Error ? e.message : 'Não foi possível adicionar a tag');
@@ -3305,7 +3031,13 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
         setKanbanTagsBusy(false);
       }
     },
-    [selectedConversationId, queryClient],
+    [
+      selectedConversationId,
+      selectedConversation,
+      conversationsView,
+      queryClient,
+      applyChatCrmConversationUpdate,
+    ],
   );
 
   const handleRemoveConversationKanbanTag = useCallback(
@@ -3315,16 +3047,15 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       try {
         await chatService.removeConversationKanbanTag(selectedConversationId, tagId);
         setConversationKanbanTags((prev) => prev.filter((t) => t.id !== tagId));
-        setConversations((prev) => {
-          const idx = prev.findIndex((c) => c.id === selectedConversationId);
-          if (idx < 0) return prev;
-          const row = prev[idx]!;
-          const merged = (row.tags ?? []).filter((t) => t.id !== tagId);
+        const base =
+          selectedConversation?.id === selectedConversationId
+            ? selectedConversation
+            : conversationsView.find((c) => c.id === selectedConversationId);
+        if (base) {
+          const merged = (base.tags ?? []).filter((t) => t.id !== tagId);
           patchConversationKanbanTagsEverywhere(queryClient, selectedConversationId, merged);
-          const next = [...prev];
-          next[idx] = { ...row, tags: merged };
-          return next;
-        });
+          applyChatCrmConversationUpdate({ ...base, tags: merged });
+        }
         toast.success('Tag removida da conversa');
       } catch (e) {
         toast.error(e instanceof Error ? e.message : 'Não foi possível remover a tag');
@@ -3333,7 +3064,13 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
         setKanbanTagsBusy(false);
       }
     },
-    [selectedConversationId, queryClient],
+    [
+      selectedConversationId,
+      selectedConversation,
+      conversationsView,
+      queryClient,
+      applyChatCrmConversationUpdate,
+    ],
   );
 
   const handleSelectConversationRef = useRef(handleSelectConversation);
@@ -3755,6 +3492,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   const handleSyncConversations = async () => {
     if (!selectedInstanceId) return;
     try {
+      recordManualRefresh();
       setSyncingConversations(true);
       const summary = (await chatService.syncConversations(selectedInstanceId, { limit: 200 })) as {
         total?: number;
@@ -3789,14 +3527,13 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   const handleSyncConversation = async () => {
     if (!selectedConversationId) return;
     try {
+      recordManualRefresh();
       setSyncingMessages(true);
       const syncResult = await chatService.syncConversationMessages(selectedConversationId, {
         force: true,
       });
       if (syncResult.conversation) {
-        setConversations((prev) =>
-          prev.map((c) => (c.id === selectedConversationId ? syncResult.conversation! : c))
-        );
+        applyChatCrmConversationUpdate(syncResult.conversation);
       } else if (enabledInstanceIds.size > 0) {
         await loadConversations(Array.from(enabledInstanceIds));
       }
@@ -3806,9 +3543,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
         try {
           const idRes = await chatService.refreshConversationIdentity(selectedConversationId);
           if (idRes.conversation) {
-          setConversations((prev) =>
-              prev.map((c) => (c.id === selectedConversationId ? idRes.conversation! : c))
-            );
+            applyChatCrmConversationUpdate(idRes.conversation);
           }
         } catch {
           /* refresh opcional */
@@ -3835,9 +3570,13 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       emitKanbanConversationUnread(selectedConversationId, 0);
       await bridgeMarkConversationRead(selectedConversationId, true);
       toast.success('Conversa marcada como lida');
-      setConversations((prev) =>
-        prev.map((c) => (c.id === selectedConversationId ? { ...c, unreadCount: 0 } : c)),
-      );
+      const base =
+        selectedConversation?.id === selectedConversationId
+          ? selectedConversation
+          : conversationsView.find((c) => c.id === selectedConversationId);
+      if (base) {
+        applyChatCrmConversationUpdate({ ...base, unreadCount: 0 });
+      }
     } catch (error) {
       console.error('Erro ao marcar conversa como lida:', error);
       toast.error('Não foi possível marcar como lida', {
@@ -3872,10 +3611,8 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     if (!selectedConversation || !selectedLinkTarget) return;
     try {
       const updated = await chatService.linkConversation(selectedConversation.id, selectedLinkTarget);
-      setConversations((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
-      if (selectedConversationId === updated.id) {
-        await loadConversationProfile(updated.id);
-      }
+      applyChatCrmConversationUpdate(updated);
+      await refreshCrmProfileAfterConversationChange(updated.id);
       setLinkDialogOpen(false);
       toast.success('Conversa vinculada com sucesso');
     } catch (error) {
@@ -3890,12 +3627,10 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     if (!selectedConversation) return;
     try {
       const updated = await chatService.unlinkConversation(selectedConversation.id);
-      setConversations((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+      applyChatCrmConversationUpdate(updated);
       setCurrentClient(null);
       setCurrentLead(null);
-      if (selectedConversationId === updated.id) {
-        await loadConversationProfile(updated.id);
-      }
+      await refreshCrmProfileAfterConversationChange(updated.id);
       setUnlinkConfirmOpen(false);
       toast.success('Vínculo da conversa removido');
       void queryClient.invalidateQueries({ queryKey: ['clients'] });
@@ -3913,7 +3648,11 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     const conversationId = selectedConversation.id;
     try {
       await bridgeSystemDeleteConversation(conversationId);
-      setConversations((prev) => prev.filter((conversation) => conversation.id !== conversationId));
+      if (isChatStoreSourceOfTruth()) {
+        applyStoreConversationRemove(conversationId);
+      } else {
+        setConversations((prev) => prev.filter((conversation) => conversation.id !== conversationId));
+      }
       setSelectedConversationId(null);
       setMessages([]);
       setContactProfileOpen(false);
@@ -3928,7 +3667,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
           },
         }),
       );
-      void queryClient.invalidateQueries({ queryKey: ['floating-chat'] });
+      scheduleInvalidateFloatingChatAggregates(queryClient);
       void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'conversations'] });
       void queryClient.invalidateQueries({ queryKey: ['chat-conversations'] });
       void queryClient.invalidateQueries({ queryKey: ['lead-conversations'] });
@@ -3979,18 +3718,13 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
         throw new Error('Lead criado sem ID retornado');
       }
 
-      await chatService.linkConversation(selectedConversation.id, {
+      const updated = await chatService.linkConversation(selectedConversation.id, {
         type: 'lead',
         id: createdLead.id,
       });
-
-      // Atualizar lista/perfil da conversa após criar lead + vínculo
-      if (selectedConversationId) {
-        if (enabledInstanceIds.size > 0) {
-          await loadConversations(Array.from(enabledInstanceIds));
-        }
-        await loadConversationProfile(selectedConversationId);
-      }
+      applyChatCrmConversationUpdate(updated);
+      await refreshCrmProfileAfterConversationChange(updated.id);
+      void queryClient.invalidateQueries({ queryKey: ['leads'] });
 
       toast.success('Lead adicionado com sucesso!');
     } catch (error) {
@@ -4027,10 +3761,8 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
         type: 'client',
         id: clientId,
       });
-      setConversations((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
-      if (selectedConversationId === updated.id) {
-        await loadConversationProfile(updated.id);
-      }
+      applyChatCrmConversationUpdate(updated);
+      await refreshCrmProfileAfterConversationChange(updated.id);
       void queryClient.invalidateQueries({ queryKey: ['clients'] });
       void queryClient.invalidateQueries({ queryKey: ['leads'] });
       toast.success('Cliente criado e vinculado com sucesso!');
@@ -4049,10 +3781,8 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     }
 
     try {
-      // Importar helper de clientes
       const { addClient } = await import('@/utils/clients-helpers');
       
-      // Criar cliente a partir do lead
       const clientResult = await addClient({
         name: currentLead.name,
         company: currentLead.company || undefined,
@@ -4076,16 +3806,15 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
         migrated_client_id: createdClient.id,
       });
 
+      const updated = await chatService.linkConversation(selectedConversation.id, {
+        type: 'client',
+        id: createdClient.id,
+      });
+      applyChatCrmConversationUpdate(updated);
+      await refreshCrmProfileAfterConversationChange(updated.id);
+
       void queryClient.invalidateQueries({ queryKey: ['clients', 'list'] });
       void queryClient.invalidateQueries({ queryKey: ['leads'] });
-
-      // Atualizar o perfil da conversa após converter lead para cliente
-      if (selectedConversationId) {
-        if (enabledInstanceIds.size > 0) {
-          await loadConversations(Array.from(enabledInstanceIds));
-        }
-        await loadConversationProfile(selectedConversationId);
-      }
 
       toast.success('Lead convertido para cliente com sucesso!');
     } catch (error) {
@@ -4804,6 +4533,63 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     }
   }, [selectedConversationId, mergeAttendanceFromPayload]);
 
+  const [waArchiveBusy, setWaArchiveBusy] = useState(false);
+  const handleToggleWaArchive = useCallback(async () => {
+    if (!selectedConversationId || !selectedConversation) return;
+    if (selectedConversation.whatsapp_official_account_id) {
+      toast.error('Arquivamento WhatsApp não está disponível para Cloud API');
+      return;
+    }
+    const nextArchived = !Boolean(selectedConversation.wa_archived);
+    setWaArchiveBusy(true);
+    try {
+      const result = await chatService.setConversationWaArchived(selectedConversationId, nextArchived);
+      const updated = result.conversation
+        ? { ...selectedConversation, ...result.conversation, wa_archived: nextArchived }
+        : { ...selectedConversation, wa_archived: nextArchived };
+      applyChatCrmConversationUpdate(updated);
+      if (!nextArchived && chatAttendanceFilter === 'wa_archived') {
+        setChatAttendanceFilter('');
+      }
+      toast.success(nextArchived ? 'Conversa arquivada no WhatsApp' : 'Conversa desarquivada no WhatsApp');
+      if (enabledInstanceIds.size > 0) {
+        try {
+          const scope =
+            user?.tenant_id && chatInboxScope === 'tenant' ? ('tenant' as const) : ('owner' as const);
+          const c = await fetchChatAttendanceCounts(
+            { instanceIds: Array.from(enabledInstanceIds), inboxScope: scope },
+            { force: true, reason: 'manual' },
+          );
+          setAttendanceCounts({
+            queue: c.queue,
+            team: c.team,
+            mine: c.mine,
+            unassigned: c.unassigned,
+            closed: c.closed,
+            wa_archived: c.wa_archived ?? 0,
+            unread: c.unread,
+          });
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch (error) {
+      toast.error(nextArchived ? 'Não foi possível arquivar' : 'Não foi possível desarquivar', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    } finally {
+      setWaArchiveBusy(false);
+    }
+  }, [
+    selectedConversationId,
+    selectedConversation,
+    enabledInstanceIds,
+    user?.tenant_id,
+    chatInboxScope,
+    chatAttendanceFilter,
+    applyChatCrmConversationUpdate,
+  ]);
+
   const openTransferDialog = useCallback(async () => {
     if (!user?.tenant_id) {
       toast.info('A transferência requer conta com equipa na empresa.');
@@ -5210,6 +4996,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     const enabling = !enabledInstanceIds.has(instanceId);
     try {
       await chatService.patchInstance(instanceId, { enabledInChat: enabling });
+      recordManualRefresh();
       await loadInstances();
     } catch (error) {
       console.error('Erro ao atualizar instância no chat:', error);
@@ -5264,8 +5051,8 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       : rawListBadges;
 
     return (
+      <ChatConversationRow conversation={conversation} isActive={isActive}>
       <div
-      key={conversation.id}
         role="button"
         tabIndex={0}
         draggable
@@ -5410,6 +5197,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
         </div>
         </div>
       </div>
+      </ChatConversationRow>
   );
   };
 
@@ -5797,7 +5585,11 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                       </div>
                   </CardHeader>
                   <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0 max-md:min-h-0">
-                    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain touch-pan-y [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border/50">
+                    <div
+                      ref={conversationListScrollRef}
+                      onScroll={conversationVirtual.enabled ? conversationVirtual.onScroll : undefined}
+                      className="min-h-0 flex-1 overflow-y-auto overscroll-contain touch-pan-y [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border/50"
+                    >
                       {isPlatformScope && chatChannelOrigin === 'official' ? (
                         <div className="shrink-0 space-y-2 border-b border-border/60 bg-muted/15 px-3 py-2.5">
                           {platformMetaStatusLoading ? (
@@ -5938,6 +5730,23 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                             </p>
                           </div>
                         </div>
+                      ) : conversationVirtual.enabled ? (
+                        <div
+                          className="relative min-w-0 px-1 pb-1 pt-0.5"
+                          style={{ height: conversationVirtual.totalHeight }}
+                        >
+                          {conversationVirtual.visibleItems.map(({ item, offsetTop, height }) => (
+                            <div
+                              key={item.id}
+                              data-conversation-id={item.id}
+                              ref={conversationVirtual.measureRef}
+                              className="absolute left-0 right-0 px-0"
+                              style={{ top: offsetTop, minHeight: height }}
+                            >
+                              {renderConversationItem(item)}
+                            </div>
+                          ))}
+                        </div>
                       ) : (
                         <div className="min-w-0 px-1 pb-1 pt-0.5">{conversationsToShow.map(renderConversationItem)}</div>
                       )}
@@ -5963,16 +5772,18 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                             </Button>
                           </div>
                           ) : null}
-                          <CustomerInvoiceNew
-                            key={`inv-${invoiceBillingPreset}`}
-                            embedded
-                            embeddedBillingPreset={invoiceBillingPreset}
-                            initialClientId={selectedConversation.client_id ?? null}
-                            onBack={handleBackFromInvoiceCreate}
-                            onCreated={(invoiceId) => {
-                              void handleInvoiceCreatedInChat(invoiceId);
-                            }}
-                          />
+                          <Suspense fallback={null}>
+                            <CustomerInvoiceNew
+                              key={`inv-${invoiceBillingPreset}`}
+                              embedded
+                              embeddedBillingPreset={invoiceBillingPreset}
+                              initialClientId={selectedConversation.client_id ?? null}
+                              onBack={handleBackFromInvoiceCreate}
+                              onCreated={(invoiceId) => {
+                                void handleInvoiceCreatedInChat(invoiceId);
+                              }}
+                            />
+                          </Suspense>
                         </CardContent>
                       ) : viewMode === 'proposal-create' ? (
                         <CardContent className={cn('flex-1 min-h-0 overflow-auto p-4', isMobile && 'p-0')}>
@@ -5983,30 +5794,32 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                             </Button>
                           </div>
                           ) : null}
-                          <ProposalCreateForm
-                            key={`proposal-create:${selectedConversation.id}`}
-                            embedded
-                            initialClientId={selectedConversation.client_id ?? null}
-                            initialLeadId={
-                              selectedConversation.client_id ? null : selectedConversation.leadId ?? null
-                            }
-                            initialLeadName={
-                              !selectedConversation.client_id && currentLead?.name ? currentLead.name : null
-                            }
-                            initialTitle={
-                              currentClient?.name || currentLead?.name
-                                ? `Proposta — ${currentClient?.name || currentLead?.name}`
-                                : ''
-                            }
-                            lockClientPicker={Boolean(selectedConversation.client_id)}
-                            lockLeadPicker={
-                              Boolean(!selectedConversation.client_id && selectedConversation.leadId)
-                            }
-                            onBack={handleBackFromProposalCreate}
-                            onCreated={(created, mode) => {
-                              void handleProposalCreatedInChat(created, mode);
-                            }}
-                          />
+                          <Suspense fallback={null}>
+                            <ProposalCreateForm
+                              key={`proposal-create:${selectedConversation.id}`}
+                              embedded
+                              initialClientId={selectedConversation.client_id ?? null}
+                              initialLeadId={
+                                selectedConversation.client_id ? null : selectedConversation.leadId ?? null
+                              }
+                              initialLeadName={
+                                !selectedConversation.client_id && currentLead?.name ? currentLead.name : null
+                              }
+                              initialTitle={
+                                currentClient?.name || currentLead?.name
+                                  ? `Proposta — ${currentClient?.name || currentLead?.name}`
+                                  : ''
+                              }
+                              lockClientPicker={Boolean(selectedConversation.client_id)}
+                              lockLeadPicker={
+                                Boolean(!selectedConversation.client_id && selectedConversation.leadId)
+                              }
+                              onBack={handleBackFromProposalCreate}
+                              onCreated={(created, mode) => {
+                                void handleProposalCreatedInChat(created, mode);
+                              }}
+                            />
+                          </Suspense>
                         </CardContent>
                       ) : viewMode === 'contract-create' ? (
                         isMobile ? (
@@ -6029,30 +5842,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                               </div>
                             }
                           >
-                            <ContractCreateForm
-                              key={selectedConversation.id}
-                              embedded
-                              initialClientId={selectedConversation.client_id ?? null}
-                              initialSigners={chatContractInitialSigners}
-                              initialTitleHint={
-                                currentClient?.name || currentLead?.name
-                                  ? `Contrato — ${currentClient?.name || currentLead?.name}`
-                                  : ''
-                              }
-                              onBack={handleBackFromContractCreate}
-                              onCreated={(created, mode) => {
-                                void handleContractCreatedInChat(created, mode);
-                              }}
-                            />
-                          </MobileCommerceScreenLayout>
-                        ) : (
-                          <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-4">
-                            <div className="mb-3 shrink-0">
-                              <Button variant="ghost" size="sm" onClick={handleBackFromContractCreate}>
-                                Voltar para conversa
-                              </Button>
-                            </div>
-                            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+                            <Suspense fallback={null}>
                               <ContractCreateForm
                                 key={selectedConversation.id}
                                 embedded
@@ -6068,21 +5858,50 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                                   void handleContractCreatedInChat(created, mode);
                                 }}
                               />
+                            </Suspense>
+                          </MobileCommerceScreenLayout>
+                        ) : (
+                          <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-4">
+                            <div className="mb-3 shrink-0">
+                              <Button variant="ghost" size="sm" onClick={handleBackFromContractCreate}>
+                                Voltar para conversa
+                              </Button>
+                            </div>
+                            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+                              <Suspense fallback={null}>
+                                <ContractCreateForm
+                                  key={selectedConversation.id}
+                                  embedded
+                                  initialClientId={selectedConversation.client_id ?? null}
+                                  initialSigners={chatContractInitialSigners}
+                                  initialTitleHint={
+                                    currentClient?.name || currentLead?.name
+                                      ? `Contrato — ${currentClient?.name || currentLead?.name}`
+                                      : ''
+                                  }
+                                  onBack={handleBackFromContractCreate}
+                                  onCreated={(created, mode) => {
+                                    void handleContractCreatedInChat(created, mode);
+                                  }}
+                                />
+                              </Suspense>
                             </div>
                           </CardContent>
                         )
                       ) : viewMode === 'appointment-create' ? (
                         <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
-                          <ChatAppointmentSchedulePanel
-                            key={`appt-${selectedConversation.id}`}
-                            variant="chat"
-                            conversationId={selectedConversation.id}
-                            contactLabel={selectedIdentity?.displayName?.trim() || 'cliente'}
-                            onBack={handleBackFromAppointmentCreate}
-                            onSuccess={() => {
-                              void loadMessages(selectedConversation.id, { silent: true });
-                            }}
-                          />
+                          <Suspense fallback={null}>
+                            <ChatAppointmentSchedulePanelLazy
+                              key={`appt-${selectedConversation.id}`}
+                              variant="chat"
+                              conversationId={selectedConversation.id}
+                              contactLabel={selectedIdentity?.displayName?.trim() || 'cliente'}
+                              onBack={handleBackFromAppointmentCreate}
+                              onSuccess={() => {
+                                void loadMessages(selectedConversation.id, { silent: true });
+                              }}
+                            />
+                          </Suspense>
                         </CardContent>
                       ) : (
                         <>
@@ -6394,6 +6213,21 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                                         )}
                                   </>
                                 )}
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      className="hidden h-7 gap-0.5 px-2 text-[11px] md:inline-flex md:h-8 md:gap-1 md:px-3 md:text-sm"
+                                      disabled={waArchiveBusy}
+                                      onClick={() => void handleToggleWaArchive()}
+                                      title={
+                                        selectedConversation?.wa_archived
+                                          ? 'Desarquivar no WhatsApp'
+                                          : 'Arquivar no WhatsApp'
+                                      }
+                                    >
+                                      {selectedConversation?.wa_archived ? 'Desarquivar' : 'Arquivar'}
+                                    </Button>
                                     {canTransferAttendance && (
                                       <Button
                                         variant="outline"
@@ -6458,6 +6292,16 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                               <VirtualizedMessageList
                                 messages={messagesView}
                                 virtual={messageVirtual}
+                                loadMore={
+                                  chatCoreStoreReadEnabled
+                                    ? {
+                                        visible: chatLoadMore.hasMore,
+                                        loading: chatLoadMore.isLoadingMore,
+                                        disabled: !chatLoadMore.canLoadMore,
+                                        onLoadMore: handleLoadMoreMessages,
+                                      }
+                                    : undefined
+                                }
                                 renderMessage={(message) => {
                                     const mc = message.message_contract;
                                     const rawPrev =
@@ -6494,8 +6338,8 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                                       c.author_email?.split('@')[0]?.trim() ||
                                       'Equipa';
                                     return (
+                              <ChatMessageRow message={message}>
                               <div 
-                                    key={message.id}
                                         className={cn(
                                           'group/msg flex w-full min-w-0 flex-col gap-1',
                                         )}
@@ -6684,6 +6528,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                                           ) : null}
                                         </div>
                                       </div>
+                              </ChatMessageRow>
                                     );
                                 }}
                               />
@@ -7054,16 +6899,20 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
         </AlertDialogContent>
       </AlertDialog>
 
-      <ScheduleChatMessageDialog
-        open={scheduleChatDlgOpen}
-        onOpenChange={setScheduleChatDlgOpen}
-        conversationId={selectedConversationId}
-        onSuccess={() => {
-          void queryClient.invalidateQueries({
-            queryKey: chatScheduledMessagesQueryKey(selectedConversationId),
-          });
-        }}
-      />
+      {scheduleChatDlgOpen ? (
+        <Suspense fallback={null}>
+          <ScheduleChatMessageDialogLazy
+            open={scheduleChatDlgOpen}
+            onOpenChange={setScheduleChatDlgOpen}
+            conversationId={selectedConversationId}
+            onSuccess={() => {
+              void queryClient.invalidateQueries({
+                queryKey: chatScheduledMessagesQueryKey(selectedConversationId),
+              });
+            }}
+          />
+        </Suspense>
+      ) : null}
 
       {selectedConversation && user && isMobile && selectedIsGroupChat ? (
         <ChatGroupProfileSheet

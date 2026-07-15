@@ -24,6 +24,51 @@ import { cn } from '@/lib/utils';
 import { useSharedChatNavUnreadCount } from '@/hooks/chatNavUnreadContext';
 import { useTicketMenuCount } from '@/hooks/useTicketMenuCount';
 
+const SidebarNavLinkItem = React.memo(function SidebarNavLinkItem({
+  to,
+  end,
+  icon: Icon,
+  label,
+  preload,
+  excludeActiveWhenPathStartsWith,
+  collapsed,
+}: {
+  to: string;
+  end?: boolean;
+  icon: LucideIcon;
+  label: string;
+  preload?: () => void;
+  /** Evita match por prefixo (ex.: `/finance/accounts` vs `/finance/accounts-payable`). */
+  excludeActiveWhenPathStartsWith?: string;
+  collapsed: boolean;
+}) {
+  const { pathname } = useLocation();
+  const excluded =
+    Boolean(excludeActiveWhenPathStartsWith) && pathname.startsWith(excludeActiveWhenPathStartsWith!);
+  const navLinkClassFn = (isActive: boolean) =>
+    cn(
+      'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors',
+      isActive
+        ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground shadow-sm'
+        : 'text-sidebar-foreground/90 hover:bg-sidebar-accent/55 hover:text-sidebar-accent-foreground',
+    );
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton asChild tooltip={label}>
+        <NavLink
+          to={to}
+          end={end}
+          onMouseEnter={preload}
+          className={({ isActive }) => navLinkClassFn(isActive && !excluded)}
+        >
+          <Icon className="size-4 shrink-0 opacity-90" aria-hidden />
+          {!collapsed && <span className="truncate">{label}</span>}
+        </NavLink>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
+  );
+});
+
 export const AppShellSidebar = React.memo(function AppShellSidebar() {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
@@ -107,46 +152,10 @@ export const AppShellSidebar = React.memo(function AppShellSidebar() {
   const navLinkClassFn = (isActive: boolean) =>
     cn(
       'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors',
-    isActive
+      isActive
         ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground shadow-sm'
         : 'text-sidebar-foreground/90 hover:bg-sidebar-accent/55 hover:text-sidebar-accent-foreground',
     );
-
-  function NavLinkItem({
-    to,
-    end,
-    icon: Icon,
-    label,
-    preload,
-    excludeActiveWhenPathStartsWith,
-  }: {
-    to: string;
-    end?: boolean;
-    icon: LucideIcon;
-    label: string;
-    preload?: () => void;
-    /** Evita match por prefixo (ex.: `/finance/accounts` vs `/finance/accounts-payable`). */
-    excludeActiveWhenPathStartsWith?: string;
-  }) {
-    const { pathname } = useLocation();
-    const excluded =
-      Boolean(excludeActiveWhenPathStartsWith) && pathname.startsWith(excludeActiveWhenPathStartsWith!);
-    return (
-      <SidebarMenuItem>
-        <SidebarMenuButton asChild tooltip={label}>
-          <NavLink
-            to={to}
-            end={end}
-            onMouseEnter={preload}
-            className={({ isActive }) => navLinkClassFn(isActive && !excluded)}
-          >
-            <Icon className="size-4 shrink-0 opacity-90" aria-hidden />
-            {!collapsed && <span className="truncate">{label}</span>}
-          </NavLink>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-    );
-  }
 
   function ChatSidebarNavItem() {
     const chatAllowed = show(hasChat, 'chat');
@@ -281,7 +290,7 @@ export const AppShellSidebar = React.memo(function AppShellSidebar() {
         <SidebarGroup className="py-1.5">
           <SidebarMenu className="gap-0.5">
             {show(hasDashboard, 'dashboard') && (
-              <NavLinkItem
+              <SidebarNavLinkItem
                 to="/dashboard"
                 icon={LayoutDashboard}
                 label="Dashboard"
@@ -293,6 +302,7 @@ export const AppShellSidebar = React.memo(function AppShellSidebar() {
                     show(hasDashboard, 'dashboard'),
                   );
                 }}
+                collapsed={collapsed}
               />
             )}
           </SidebarMenu>
@@ -305,7 +315,7 @@ export const AppShellSidebar = React.memo(function AppShellSidebar() {
           <SidebarGroupContent>
             <SidebarMenu className="gap-0.5">
               {show(hasClients, 'clients') && (
-                <NavLinkItem
+                <SidebarNavLinkItem
                   to="/clients"
                   icon={Users}
                   label="Clientes"
@@ -317,10 +327,11 @@ export const AppShellSidebar = React.memo(function AppShellSidebar() {
                       show(hasClients, 'clients') && hasPermissionKey('clients.view'),
                     );
                   }}
+                  collapsed={collapsed}
                 />
               )}
               {show(hasLeads, 'leads') && (
-                <NavLinkItem
+                <SidebarNavLinkItem
                   to="/leads"
                   icon={UserPlus}
                   label="Leads"
@@ -332,10 +343,11 @@ export const AppShellSidebar = React.memo(function AppShellSidebar() {
                       show(hasLeads, 'leads') && hasPermissionKey('leads.view'),
                     );
                   }}
+                  collapsed={collapsed}
                 />
               )}
               {show(hasAgenda, 'agenda') && (
-                <NavLinkItem to="/agenda" icon={CalendarDays} label="Agenda" preload={() => routePreload.agenda()} />
+                <SidebarNavLinkItem to="/agenda" icon={CalendarDays} label="Agenda" preload={() => routePreload.agenda()} collapsed={collapsed} />
               )}
             </SidebarMenu>
           </SidebarGroupContent>
@@ -349,7 +361,7 @@ export const AppShellSidebar = React.memo(function AppShellSidebar() {
             <SidebarMenu className="gap-0.5">
               {show(hasChat, 'chat') && <ChatSidebarNavItem />}
               {show(hasChat, 'chat') && (
-                <NavLinkItem to="/chat/kanbam" icon={LayoutGrid} label="Kanban" preload={() => routePreload.chatKanban()} />
+                <SidebarNavLinkItem to="/chat/kanbam" icon={LayoutGrid} label="Kanban" preload={() => routePreload.chatKanban()} collapsed={collapsed} />
               )}
               {show(hasTickets, 'tickets') && (
                 <TicketSidebarNavItem />
@@ -369,28 +381,25 @@ export const AppShellSidebar = React.memo(function AppShellSidebar() {
           <SidebarGroupContent>
               <SidebarMenu className="gap-0.5">
                 {hasPermissionKey('billing.view_invoices') ? (
-                <NavLinkItem
+                <SidebarNavLinkItem
                   to="/customer-invoices"
                   icon={FileText}
                   label="Faturas"
-                  preload={() => routePreload.customerInvoices()}
-                />
+                  preload={() => routePreload.customerInvoices()} collapsed={collapsed} />
                 ) : null}
                 {hasPermissionKey('billing.view_charges') ? (
-                <NavLinkItem
+                <SidebarNavLinkItem
                   to="/customer-charges"
                   icon={CreditCard}
                   label="Cobranças"
-                  preload={() => routePreload.customerCharges()}
-                />
+                  preload={() => routePreload.customerCharges()} collapsed={collapsed} />
                 ) : null}
                 {hasPermissionKey('billing.view_subscriptions') ? (
-                <NavLinkItem
+                <SidebarNavLinkItem
                   to="/crm-subscriptions"
                   icon={CalendarSync}
                   label="Assinaturas"
-                  preload={() => routePreload.crmSubscriptions()}
-                />
+                  preload={() => routePreload.crmSubscriptions()} collapsed={collapsed} />
                 ) : null}
               </SidebarMenu>
             </SidebarGroupContent>
@@ -404,10 +413,10 @@ export const AppShellSidebar = React.memo(function AppShellSidebar() {
           <SidebarGroupContent>
             <SidebarMenu className="gap-0.5">
               {show(hasProposals, 'proposals') && (
-                <NavLinkItem to="/proposals" icon={FileText} label="Propostas" preload={() => routePreload.proposals()} />
+                <SidebarNavLinkItem to="/proposals" icon={FileText} label="Propostas" preload={() => routePreload.proposals()} collapsed={collapsed} />
               )}
               {show(hasContracts, 'contracts') && (
-                <NavLinkItem to="/contracts" icon={FileSearch} label="Contratos" preload={() => routePreload.contracts()} />
+                <SidebarNavLinkItem to="/contracts" icon={FileSearch} label="Contratos" preload={() => routePreload.contracts()} collapsed={collapsed} />
               )}
             </SidebarMenu>
           </SidebarGroupContent>
@@ -420,26 +429,24 @@ export const AppShellSidebar = React.memo(function AppShellSidebar() {
           <SidebarGroupContent>
             <SidebarMenu className="gap-0.5">
               {show(hasProjects, 'projects') && (
-                <NavLinkItem to="/projects" icon={Calendar} label="Projetos" preload={() => routePreload.projects()} />
+                <SidebarNavLinkItem to="/projects" icon={Calendar} label="Projetos" preload={() => routePreload.projects()} collapsed={collapsed} />
               )}
               {show(hasTasks, 'tasks') && (
-                <NavLinkItem
+                <SidebarNavLinkItem
                   to="/tasks"
                   icon={ClipboardCheck}
                   label="Tarefas"
                   preload={() => {
                     routePreload.tasks();
                     prefetchTasksSummaryNav(tenantId, userId);
-                  }}
-                />
+                  }} collapsed={collapsed} />
               )}
               {show(hasTasks, 'project_templates') && (
-                <NavLinkItem
+                <SidebarNavLinkItem
                   to="/project-templates"
                   icon={LayoutTemplate}
                   label="Templates"
-                  preload={() => routePreload.projectTemplates()}
-                />
+                  preload={() => routePreload.projectTemplates()} collapsed={collapsed} />
               )}
             </SidebarMenu>
           </SidebarGroupContent>
@@ -452,7 +459,7 @@ export const AppShellSidebar = React.memo(function AppShellSidebar() {
             </SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu className="gap-0.5">
-                <NavLinkItem to="/funnel" icon={List} label="Funil de Vendas" preload={() => routePreload.funnel()} />
+                <SidebarNavLinkItem to="/funnel" icon={List} label="Funil de Vendas" preload={() => routePreload.funnel()} collapsed={collapsed} />
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
@@ -466,9 +473,9 @@ export const AppShellSidebar = React.memo(function AppShellSidebar() {
             <SidebarMenu className="gap-0.5">
               {show(hasProducts, 'products') && (
                 <>
-                  <NavLinkItem to="/admin/products" icon={Package} label="Catálogo" preload={() => routePreload.products()} />
-                  <NavLinkItem to="/orders" icon={ShoppingCart} label="Pedidos" preload={() => routePreload.orders()} />
-                  <NavLinkItem to="/admin/loja" icon={Store} label="Configuração da loja" preload={() => routePreload.storeSettings()} />
+                  <SidebarNavLinkItem to="/admin/products" icon={Package} label="Catálogo" preload={() => routePreload.products()} collapsed={collapsed} />
+                  <SidebarNavLinkItem to="/orders" icon={ShoppingCart} label="Pedidos" preload={() => routePreload.orders()} collapsed={collapsed} />
+                  <SidebarNavLinkItem to="/admin/loja" icon={Store} label="Configuração da loja" preload={() => routePreload.storeSettings()} collapsed={collapsed} />
                 </>
               )}
             </SidebarMenu>
@@ -489,46 +496,42 @@ export const AppShellSidebar = React.memo(function AppShellSidebar() {
             <SidebarMenu className="gap-0.5">
                 <>
                   {hasPermissionKey('finance.view') ? (
-                  <NavLinkItem to="/finance" end icon={LayoutDashboard} label="Resumo geral" preload={() => routePreload.finance()} />
+                  <SidebarNavLinkItem to="/finance" end icon={LayoutDashboard} label="Resumo geral" preload={() => routePreload.finance()} collapsed={collapsed} />
                   ) : null}
                   {hasPermissionKey('finance.view') ? (
-                  <NavLinkItem
+                  <SidebarNavLinkItem
                     to="/finance/accounts"
                     icon={Landmark}
                     label="Bancos e contas"
                     excludeActiveWhenPathStartsWith="/finance/accounts-payable"
-                    preload={() => routePreload.finance()}
-                  />
+                    preload={() => routePreload.finance()} collapsed={collapsed} />
                   ) : null}
                   {hasPermissionKey('finance.view_revenue') || hasPermissionKey('finance.view_expenses') ? (
-                  <NavLinkItem
+                  <SidebarNavLinkItem
                     to="/finance/transactions"
                     icon={ArrowLeftRight}
                     label="Entradas e saídas"
-                    preload={() => routePreload.finance()}
-                  />
+                    preload={() => routePreload.finance()} collapsed={collapsed} />
                   ) : null}
                   {hasPermissionKey('finance.view_accounts_payable') ? (
-                  <NavLinkItem
+                  <SidebarNavLinkItem
                     to="/finance/accounts-payable"
                     icon={ClipboardList}
                     label="Contas a pagar"
-                    preload={() => routePreload.finance()}
-                  />
+                    preload={() => routePreload.finance()} collapsed={collapsed} />
                   ) : null}
                   {hasPermissionKey('finance.view') ? (
-                  <NavLinkItem
+                  <SidebarNavLinkItem
                     to="/finance/credit-cards"
                     icon={CreditCard}
                     label="Cartões de crédito"
-                    preload={() => routePreload.finance()}
-                  />
+                    preload={() => routePreload.finance()} collapsed={collapsed} />
                   ) : null}
                   {hasPermissionKey('finance.view_expenses') ? (
-                  <NavLinkItem to="/finance/categories" icon={Tags} label="Categorias" preload={() => routePreload.finance()} />
+                  <SidebarNavLinkItem to="/finance/categories" icon={Tags} label="Categorias" preload={() => routePreload.finance()} collapsed={collapsed} />
                   ) : null}
                   {hasPermissionKey('finance.view_reports') ? (
-                  <NavLinkItem to="/finance/relatorios" icon={PieChart} label="Relatórios" preload={() => routePreload.finance()} />
+                  <SidebarNavLinkItem to="/finance/relatorios" icon={PieChart} label="Relatórios" preload={() => routePreload.finance()} collapsed={collapsed} />
                   ) : null}
                 </>
             </SidebarMenu>
@@ -543,7 +546,7 @@ export const AppShellSidebar = React.memo(function AppShellSidebar() {
           <SidebarGroupContent>
             <SidebarMenu className="gap-0.5">
             {show(hasSettings, 'settings') && (
-                <NavLinkItem to="/settings" icon={Settings} label="Configurações" preload={() => routePreload.settings()} />
+                <SidebarNavLinkItem to="/settings" icon={Settings} label="Configurações" preload={() => routePreload.settings()} collapsed={collapsed} />
             )}
           </SidebarMenu>
           </SidebarGroupContent>

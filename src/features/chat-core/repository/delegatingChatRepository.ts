@@ -20,6 +20,7 @@ import {
 } from '../store/domainMappers';
 import { recordChatHttpRequest } from '../metrics/baseline';
 import type { ChatRepository } from './chatRepository';
+import { getMessagesPage } from '../core/messagesPageFetch';
 
 export function createDelegatingChatRepository(): ChatRepository {
   return {
@@ -32,7 +33,7 @@ export function createDelegatingChatRepository(): ChatRepository {
   async getConversations(params: {
     instanceIds?: ChatInstanceId[];
     inboxScope: ChatInboxScope;
-    attendanceFilter?: 'mine' | 'queue' | 'team' | 'closed' | '';
+    attendanceFilter?: 'mine' | 'queue' | 'team' | 'closed' | 'wa_archived' | '';
   }): Promise<ChatDomainConversation[]> {
       recordChatHttpRequest({
         endpoint: '/api/chat/conversations',
@@ -74,6 +75,10 @@ export function createDelegatingChatRepository(): ChatRepository {
       });
       const rows = await chatService.getConversationMessages(conversationId);
       return rows.map(mapLegacyMessageToDomain);
+    },
+
+    async getMessagesPage(params) {
+      return getMessagesPage(params);
     },
 
     async syncMessages(conversationId: ChatConversationId): Promise<void> {

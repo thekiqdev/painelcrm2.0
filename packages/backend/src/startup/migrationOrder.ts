@@ -438,5 +438,9 @@ export const MIGRATION_ORDER = [
   '289_billing_certification_reports.sql',
   /** Sprint 3.2B: billing_strategy GA cleanup */
   '290_billing_strategy_ga_cleanup.sql',
+  /** Phase 0: WhatsApp archive flag (CRM-owned wa_archived) */
+  '291_chat_conversations_wa_archived.sql',
+  /** Phase 0: clear polluted wa_archived from inbox */
+  '292_chat_conversations_wa_archived_inbox_repair.sql',
   'create-admin-user.sql',
 ];

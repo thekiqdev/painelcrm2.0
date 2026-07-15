@@ -1,27 +1,32 @@
 import { memo, type ReactNode } from 'react';
-import type { VirtualItem } from '@tanstack/react-virtual';
 import { cn } from '@/lib/utils';
 
 export type VirtualizedMessageItemProps = {
-  virtualItem: VirtualItem;
+  index: number;
+  start: number;
   measureElement: (node: Element | null) => void;
   children: ReactNode;
   className?: string;
+  /** Quando setado, o measureRef estável lê este atributo (F6.4 core). */
+  messageId?: string;
 };
 
 function VirtualizedMessageItemInner({
-  virtualItem,
+  index,
+  start,
   measureElement,
   children,
   className,
+  messageId,
 }: VirtualizedMessageItemProps) {
   return (
     <div
-      data-index={virtualItem.index}
+      data-index={index}
+      data-message-id={messageId}
       ref={measureElement}
       className={cn('absolute left-0 top-0 w-full min-w-0', className)}
       style={{
-        transform: `translateY(${virtualItem.start}px)`,
+        transform: `translateY(${start}px)`,
       }}
     >
       {children}

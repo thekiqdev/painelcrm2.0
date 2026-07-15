@@ -31,6 +31,33 @@ async function finalizeSendIfDone(client: PoolClient, sendId: string): Promise<v
 /**
  * Processa um destinatário pendente da fila de anúncios (WhatsApp plataforma + delay por linha).
  */
+export async function hasPendingAnnouncementRecipients(pool: Pool): Promise<boolean> {
+  if (announcementsSendQueueSchemaAvailable === false) {
+    const now = Date.now();
+    if (now - announcementsSendSchemaProbeAtMs < 60_000) return false;
+  }
+  try {
+    const r = await pool.query<{ ok: number }>(
+      `SELECT 1 AS ok
+       FROM announcement_send_recipients r
+       INNER JOIN announcement_sends s ON s.id = r.send_id
+       WHERE r.status = 'pending'
+         AND r.scheduled_at <= NOW()
+         AND s.status IN ('pending', 'processing')
+       LIMIT 1`,
+    );
+    announcementsSendQueueSchemaAvailable = true;
+    return r.rows.length > 0;
+  } catch (e: unknown) {
+    const err = e as { code?: string; message?: string };
+    if (err?.code === '42P01') {
+      disableAnnouncementsSendWorkerMissingSchema();
+      return false;
+    }
+    throw e;
+  }
+}
+
 export async function processAnnouncementSendRecipientsOnce(pool: Pool): Promise<void> {
   if (announcementsSendQueueSchemaAvailable === false) {
     const now = Date.now();
@@ -198,6 +225,8 @@ export async function processAnnouncementSendRecipientsOnce(pool: Pool): Promise
 }
 
 export async function processAnnouncementSendRecipientsBatch(pool: Pool, rounds = 8): Promise<void> {
+  // MB-017: evita BEGIN/COMMIT vazios quando a fila está ociosa.
+  if (!(await hasPendingAnnouncementRecipients(pool))) return;
   for (let i = 0; i < rounds; i += 1) {
     await processAnnouncementSendRecipientsOnce(pool);
   }

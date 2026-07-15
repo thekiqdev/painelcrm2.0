@@ -36,6 +36,7 @@ vi.mock('@/services/chat', () => ({
       team: 0,
       unassigned: 0,
       closed: 0,
+      wa_archived: 0,
       unread: 3,
     })),
   },

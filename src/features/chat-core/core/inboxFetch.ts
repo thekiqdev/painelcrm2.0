@@ -7,6 +7,8 @@ import type { ChatAggregatedSurface } from '@/lib/chatAggregatedFlags';
 import type { FetchMergedConversationsParams } from '@/lib/chatConversationsFetch';
 import type { ChatConversation } from '@/services/chat';
 import type { ChatInboxScope, ChatInstanceId } from '../domain/types';
+import { recordHttpMetric } from '../metrics/httpMetrics';
+import { nowMs } from '../metrics/performanceMetrics';
 
 export type LoadInboxSurface = ChatAggregatedSurface | 'core' | 'bootstrap';
 
@@ -36,6 +38,7 @@ export async function fetchInboxConversations(
     surface,
   } = params;
 
+  const t0 = nowMs();
   const result = await listChatConversations({
     surface: resolveAggregatedSurface(surface),
     instanceIds: instanceIds as ChatInstanceId[],
@@ -45,6 +48,14 @@ export async function fetchInboxConversations(
     channelOrigin,
     conversationFilter,
     includeOfficialWhenAll,
+  });
+
+  recordHttpMetric({
+    kind: 'GET conversations',
+    endpoint: '/api/chat/conversations',
+    method: 'GET',
+    source: `inboxFetch:${resolveAggregatedSurface(surface)}`,
+    durationMs: Math.round(nowMs() - t0),
   });
 
   return result.items;

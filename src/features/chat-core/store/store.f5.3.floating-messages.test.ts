@@ -264,7 +264,7 @@ describe('chat-core F5.3 floating messages', () => {
     setChatDomainStoreSessionForTests(store);
 
     const { loadMessagesCommand } = await import('../core/commands');
-    await loadMessagesCommand('conv-1');
+    await loadMessagesCommand('conv-1', { latestPage: false });
 
     expect(selectMessagesForUi(store.getState(), 'conv-1').map((m) => m.id)).toEqual([
       'msg-1',

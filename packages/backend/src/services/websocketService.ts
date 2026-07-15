@@ -6,6 +6,7 @@ import { isUazIntegrationVerboseLogs } from '../utils/chatObservability.js';
 import { conversationRowForClientApi } from '../utils/uazapiIdentityResolve.js';
 import type { Notification } from './notifications.js';
 import { getAllowedCorsOrigins } from '../config/corsOrigins.js';
+import { getRedisSocketAdapterConfig } from '../config/redisSocketAdapterEnv.js';
 
 interface AuthenticatedSocket extends Socket {
   userId?: string;
@@ -21,6 +22,7 @@ const wsVerbose = () => isUazIntegrationVerboseLogs();
 export function initializeWebSocket(httpServer: HttpServer): SocketIOServer {
   // Mesma lista que Express (inclui localhost:8081 etc.) — FRONTEND_URL só prod não bloqueia dev
   const corsOrigins = getAllowedCorsOrigins();
+  const nodeId = getRedisSocketAdapterConfig().nodeId;
 
   io = new SocketIOServer(httpServer, {
     cors: {
@@ -178,6 +180,7 @@ export function initializeWebSocket(httpServer: HttpServer): SocketIOServer {
     socket.emit('connected', {
       message: 'Connected to notification server',
       userId,
+      nodeId,
       timestamp: new Date().toISOString(),
     });
 
@@ -449,4 +452,7 @@ export function emitChatProfessionalPayload(
 export function getIO(): SocketIOServer | null {
   return io;
 }
+
+/** Phase 8 — anexa Redis adapter (async). Preferir chamar antes do listen. */
+export { attachRedisSocketAdapter } from '../realtime/redisSocketAdapter.js';
 

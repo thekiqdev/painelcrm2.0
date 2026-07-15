@@ -18,6 +18,8 @@
     "test:billing": "vitest run tests/billing",
     "test:billing:update-snapshots": "cross-env UPDATE_BILLING_SNAPSHOTS=1 vitest run tests/billing/certification",
     "setup:local": "node scripts/setup-local.js",
+    "check:migration-order": "node scripts/check-migration-order.mjs",
+    "check:chat-sot-guards": "node scripts/check-chat-sot-guards.mjs",
     "docker:up": "docker-compose up -d",
     "docker:down": "docker-compose down",
     "docker:logs": "docker-compose logs -f",

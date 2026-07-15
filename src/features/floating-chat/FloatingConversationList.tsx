@@ -17,6 +17,7 @@ import { ChatKanbanTagBadge } from '@/components/chat/ChatKanbanTagBadge';
 import { ConversationListSkeleton } from '@/components/chat/skeletons/ConversationListSkeleton';
 import { FloatingChatListShell } from '@/components/chat/FloatingChatListShell';
 import { useFloatingConversationListData } from '@/features/chat-core/store/public';
+import { useChatPerfRender } from '@/features/chat-core/metrics/renderMetrics';
 
 type QuickFilter = 'all' | 'mine' | 'unread';
 
@@ -27,6 +28,7 @@ function previewLine(c: ChatConversation): string {
 }
 
 export function FloatingConversationList({ className }: { className?: string }) {
+  useChatPerfRender('FloatingConversationList');
   const navigate = useNavigate();
   const { instanceIds, inboxScope, openOrFocusConversation, listOpen } = useFloatingChat();
   const [search, setSearch] = useState('');

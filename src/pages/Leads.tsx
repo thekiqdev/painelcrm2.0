@@ -58,6 +58,7 @@ import { CommercialListingPageShell } from "@/components/listing/CommercialListi
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { prepareLeadsFromCsv, type LeadCsvProfile } from "@/utils/importLeadsCsv";
 import { useFloatingChatOptional } from "@/features/floating-chat";
+import { scheduleInvalidateFloatingChatAggregates } from "@/features/floating-chat/floatingChatQueries";
 import { chatService, type ChatInstance } from "@/services/chat";
 import { ensureChatInstances } from "@/features/chat-core/runtime";
 
@@ -344,7 +345,7 @@ const Leads = () => {
           }),
         );
       }
-      void queryClient.invalidateQueries({ queryKey: ["floating-chat"] });
+      void scheduleInvalidateFloatingChatAggregates(queryClient);
       void queryClient.invalidateQueries({ queryKey: ["leads", tenantId, userId] });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Não foi possível abrir a conversa do lead");

@@ -22,9 +22,21 @@ export type ChatRepository = {
   getConversations(params: {
     instanceIds?: ChatInstanceId[];
     inboxScope: ChatInboxScope;
-    attendanceFilter?: 'mine' | 'queue' | 'team' | 'closed' | '';
+    attendanceFilter?: 'mine' | 'queue' | 'team' | 'closed' | 'wa_archived' | '';
   }): Promise<ChatDomainConversation[]>;
   getMessages(conversationId: ChatConversationId): Promise<ChatDomainMessage[]>;
+  /** F6.0 — paginação por cursor (opcional; stubs podem omitir). */
+  getMessagesPage?(params: {
+    conversationId: ChatConversationId;
+    cursor?: string | null;
+    pageSize?: number;
+  }): Promise<{
+    messages: ChatDomainMessage[];
+    nextCursor: string | null;
+    previousCursor: string | null;
+    hasMore: boolean;
+    source: 'cursor' | 'legacy';
+  }>;
   syncMessages(conversationId: ChatConversationId): Promise<void>;
   markConversationRead(conversationId: ChatConversationId): Promise<void>;
   getAttendanceCounts(params: {

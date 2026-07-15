@@ -62,7 +62,7 @@ function readFromStore<T>(reader: (state: ReturnType<NonNullable<ReturnType<type
 }
 
 export const chatCore: ChatCorePublicApi = {
-  phase: 'F5.10',
+  phase: 'F6.6',
   get isWired() {
     return shadowEnabled();
   },
@@ -82,7 +82,7 @@ export const chatCore: ChatCorePublicApi = {
     inboxScope: ChatInboxScope;
     surface?: import('../core/loadInbox').LoadInboxSurface;
     quickFilter?: 'all' | 'mine' | 'unread';
-    attendanceFilter?: '' | 'mine' | 'queue' | 'team' | 'closed';
+    attendanceFilter?: '' | 'mine' | 'queue' | 'team' | 'closed' | 'wa_archived';
     channelOrigin?: 'all' | 'uazapi' | 'official';
     conversationFilter?: 'groups';
     includeOfficialWhenAll?: boolean;

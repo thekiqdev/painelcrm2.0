@@ -62,6 +62,8 @@ import {
   chatRealtimeBridge,
   shouldUseSingleChatSocket,
 } from "@/features/chat-core/realtime/bridge";
+import { recordDedicatedChatSocketOpen } from "@/features/chat-core/realtime/dedicatedSocketTelemetry";
+import { scheduleInvalidateFloatingChatAggregates } from "@/features/floating-chat/floatingChatQueries";
 import { format, parseISO, startOfDay, endOfDay, addMonths } from "date-fns";
 import { ClientUpcomingAppointments } from "@/components/clients/ClientUpcomingAppointments";
 import { ClientAppointmentsHistory } from "@/components/clients/ClientAppointmentsHistory";
@@ -911,7 +913,7 @@ const ClientProfile = () => {
       if (!conversationId || clientMessages.length > 0) return;
       try {
         await chatService.patchPreparedConversationInstance(conversationId, nextInstanceId);
-        void queryClient.invalidateQueries({ queryKey: ["floating-chat"] });
+        scheduleInvalidateFloatingChatAggregates(queryClient);
       } catch (e: unknown) {
         toast.error(e instanceof Error ? e.message : "Não foi possível alterar a instância");
       }
@@ -980,7 +982,7 @@ const ClientProfile = () => {
         });
         cid = res.conversation.id;
         setConversationId(cid);
-        void queryClient.invalidateQueries({ queryKey: ["floating-chat"] });
+        scheduleInvalidateFloatingChatAggregates(queryClient);
       }
 
       newMessageRef.current = "";
@@ -1038,6 +1040,7 @@ const ClientProfile = () => {
         path: "/socket.io/",
       });
       ownsDedicated = true;
+      recordDedicatedChatSocketOpen("ClientProfile");
       socketRef.current = socket;
     }
 

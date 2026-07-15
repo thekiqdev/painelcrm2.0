@@ -1,6 +1,6 @@
 /**
- * F5.0 — factory do Domain Store.
- * Sem singleton global; cada chamada retorna instância isolada.
+ * F5.0 / F6.5 — factory do Domain Store.
+ * F6.5: dispatchBatch aplica N actions e notifica uma vez.
  */
 
 import { reduceChatDomainState } from './actions';
@@ -12,6 +12,10 @@ import { createInitialChatDomainState } from './state';
 import { createChatDomainSubscriptionRegistry } from './subscriptions';
 import type { ChatDomainAction, ChatDomainState, ChatDomainStore } from './types';
 import { auditLogDispatch } from './f5HydrationAudit';
+import { timeReducer } from '../metrics/reducerMetrics';
+import { sampleStoreMemory } from '../metrics/memoryMetrics';
+import { isChatPerformanceTelemetryEnabled } from '../metrics/performanceMetrics';
+import { noteBatchCommit, type ChatDomainStoreWithBatch } from './storeBatch';
 
 export type CreateChatDomainStoreOptions = {
   initialState?: Partial<ChatDomainState>;
@@ -19,21 +23,69 @@ export type CreateChatDomainStoreOptions = {
 
 export function createChatDomainStore(
   options: CreateChatDomainStoreOptions = {},
-): ChatDomainStore {
+): ChatDomainStoreWithBatch {
   const subscriptions = createChatDomainSubscriptionRegistry();
   let state = mergeInitialState(options.initialState);
+  let suspendNotify = false;
+  let lastSuspendedAction: ChatDomainAction | null = null;
 
-  const dispatch = (action: ChatDomainAction): void => {
+  const applyAction = (action: ChatDomainAction): void => {
     const before = state;
-    state = reduceChatDomainState(state, action);
-    auditLogDispatch(action, before, state);
+    state = timeReducer(action.type, () => reduceChatDomainState(state, action));
+    const stateChanged = !Object.is(before, state);
+    if (
+      stateChanged &&
+      isChatPerformanceTelemetryEnabled() &&
+      (action.type === 'conversations/set' ||
+        action.type === 'messages/set' ||
+        action.type === 'hydrate/partial')
+    ) {
+      sampleStoreMemory(state, action.type);
+    }
+    if (stateChanged) {
+      auditLogDispatch(action, before, state);
+    }
+    if (!stateChanged) {
+      return;
+    }
+    if (suspendNotify) {
+      lastSuspendedAction = action;
+      return;
+    }
     subscriptions.notify(state, action);
   };
 
-  const store: ChatDomainStore = {
-    version: 'F5.6',
+  const dispatch = (action: ChatDomainAction): void => {
+    applyAction(action);
+  };
+
+  const dispatchBatch = (actions: readonly ChatDomainAction[]): void => {
+    if (actions.length === 0) return;
+    if (actions.length === 1) {
+      dispatch(actions[0]!);
+      return;
+    }
+    suspendNotify = true;
+    lastSuspendedAction = null;
+    try {
+      for (const action of actions) {
+        applyAction(action);
+      }
+    } finally {
+      suspendNotify = false;
+      if (lastSuspendedAction != null) {
+        noteBatchCommit(actions.length);
+        subscriptions.notify(state, lastSuspendedAction);
+      }
+      lastSuspendedAction = null;
+    }
+  };
+
+  const store: ChatDomainStoreWithBatch = {
+    version: 'F5.0',
     getState: () => state,
     dispatch,
+    dispatchBatch,
     subscribe(listener) {
       return subscriptions.subscribe(listener);
     },

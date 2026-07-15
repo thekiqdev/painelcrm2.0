@@ -7,6 +7,7 @@ import {
   validateChatOutgoingFileSize,
 } from '@/utils/chatComposerOutgoingFile';
 import { toast } from 'sonner';
+import { useChatPerfRender } from '@/features/chat-core/metrics/renderMetrics';
 
 type Props = {
   children: ReactNode;
@@ -28,6 +29,7 @@ export function ChatComposerDropZone({
   onSendDocumentFile,
   className,
 }: Props) {
+  useChatPerfRender('Composer');
   const [dragActive, setDragActive] = useState(false);
   const dragCounter = useRef(0);
 

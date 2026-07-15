@@ -18,6 +18,7 @@ export const CHAT_MIGRATION_FLAG_KEYS = [
   'CHAT_AGGREGATED_DEV_LOG',
   'CHAT_CORE_METRICS',
   'CHAT_CORE_STORE',
+  'CHAT_REDIS_WS',
 ] as const;
 
 export type ChatMigrationFlagKey = (typeof CHAT_MIGRATION_FLAG_KEYS)[number];

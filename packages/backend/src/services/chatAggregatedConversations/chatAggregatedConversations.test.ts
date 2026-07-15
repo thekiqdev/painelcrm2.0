@@ -139,7 +139,7 @@ describe('chatAggregatedConversations F4a', () => {
     expect(expr).not.toContain('chat_messages');
   });
 
-  it('uses legacy parity expr in parity mode', () => {
+  it('uses denormalized last_message_at in parity mode by default (Phase 3)', () => {
     const expr = buildEffectiveLastMessageExpr({
       attendanceCols: true,
       teamCols: false,
@@ -151,7 +151,31 @@ describe('chatAggregatedConversations F4a', () => {
       viewAll: true,
       parityMode: true,
     });
-    expect(expr).toContain('chat_messages');
+    expect(expr).toContain('last_message_at');
+    expect(expr).not.toContain('chat_messages');
+  });
+
+  it('parity mode can restore MAX via CHAT_LIST_LEGACY_MESSAGES_MAX=1', () => {
+    const prev = process.env.CHAT_LIST_LEGACY_MESSAGES_MAX;
+    process.env.CHAT_LIST_LEGACY_MESSAGES_MAX = '1';
+    try {
+      const expr = buildEffectiveLastMessageExpr({
+        attendanceCols: true,
+        teamCols: false,
+        slaPhase5Cols: true,
+        leadColumnAvailable: true,
+        groupsFeat: true,
+        superadminOfficialEnabled: false,
+        tenantOfficialEnabled: false,
+        viewAll: true,
+        parityMode: true,
+      });
+      expect(expr).toContain('chat_messages');
+      expect(expr).toContain('MAX(');
+    } finally {
+      if (prev === undefined) delete process.env.CHAT_LIST_LEGACY_MESSAGES_MAX;
+      else process.env.CHAT_LIST_LEGACY_MESSAGES_MAX = prev;
+    }
   });
 
   it('computes reduction percent', () => {

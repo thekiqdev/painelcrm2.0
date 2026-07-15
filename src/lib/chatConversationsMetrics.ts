@@ -3,7 +3,7 @@
  * Logs somente com flag CHAT_CORE_METRICS no painel Super Admin.
  */
 
-import { isChatMigrationFlagEnabled } from '@/lib/chatMigrationFlagManager';
+import { isChatPerformanceTelemetryEnabled } from '@/features/chat-core/metrics/productionPolicy';
 
 import type { ChatAggregatedSurface } from './chatAggregatedFlags';
 
@@ -44,7 +44,7 @@ const state: MetricsState = {
 const MAX_SAMPLES = 200;
 
 function metricsLogEnabled(): boolean {
-  return isChatMigrationFlagEnabled('CHAT_CORE_METRICS');
+  return isChatPerformanceTelemetryEnabled();
 }
 
 function log(event: string, payload: Record<string, unknown>): void {

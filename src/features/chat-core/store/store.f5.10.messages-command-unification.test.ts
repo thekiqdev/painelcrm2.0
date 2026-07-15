@@ -43,6 +43,20 @@ vi.mock('../core/messagesFetch', () => ({
   ),
 }));
 
+vi.mock('../core/messagesPageFetch', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../core/messagesPageFetch')>();
+  return {
+    ...actual,
+    getMessagesPage: vi.fn(async (params: { conversationId: string }) => ({
+      messages: domainMessages(['msg-1', 'msg-2'], params.conversationId),
+      nextCursor: null,
+      previousCursor: null,
+      hasMore: false,
+      source: 'legacy' as const,
+    })),
+  };
+});
+
 describe('F5.10 messages command unification', () => {
   beforeEach(() => {
     resetChatMigrationFlagsToDefaults();
@@ -100,10 +114,14 @@ describe('F5.10 messages command unification', () => {
       (m) => m.id,
     );
 
-    const { fetchConversationMessages } = await import('../core/messagesFetch');
-    vi.mocked(fetchConversationMessages).mockResolvedValueOnce(
-      domainMessages(['msg-1', 'msg-2'], 'conv-parity'),
-    );
+    const { getMessagesPage } = await import('../core/messagesPageFetch');
+    vi.mocked(getMessagesPage).mockResolvedValueOnce({
+      messages: domainMessages(['msg-1', 'msg-2'], 'conv-parity'),
+      nextCursor: null,
+      previousCursor: null,
+      hasMore: false,
+      source: 'legacy',
+    });
     await loadMessagesCommand('conv-parity');
     const afterSecond = selectMessagesForUi(getChatDomainStoreSession()!.getState(), 'conv-parity').map(
       (m) => m.id,
@@ -114,14 +132,20 @@ describe('F5.10 messages command unification', () => {
   });
 
   it('concurrency — last generation wins per conversation', async () => {
-    const { fetchConversationMessages } = await import('../core/messagesFetch');
-    let resolveFirst: (v: ChatDomainMessage[]) => void;
-    const firstPromise = new Promise<ChatDomainMessage[]>((r) => {
+    const { getMessagesPage } = await import('../core/messagesPageFetch');
+    let resolveFirst: (v: Awaited<ReturnType<typeof getMessagesPage>>) => void;
+    const firstPromise = new Promise<Awaited<ReturnType<typeof getMessagesPage>>>((r) => {
       resolveFirst = r;
     });
-    vi.mocked(fetchConversationMessages)
+    vi.mocked(getMessagesPage)
       .mockImplementationOnce(() => firstPromise)
-      .mockImplementationOnce(async () => domainMessages(['only-last'], 'conv-1'));
+      .mockImplementationOnce(async () => ({
+        messages: domainMessages(['only-last'], 'conv-1'),
+        nextCursor: null,
+        previousCursor: null,
+        hasMore: false,
+        source: 'legacy' as const,
+      }));
 
     const p1 = loadMessagesCommand('conv-1');
     const p2 = loadMessagesCommand('conv-1');
@@ -131,7 +155,13 @@ describe('F5.10 messages command unification', () => {
       ['only-last'],
     );
 
-    resolveFirst!(domainMessages(['stale'], 'conv-1'));
+    resolveFirst!({
+      messages: domainMessages(['stale'], 'conv-1'),
+      nextCursor: null,
+      previousCursor: null,
+      hasMore: false,
+      source: 'legacy',
+    });
     await p1;
     expect(selectChatMessagesForUi(getChatDomainStoreSession()!.getState(), 'conv-1').map((m) => m.id)).toEqual(
       ['only-last'],

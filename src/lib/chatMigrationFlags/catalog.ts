@@ -16,11 +16,12 @@ export const CHAT_MIGRATION_FLAG_KEYS = [
   'CHAT_AGGREGATED_DEV_LOG',
   'CHAT_CORE_METRICS',
   'CHAT_CORE_STORE',
+  'CHAT_REDIS_WS',
 ] as const;
 
 export type ChatMigrationFlagKey = (typeof CHAT_MIGRATION_FLAG_KEYS)[number];
 
-export type ChatMigrationFlagGroupId = 'F1' | 'F2' | 'F3' | 'F4' | 'F5' | 'Desenvolvimento';
+export type ChatMigrationFlagGroupId = 'F1' | 'F2' | 'F3' | 'F4' | 'F5' | 'F7' | 'Desenvolvimento';
 
 export type ChatMigrationFlagDef = {
   key: ChatMigrationFlagKey;
@@ -141,6 +142,20 @@ export const CHAT_MIGRATION_FLAG_GROUPS: ChatMigrationFlagGroup[] = [
         label: 'Domain Store',
         description:
           'F5.0: fundação do store (sem impacto em runtime). F5.1+: migração gradual de superfícies.',
+      },
+    ],
+  },
+  {
+    id: 'F7',
+    title: 'F7 — Escala horizontal (Redis WS)',
+    description:
+      'Socket.IO Redis Adapter multi-réplica. Requer Redis configurado no backend (`SOCKET_IO_REDIS_ADAPTER` / `REDIS_*`).',
+    flags: [
+      {
+        key: 'CHAT_REDIS_WS',
+        label: 'Redis Socket.IO Adapter',
+        description:
+          'Ativa adapter Redis para fan-out cross-node (salas user/tenant). Fallback automático para memory se Redis falhar.',
       },
     ],
   },

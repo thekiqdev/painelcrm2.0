@@ -10,7 +10,7 @@ import { FLOATING_CHAT_MESSAGES_STALE_MS } from '@/features/floating-chat/floati
 import { loadMessagesCommand } from '../../core/commands';
 import { shouldUseChatDomainStore } from '../flags';
 import { getChatDomainStoreSession } from '../session';
-import { createInitialChatDomainState } from '../state';
+import { EMPTY_CHAT_DOMAIN_STATE } from '../state';
 import {
   selectMessageVersion,
   selectMessagesForUi,
@@ -19,6 +19,13 @@ import {
 import { recordFloatingMessageRender } from '../floatingMessageMetrics';
 import { recordChatRenderMs, recordStoreSubscription } from '../consolidatedMetrics';
 import { applyFloatingMessagesUpdater } from '../messageMutations';
+import {
+  recordSubscriptionAttach,
+  recordSubscriptionNotify,
+} from '../../metrics/subscriptionMetrics';
+import { recordSocketUiFlush } from '../../metrics/socketMetrics';
+import { shouldFloatDumpAllMessages } from '@/features/floating-chat/floatingMessageLoadPolicy';
+import { shouldReactQueryOwnChatThread } from '../../runtime/cachePrecedence';
 
 export type FloatingConversationMessagesData = {
   messages: ChatMessage[];
@@ -33,6 +40,8 @@ export function useFloatingConversationMessages(
 ): FloatingConversationMessagesData {
   const useStore = shouldUseChatDomainStore();
   const queryClient = useQueryClient();
+  // MB-031: RQ só é dono da thread quando Store OFF.
+  const rqOwnsThread = shouldReactQueryOwnChatThread();
 
   const messagesQueryKey = useMemo(
     () => ['floating-chat', 'messages', conversationId] as const,
@@ -41,7 +50,7 @@ export function useFloatingConversationMessages(
 
   const rq = useQuery({
     queryKey: messagesQueryKey,
-    enabled: !useStore && Boolean(conversationId),
+    enabled: rqOwnsThread && Boolean(conversationId),
     queryFn: async () => {
       const rows = await chatService.getConversationMessages(conversationId);
       void chatService.syncConversationMessages(conversationId, {}).catch(() => {});
@@ -57,14 +66,21 @@ export function useFloatingConversationMessages(
   const subscribeStore = useCallback((onChange: () => void) => {
     const store = getChatDomainStoreSession();
     if (!store) return () => undefined;
-    return store.subscribe(() => {
+    const detach = recordSubscriptionAttach('useFloatingConversationMessages');
+    const unsub = store.subscribe(() => {
       recordStoreSubscription();
+      recordSubscriptionNotify('useFloatingConversationMessages');
+      recordSocketUiFlush();
       onChange();
     });
+    return () => {
+      detach();
+      unsub();
+    };
   }, []);
 
   const getStoreSnapshot = useCallback(() => {
-    return getChatDomainStoreSession()?.getState() ?? createInitialChatDomainState();
+    return getChatDomainStoreSession()?.getState() ?? EMPTY_CHAT_DOMAIN_STATE;
   }, []);
 
   const storeState = useSyncExternalStore(subscribeStore, getStoreSnapshot, getStoreSnapshot);
@@ -78,7 +94,10 @@ export function useFloatingConversationMessages(
     setStoreFetching(true);
     const start = performance.now();
     try {
-      await loadMessagesCommand(conversationId);
+      await loadMessagesCommand(
+        conversationId,
+        shouldFloatDumpAllMessages() ? { latestPage: false } : undefined,
+      );
       if (generation !== loadGenerationRef.current) return;
 
       const store = getChatDomainStoreSession();

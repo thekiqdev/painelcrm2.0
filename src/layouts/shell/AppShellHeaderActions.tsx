@@ -63,24 +63,47 @@ export const AppShellHeaderActions = React.memo(function AppShellHeaderActions()
   const hasInvoices = useFeatureFlag('invoices');
   const hasExpenses = useFeatureFlag('expenses');
 
-  const showCreateInvoice =
-    hasInvoices && canView('billing') && hasPermissionKey('billing.create_invoice');
-  const showCreateClient = hasClients && canView('clients') && canCreate('clients');
-  const showCreateProposal = hasProposals && canView('proposals') && canCreate('proposals');
-  const showCreateContract = hasContracts && canView('contracts') && canCreate('contracts');
-  const showCreateTask = hasTasks && canView('tasks') && canCreate('tasks');
-  const showCreateAppointment = hasAgenda && canView('agenda') && canCreate('agenda');
-  const showCreateFinanceTx =
-    hasExpenses && canView('finance') && hasPermissionKey('finance.create_expense');
-  const showTransfer = showCreateFinanceTx;
-  const showCreateMenu =
-    showCreateInvoice ||
-    showCreateClient ||
-    showCreateProposal ||
-    showCreateContract ||
-    showCreateTask ||
-    showCreateAppointment ||
-    showCreateFinanceTx;
+  const {
+    showCreateInvoice,
+    showCreateClient,
+    showCreateProposal,
+    showCreateContract,
+    showCreateTask,
+    showCreateAppointment,
+    showCreateFinanceTx,
+    showTransfer,
+    showCreateMenu,
+  } = useMemo(() => {
+    const invoice = hasInvoices && canView('billing') && hasPermissionKey('billing.create_invoice');
+    const client = hasClients && canView('clients') && canCreate('clients');
+    const proposal = hasProposals && canView('proposals') && canCreate('proposals');
+    const contract = hasContracts && canView('contracts') && canCreate('contracts');
+    const task = hasTasks && canView('tasks') && canCreate('tasks');
+    const appointment = hasAgenda && canView('agenda') && canCreate('agenda');
+    const financeTx = hasExpenses && canView('finance') && hasPermissionKey('finance.create_expense');
+    return {
+      showCreateInvoice: invoice,
+      showCreateClient: client,
+      showCreateProposal: proposal,
+      showCreateContract: contract,
+      showCreateTask: task,
+      showCreateAppointment: appointment,
+      showCreateFinanceTx: financeTx,
+      showTransfer: financeTx,
+      showCreateMenu: invoice || client || proposal || contract || task || appointment || financeTx,
+    };
+  }, [
+    hasInvoices,
+    hasClients,
+    hasProposals,
+    hasContracts,
+    hasTasks,
+    hasAgenda,
+    hasExpenses,
+    canView,
+    canCreate,
+    hasPermissionKey,
+  ]);
 
   const createMenuContent = useMemo(() => {
     type Row = { tier: number; sort: number; node: React.ReactNode };

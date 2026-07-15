@@ -12,6 +12,7 @@ import {
 } from './chatNotificationContext.js';
 import { conversationRowForClientApi } from '../utils/uazapiIdentityResolve.js';
 import { emitConversationAttendanceUpdated } from './websocketService.js';
+import { appLogger } from '../observability/appLogger.js';
 
 /** Minutos entre níveis de escalonamento (assignee → equipa → supervisor). */
 const ESCALATION_GAP_MINUTES = 15;
@@ -28,68 +29,109 @@ type ConvSlaRow = {
   last_agent_message_at: Date | null;
 };
 
-async function teamIdsForConversation(
+type AlertRow = { alert_type: string; created_at: Date };
+
+/** Cache por tick — evita N+1 de settings/teams/supervisors. */
+type TickCaches = {
+  slaAlertsEnabled: Map<string, boolean>;
+  queueTeam: Map<string, string | null>;
+  teamMembers: Map<string, string[]>;
+  supervisors: Map<string, string[]>;
+};
+
+function createTickCaches(): TickCaches {
+  return {
+    slaAlertsEnabled: new Map(),
+    queueTeam: new Map(),
+    teamMembers: new Map(),
+    supervisors: new Map(),
+  };
+}
+
+async function teamIdsForConversationCached(
+  caches: TickCaches,
   tenantId: string,
   queueId: string | null,
-  assignedTeamId: string | null
+  assignedTeamId: string | null,
 ): Promise<string[]> {
   if (assignedTeamId) return [assignedTeamId];
   if (!queueId) return [];
+  const key = `${tenantId}:${queueId}`;
+  if (caches.queueTeam.has(key)) {
+    const tid = caches.queueTeam.get(key);
+    return tid ? [tid] : [];
+  }
   const r = await pool.query<{ team_id: string | null }>(
     `SELECT team_id FROM chat_queue_distribution WHERE tenant_id = $1 AND queue_id = $2`,
-    [tenantId, queueId]
+    [tenantId, queueId],
   );
-  const tid = r.rows[0]?.team_id;
+  const tid = r.rows[0]?.team_id ?? null;
+  caches.queueTeam.set(key, tid);
   return tid ? [tid] : [];
 }
 
-async function listTeamMemberUserIds(teamIds: string[]): Promise<string[]> {
+async function listTeamMemberUserIdsCached(caches: TickCaches, teamIds: string[]): Promise<string[]> {
   if (teamIds.length === 0) return [];
-  const r = await pool.query<{ user_id: string }>(
-    `SELECT DISTINCT tm.user_id FROM team_members tm WHERE tm.team_id = ANY($1::uuid[])`,
-    [teamIds]
-  );
-  return r.rows.map((x) => x.user_id);
+  const missing = teamIds.filter((id) => !caches.teamMembers.has(id));
+  if (missing.length > 0) {
+    const r = await pool.query<{ team_id: string; user_id: string }>(
+      `SELECT tm.team_id, tm.user_id FROM team_members tm WHERE tm.team_id = ANY($1::uuid[])`,
+      [missing],
+    );
+    for (const id of missing) caches.teamMembers.set(id, []);
+    for (const row of r.rows) {
+      const list = caches.teamMembers.get(row.team_id) ?? [];
+      list.push(row.user_id);
+      caches.teamMembers.set(row.team_id, list);
+    }
+  }
+  const out = new Set<string>();
+  for (const id of teamIds) {
+    for (const uid of caches.teamMembers.get(id) ?? []) out.add(uid);
+  }
+  return [...out];
 }
 
-async function listTenantSupervisorUserIds(tenantId: string): Promise<string[]> {
+async function listTenantSupervisorUserIdsCached(
+  caches: TickCaches,
+  tenantId: string,
+): Promise<string[]> {
+  if (caches.supervisors.has(tenantId)) return caches.supervisors.get(tenantId)!;
   const r = await pool.query<{ id: string }>(
     `SELECT u.id FROM users u
      INNER JOIN user_profiles p ON p.owner_id = u.id
      WHERE u.tenant_id = $1 AND p.is_admin = true`,
-    [tenantId]
+    [tenantId],
   );
-  return r.rows.map((x) => x.id);
+  const ids = r.rows.map((x) => x.id);
+  caches.supervisors.set(tenantId, ids);
+  return ids;
 }
 
-async function lastFrAlert(
-  conversationId: string,
-  since: Date
-): Promise<{ alert_type: string; created_at: Date } | null> {
-  const r = await pool.query<{ alert_type: string; created_at: Date }>(
-    `SELECT alert_type, created_at FROM chat_sla_alert_log
-     WHERE conversation_id = $1
-       AND alert_type IN ('sla_fr_a', 'sla_fr_b', 'sla_fr_c')
-       AND created_at >= $2
-     ORDER BY created_at DESC LIMIT 1`,
-    [conversationId, since]
+/** Uma query para últimas alerts FR/NR por conversa desde last_customer_message_at. */
+async function loadLatestAlertsByConversation(
+  rows: ConvSlaRow[],
+  alertTypes: string[],
+): Promise<Map<string, AlertRow>> {
+  const map = new Map<string, AlertRow>();
+  if (rows.length === 0) return map;
+  const ids = rows.map((r) => r.id);
+  const sinces = rows.map((r) => r.last_customer_message_at);
+  const r = await pool.query<{ conversation_id: string; alert_type: string; created_at: Date }>(
+    `SELECT DISTINCT ON (l.conversation_id)
+       l.conversation_id, l.alert_type, l.created_at
+     FROM chat_sla_alert_log l
+     INNER JOIN unnest($1::uuid[], $2::timestamptz[]) AS v(conversation_id, since)
+       ON v.conversation_id = l.conversation_id
+     WHERE l.alert_type = ANY($3::text[])
+       AND l.created_at >= v.since
+     ORDER BY l.conversation_id, l.created_at DESC`,
+    [ids, sinces, alertTypes],
   );
-  return r.rows[0] ?? null;
-}
-
-async function lastNrAlert(
-  conversationId: string,
-  since: Date
-): Promise<{ alert_type: string; created_at: Date } | null> {
-  const r = await pool.query<{ alert_type: string; created_at: Date }>(
-    `SELECT alert_type, created_at FROM chat_sla_alert_log
-     WHERE conversation_id = $1
-       AND alert_type IN ('sla_nr_a', 'sla_nr_b', 'sla_nr_c')
-       AND created_at >= $2
-     ORDER BY created_at DESC LIMIT 1`,
-    [conversationId, since]
-  );
-  return r.rows[0] ?? null;
+  for (const row of r.rows) {
+    map.set(row.conversation_id, { alert_type: row.alert_type, created_at: row.created_at });
+  }
+  return map;
 }
 
 async function insertAlertLog(params: {
@@ -101,22 +143,26 @@ async function insertAlertLog(params: {
   await pool.query(
     `INSERT INTO chat_sla_alert_log (tenant_id, conversation_id, alert_type, escalated)
      VALUES ($1, $2, $3, $4)`,
-    [params.tenantId, params.conversationId, params.alertType, params.escalated]
+    [params.tenantId, params.conversationId, params.alertType, params.escalated],
   );
 }
 
 async function notifySlaUsers(
+  caches: TickCaches,
   userIds: string[],
   conversationId: string,
   tenantId: string,
-  severity: 'at_risk' | 'overdue'
+  severity: 'at_risk' | 'overdue',
 ): Promise<void> {
   try {
-    const ar = await pool.query<{ sla_alerts_enabled: boolean | null }>(
-      `SELECT sla_alerts_enabled FROM chat_automation_settings WHERE tenant_id = $1`,
-      [tenantId]
-    );
-    if (ar.rows[0]?.sla_alerts_enabled === false) return;
+    if (!caches.slaAlertsEnabled.has(tenantId)) {
+      const ar = await pool.query<{ sla_alerts_enabled: boolean | null }>(
+        `SELECT sla_alerts_enabled FROM chat_automation_settings WHERE tenant_id = $1`,
+        [tenantId],
+      );
+      caches.slaAlertsEnabled.set(tenantId, ar.rows[0]?.sla_alerts_enabled !== false);
+    }
+    if (caches.slaAlertsEnabled.get(tenantId) === false) return;
   } catch {
     /* coluna ausente / migração antiga */
   }
@@ -150,7 +196,7 @@ async function notifySlaUsers(
       entity_type: 'conversation',
       entity_id: conversationId,
     },
-    ctx
+    ctx,
   );
 
   for (const uid of uniq) {
@@ -163,12 +209,12 @@ async function notifySlaUsers(
         data,
       });
     } catch (e) {
-      console.warn('[chatSlaWorker] notify failed', uid, e);
+      appLogger.warn('chatSlaWorker', 'notify failed', { uid, err: String(e) });
     }
   }
 }
 
-async function processFirstResponseSlas(): Promise<void> {
+async function processFirstResponseSlas(caches: TickCaches): Promise<void> {
   const r = await pool.query<ConvSlaRow & { sla_first_response_minutes: number }>(
     `SELECT c.id, c.user_id, owner.tenant_id, c.queue_id, c.assigned_to_user_id, c.assigned_team_id,
             c.last_customer_message_at, c.first_response_at, c.last_agent_message_at,
@@ -182,16 +228,17 @@ async function processFirstResponseSlas(): Promise<void> {
        AND c.last_customer_message_at IS NOT NULL
        AND c.attendance_status NOT IN ('closed', 'archived')
        AND now() - c.last_customer_message_at > (s.sla_first_response_minutes::text || ' minutes')::interval
-     LIMIT 150`
+     LIMIT 150`,
   );
 
+  const latest = await loadLatestAlertsByConversation(r.rows, ['sla_fr_a', 'sla_fr_b', 'sla_fr_c']);
+
   for (const row of r.rows) {
-    const since = row.last_customer_message_at!;
-    const last = await lastFrAlert(row.id, since);
+    const last = latest.get(row.id) ?? null;
 
     if (!last) {
       if (row.assigned_to_user_id) {
-        await notifySlaUsers([row.assigned_to_user_id], row.id, row.tenant_id, 'at_risk');
+        await notifySlaUsers(caches, [row.assigned_to_user_id], row.id, row.tenant_id, 'at_risk');
         await insertAlertLog({
           tenantId: row.tenant_id,
           conversationId: row.id,
@@ -199,10 +246,15 @@ async function processFirstResponseSlas(): Promise<void> {
           escalated: false,
         });
       } else {
-        const teams = await teamIdsForConversation(row.tenant_id, row.queue_id, row.assigned_team_id);
-        const members = await listTeamMemberUserIds(teams);
+        const teams = await teamIdsForConversationCached(
+          caches,
+          row.tenant_id,
+          row.queue_id,
+          row.assigned_team_id,
+        );
+        const members = await listTeamMemberUserIdsCached(caches, teams);
         if (members.length > 0) {
-          await notifySlaUsers(members, row.id, row.tenant_id, 'at_risk');
+          await notifySlaUsers(caches, members, row.id, row.tenant_id, 'at_risk');
           await insertAlertLog({
             tenantId: row.tenant_id,
             conversationId: row.id,
@@ -210,9 +262,9 @@ async function processFirstResponseSlas(): Promise<void> {
             escalated: false,
           });
         } else {
-          const sups = await listTenantSupervisorUserIds(row.tenant_id);
+          const sups = await listTenantSupervisorUserIdsCached(caches, row.tenant_id);
           if (sups.length > 0) {
-            await notifySlaUsers(sups, row.id, row.tenant_id, 'overdue');
+            await notifySlaUsers(caches, sups, row.id, row.tenant_id, 'overdue');
             await insertAlertLog({
               tenantId: row.tenant_id,
               conversationId: row.id,
@@ -231,11 +283,16 @@ async function processFirstResponseSlas(): Promise<void> {
     if (gapMin < ESCALATION_GAP_MINUTES) continue;
 
     if (last.alert_type === 'sla_fr_a') {
-      const teams = await teamIdsForConversation(row.tenant_id, row.queue_id, row.assigned_team_id);
-      const members = await listTeamMemberUserIds(teams);
+      const teams = await teamIdsForConversationCached(
+        caches,
+        row.tenant_id,
+        row.queue_id,
+        row.assigned_team_id,
+      );
+      const members = await listTeamMemberUserIdsCached(caches, teams);
       const targets = members.filter((id) => id !== row.assigned_to_user_id);
       if (targets.length > 0) {
-        await notifySlaUsers(targets, row.id, row.tenant_id, 'overdue');
+        await notifySlaUsers(caches, targets, row.id, row.tenant_id, 'overdue');
         await insertAlertLog({
           tenantId: row.tenant_id,
           conversationId: row.id,
@@ -243,10 +300,10 @@ async function processFirstResponseSlas(): Promise<void> {
           escalated: true,
         });
       } else {
-        const sups = await listTenantSupervisorUserIds(row.tenant_id);
+        const sups = await listTenantSupervisorUserIdsCached(caches, row.tenant_id);
         const t2 = sups.filter((id) => id !== row.assigned_to_user_id);
         if (t2.length > 0) {
-          await notifySlaUsers(t2, row.id, row.tenant_id, 'overdue');
+          await notifySlaUsers(caches, t2, row.id, row.tenant_id, 'overdue');
           await insertAlertLog({
             tenantId: row.tenant_id,
             conversationId: row.id,
@@ -259,10 +316,10 @@ async function processFirstResponseSlas(): Promise<void> {
     }
 
     if (last.alert_type === 'sla_fr_b') {
-      const sups = await listTenantSupervisorUserIds(row.tenant_id);
+      const sups = await listTenantSupervisorUserIdsCached(caches, row.tenant_id);
       const targets = sups.filter((id) => id !== row.assigned_to_user_id);
       if (targets.length > 0) {
-        await notifySlaUsers(targets, row.id, row.tenant_id, 'overdue');
+        await notifySlaUsers(caches, targets, row.id, row.tenant_id, 'overdue');
         await insertAlertLog({
           tenantId: row.tenant_id,
           conversationId: row.id,
@@ -274,7 +331,7 @@ async function processFirstResponseSlas(): Promise<void> {
   }
 }
 
-async function processNextResponseSlas(): Promise<void> {
+async function processNextResponseSlas(caches: TickCaches): Promise<void> {
   const r = await pool.query<ConvSlaRow & { sla_next_response_minutes: number }>(
     `SELECT c.id, c.user_id, owner.tenant_id, c.queue_id, c.assigned_to_user_id, c.assigned_team_id,
             c.last_customer_message_at, c.first_response_at, c.last_agent_message_at,
@@ -289,16 +346,17 @@ async function processNextResponseSlas(): Promise<void> {
        AND c.last_customer_message_at > c.last_agent_message_at
        AND c.attendance_status NOT IN ('closed', 'archived')
        AND now() - c.last_customer_message_at > (s.sla_next_response_minutes::text || ' minutes')::interval
-     LIMIT 150`
+     LIMIT 150`,
   );
 
+  const latest = await loadLatestAlertsByConversation(r.rows, ['sla_nr_a', 'sla_nr_b', 'sla_nr_c']);
+
   for (const row of r.rows) {
-    const since = row.last_customer_message_at!;
-    const last = await lastNrAlert(row.id, since);
+    const last = latest.get(row.id) ?? null;
 
     if (!last) {
       if (row.assigned_to_user_id) {
-        await notifySlaUsers([row.assigned_to_user_id], row.id, row.tenant_id, 'at_risk');
+        await notifySlaUsers(caches, [row.assigned_to_user_id], row.id, row.tenant_id, 'at_risk');
         await insertAlertLog({
           tenantId: row.tenant_id,
           conversationId: row.id,
@@ -306,10 +364,15 @@ async function processNextResponseSlas(): Promise<void> {
           escalated: false,
         });
       } else {
-        const teams = await teamIdsForConversation(row.tenant_id, row.queue_id, row.assigned_team_id);
-        const members = await listTeamMemberUserIds(teams);
+        const teams = await teamIdsForConversationCached(
+          caches,
+          row.tenant_id,
+          row.queue_id,
+          row.assigned_team_id,
+        );
+        const members = await listTeamMemberUserIdsCached(caches, teams);
         if (members.length > 0) {
-          await notifySlaUsers(members, row.id, row.tenant_id, 'at_risk');
+          await notifySlaUsers(caches, members, row.id, row.tenant_id, 'at_risk');
           await insertAlertLog({
             tenantId: row.tenant_id,
             conversationId: row.id,
@@ -317,9 +380,9 @@ async function processNextResponseSlas(): Promise<void> {
             escalated: false,
           });
         } else {
-          const sups = await listTenantSupervisorUserIds(row.tenant_id);
+          const sups = await listTenantSupervisorUserIdsCached(caches, row.tenant_id);
           if (sups.length > 0) {
-            await notifySlaUsers(sups, row.id, row.tenant_id, 'overdue');
+            await notifySlaUsers(caches, sups, row.id, row.tenant_id, 'overdue');
             await insertAlertLog({
               tenantId: row.tenant_id,
               conversationId: row.id,
@@ -338,11 +401,16 @@ async function processNextResponseSlas(): Promise<void> {
     if (gapMin < ESCALATION_GAP_MINUTES) continue;
 
     if (last.alert_type === 'sla_nr_a') {
-      const teams = await teamIdsForConversation(row.tenant_id, row.queue_id, row.assigned_team_id);
-      const members = await listTeamMemberUserIds(teams);
+      const teams = await teamIdsForConversationCached(
+        caches,
+        row.tenant_id,
+        row.queue_id,
+        row.assigned_team_id,
+      );
+      const members = await listTeamMemberUserIdsCached(caches, teams);
       const targets = members.filter((id) => id !== row.assigned_to_user_id);
       if (targets.length > 0) {
-        await notifySlaUsers(targets, row.id, row.tenant_id, 'overdue');
+        await notifySlaUsers(caches, targets, row.id, row.tenant_id, 'overdue');
         await insertAlertLog({
           tenantId: row.tenant_id,
           conversationId: row.id,
@@ -350,10 +418,10 @@ async function processNextResponseSlas(): Promise<void> {
           escalated: true,
         });
       } else {
-        const sups = await listTenantSupervisorUserIds(row.tenant_id);
+        const sups = await listTenantSupervisorUserIdsCached(caches, row.tenant_id);
         const t2 = sups.filter((id) => id !== row.assigned_to_user_id);
         if (t2.length > 0) {
-          await notifySlaUsers(t2, row.id, row.tenant_id, 'overdue');
+          await notifySlaUsers(caches, t2, row.id, row.tenant_id, 'overdue');
           await insertAlertLog({
             tenantId: row.tenant_id,
             conversationId: row.id,
@@ -366,10 +434,10 @@ async function processNextResponseSlas(): Promise<void> {
     }
 
     if (last.alert_type === 'sla_nr_b') {
-      const sups = await listTenantSupervisorUserIds(row.tenant_id);
+      const sups = await listTenantSupervisorUserIdsCached(caches, row.tenant_id);
       const targets = sups.filter((id) => id !== row.assigned_to_user_id);
       if (targets.length > 0) {
-        await notifySlaUsers(targets, row.id, row.tenant_id, 'overdue');
+        await notifySlaUsers(caches, targets, row.id, row.tenant_id, 'overdue');
         await insertAlertLog({
           tenantId: row.tenant_id,
           conversationId: row.id,
@@ -382,7 +450,7 @@ async function processNextResponseSlas(): Promise<void> {
 }
 
 async function processInactivityResets(): Promise<void> {
-  const r = await pool.query<{ id: string; tenant_id: string; owner_user_id: string }>(
+  const r = await pool.query<Record<string, unknown> & { tenant_id: string; owner_user_id: string }>(
     `UPDATE chat_conversations c
      SET attendance_status = 'pending', updated_at = now()
      FROM users owner
@@ -393,29 +461,39 @@ async function processInactivityResets(): Promise<void> {
        AND c.attendance_status = 'waiting_customer'
        AND c.last_agent_message_at IS NOT NULL
        AND now() - c.last_agent_message_at > (s.inactivity_reset_minutes::text || ' minutes')::interval
-     RETURNING c.id, owner.tenant_id AS tenant_id, c.user_id AS owner_user_id`
+     RETURNING c.*, owner.tenant_id AS tenant_id, c.user_id AS owner_user_id`,
   );
 
   for (const row of r.rows) {
     try {
-      const fresh = await pool.query(`SELECT * FROM chat_conversations WHERE id = $1`, [row.id]);
-      const convPayload = conversationRowForClientApi(fresh.rows[0] as Record<string, unknown>);
-      emitConversationAttendanceUpdated(row.tenant_id, row.owner_user_id, convPayload);
+      const convPayload = conversationRowForClientApi(row as Record<string, unknown>);
+      emitConversationAttendanceUpdated(String(row.tenant_id), String(row.owner_user_id), convPayload);
     } catch (e) {
-      console.warn('[chatSlaWorker] emit after inactivity', row.id, e);
+      appLogger.warn('chatSlaWorker', 'emit after inactivity', {
+        id: String(row.id),
+        err: String(e),
+      });
     }
   }
 }
 
 /**
  * Worker periódico: SLA (alertas escalonados), inatividade em waiting_customer.
+ * MB-016: alertas em batch + caches por tick (sem N+1 por-row de log/teams).
  */
 export async function runChatSlaAutomationTick(): Promise<void> {
   if (!(await hasChatAutomationTables())) return;
   if (!(await hasChatPhase5SlaColumns())) return;
   if (!(await hasAttendanceColumns())) return;
 
+  const caches = createTickCaches();
   await processInactivityResets();
-  await processFirstResponseSlas();
-  await processNextResponseSlas();
+  await processFirstResponseSlas(caches);
+  await processNextResponseSlas(caches);
 }
+
+/** Exposto para testes unitários de batching. */
+export const __chatSlaTestables = {
+  loadLatestAlertsByConversation,
+  createTickCaches,
+};

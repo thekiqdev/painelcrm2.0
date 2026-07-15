@@ -20,10 +20,14 @@ const EMPTY_COUNTS: ChatAttendanceCounts = {
   team: 0,
   unassigned: 0,
   closed: 0,
+  wa_archived: 0,
   unread: 0,
 };
 
-/** Alinhado ao poll legado do nav unread. */
+/**
+ * @deprecated Phase 9 — polling periódico removido; constante mantida para testes/diagnóstico.
+ * HTTP reconcile só via bootstrap/manual (`scheduleChatAttendanceReconcile` / `reconcileChatAttendanceCounts`).
+ */
 export const CHAT_UNREAD_RECONCILE_INTERVAL_MS = 120_000;
 const ATTENDANCE_RECONCILE_DEBOUNCE_MS = 2_000;
 
@@ -243,12 +247,12 @@ export function scheduleChatAttendanceReconcile(reason: ChatReconcileReason): vo
   }, ATTENDANCE_RECONCILE_DEBOUNCE_MS);
 }
 
+/** Phase 9 — no-op: zero polling contínuo; attendance via Socket + reconcile manual/login. */
 export function startChatUnreadPeriodicReconcile(): void {
-  if (!shouldUseChatUnreadEngine() || !shouldUseChatAttendanceReconcile()) return;
-  if (state.periodicTimer) return;
-  state.periodicTimer = setInterval(() => {
-    void reconcileChatAttendanceCounts('cache_expired');
-  }, CHAT_UNREAD_RECONCILE_INTERVAL_MS);
+  if (state.periodicTimer) {
+    clearInterval(state.periodicTimer);
+    state.periodicTimer = null;
+  }
 }
 
 export function stopChatUnreadPeriodicReconcile(): void {

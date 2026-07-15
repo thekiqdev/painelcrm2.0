@@ -11,7 +11,8 @@ Infraestrutura do módulo Chat (Master Plan F0–F7).
 | F2 WS Patch | Entregue (sub-flags OFF) | Idem (`CHAT_WS_PATCH_*`) |
 | F3 Registry + Unread | Entregue (flags OFF) | Idem (`CHAT_INSTANCE_REGISTRY`, `CHAT_UNREAD_*`) |
 | F4+ | Parcial (F4b) | Idem — ver `SPRINT_CHAT_FEATURE_FLAGS_PANEL_REPORT.md` |
-| **F5 Domain Store** | **Entregue (F5.7)** | `CHAT_CORE_STORE` (default OFF) |
+| **F5 Domain Store** | **Entregue (F5.12)** | `CHAT_CORE_STORE` (default OFF) |
+| **F6 Cursor / Virtualização** | **Freeze F6.8** | ADR-010; F7 sobre a arquitetura congelada |
 
 **Ativação:** exclusivamente pelo painel **Super Admin → Avançado → Feature Flags → Otimização do Chat** (`/superadmin/avancado/feature-flags/chat-optimization`). Variáveis `.env` não são mais a fonte de verdade para estas flags.
 
@@ -111,4 +112,153 @@ Repository → loadMessagesCommand → Domain Store → hooks → UI
 
 Ver [`SPRINT_F5.10_MESSAGES_COMMAND_UNIFICATION_REPORT.md`](../../../docs/architecture/chat/SPRINT_F5.10_MESSAGES_COMMAND_UNIFICATION_REPORT.md).
 
-Ver sub-sprints F5.1–F5.10 em `docs/architecture/chat/`.
+## F5.11 — Realtime Unification
+
+Com `CHAT_CORE_STORE` ON, eventos WS atualizam **apenas** o Domain Store:
+
+```
+Socket.IO → ChatRealtimeBridge → syncStoreFromSocketEvent → Store → hooks → UI
+```
+
+- Sem `setMessages` / `setConversations` / `invalidateQueries` em handlers realtime (store ON)
+- Floating mantém apenas efeitos de UI (pulse, fechar painel)
+- `storeBootstrap`: ingresso único via `bridge.subscribe` (F1 ON)
+
+Ver [`SPRINT_F5.11_REALTIME_UNIFICATION_REPORT.md`](../../../docs/architecture/chat/SPRINT_F5.11_REALTIME_UNIFICATION_REPORT.md).
+
+## F5.12 — Performance Baseline & Telemetry
+
+Camada de observabilidade (DEV + `CHAT_CORE_METRICS`) para baseline pré-F6:
+
+- Renders, reducers, selectors, subscriptions, HTTP, socket apply, memória
+- Cenários: `chat_open`, `conversation_open`, `incoming_message`
+- API: `getChatPerformanceReport()` / `logChatPerformanceReport()`
+- **Sem otimização funcional** — só medição
+
+Ver [`SPRINT_F5.12_PERFORMANCE_BASELINE_REPORT.md`](../../../docs/architecture/chat/SPRINT_F5.12_PERFORMANCE_BASELINE_REPORT.md).
+
+## F6.0 — Cursor Engine (Pagination Foundation)
+
+Fundação de paginação incremental **sem mudança de UX**:
+
+```
+getMessagesPage → loadMessagesCursorCommand → messages/prependPage → cursorSelectors
+```
+
+- Estado: `nextCursor` / `hasMore` / `loadingMore` / `loadedPages` por conversa
+- Hooks: `useConversationCursor`, `useLoadMoreMessages` (prontos para F6.1)
+- `loadMessagesCommand` continua sendo o pipeline de abertura (dump integral)
+- Fallback legado quando a API ainda não pagina
+
+Ver [`SPRINT_F6.0_CURSOR_ENGINE_REPORT.md`](../../../docs/architecture/chat/SPRINT_F6.0_CURSOR_ENGINE_REPORT.md).
+
+## F6.1 — Incremental Load More
+
+No Chat principal (`CHAT_CORE_STORE` ON):
+
+1. Abertura carrega a **última página** (`loadMessagesCommand` + `latestPage`)
+2. Botão **Carregar mensagens anteriores** no topo da thread
+3. `useLoadMoreMessages` → `loadMessagesCursorCommand` → prepend + restore scroll
+
+Floating mantém dump integral (`latestPage: false`) nesta sprint.
+
+Ver [`SPRINT_F6.1_INCREMENTAL_LOAD_MORE_REPORT.md`](../../../docs/architecture/chat/SPRINT_F6.1_INCREMENTAL_LOAD_MORE_REPORT.md).
+
+## F6.2 — Sliding Window Cache
+
+Domain Store mantém apenas uma janela residente por conversa (~5 páginas / ~250 msgs):
+
+```
+messages/set | prependPage → registerPage → trim (LRU, pin newest) → evict
+```
+
+- Estado: `residentPages` / `cachedPages` / `evictedPages` / `memoryFootprint`
+- Hooks: `useConversationWindow`, `useWindowMemory`
+- Sem mudança de UX; prepara F6.3 (virtualização)
+
+Ver [`SPRINT_F6.2_WINDOW_CACHE_REPORT.md`](../../../docs/architecture/chat/SPRINT_F6.2_WINDOW_CACHE_REPORT.md).
+
+## F6.3 — Conversation Virtualization
+
+Sidebar do Chat (`CHAT_CORE_STORE` ON) renderiza só viewport + overscan:
+
+```
+conversationsToShow → Virtual Engine → visibleItems (DOM) + totalHeight
+```
+
+- Hooks: `useConversationVirtualization`, `useConversationScroll`
+- Store: `conversationVirtualization` (scroll/viewport/window)
+- Floating inalterado; mensagens = escopo F6.4
+
+Ver [`SPRINT_F6.3_CONVERSATION_VIRTUALIZATION_REPORT.md`](../../../docs/architecture/chat/SPRINT_F6.3_CONVERSATION_VIRTUALIZATION_REPORT.md).
+
+## F6.4 — Message Virtualization
+
+Thread do Chat (`CHAT_CORE_STORE` ON) usa Message Virtual Engine:
+
+```
+messagesView → useVirtualizedMessages (mode: core) → VirtualizedMessageList
+```
+
+- Hooks: `useMessageVirtualization`, `useMessageScroll`
+- Store: `messageVirtualization`
+- Floating / store OFF → TanStack legado (`mode: legacy`)
+
+Ver [`SPRINT_F6.4_MESSAGE_VIRTUALIZATION_REPORT.md`](../../../docs/architecture/chat/SPRINT_F6.4_MESSAGE_VIRTUALIZATION_REPORT.md).
+
+## F6.5 — Realtime Render Optimization
+
+Reduz re-renders de realtime sem mudar UX:
+
+```
+Bridge coalesce → dispatchBatch → useStableSelector → React.memo rows
+```
+
+- `useStableSelector` / `selectorMemo` / `storeBatch`
+- `ChatConversationRow` + `ChatMessageRow` (fingerprint)
+- Telemetria: `renderOptimizationMetrics`
+
+Ver [`SPRINT_F6.5_RENDER_OPTIMIZATION_REPORT.md`](../../../docs/architecture/chat/SPRINT_F6.5_RENDER_OPTIMIZATION_REPORT.md).
+
+## F6.6 — Warm Window & Predictive Prefetch
+
+Pré-aquece threads em idle sem mudar UX:
+
+```
+Heat Score → fila preditiva → requestIdleCallback → loadMessagesCommand → Window Cache
+```
+
+- Capacidade: 5 conversas (LRU)
+- Skip se mensagens já residentes
+- Cancel em interação (pointer/keydown/wheel)
+- Hook: `useConversationWarmup` (Chat principal, store ON)
+
+Ver [`SPRINT_F6.6_WARM_WINDOW_REPORT.md`](../../../docs/architecture/chat/SPRINT_F6.6_WARM_WINDOW_REPORT.md).
+
+## F6.7 — Performance Certification
+
+Auditoria only (sem alteração de código):
+
+- [`AUDIT_F6_PERFORMANCE_CERTIFICATION.md`](../../../docs/architecture/chat/AUDIT_F6_PERFORMANCE_CERTIFICATION.md)
+- [`PERFORMANCE_BASELINE_F6.md`](../../../docs/architecture/chat/PERFORMANCE_BASELINE_F6.md)
+- [`LEGACY_REMOVAL_READINESS.md`](../../../docs/architecture/chat/LEGACY_REMOVAL_READINESS.md)
+- [`F7_READINESS_REPORT.md`](../../../docs/architecture/chat/F7_READINESS_REPORT.md)
+
+Veredito: **GO condicionado** para F7; baseline live Network ainda a preencher em staging.
+
+## F6.8 — Architecture Freeze
+
+Contratos e camadas F1–F6 **congelados** (sem mudança funcional):
+
+| Doc |
+|---|
+| [`F6_ARCHITECTURE_FREEZE_REPORT.md`](../../../docs/architecture/chat/F6_ARCHITECTURE_FREEZE_REPORT.md) |
+| [`ADR-010-CHAT-ARCHITECTURE-FREEZE.md`](../../../docs/architecture/chat/ADR-010-CHAT-ARCHITECTURE-FREEZE.md) |
+| [`PUBLIC_API_FREEZE.md`](../../../docs/architecture/chat/PUBLIC_API_FREEZE.md) |
+| [`DOMAIN_STORE_FREEZE.md`](../../../docs/architecture/chat/DOMAIN_STORE_FREEZE.md) |
+| [`FEATURE_FLAGS_AUDIT.md`](../../../docs/architecture/chat/FEATURE_FLAGS_AUDIT.md) |
+| [`DEPENDENCY_GRAPH.md`](../../../docs/architecture/chat/DEPENDENCY_GRAPH.md) |
+| [`STATIC_DEPENDENCY_REPORT.md`](../../../docs/architecture/chat/STATIC_DEPENDENCY_REPORT.md) |
+
+Ver sub-sprints F5.1–F5.12 e F6.0–F6.8 em `docs/architecture/chat/`.
+Ver também [`AUDIT_F5_FINAL.md`](../../../docs/architecture/chat/AUDIT_F5_FINAL.md).

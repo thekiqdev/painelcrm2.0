@@ -7,7 +7,7 @@ export type FetchMergedConversationsParams = {
   inboxScope: ChatInboxScope;
   /** Filtro rápido do float: unread só no cliente após merge. */
   quickFilter?: 'all' | 'mine' | 'unread';
-  attendanceFilter?: 'mine' | 'queue' | 'team' | 'closed' | '';
+  attendanceFilter?: 'mine' | 'queue' | 'team' | 'closed' | 'wa_archived' | '';
   channelOrigin?: 'all' | 'uazapi' | 'official';
   conversationFilter?: 'groups';
   includeOfficialWhenAll?: boolean;
@@ -99,7 +99,13 @@ export async function fetchMergedChatConversations(
   }
   let list = sortConversationsByRecent(Array.from(byId.values()));
   if (quickFilter === 'unread') {
-    list = list.filter((c) => (c.unreadCount ?? 0) > 0);
+    list = list.filter((c) => (c.unreadCount ?? 0) > 0 && !c.wa_archived);
+  }
+  // Inbox isolation (MB-003/039): archived only when filter=wa_archived (groups included).
+  if (attendanceFilter === 'wa_archived') {
+    list = list.filter((c) => Boolean(c.wa_archived));
+  } else {
+    list = list.filter((c) => !c.wa_archived);
   }
   return list;
 }

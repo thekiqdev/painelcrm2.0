@@ -150,6 +150,15 @@ import {
   shadowRequestFromLegacyQuery,
   validateAggregatedConversationsAccess,
 } from '../services/chatAggregatedConversations/index.js';
+import {
+  buildEffectiveLastMessageExpr,
+  isChatListLegacyMessagesMaxEnabled,
+} from '../services/chatSql/effectiveLastMessage.js';
+import {
+  buildLegacyMessageCommentSelectSql,
+  buildOptimizedMessageCommentJoinSql,
+  isChatMessagesLegacyCommentSubqueryEnabled,
+} from '../services/chatSql/messageCommentsSql.js';
 import { getAccountCredentials } from '../services/whatsappOfficial/whatsappOfficialConfigService.js';
 import { sendTextMessage as graphOfficialSendText } from '../services/whatsappOfficial/whatsappOfficialClient.js';
 import { insertChatGroupAdminAudit } from '../services/chatGroupAdminAuditService.js';
@@ -6209,18 +6218,12 @@ export async function getConversations(req: AuthRequest, res: Response) {
     const teamCols = attendanceCols && (await hasAssignedTeamColumn());
     const slaPhase5Cols = await hasChatPhase5SlaColumns();
 
-    /** Última mensagem real: mensagens locais → colunas da conversa → SLA; nunca updated_at. */
-    const messagesMaxAtExpr = `(SELECT MAX(COALESCE(m.sent_at, m.created_at))::timestamptz FROM chat_messages m WHERE m.conversation_id = c.id)`;
-    const effectiveLastMessageExpr = slaPhase5Cols
-      ? `COALESCE(
-          ${messagesMaxAtExpr},
-          c.last_message_at,
-          GREATEST(c.last_customer_message_at, c.last_agent_message_at)
-        )`
-      : `COALESCE(
-          ${messagesMaxAtExpr},
-          c.last_message_at
-        )`;
+    /** Última mensagem: hot path denormalizado (MB-011). Rollback: CHAT_LIST_LEGACY_MESSAGES_MAX=1. */
+    const useMessagesMax = isChatListLegacyMessagesMaxEnabled();
+    const effectiveLastMessageExpr = buildEffectiveLastMessageExpr({
+      slaPhase5Cols,
+      useMessagesMax,
+    });
 
     const attendanceSelectAndJoins = attendanceCols
       ? {
@@ -6305,6 +6308,7 @@ export async function getConversations(req: AuthRequest, res: Response) {
         c.last_message_at,
         ${effectiveLastMessageExpr} AS effective_last_message_at,
         c.unread_count,
+        COALESCE(c.wa_archived, false) AS wa_archived,
         c.metadata,
         c.created_at,
         c.updated_at,
@@ -6383,7 +6387,9 @@ export async function getConversations(req: AuthRequest, res: Response) {
     }
 
     if (attendanceCols) {
-      if (attendanceFilter === 'mine') {
+      if (attendanceFilter === 'wa_archived') {
+        query += ` AND COALESCE(c.wa_archived, false) = true`;
+      } else if (attendanceFilter === 'mine') {
         params.push(userId);
         query += ` AND c.assigned_to_user_id = $${params.length} AND c.attendance_status = 'in_progress'`;
         paramIndex++;
@@ -6424,10 +6430,19 @@ export async function getConversations(req: AuthRequest, res: Response) {
           query += ` AND FALSE`;
         }
       }
-    } else if (attendanceFilter && attendanceFilter.length > 0) {
+    } else if (attendanceFilter && attendanceFilter.length > 0 && attendanceFilter !== 'wa_archived') {
       console.warn(
         '[GetConversations] attendanceFilter ignorado: migration Etapa 5 não aplicada (sem coluna assigned_to_user_id)'
       );
+    }
+
+    // WhatsApp archive isolation: only filter=wa_archived includes archived chats (incl. groups).
+    if (attendanceFilter === 'wa_archived') {
+      if (!attendanceCols) {
+        query += ` AND COALESCE(c.wa_archived, false) = true`;
+      }
+    } else {
+      query += ` AND COALESCE(c.wa_archived, false) = false`;
     }
 
     if (status && typeof status === 'string') {
@@ -6849,6 +6864,7 @@ export async function getConversationAttendanceCounts(req: AuthRequest, res: Res
         WHERE c.assigned_team_id IS NOT NULL
           AND c.assigned_to_user_id IS NULL
           AND (c.attendance_status IS NULL OR c.attendance_status IN ('pending', 'open'))
+          AND COALESCE(c.wa_archived, false) = false
           AND EXISTS (
             SELECT 1 FROM team_members tm
             WHERE tm.team_id = c.assigned_team_id AND tm.user_id = $1
@@ -6861,9 +6877,11 @@ export async function getConversationAttendanceCounts(req: AuthRequest, res: Res
           ${queueTeamExcl}
           AND (c.attendance_status IS NULL OR c.attendance_status IN ('pending', 'open'))
           AND (c.attendance_status IS DISTINCT FROM 'closed')
+          AND COALESCE(c.wa_archived, false) = false
       )::int AS queue,
       COUNT(*) FILTER (
         WHERE c.assigned_to_user_id = $1 AND c.attendance_status = 'in_progress'
+          AND COALESCE(c.wa_archived, false) = false
       )::int AS mine,
       ${teamInboxCount}
       COUNT(*) FILTER (
@@ -6872,8 +6890,13 @@ export async function getConversationAttendanceCounts(req: AuthRequest, res: Res
           AND (c.attendance_status IS NULL OR c.attendance_status IN ('pending', 'open'))
           AND (c.attendance_status IS DISTINCT FROM 'closed')
           AND (c.attendance_status IS DISTINCT FROM 'archived')
+          AND COALESCE(c.wa_archived, false) = false
       )::int AS unassigned,
-      COUNT(*) FILTER (WHERE c.attendance_status IN ('closed', 'archived'))::int AS closed,
+      COUNT(*) FILTER (
+        WHERE c.attendance_status IN ('closed', 'archived')
+          AND COALESCE(c.wa_archived, false) = false
+      )::int AS closed,
+      COUNT(*) FILTER (WHERE COALESCE(c.wa_archived, false) = true)::int AS wa_archived,
       `;
     } else {
       selectCounts = `
@@ -6882,13 +6905,17 @@ export async function getConversationAttendanceCounts(req: AuthRequest, res: Res
       0::int AS team,
       0::int AS unassigned,
       0::int AS closed,
+      COUNT(*) FILTER (WHERE COALESCE(c.wa_archived, false) = true)::int AS wa_archived,
       `;
     }
 
     const q = `
       SELECT
         ${selectCounts}
-        COUNT(*) FILTER (WHERE COALESCE(c.unread_count, 0) > 0)::int AS unread
+        COUNT(*) FILTER (
+          WHERE COALESCE(c.unread_count, 0) > 0
+            AND COALESCE(c.wa_archived, false) = false
+        )::int AS unread
       FROM chat_conversations c
       INNER JOIN chat_instances i ON i.id = c.instance_id
       WHERE ${whereOwnerOrTenant}
@@ -6901,6 +6928,7 @@ export async function getConversationAttendanceCounts(req: AuthRequest, res: Res
       team: number;
       unassigned: number;
       closed: number;
+      wa_archived: number;
       unread: number;
     }>(q, params);
 
@@ -6911,6 +6939,7 @@ export async function getConversationAttendanceCounts(req: AuthRequest, res: Res
       team: row?.team ?? 0,
       unassigned: row?.unassigned ?? 0,
       closed: row?.closed ?? 0,
+      wa_archived: row?.wa_archived ?? 0,
       unread: row?.unread ?? 0,
     });
   } catch (e: any) {
@@ -6953,40 +6982,18 @@ export async function getConversationMessages(req: AuthRequest, res: Response) {
       trigger: 'open_conversation',
     });
 
+    const commentSql = isChatMessagesLegacyCommentSubqueryEnabled()
+      ? { select: buildLegacyMessageCommentSelectSql(), join: '' }
+      : buildOptimizedMessageCommentJoinSql();
+
     const messages = await pool.query(
       `
         SELECT m.*,
-        (
-          SELECT COUNT(*)::int
-          FROM chat_message_comments cmc
-          WHERE cmc.message_id = m.id AND cmc.deleted_at IS NULL
-        ) AS internal_comment_count,
-        (
-          SELECT COALESCE(
-            json_agg(
-              json_build_object(
-                'id', c.id,
-                'author_user_id', c.author_user_id,
-                'comment_text', c.comment_text,
-                'created_at', c.created_at,
-                'author_email', au.email,
-                'author_display', COALESCE(
-                  NULLIF(trim(concat_ws(' ', pr.first_name, pr.last_name)), ''),
-                  split_part(au.email, '@', 1)
-                )
-              )
-              ORDER BY c.created_at ASC
-            ),
-            '[]'::json
-          )
-          FROM chat_message_comments c
-          INNER JOIN users au ON au.id = c.author_user_id
-          LEFT JOIN profiles pr ON pr.id = au.id
-          WHERE c.message_id = m.id AND c.deleted_at IS NULL
-        ) AS internal_comments
+        ${commentSql.select}
         FROM chat_messages m
         INNER JOIN chat_conversations c ON c.id = m.conversation_id
         INNER JOIN users actor ON actor.id = $2
+        ${commentSql.join}
         WHERE m.conversation_id = $1
           AND ${SQL_CHAT_ACCESS_PREDICATE}
           AND (

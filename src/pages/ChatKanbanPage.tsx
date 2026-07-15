@@ -234,13 +234,7 @@ const ChatKanbanPage = ({ service }: Props) => {
     void loadBoardDetail(selectedBoardId);
   }, [selectedBoardId, loadBoardDetail]);
 
-  useEffect(() => {
-    if (!isOpsKanban || !selectedBoardId) return;
-    const t = window.setInterval(() => {
-      void loadBoardDetail(selectedBoardId);
-    }, 20_000);
-    return () => window.clearInterval(t);
-  }, [isOpsKanban, selectedBoardId, loadBoardDetail]);
+  // Phase 9 — sem poll 20s; board atualiza via socket / ação manual (loadBoardDetail).
 
   useEffect(() => {
     setAddCardColumnId(null);

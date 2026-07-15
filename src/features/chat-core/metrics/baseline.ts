@@ -9,6 +9,7 @@
 
 import { isChatMigrationFlagEnabled } from '@/lib/chatMigrationFlagManager';
 import { getChatPhaseFlagsSnapshot } from '../feature-flags';
+import { recordHttpFromBaselineSample } from './httpMetrics';
 
 export type ChatHttpMetricSample = {
   at: number;
@@ -327,6 +328,13 @@ export function recordChatHttpRequest(sample: Omit<ChatHttpMetricSample, 'at'>):
   const row: ChatHttpMetricSample = { at: Date.now(), ...sample };
   pushCapped(state.http, row);
   log('http_request', row as unknown as Record<string, unknown>);
+  // F5.12 — bridge (no-op se telemetria OFF)
+  recordHttpFromBaselineSample({
+    endpoint: sample.endpoint,
+    method: sample.method,
+    source: sample.source,
+    durationMs: sample.durationMs,
+  });
 }
 
 export function recordChatSocket(sample: Omit<ChatSocketMetricSample, 'at'>): void {

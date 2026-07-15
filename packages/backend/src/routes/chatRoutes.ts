@@ -35,6 +35,7 @@ import {
   getChatTenantUsersForGroupInvite,
   postChatCreateGroupFromConversation,
 } from '../controllers/chatController.js';
+import { patchConversationWaArchive } from '../controllers/chatWaArchiveController.js';
 import {
   deleteConversationKanbanTag,
   getConversationKanbanTags,
@@ -175,6 +176,7 @@ router.patch('/conversations/:id/team', patchConversationTeamAlias);
 router.get('/conversations/:id/transfers', getChatTransfers);
 router.patch('/conversations/:id/attendance', patchConversationAttendance);
 router.get('/conversations/:id/attendance/history', getConversationAssignmentHistory);
+router.patch('/conversations/:id/wa-archive', patchConversationWaArchive);
 router.get('/teams', chatTeamsList);
 router.post('/teams', chatTeamsCreate);
 router.patch('/teams/:id', chatTeamsPatch);

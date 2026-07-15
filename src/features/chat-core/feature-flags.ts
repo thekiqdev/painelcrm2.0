@@ -47,8 +47,9 @@ export function isChatPhaseFlagEnabled(flag: ChatMigrationPhaseFlag): boolean {
     case 'CHAT_CORE_STORE':
       return isChatMigrationFlagEnabled('CHAT_CORE_STORE');
     case 'CHAT_INBOX_CURSOR':
-    case 'CHAT_REDIS_WS':
       return false;
+    case 'CHAT_REDIS_WS':
+      return isChatMigrationFlagEnabled('CHAT_REDIS_WS');
     default:
       return false;
   }
@@ -118,7 +119,7 @@ export function getChatPhaseFlagsSnapshot(): Readonly<Record<ChatMigrationPhaseF
     CHAT_AGGREGATED_CONVERSATIONS: isChatPhaseFlagEnabled('CHAT_AGGREGATED_CONVERSATIONS'),
     CHAT_CORE_STORE: isChatPhaseFlagEnabled('CHAT_CORE_STORE'),
     CHAT_INBOX_CURSOR: false,
-    CHAT_REDIS_WS: false,
+    CHAT_REDIS_WS: isChatPhaseFlagEnabled('CHAT_REDIS_WS'),
   };
 }
 

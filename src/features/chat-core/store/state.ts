@@ -4,6 +4,8 @@
 
 import type { ChatDomainState } from './types';
 import { createInitialCommandState } from './commandState';
+import { createInitialConversationVirtualizationState } from './conversationVirtualizationState';
+import { createInitialMessageVirtualizationState } from './messageVirtualizationState';
 
 export function createInitialChatDomainState(): ChatDomainState {
   return {
@@ -19,6 +21,18 @@ export function createInitialChatDomainState(): ChatDomainState {
       byId: {},
       versionByConversationId: {},
       lastLoadedCursorByConversationId: {},
+      cursorByConversationId: {},
+      hasMoreByConversationId: {},
+      loadingMoreByConversationId: {},
+      nextCursorByConversationId: {},
+      previousCursorByConversationId: {},
+      loadedPagesByConversationId: {},
+      residentPagesByConversationId: {},
+      windowStartByConversationId: {},
+      windowEndByConversationId: {},
+      cachedPagesByConversationId: {},
+      evictedPagesByConversationId: {},
+      memoryFootprintByConversationId: {},
     },
     selection: {
       selectedConversationId: null,
@@ -56,5 +70,14 @@ export function createInitialChatDomainState(): ChatDomainState {
       conversationFilter: null,
     },
     commands: createInitialCommandState(),
+    conversationVirtualization: createInitialConversationVirtualizationState(),
+    messageVirtualization: createInitialMessageVirtualizationState(),
   };
 }
+
+/**
+ * Snapshot vazio imutável para getSnapshot / SSR.
+ * Nunca use createInitialChatDomainState() em useSyncExternalStore — aloca
+ * objeto novo a cada chamada e causa "Maximum update depth exceeded".
+ */
+export const EMPTY_CHAT_DOMAIN_STATE: ChatDomainState = createInitialChatDomainState();

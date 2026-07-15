@@ -16,6 +16,7 @@
     "trial:expire": "tsx src/scripts/runTrialExpiration.ts",
     "billing:scheduler": "tsx src/scripts/runRecurringScheduler.ts",
     "billing:worker": "tsx src/scripts/runRecurringWorker.ts",
+    "workers:dense": "tsx src/scripts/runDenseWorkers.ts",
     "outbox:worker": "tsx src/scripts/runOutboxPublisherWorker.ts",
     "billing:reconciliation": "tsx src/scripts/runReconciliation.ts",
     "billing:ops-reconciliation": "tsx src/scripts/runBillingReconciliation.ts",
@@ -30,12 +31,14 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@socket.io/redis-adapter": "^8.3.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "express-rate-limit": "^7.1.5",
     "helmet": "^7.1.0",
+    "ioredis": "^5.11.1",
     "jsonwebtoken": "^9.0.2",
     "luxon": "^3.7.2",
     "multer": "^2.0.2",
@@ -60,6 +63,7 @@
     "@types/pg": "^8.10.9",
     "@types/sanitize-html": "^2.16.1",
     "nodemon": "^3.1.0",
+    "socket.io-client": "^4.8.3",
     "tsx": "^4.7.0",
     "typescript": "^5.3.3",
     "vitest": "^2.1.0"

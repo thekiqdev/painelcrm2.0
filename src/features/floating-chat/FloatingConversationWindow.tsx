@@ -22,9 +22,17 @@ import { apiClient } from '@/integrations/api/client';
 import { DEFAULT_CHAT_TAG_COLOR, normalizeHexColor } from '@/lib/chatKanbanTagStyle';
 import { REALTIME_WINDOW_EVENTS } from '@/services/realtimeClient';
 import { tryApplyChatWsPatch } from '@/features/chat-core/ws-patch';
+import { shouldUseChatDomainStore } from '@/features/chat-core/store/flags';
+import { useLoadMoreMessages } from '@/features/chat-core/store/hooks/useLoadMoreMessages';
 import { ensureChatInstances, filterConnectedChatInstances } from '@/features/chat-core/runtime';
 import { cn } from '@/lib/utils';
 import { useFloatingChat } from './floatingChatContext';
+import {
+  FLOATING_CHAT_META_STALE_MS,
+  invalidateFloatingChatAggregates,
+  invalidateFloatingChatCrmSurfaces,
+  scheduleInvalidateFloatingChatAggregates,
+} from './floatingChatQueries';
 import { useFloatingConversationIdentity } from './useFloatingConversationIdentity';
 import { FLOATING_WINDOW_WIDTH_PX, FLOATING_Z_WINDOWS } from './constants';
 import { floatingAttendanceRowModel } from './attendanceUi';
@@ -47,11 +55,8 @@ import {
 } from '@/lib/conversationDragPreview';
 import { FloatingCompactProfile } from './FloatingCompactProfile';
 import { getCachedFloatingConversationById } from './queryCache';
-import {
-  FLOATING_CHAT_META_STALE_MS,
-  invalidateFloatingChatAggregates,
-} from './floatingChatQueries';
 import { useFloatingConversationMessages } from '@/features/chat-core/store/public';
+import { useChatPerfRender } from '@/features/chat-core/metrics/renderMetrics';
 import { useNavigate } from 'react-router-dom';
 import { useModulePermissions } from '@/contexts/ModulePermissionsContext';
 import { chatCommercialGates } from '@/utils/chatCommercialGates';
@@ -119,6 +124,7 @@ export function FloatingConversationWindow({
   isActive: boolean;
   onFocusWindow: () => void;
 }) {
+  useChatPerfRender('FloatingConversationWindow');
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -279,6 +285,8 @@ export function FloatingConversationWindow({
   };
 
   const { messages, isLoading, applyMessages } = useFloatingConversationMessages(conversationId);
+  const loadMoreMessages = useLoadMoreMessages(conversationId);
+  const messageHistoryScrollRef = useRef<HTMLDivElement | null>(null);
 
   const afterFloatingSend = useCallback(() => {
     void queryClient.invalidateQueries({
@@ -305,6 +313,7 @@ export function FloatingConversationWindow({
 
   useEffect(() => {
     const onMsg = (e: Event) => {
+      if (shouldUseChatDomainStore()) return;
       const d = (e as CustomEvent<Record<string, unknown>>).detail;
       const cid = (d?.conversation_id as string) || (d?.conversationId as string);
       if (typeof cid !== 'string' || cid !== conversationId) return;
@@ -316,6 +325,7 @@ export function FloatingConversationWindow({
       void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'conversation-meta', conversationId] });
     };
     const onConv = (e: Event) => {
+      if (shouldUseChatDomainStore()) return;
       const d = (e as CustomEvent<Record<string, unknown>>).detail;
       const cid = (d?.conversation_id as string) || (d?.conversationId as string);
       if (typeof cid === 'string' && cid !== conversationId) return;
@@ -520,7 +530,7 @@ export function FloatingConversationWindow({
           });
           toast.success('Lead convertido para cliente');
           void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'conversation-crm-profile', conversationId] });
-          void queryClient.invalidateQueries({ queryKey: ['floating-chat'] });
+          invalidateFloatingChatCrmSurfaces(queryClient, conversationId);
           void queryClient.invalidateQueries({ queryKey: ['clients', 'list'] });
           void queryClient.invalidateQueries({ queryKey: ['leads'] });
         } else {
@@ -540,7 +550,7 @@ export function FloatingConversationWindow({
           applyFloatingCrmPatch(updated);
           toast.success('Lead criado e vinculado');
           void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'conversation-crm-profile', conversationId] });
-          void queryClient.invalidateQueries({ queryKey: ['floating-chat'] });
+          invalidateFloatingChatCrmSurfaces(queryClient, conversationId);
           void queryClient.invalidateQueries({ queryKey: ['leads'] });
         }
       } catch (err) {
@@ -606,7 +616,7 @@ export function FloatingConversationWindow({
       try {
         const updated = await chatService.patchPreparedConversationInstance(conversationId, nextInstanceId);
         queryClient.setQueryData(['floating-chat', 'conversation-meta', conversationId], updated);
-        void queryClient.invalidateQueries({ queryKey: ['floating-chat'] });
+        invalidateFloatingChatCrmSurfaces(queryClient, conversationId);
       } catch (e) {
         toast.error(e instanceof Error ? e.message : 'Não foi possível alterar a instância');
       }
@@ -834,6 +844,7 @@ export function FloatingConversationWindow({
           '[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
           'touch-pan-y [&_img]:max-h-[min(200px,38dvh)] [&_img]:w-auto [&_img]:max-w-full [&_img]:rounded-md [&_img]:object-contain',
         )}
+        ref={messageHistoryScrollRef}
       >
         <div className="space-y-1.5 px-2 py-1.5">
           {isLoading && messages.length === 0 ? (
@@ -874,6 +885,14 @@ export function FloatingConversationWindow({
               itemGapClassName="pb-1.5"
               legacyListClassName="w-full min-w-0"
               legacyInnerClassName="space-y-1.5"
+              loadMore={{
+                visible: loadMoreMessages.canLoadMore,
+                loading: loadMoreMessages.isLoadingMore,
+                disabled: !loadMoreMessages.enabled,
+                onLoadMore: () => {
+                  void loadMoreMessages.loadMore(messageHistoryScrollRef.current);
+                },
+              }}
               renderMessage={(message) => (
                 <div
                   draggable={false}

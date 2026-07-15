@@ -25,6 +25,7 @@ import {
   prefetchFloatingChatLists,
 } from './floatingChatQueries';
 import { tryApplyChatWsPatch } from '@/features/chat-core/ws-patch';
+import { shouldUseChatDomainStore } from '@/features/chat-core/store/flags';
 import {
   bootstrapChatF3Session,
   ensureChatInstances,
@@ -180,6 +181,10 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
     const onConvUpd = (e: Event) => {
       const d = (e as CustomEvent<Record<string, unknown>>).detail;
       const cid = (d?.conversation_id as string) || (d?.conversationId as string);
+      if (shouldUseChatDomainStore()) {
+        if (typeof cid === 'string') emitChatNavUnreadRefresh();
+        return;
+      }
       const patch = tryApplyChatWsPatch(queryClient, REALTIME_EVENTS.conversationUpdated, d, {
         isMinimizedConversation:
           typeof cid === 'string' &&
@@ -197,6 +202,7 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
       }
     };
     const onNotif = () => {
+      if (shouldUseChatDomainStore()) return;
       invalidateFloatingChatAggregates(queryClient);
     };
     window.addEventListener(REALTIME_WINDOW_EVENTS.conversationUpdated, onConvUpd);
@@ -221,6 +227,15 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
       const active = activeWindowIdRef.current;
       const isActive = Boolean(panel && !panel.minimized && active === cid);
       const isMinimized = Boolean(panel?.minimized);
+
+      if (shouldUseChatDomainStore()) {
+        if (panel && isMinimized) {
+          const until = Date.now() + 4000;
+          setPulseUntil((prev) => ({ ...prev, [cid]: until }));
+        }
+        emitChatNavUnreadRefresh();
+        return;
+      }
 
       const patch = tryApplyChatWsPatch(queryClient, REALTIME_EVENTS.messageCreated, d, {
         isActiveConversation: isActive,
@@ -593,7 +608,9 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
       if (mobileOverlayConversationIdRef.current === conversationId) {
         closeMobileConversationOverlay();
       }
-      invalidateFloatingChatAggregates(queryClient);
+      if (!shouldUseChatDomainStore()) {
+        invalidateFloatingChatAggregates(queryClient);
+      }
       emitChatNavUnreadRefresh();
     };
     window.addEventListener(REALTIME_WINDOW_EVENTS.conversationDeleted, onConversationDeleted);

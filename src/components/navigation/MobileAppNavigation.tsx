@@ -75,7 +75,7 @@ function defToMoreItem(def: (typeof MOBILE_MORE_ITEM_DEFS)[number]): MoreItem {
   };
 }
 
-export function MobileAppNavigation() {
+function MobileAppNavigationImpl() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
@@ -419,3 +419,5 @@ export function MobileAppNavigation() {
     </>
   );
 }
+
+export const MobileAppNavigation = React.memo(MobileAppNavigationImpl);

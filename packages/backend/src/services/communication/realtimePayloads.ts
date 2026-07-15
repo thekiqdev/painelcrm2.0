@@ -28,6 +28,8 @@ export type ConversationUpdatedRealtimePayload = {
   assigned_team_id: string | null;
   display_name: string | null;
   avatar_url: string | null;
+  /** WhatsApp archive (CRM-owned wa_archived); independent of attendance_status. */
+  wa_archived?: boolean;
 };
 
 export type ChannelStatusRealtimePayload = {
@@ -72,6 +74,7 @@ export function buildConversationUpdatedPayload(
     assigned_team_id: input.assigned_team_id,
     display_name: input.display_name,
     avatar_url: input.avatar_url,
+    ...(typeof input.wa_archived === 'boolean' ? { wa_archived: input.wa_archived } : {}),
   };
 }
 

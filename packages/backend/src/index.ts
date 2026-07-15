@@ -94,8 +94,6 @@ import acquisitionOnboardingWizardRoutes from './routes/acquisitionOnboardingWiz
 import tenantsRoutes from './routes/tenantsRoutes.js';
 import superadminCompanyUsersRoutes from './routes/superadminCompanyUsersRoutes.js';
 import { pool } from './utils/db.js';
-import { startWhatsappAvatarCacheWorkerInterval } from './services/whatsappAvatarCacheWorker.js';
-import { processDueKanbanScheduledMovesBatch } from './services/kanbanScheduledMoveService.js';
 import { processProposalWebhookDeliveriesBatch } from './services/proposalWebhookDeliveryService.js';
 import { processNotificationOutboundRetriesBatch } from './services/notificationsEngine/notificationOutboundRetryWorker.js';
 import { processPlatformNotificationOutboundRetriesBatch } from './services/platformNotifications/platformNotificationOutboundRetryWorker.js';
@@ -107,7 +105,7 @@ import {
 import { getPlatformNotificationsOutboundRetryPollMs } from './config/platformNotificationsEnv.js';
 import { refreshPlatformNotificationsFlagsFromPool } from './services/platformNotifications/platformNotificationsRuntimeFlags.js';
 import { runInvoiceDigestTickSafe } from './services/notificationsEngine/notificationInvoiceDigestWorker.js';
-import { initializeWebSocket } from './services/websocketService.js';
+import { initializeWebSocket, attachRedisSocketAdapter } from './services/websocketService.js';
 import { getCatalogMediaStorageRoot } from './services/catalogMediaUploadService.js';
 import {
   getWhatsappTemplateMediaRoot,
@@ -116,12 +114,8 @@ import {
 } from './services/whatsappTemplateMediaStorageService.js';
 import { syncOverdueBillingStatuses } from './services/billingOverdueStatusService.js';
 import { notifyPlatformTrialsExpiringSoon } from './services/platformNotifications/platformTrialExpiringNotificationService.js';
-import { processAnnouncementSendRecipientsBatch } from './services/announcements/announcementSendWorker.js';
 import { runAppointmentRemindersOnce } from './services/appointmentReminderWorkerService.js';
 import { runPendingConfirmationAutomationOnce } from './services/appointmentAutomationService.js';
-import { runChatSlaAutomationTick } from './services/chatSlaWorkerService.js';
-import { processChatScheduledMessagesWorkerTick } from './services/chatScheduledMessagesWorker.js';
-import { getChatAutomationWorkerPollMs } from './config/chatAutomationEnv.js';
 import { logGoogleCalendarBootDiagnostics } from './config/googleCalendarEnv.js';
 import { logGoogleDriveBootDiagnostics } from './config/googleDriveEnv.js';
 import { getAllowedCorsOrigins } from './config/corsOrigins.js';
@@ -133,6 +127,19 @@ import {
 import { refreshSystemFeatureFlagsFromPool } from './services/systemFeatureFlagsService.js';
 import { refreshPlatformFeatureFlagRegistry } from './platform/featureFlagRegistry.js';
 import { correlationIdMiddleware } from './middleware/correlationId.js';
+import {
+  appLogger,
+  isHttpAccessLogEnabled,
+  refreshLogLevelFromEnv,
+} from './observability/appLogger.js';
+import {
+  installPlatformObservability,
+  installSocketObservability,
+} from './observability/install.js';
+import {
+  isHttpSkipDenseWorkers,
+  startDenseBackgroundWorkers,
+} from './workers/denseWorkerBootstrap.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootEnv = path.resolve(__dirname, '../../../.env');
@@ -372,11 +379,16 @@ app.get('/', (req, res) => {
   });
 });
 
-// Log all requests for debugging (originalUrl inclui /api/...; req.path pode variar com mounts)
+// Access log /api — opt-in LOG_HTTP=1 (MB-014)
 app.use('/api', (req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl || req.url}`);
+  if (isHttpAccessLogEnabled()) {
+    appLogger.debug('http', `${req.method} ${req.originalUrl || req.url}`);
+  }
   next();
 });
+
+// MB-024 — observabilidade de plataforma (opt-in OBS_METRICS=1)
+installPlatformObservability(app);
 
 // Routes - IMPORTANTE: Rotas específicas devem vir ANTES do rate limiter geral
 // Mas como o rate limiter já foi aplicado acima, vamos garantir que testes tenham tratamento especial
@@ -496,7 +508,8 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 });
 
 // Inicializar WebSocket
-initializeWebSocket(httpServer);
+const io = initializeWebSocket(httpServer);
+installSocketObservability(io);
 
 // Encerramento graceful: libera a porta antes de sair (nodemon envia SIGTERM e aguarda --delay 2)
 function shutdown(signal: string) {
@@ -545,49 +558,56 @@ void (async () => {
 
     const { runMigrationGuard } = await import('./startup/migrationGuard.js');
     await runMigrationGuard(pool);
+
+    // MB-026 — Redis Socket.IO adapter (opt-in; fallback memory se Redis indisponível)
+    const redisAttach = await attachRedisSocketAdapter(io);
+    appLogger.boot('redis-adapter', 'attach result', redisAttach);
   } catch (err) {
     console.error('❌ Falha no arranque (PostgreSQL / flags / cifra / migration guard):', err);
     process.exit(1);
   }
 
   httpServer.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`Listening on 0.0.0.0:${PORT}`);
-  console.log(`📡 WebSocket server initialized`);
+  refreshLogLevelFromEnv();
+  appLogger.boot('http', `Server running on port ${PORT}`, {
+    env: process.env.NODE_ENV || 'development',
+    listen: `0.0.0.0:${PORT}`,
+    websocket: true,
+  });
 
   setInterval(() => {
     void refreshSystemFeatureFlagsFromPool(pool).catch(() => undefined);
     void refreshPlatformFeatureFlagRegistry().catch(() => undefined);
   }, 120_000);
-  const kanbanPollMs = Math.max(5000, parseInt(process.env.KANBAN_SCHEDULED_MOVE_POLL_MS || '30000', 10));
-  setInterval(() => {
-    void processDueKanbanScheduledMovesBatch(25).catch((err) =>
-      console.error('[kanbanScheduledMove] batch error', err),
-    );
-  }, kanbanPollMs);
+
+  if (isHttpSkipDenseWorkers()) {
+    appLogger.boot('http', 'dense workers skipped (HTTP_SKIP_DENSE_WORKERS=1) — run npm run workers:dense');
+  } else {
+    startDenseBackgroundWorkers(pool);
+  }
+
   const proposalWhPollMs = Math.max(20_000, parseInt(process.env.PROPOSAL_WEBHOOK_POLL_MS || '60000', 10));
   setInterval(() => {
     void processProposalWebhookDeliveriesBatch(20).catch((err) =>
-      console.error('[proposalWebhookDelivery] batch error', err),
+      appLogger.error('proposalWebhookDelivery', 'batch error', { err: String(err) }),
     );
   }, proposalWhPollMs);
 
   void refreshPlatformNotificationsFlagsFromPool(pool).catch((err) =>
-    console.error('[platform-notifications] refresh flags on startup', err),
+    appLogger.error('platform-notifications', 'refresh flags on startup', { err: String(err) }),
   );
 
   const neRetryPollMs = getNotificationsEngineOutboundRetryPollMs();
   setInterval(() => {
     void processNotificationOutboundRetriesBatch(25).catch((err) =>
-      console.error('[notifications-engine/retry] batch error', err),
+      appLogger.error('notifications-engine/retry', 'batch error', { err: String(err) }),
     );
   }, neRetryPollMs);
 
   const pnRetryPollMs = getPlatformNotificationsOutboundRetryPollMs();
   setInterval(() => {
     void processPlatformNotificationOutboundRetriesBatch(25).catch((err) =>
-      console.error('[platform-notifications/retry] batch error', err),
+      appLogger.error('platform-notifications/retry', 'batch error', { err: String(err) }),
     );
   }, pnRetryPollMs);
 
@@ -607,12 +627,14 @@ void (async () => {
       .then((result) => {
         const total = result.customer_invoices_updated + result.tenant_billing_updated;
         if (total > 0) {
-          console.log(
-            `[billing-overdue-sync] updated=${total} customer_invoices=${result.customer_invoices_updated} tenant_billing=${result.tenant_billing_updated}`
-          );
+          appLogger.info('billing-overdue-sync', 'updated', {
+            total,
+            customer_invoices: result.customer_invoices_updated,
+            tenant_billing: result.tenant_billing_updated,
+          });
         }
       })
-      .catch((err) => console.error('[billing-overdue-sync] batch error', err));
+      .catch((err) => appLogger.error('billing-overdue-sync', 'batch error', { err: String(err) }));
   }, overdueSyncPollMs);
 
   const trialExpiringPollMs = Math.max(
@@ -623,22 +645,17 @@ void (async () => {
     void notifyPlatformTrialsExpiringSoon()
       .then((result) => {
         if (result.notified > 0) {
-          console.log(`[platform-trial-expiring] notified=${result.notified}`);
+          appLogger.info('platform-trial-expiring', 'notified', { notified: result.notified });
         }
       })
-      .catch((err) => console.error('[platform-trial-expiring] tick error', err));
+      .catch((err) => appLogger.error('platform-trial-expiring', 'tick error', { err: String(err) }));
   }, trialExpiringPollMs);
-
-  const announcementsPollMs = Math.max(2000, parseInt(process.env.ANNOUNCEMENTS_SEND_POLL_MS || '4000', 10));
-  setInterval(() => {
-    void processAnnouncementSendRecipientsBatch(pool, 6).catch((err) =>
-      console.error('[announcements/send] batch error', err),
-    );
-  }, announcementsPollMs);
 
   const agendaReminderMs = Math.max(60_000, parseInt(process.env.AGENDA_REMINDER_POLL_MS || '60000', 10));
   setInterval(() => {
-    void runAppointmentRemindersOnce().catch((err) => console.error('[agenda-reminder] tick error', err));
+    void runAppointmentRemindersOnce().catch((err) =>
+      appLogger.error('agenda-reminder', 'tick error', { err: String(err) }),
+    );
   }, agendaReminderMs);
 
   const agendaAutomationMs = Math.max(
@@ -647,32 +664,18 @@ void (async () => {
   );
   setInterval(() => {
     void runPendingConfirmationAutomationOnce().catch((err) =>
-      console.error('[agenda-automation] tick error', err),
+      appLogger.error('agenda-automation', 'tick error', { err: String(err) }),
     );
   }, agendaAutomationMs);
-
-  const chatAutomationMs = getChatAutomationWorkerPollMs();
-  setInterval(() => {
-    void runChatSlaAutomationTick().catch((err) => console.error('[chat-sla-automation] tick error', err));
-  }, chatAutomationMs);
-
-  const chatSchedMsgPollMs = Math.max(15_000, parseInt(process.env.CHAT_SCHEDULED_MESSAGES_POLL_MS || '30000', 10));
-  setInterval(() => {
-    void processChatScheduledMessagesWorkerTick(15).catch((err) =>
-      console.error('[chat-scheduled-messages] tick error', err),
-    );
-  }, chatSchedMsgPollMs);
 
   if (isWhatsappOfficialCampaignWorkerEnabled()) {
     const waCampPoll = getWhatsappOfficialCampaignWorkerPollMs();
     setInterval(() => {
       void runWhatsappOfficialCampaignWorkerTick().catch((err) =>
-        console.error('[wa-official-campaign-worker] tick error', err),
+        appLogger.error('wa-official-campaign-worker', 'tick error', { err: String(err) }),
       );
     }, waCampPoll);
   }
-
-  startWhatsappAvatarCacheWorkerInterval();
 
   const ticketAutoResolveMs = Math.max(
     3_600_000,
@@ -683,10 +686,10 @@ void (async () => {
       .then(({ runTicketAutoResolveBatch }) => runTicketAutoResolveBatch())
       .then((result) => {
         if (result.resolved_count > 0) {
-          console.log(`[tickets-auto-resolve] resolved=${result.resolved_count}`);
+          appLogger.info('tickets-auto-resolve', 'resolved', { resolved: result.resolved_count });
         }
       })
-      .catch((err) => console.error('[tickets-auto-resolve] tick error', err));
+      .catch((err) => appLogger.error('tickets-auto-resolve', 'tick error', { err: String(err) }));
   }, ticketAutoResolveMs);
 
   const trialRecoveryMs = Math.max(
@@ -696,27 +699,27 @@ void (async () => {
   setInterval(() => {
     void import('./jobs/trialRecoveryLifecycleJob.js')
       .then(({ runTrialRecoveryLifecycleOnce }) => runTrialRecoveryLifecycleOnce())
-      .catch((err) => console.error('[trial-recovery-lifecycle] tick error', err));
+      .catch((err) => appLogger.error('trial-recovery-lifecycle', 'tick error', { err: String(err) }));
   }, trialRecoveryMs);
 
   void import('./jobs/trialEngagementLifecycleJob.js')
     .then(({ runTrialEngagementLifecycleOnce }) => runTrialEngagementLifecycleOnce())
-    .catch((err) => console.error('[trial-engagement-lifecycle] startup error', err));
+    .catch((err) => appLogger.error('trial-engagement-lifecycle', 'startup error', { err: String(err) }));
 
   setInterval(() => {
     void import('./jobs/trialEngagementLifecycleJob.js')
       .then(({ runTrialEngagementLifecycleOnce }) => runTrialEngagementLifecycleOnce())
-      .catch((err) => console.error('[trial-engagement-lifecycle] tick error', err));
+      .catch((err) => appLogger.error('trial-engagement-lifecycle', 'tick error', { err: String(err) }));
   }, 3_600_000);
 
   void import('./jobs/trialExpirationJob.js')
     .then(({ runTrialExpirationOnce }) => runTrialExpirationOnce())
-    .catch((err) => console.error('[trial-expiration] startup error', err));
+    .catch((err) => appLogger.error('trial-expiration', 'startup error', { err: String(err) }));
 
   setInterval(() => {
     void import('./jobs/trialExpirationJob.js')
       .then(({ runTrialExpirationOnce }) => runTrialExpirationOnce())
-      .catch((err) => console.error('[trial-expiration] tick error', err));
+      .catch((err) => appLogger.error('trial-expiration', 'tick error', { err: String(err) }));
   }, 3_600_000);
   });
 })();

@@ -3,6 +3,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getMyTenantCompany, type TenantCompanyPayload } from '@/services/tenantCompany';
 import { resolveTenantLogoUrl } from '@/utils/tenantBranding';
 import { useTheme } from 'next-themes';
+import { scheduleIdleTask } from '@/lib/scheduleIdleTask';
 
 type TenantBrandContextValue = {
   company: TenantCompanyPayload | null;
@@ -26,6 +27,7 @@ export function TenantBrandProvider({ children }: { children: React.ReactNode })
     if (!user?.tenant_id || user.is_super_admin) {
       setCompany(null);
       setError(null);
+      setLoading(false);
       return;
     }
     setLoading(true);
@@ -46,8 +48,24 @@ export function TenantBrandProvider({ children }: { children: React.ReactNode })
     }
   }, [user?.tenant_id, user?.is_super_admin]);
 
+  // MB-007: soft-lazy — não compete com Auth/Permissions/nav no critical path do shell.
   useEffect(() => {
-    void refresh();
+    let armed = false;
+    const run = () => {
+      if (armed) return;
+      armed = true;
+      void refresh();
+    };
+    const cancelIdle = scheduleIdleTask(run, { timeout: 2500, fallbackDelay: 1200 });
+    const onInteraction = () => run();
+    const opts: AddEventListenerOptions = { once: true, passive: true };
+    window.addEventListener('pointerdown', onInteraction, opts);
+    window.addEventListener('keydown', onInteraction, opts);
+    return () => {
+      cancelIdle();
+      window.removeEventListener('pointerdown', onInteraction);
+      window.removeEventListener('keydown', onInteraction);
+    };
   }, [refresh]);
 
   const resolvedLogoUrl = useMemo(

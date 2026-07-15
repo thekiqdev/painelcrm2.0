@@ -15,6 +15,9 @@ import type {
   ChatMessageId,
 } from '../domain/types';
 import type { CommandSliceState } from './commandState';
+import type { MessagePageId, MessagePageRecord } from './windowCacheTypes';
+import type { ConversationVirtualizationState } from './conversationVirtualizationState';
+import type { MessageVirtualizationState } from './messageVirtualizationState';
 
 /** Estado raiz do Domain Store. */
 export type ChatDomainState = {
@@ -28,6 +31,10 @@ export type ChatDomainState = {
   instances: InstanceState;
   ui: UIState;
   commands: CommandSliceState;
+  /** F6.3 — janela virtual da sidebar de conversas. */
+  conversationVirtualization: ConversationVirtualizationState;
+  /** F6.4 — janela virtual da thread de mensagens. */
+  messageVirtualization: MessageVirtualizationState;
 };
 
 export type ConversationState = {
@@ -45,8 +52,28 @@ export type MessageState = {
   byConversationId: Record<ChatConversationId, ChatMessageId[]>;
   /** Versão incremental por conversa (invalidação de render). */
   versionByConversationId: Record<ChatConversationId, number>;
-  /** Cursor de histórico carregado (paginação futura). */
+  /**
+   * @deprecated F6.0 — preferir `nextCursorByConversationId`.
+   * Mantido para compatibilidade F5 (`selectHasMoreMessages`).
+   */
   lastLoadedCursorByConversationId: Record<ChatConversationId, string | null>;
+  /** Cursor ativo de load-more (alias operacional de nextCursor). */
+  cursorByConversationId: Record<ChatConversationId, string | null>;
+  hasMoreByConversationId: Record<ChatConversationId, boolean>;
+  loadingMoreByConversationId: Record<ChatConversationId, boolean>;
+  nextCursorByConversationId: Record<ChatConversationId, string | null>;
+  previousCursorByConversationId: Record<ChatConversationId, string | null>;
+  loadedPagesByConversationId: Record<ChatConversationId, number>;
+  /** F6.2 — Sliding Window Cache */
+  residentPagesByConversationId: Record<ChatConversationId, MessagePageId[]>;
+  windowStartByConversationId: Record<ChatConversationId, number>;
+  windowEndByConversationId: Record<ChatConversationId, number>;
+  cachedPagesByConversationId: Record<
+    ChatConversationId,
+    Record<MessagePageId, MessagePageRecord>
+  >;
+  evictedPagesByConversationId: Record<ChatConversationId, MessagePageId[]>;
+  memoryFootprintByConversationId: Record<ChatConversationId, number>;
 };
 
 export type SelectionState = {
@@ -106,7 +133,59 @@ export type ChatDomainAction =
     }
   | { type: 'messages/remove'; conversationId: ChatConversationId; messageId: ChatMessageId }
   | { type: 'messages/prepend'; conversationId: ChatConversationId; messages: ChatDomainMessage[] }
-  | { type: 'messages/setCursor'; conversationId: ChatConversationId; cursor: string | null }
+  | {
+      type: 'messages/prependPage';
+      conversationId: ChatConversationId;
+      messages: ChatDomainMessage[];
+      nextCursor?: string | null;
+      previousCursor?: string | null;
+      hasMore?: boolean;
+    }
+  | {
+      type: 'messages/setCursor';
+      conversationId: ChatConversationId;
+      /** @deprecated F5 — use nextCursor */
+      cursor?: string | null;
+      nextCursor?: string | null;
+      previousCursor?: string | null;
+      hasMore?: boolean;
+    }
+  | {
+      type: 'messages/setHasMore';
+      conversationId: ChatConversationId;
+      hasMore: boolean;
+    }
+  | {
+      type: 'messages/setLoadingMore';
+      conversationId: ChatConversationId;
+      loading: boolean;
+    }
+  | { type: 'messages/resetCursor'; conversationId: ChatConversationId }
+  | {
+      type: 'messages/registerPage';
+      conversationId: ChatConversationId;
+      page: MessagePageRecord;
+      position?: 'older' | 'newer' | 'replace';
+    }
+  | {
+      type: 'messages/evictPage';
+      conversationId: ChatConversationId;
+      pageId: MessagePageId;
+    }
+  | {
+      type: 'messages/updateWindow';
+      conversationId: ChatConversationId;
+      windowStart?: number;
+      windowEnd?: number;
+      pinnedPageIds?: MessagePageId[];
+    }
+  | {
+      type: 'messages/rehydratePage';
+      conversationId: ChatConversationId;
+      page: MessagePageRecord;
+      messages: ChatDomainMessage[];
+    }
+  | { type: 'messages/trimWindow'; conversationId: ChatConversationId }
   | { type: 'selection/setConversation'; conversationId: ChatConversationId | null }
   | { type: 'loading/setConversations'; loading: boolean }
   | {
@@ -118,6 +197,16 @@ export type ChatDomainAction =
   | { type: 'connection/set'; connection: Partial<ConnectionState> }
   | { type: 'instances/set'; instances: ChatDomainInstance[] }
   | { type: 'ui/patch'; ui: Partial<UIState> }
+  | {
+      type: 'conversationVirtualization/setWindow';
+      window: Partial<ConversationVirtualizationState>;
+    }
+  | { type: 'conversationVirtualization/setEnabled'; enabled: boolean }
+  | {
+      type: 'messageVirtualization/setWindow';
+      window: Partial<MessageVirtualizationState>;
+    }
+  | { type: 'messageVirtualization/setEnabled'; enabled: boolean }
   | { type: 'hydrate/partial'; state: Partial<ChatDomainState> }
   | { type: 'store/reset' }
   | { type: 'commands/begin'; token: string; command: import('./commandState').ChatCommandName; conversationId?: ChatConversationId; snapshot: import('./commandState').CommandRollbackSnapshot }
@@ -159,6 +248,8 @@ export type ChatDomainStore = {
   readonly version: 'F5.0';
   getState(): Readonly<ChatDomainState>;
   dispatch(action: ChatDomainAction): void;
+  /** F6.5 — aplica várias actions e notifica subscribers uma vez. */
+  dispatchBatch?(actions: readonly ChatDomainAction[]): void;
   subscribe(listener: ChatDomainListener): () => void;
   reset(): void;
   selectors: ChatDomainSelectors;

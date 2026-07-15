@@ -6,7 +6,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { normalizeHexColor, contrastingTextForBg } from '@/lib/chatKanbanTagStyle';
 import type { ChatKanbanTagUi } from '@/services/chat';
 
-export type ChatAttendanceFilterValue = '' | 'queue' | 'team' | 'mine' | 'closed';
+export type ChatAttendanceFilterValue = '' | 'queue' | 'team' | 'mine' | 'closed' | 'wa_archived';
 
 export type ChatSidebarTagFiltersProps = {
   tags: ChatKanbanTagUi[];
@@ -23,6 +23,7 @@ export type ChatSidebarTagFiltersProps = {
     mine: number;
     team: number;
     closed: number;
+    wa_archived?: number;
   };
   canViewQueue: boolean;
   showTeamFilter: boolean;
@@ -333,6 +334,15 @@ function ChatSidebarTagFiltersInner({
                         }}
                       />
                     ) : null}
+                    <AttendanceChip
+                      label="Arquivadas"
+                      active={attendanceFilter === 'wa_archived'}
+                      count={attendanceCounts.wa_archived ?? 0}
+                      onClick={() => {
+                        toggleAttendance('wa_archived');
+                        setMoreOpen(false);
+                      }}
+                    />
                     <AttendanceChip
                       label="Encerradas"
                       active={attendanceFilter === 'closed'}

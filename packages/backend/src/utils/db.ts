@@ -5,6 +5,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { assertTenantScopedQuery } from './tenantSecurity.js';
 import { guardBillingQueryParams } from '../billingRuntime/billingRuntimeDbGuard.js';
+import { recordSqlQuery } from '../observability/sqlMetrics.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootEnv = path.resolve(__dirname, '../../../../.env');
@@ -95,6 +96,20 @@ export async function endDatabasePool(): Promise<void> {
   await internalPool.end();
 }
 
+async function timedQuery(
+  run: () => Promise<pg.QueryResult>,
+): Promise<pg.QueryResult> {
+  const start = process.hrtime.bigint();
+  try {
+    const result = await run();
+    recordSqlQuery(Number(process.hrtime.bigint() - start) / 1e6, true);
+    return result;
+  } catch (err) {
+    recordSqlQuery(Number(process.hrtime.bigint() - start) / 1e6, false);
+    throw err;
+  }
+}
+
 export const pool = {
   query(
     textOrConfig: string | pg.QueryConfig,
@@ -109,14 +124,14 @@ export const pool = {
     const store = dbRequestStorage.getStore();
     if (store?.client) {
       if (typeof textOrConfig === 'string') {
-        return store.client.query(textOrConfig, guardedValues);
+        return timedQuery(() => store.client!.query(textOrConfig, guardedValues));
       }
-      return store.client.query(textOrConfig);
+      return timedQuery(() => store.client!.query(textOrConfig));
     }
     if (typeof textOrConfig === 'string') {
-      return internalPool.query(textOrConfig, guardedValues);
+      return timedQuery(() => internalPool.query(textOrConfig, guardedValues));
     }
-    return internalPool.query(textOrConfig);
+    return timedQuery(() => internalPool.query(textOrConfig));
   },
   connect(): Promise<pg.PoolClient> {
     return internalPool.connect();

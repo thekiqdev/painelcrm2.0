@@ -27,6 +27,7 @@ import { chatService, type ChatConversation, type ChatKanbanTagUi } from '@/serv
 import { chatKanbanService } from '@/services/chatKanban';
 import { tasksService } from '@/services/tasks';
 import { useFloatingConversationIdentity } from './useFloatingConversationIdentity';
+import { invalidateFloatingChatCrmSurfaces } from './floatingChatQueries';
 import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
 import { assigneeInitials } from '@/utils/chatKanbanCardDisplay';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -240,7 +241,7 @@ export function FloatingCompactProfile({
       });
       toast.success('Lead convertido para cliente');
       void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'conversation-crm-profile', conversationId] });
-      void queryClient.invalidateQueries({ queryKey: ['floating-chat'] });
+      invalidateFloatingChatCrmSurfaces(queryClient, conversationId);
       void queryClient.invalidateQueries({ queryKey: ['clients', 'list'] });
       void queryClient.invalidateQueries({ queryKey: ['leads'] });
       debugChatActionNotification({
@@ -297,7 +298,7 @@ export function FloatingCompactProfile({
       applyConversationCrmPatch(updated);
       toast.success('Lead criado e vinculado');
       void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'conversation-crm-profile', conversationId] });
-      void queryClient.invalidateQueries({ queryKey: ['floating-chat'] });
+      invalidateFloatingChatCrmSurfaces(queryClient, conversationId);
       void queryClient.invalidateQueries({ queryKey: ['leads'] });
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Não foi possível criar lead');
@@ -328,7 +329,7 @@ export function FloatingCompactProfile({
       applyConversationCrmPatch(updated);
       toast.success('Cliente criado e vinculado');
       void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'conversation-crm-profile', conversationId] });
-      void queryClient.invalidateQueries({ queryKey: ['floating-chat'] });
+      invalidateFloatingChatCrmSurfaces(queryClient, conversationId);
       void queryClient.invalidateQueries({ queryKey: ['clients'] });
       void queryClient.invalidateQueries({ queryKey: ['leads'] });
     } catch (e: unknown) {

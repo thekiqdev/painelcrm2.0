@@ -1,6 +1,10 @@
 import type { AggregatedConversationsRequest, ChatConversationSort } from './types.js';
 import { decodeConversationCursor } from './cursor.js';
 import { appendAggregatedChannelPredicateSql } from './channelPredicate.js';
+import {
+  buildEffectiveLastMessageExpr as buildSharedEffectiveLastMessageExpr,
+  isChatListLegacyMessagesMaxEnabled,
+} from '../chatSql/effectiveLastMessage.js';
 
 export type QueryBuildContext = {
   attendanceCols: boolean;
@@ -44,18 +48,15 @@ function slaSortExpr(slaPhase5Cols: boolean): string {
 }
 
 export function buildEffectiveLastMessageExpr(ctx: QueryBuildContext): string {
+  // Hot path aggregated (parityMode false): denormalized — alinhado MB-011/MB-013.
+  // parityMode: MAX opcional via env (shadow/parity); default sem MAX após Phase 3.
   if (!ctx.parityMode) {
     return `COALESCE(c.last_message_at, c.created_at)`;
   }
-  const messagesMaxAtExpr = `(SELECT MAX(COALESCE(m.sent_at, m.created_at))::timestamptz FROM chat_messages m WHERE m.conversation_id = c.id)`;
-  if (ctx.slaPhase5Cols) {
-    return `COALESCE(
-      ${messagesMaxAtExpr},
-      c.last_message_at,
-      GREATEST(c.last_customer_message_at, c.last_agent_message_at)
-    )`;
-  }
-  return `COALESCE(${messagesMaxAtExpr}, c.last_message_at)`;
+  return buildSharedEffectiveLastMessageExpr({
+    slaPhase5Cols: ctx.slaPhase5Cols,
+    useMessagesMax: isChatListLegacyMessagesMaxEnabled(),
+  });
 }
 
 function buildOrderBy(sort: ChatConversationSort, effectiveLastMessageExpr: string, ctx: QueryBuildContext): string {
@@ -229,6 +230,7 @@ export function buildAggregatedConversationsQuery(
         c.last_message_at,
         ${effectiveLastMessageExpr} AS effective_last_message_at,
         c.unread_count,
+        COALESCE(c.wa_archived, false) AS wa_archived,
         c.status,
         c.client_id,
         ${leadSelect},
@@ -326,7 +328,9 @@ export function buildAggregatedConversationsQuery(
 
   if (ctx.attendanceCols) {
     const af = request.attendanceFilter;
-    if (af === 'mine') {
+    if (af === 'wa_archived') {
+      sql += ` AND COALESCE(c.wa_archived, false) = true`;
+    } else if (af === 'mine') {
       params.push(request.userId);
       sql += ` AND c.assigned_to_user_id = $${params.length} AND c.attendance_status = 'in_progress'`;
     } else if (af === 'unassigned') {
@@ -359,6 +363,11 @@ export function buildAggregatedConversationsQuery(
         sql += ` AND FALSE`;
       }
     }
+  }
+
+  // WhatsApp archive isolation: only the Arquivadas filter includes wa_archived=true (groups too).
+  if (request.attendanceFilter !== 'wa_archived') {
+    sql += ` AND COALESCE(c.wa_archived, false) = false`;
   }
 
   if (request.assignedToUserId) {

@@ -41,6 +41,67 @@ export function invalidateFloatingChatConversationMeta(
   });
 }
 
+export function invalidateFloatingChatMessages(
+  queryClient: QueryClient,
+  conversationId: string,
+): void {
+  void queryClient.invalidateQueries({
+    queryKey: ['floating-chat', 'messages', conversationId],
+  });
+}
+
+/** CRM profile + listas — nunca root `['floating-chat']`. */
+export function invalidateFloatingChatCrmSurfaces(
+  queryClient: QueryClient,
+  conversationId?: string,
+): void {
+  if (conversationId) {
+    void queryClient.invalidateQueries({
+      queryKey: ['floating-chat', 'conversation-crm-profile', conversationId],
+    });
+  }
+  invalidateFloatingChatAggregates(queryClient);
+}
+
+// MB-020 — coalesce bursts de invalidate de agregados
+let aggregateTimer: ReturnType<typeof setTimeout> | null = null;
+let aggregatePending: QueryClient | null = null;
+let coalesceCount = 0;
+let coalesceFlushes = 0;
+
+export function getFloatingInvalidateCoalesceStats(): {
+  scheduled: number;
+  flushes: number;
+} {
+  return { scheduled: coalesceCount, flushes: coalesceFlushes };
+}
+
+export function resetFloatingInvalidateCoalesceStatsForTests(): void {
+  if (aggregateTimer) clearTimeout(aggregateTimer);
+  aggregateTimer = null;
+  aggregatePending = null;
+  coalesceCount = 0;
+  coalesceFlushes = 0;
+}
+
+/** Agenda invalidação de listas Float com debounce (storm reduction). */
+export function scheduleInvalidateFloatingChatAggregates(
+  queryClient: QueryClient,
+  delayMs = 120,
+): void {
+  coalesceCount += 1;
+  aggregatePending = queryClient;
+  if (aggregateTimer) clearTimeout(aggregateTimer);
+  aggregateTimer = setTimeout(() => {
+    aggregateTimer = null;
+    const qc = aggregatePending;
+    aggregatePending = null;
+    if (!qc) return;
+    coalesceFlushes += 1;
+    invalidateFloatingChatAggregates(qc);
+  }, delayMs);
+}
+
 export async function prefetchFloatingChatLists(
   queryClient: QueryClient,
   instanceIds: string[],

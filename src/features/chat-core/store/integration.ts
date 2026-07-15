@@ -15,6 +15,12 @@ import { recordFloatingSocketApplyLatency } from './floatingMessageMetrics';
 import { getChatDomainStoreSession, resetChatDomainStoreSession } from './session';
 import { shouldUseChatDomainStore } from './flags';
 import { loadInboxCommand } from '../core/loadInbox';
+import { recordSocketApply } from '../metrics/socketMetrics';
+import {
+  beginPerfScenario,
+  endPerfScenario,
+} from '../metrics/performanceMetrics';
+import { enqueueSocketActions, settleSocketActionQueue } from './storeBatch';
 
 function nowMs(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -36,22 +42,32 @@ export function syncStoreFromRepositoryResponse(source: RepositorySyncSource, pa
   dispatchRepositorySync(source, payload);
 }
 
+/**
+ * Aplica evento socket ao store.
+ * F6.5 — actions entram em fila e fazem flush no microtask (batch de bursts).
+ * Para asserts síncronos em testes, usar `await settleSocketActionQueue(store)`.
+ */
 export function syncStoreFromSocketEvent(event: ChatDomainEvent): void {
   if (!shouldUseChatDomainStore()) return;
   const store = getChatDomainStoreSession();
   if (!store) return;
+  const isIncomingMessage = event.kind === 'message.created';
+  if (isIncomingMessage) beginPerfScenario('incoming_message');
   const t0 = nowMs();
-  for (const action of mapDomainEventToActions(event)) {
-    store.dispatch(action);
-  }
+  const actions = mapDomainEventToActions(event);
+  enqueueSocketActions(store, actions);
   const durationMs = Math.max(0, Math.round(nowMs() - t0));
   recordStoreSyncMs(durationMs);
   recordSocketLatency(durationMs);
   recordStoreEventApplied('realtime');
+  recordSocketApply(event.kind, durationMs);
   if (event.kind.startsWith('message.')) {
     recordFloatingSocketApplyLatency(durationMs);
   }
+  if (isIncomingMessage) endPerfScenario('incoming_message');
 }
+
+export { settleSocketActionQueue };
 
 export function syncStoreFromCommandResult(command: string, payload: unknown): void {
   if (!shouldUseChatDomainStore()) return;

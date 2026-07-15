@@ -63,6 +63,7 @@ function toListViewItem(full: Record<string, unknown>): Record<string, unknown> 
     last_message_preview: full.last_message_preview ?? null,
     last_message_at: full.last_message_at ?? null,
     unread_count: full.unread_count ?? 0,
+    wa_archived: Boolean(full.wa_archived),
     attendance_status: full.attendance_status ?? null,
     assigned_to_user_id: full.assigned_to_user_id ?? null,
     assigned_team_id: full.assigned_team_id ?? null,

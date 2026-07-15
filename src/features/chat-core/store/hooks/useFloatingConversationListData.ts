@@ -12,13 +12,18 @@ import { listChatConversationsItems, type ChatInboxScope } from '@/repositories/
 import { loadInboxCommand } from '../../core/commands';
 import { shouldUseChatDomainStore } from '../flags';
 import { getChatDomainStoreSession } from '../session';
-import { createInitialChatDomainState } from '../state';
+import { EMPTY_CHAT_DOMAIN_STATE } from '../state';
 import {
   selectConversationsForUi,
   type ConversationQuickFilter,
 } from '../conversationSelectors';
 import { recordFloatingConversationRender } from '../floatingMetrics';
 import { recordChatRenderMs, recordStoreSubscription } from '../consolidatedMetrics';
+import {
+  recordSubscriptionAttach,
+  recordSubscriptionNotify,
+} from '../../metrics/subscriptionMetrics';
+import { recordSocketUiFlush } from '../../metrics/socketMetrics';
 
 export type FloatingConversationListData = {
   conversations: ReturnType<typeof selectConversationsForUi>;
@@ -57,14 +62,21 @@ export function useFloatingConversationListData(params: {
   const subscribeStore = useCallback((onChange: () => void) => {
     const store = getChatDomainStoreSession();
     if (!store) return () => undefined;
-    return store.subscribe(() => {
+    const detach = recordSubscriptionAttach('useFloatingConversationListData');
+    const unsub = store.subscribe(() => {
       recordStoreSubscription();
+      recordSubscriptionNotify('useFloatingConversationListData');
+      recordSocketUiFlush();
       onChange();
     });
+    return () => {
+      detach();
+      unsub();
+    };
   }, []);
 
   const getStoreSnapshot = useCallback(() => {
-    return getChatDomainStoreSession()?.getState() ?? createInitialChatDomainState();
+    return getChatDomainStoreSession()?.getState() ?? EMPTY_CHAT_DOMAIN_STATE;
   }, []);
 
   const storeState = useSyncExternalStore(subscribeStore, getStoreSnapshot, getStoreSnapshot);

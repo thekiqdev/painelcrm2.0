@@ -69,6 +69,10 @@ export function selectHasMoreMessages(
   state: ChatDomainState,
   conversationId: ChatConversationId,
 ): boolean {
+  if (conversationId in state.messages.hasMoreByConversationId) {
+    return state.messages.hasMoreByConversationId[conversationId] === true;
+  }
+  // Fallback F5: cursor string em lastLoadedCursor
   const cursor = state.messages.lastLoadedCursorByConversationId[conversationId];
   return typeof cursor === 'string' && cursor.length > 0;
 }

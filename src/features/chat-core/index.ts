@@ -13,10 +13,18 @@ export {
   loadInboxCommand,
   clearInboxCommand,
   loadMessagesCommand,
+  loadMessagesCursorCommand,
+  resetConversationCursorCommand,
   chatCoreCommands,
 } from './core/commands';
 export type { LoadInboxParams, LoadInboxResult, LoadInboxSurface } from './core/loadInbox';
 export type { LoadMessagesResult } from './core/loadMessages';
+export type {
+  LoadMessagesCursorParams,
+  LoadMessagesCursorResult,
+} from './core/loadMessagesCursor';
+export type { GetMessagesPageParams, MessagesPageResult } from './core/messagesPageFetch';
+export { DEFAULT_MESSAGES_PAGE_SIZE } from './core/messagesPageFetch';
 export type { ChatCorePublicApi, ChatCoreCommands, ChatCoreSelectors } from './domain/public-api';
 export { ChatCoreNotWiredError } from './domain/public-api';
 export type {
@@ -51,6 +59,7 @@ export type { ChatMigrationPhaseFlag, ChatWsPatchFlag, ChatF3Flag } from './feat
 export { chatRepository, createChatRepository } from './repository/chatRepository';
 export type { ChatRepository } from './repository/chatRepository';
 
+export { isChatStoreRealtimeSourceOfTruth } from './realtime/policy';
 export {
   chatRealtimeBridge,
   createChatRealtimeBridge,
@@ -100,6 +109,74 @@ export type {
   ChatF3EndpointReductionStat,
   ChatF3PerformanceStatisticsSnapshot,
 } from './metrics/baseline';
+
+export {
+  isChatPerformanceTelemetryEnabled,
+  beginPerfScenario,
+  endPerfScenario,
+  getLastScenarioResult,
+} from './metrics/performanceMetrics';
+export type { PerfScenario, PerfCountersSnapshot } from './metrics/performanceMetrics';
+export { useChatPerfRender, recordRender, getRenderMetricsSnapshot } from './metrics/renderMetrics';
+export { recordReducer, getReducerMetricsSnapshot } from './metrics/reducerMetrics';
+export { timeSelector, getSelectorMetricsSnapshot } from './metrics/selectorMetrics';
+export {
+  recordSubscriptionNotify,
+  getSubscriptionMetricsSnapshot,
+} from './metrics/subscriptionMetrics';
+export { recordHttpMetric, getHttpMetricsSnapshot } from './metrics/httpMetrics';
+export { recordSocketApply, getSocketMetricsSnapshot } from './metrics/socketMetrics';
+export {
+  sampleStoreMemory,
+  projectMemoryBaseline,
+  getMemoryMetricsSnapshot,
+} from './metrics/memoryMetrics';
+export {
+  getChatPerformanceReport,
+  logChatPerformanceReport,
+  resetChatPerformanceMetrics,
+} from './metrics/report';
+export type { ChatPerformanceReport } from './metrics/report';
+export {
+  getCursorMetricsSnapshot,
+  resetCursorMetrics,
+} from './metrics/cursorMetrics';
+export {
+  getLoadMoreMetricsSnapshot,
+  resetLoadMoreMetrics,
+} from './metrics/loadMoreMetrics';
+export {
+  getWindowMetricsSnapshot,
+  resetWindowMetrics,
+} from './metrics/windowMetrics';
+export {
+  getConversationVirtualizationMetricsSnapshot,
+  resetConversationVirtualizationMetrics,
+} from './metrics/conversationVirtualizationMetrics';
+export {
+  getMessageVirtualizationMetricsSnapshot,
+  resetMessageVirtualizationMetrics,
+} from './metrics/messageVirtualizationMetrics';
+export {
+  getRenderOptimizationMetricsSnapshot,
+  resetRenderOptimizationMetrics,
+} from './metrics/renderOptimizationMetrics';
+export {
+  getPrefetchMetricsSnapshot,
+  resetPrefetchMetrics,
+} from './metrics/prefetchMetrics';
+export {
+  getZeroPollingMetricsSnapshot,
+  resetZeroPollingMetricsForTests,
+  recordManualRefresh,
+  recordSocketUpdate,
+  recordPollingRemoved,
+  recordWebhookUpdate,
+  recordAutomaticHttpRefresh,
+  recordRuntimeCacheHit,
+  recordRuntimeCacheMiss,
+} from './metrics/zeroPollingMetrics';
+export type { ZeroPollingMetricsSnapshot } from './metrics/zeroPollingMetrics';
 
 export {
   tryApplyChatWsPatch,

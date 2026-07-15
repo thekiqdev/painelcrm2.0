@@ -4,7 +4,7 @@
 |---|---|
 | **Documento** | Inventário oficial de código legado do módulo Chat |
 | **Versão** | 1.0 |
-| **Última atualização** | 2026-07-08 (pós F5.7) |
+| **Última atualização** | 2026-07-13 (pós F6.8 Architecture Freeze) |
 | **Plano mestre** | [`CHAT_ENTERPRISE_MIGRATION_MASTER_PLAN.md`](../CHAT_ENTERPRISE_MIGRATION_MASTER_PLAN.md) |
 | **Governança** | Atualizar **ao final de cada sprint** F0→F7 |
 
@@ -19,11 +19,15 @@
 
 ### Legenda de status
 
-| Status | Significado |
-|---|---|
-| **Ativo** | Caminho primário hoje (flag OFF ou sem substituto estável). |
-| **Migrado** | Substituto implementado atrás de feature flag; legado mantido para rollback. |
-| **Removido** | Eliminado do repositório. |
+| Status (legado documento) | Status F6.8 freeze | Significado |
+|---|---|---|
+| **Ativo** | **ACTIVE** | Ainda necessário (satélite, stub, ou path primário flag OFF) |
+| **Migrado** | **ROLLBACK** | Substituto atrás de flag; manter para rollback |
+| **Removido** | **REMOVED** | Eliminado do repositório |
+| — | **DEPRECATED** | Pode remover após canário (candidatos; ainda no código) |
+| — | **REMOVE_READY** | Pronto para PR de remoção dedicada (após checklist) |
+
+> F6.8: coluna histórica Ativo/Migrado/Removido **mantida** nas tabelas. Classificação freeze consolidada na §0 abaixo — **nenhuma remoção física**.
 
 ### Legenda — sprint de remoção
 
@@ -37,15 +41,55 @@
 
 ---
 
-## Resumo executivo (2026-07-08, pós F5.7)
+## Resumo executivo (2026-07-13, pós F6.8)
 
 | Métrica | Valor |
 |---|---|
-| Itens rastreados | 48 |
-| **Ativo** | 28 |
-| **Migrado** | 20 |
-| **Removido** | 0 |
-| Próxima remoção em massa prevista | **Pós-F6** (cursor UI) → **F7** (WS horizontal) |
+| Itens rastreados | 50 |
+| **ACTIVE / Ativo** | 21 |
+| **ROLLBACK / Migrado** | 29 |
+| **REMOVED** | 0 |
+| **DEPRECATED / REMOVE_READY** | ver §0 (candidatos — ainda não deletados) |
+| Architecture Freeze | [`F6_ARCHITECTURE_FREEZE_REPORT.md`](./F6_ARCHITECTURE_FREEZE_REPORT.md) + [`ADR-010-CHAT-ARCHITECTURE-FREEZE.md`](./ADR-010-CHAT-ARCHITECTURE-FREEZE.md) |
+| Certificação F5 | [`AUDIT_F5_FINAL.md`](./AUDIT_F5_FINAL.md) |
+| Certificação F6 | [`AUDIT_F6_PERFORMANCE_CERTIFICATION.md`](./AUDIT_F6_PERFORMANCE_CERTIFICATION.md) |
+| F7 liberação | [`F7_READINESS_REPORT.md`](./F7_READINESS_REPORT.md) |
+| Flags audit | [`FEATURE_FLAGS_AUDIT.md`](./FEATURE_FLAGS_AUDIT.md) |
+
+---
+
+## 0. Classificação F6.8 (Architecture Freeze)
+
+### ROLLBACK (maioria dos “Migrado”)
+
+Código dual-path mantido enquanto flags OFF existem. Exemplos:
+
+- Chat.tsx `useState` muted + RQ Floating STORE OFF
+- TanStack message virt (`mode: legacy`)
+- WS patch RQ (F2)
+- Sockets dedicados (F1 OFF)
+- Merge N+1 HTTP (agregado OFF)
+- Shadow validation / shadowLog
+
+### DEPRECATED (candidatos pós-canário — **não remover agora**)
+
+| ID / tema | Condição para REMOVE_READY |
+|---|---|
+| Shadow backend F4a (L-HTTP-B03) | Paridade staging |
+| Stub `CHAT_INBOX_CURSOR` | Consolidar docs/flags |
+| `ui/patch` action sem creator | Cleanup tipagem/store |
+| Floating `latestPage: false` path | Dump só com `VITE_FLOAT_MESSAGES_DUMP=1` (ADR-011); default latest-page |
+| commandShadowValidation morto | Confirmar 0 callers pós-canário F5 |
+
+### REMOVE_READY
+
+**Nenhum** item promovido a REMOVE_READY nesta sprint (política: canário produção + PR dedicado).
+
+### ACTIVE
+
+Satélites Kanban/Lead/Admin, Notifications socket, eventos WS legacy. Redis adapter / `CHAT_REDIS_WS` → **entregues Phase 8** (L-RT-08 / L-FF-14 Migrado).
+
+---
 
 ---
 
@@ -93,9 +137,9 @@
 | L-FF-09 | `VITE_CHAT_FF_AGGREGATED_CHAT` | F4b | **Migrado** | **Pós-F4b** | |
 | L-FF-10 | `CHAT_AGGREGATED_CONVERSATIONS` (backend) | F4a | **Migrado** | **Pós-F4b** | |
 | L-FF-11 | `CHAT_AGGREGATED_API_SHADOW` (backend) | F4a | **Migrado** | **Pós-F4b** | |
-| L-FF-12 | `VITE_CHAT_FF_CORE_STORE` | F5 | **Ativo** | — | Ainda não implementado |
+| L-FF-12 | `VITE_CHAT_FF_CORE_STORE` | F5 | **Migrado** | **Pós-F6** | F5.6–F5.11: Domain Store SoT quando ON; rollback OFF intacto |
 | L-FF-13 | `VITE_CHAT_FF_INBOX_CURSOR` | F6 | **Ativo** | — | Ainda não implementado |
-| L-FF-14 | `VITE_CHAT_FF_REDIS_WS` | F7 | **Ativo** | — | Ainda não implementado |
+| L-FF-14 | `CHAT_REDIS_WS` (catalog) | F7 | **Migrado** | Pós-canário multi-réplica | Phase 8; default OFF |
 | L-FF-15 | `src/lib/chatAggregatedFlags.ts` | F4b | **Migrado** | **Pós-F4b** | Pode fundir em `feature-flags.ts` após rollout |
 
 ---
@@ -111,7 +155,7 @@
 | L-RT-05 | `ChatRealtimeBridge` | `src/features/chat-core/realtime/bridge.ts` | **Migrado** | — | Substituto F1; não remover |
 | L-RT-06 | Handlers eventos **legado** WS | `CHAT_WS_EVENTS_LEGACY` em `contracts.ts` | **Ativo** | **F7+** | Remover quando backend emitir só v2 |
 | L-RT-07 | `useNotifications` socket próprio | `src/hooks/useNotifications.ts` | **Ativo** | **Fora F0–F7** | Módulo Notifications — ADR separada |
-| L-RT-08 | Redis WS adapter ausente | backend Socket.IO | **Ativo** | **F7** | Single-node hoje |
+| L-RT-08 | Redis WS adapter | `realtime/redisSocketAdapter.ts` | **Migrado** | Pós-canário | Phase 8; fallback memory |
 
 ---
 
@@ -119,10 +163,10 @@
 
 | ID | Artefato | Local | Status | Remover em | Notas |
 |---|---|---|---|---|---|
-| L-INV-01 | `invalidateQueries(['floating-chat', …])` pós-WS | `FloatingChatProvider.tsx` | **Ativo** | **Pós-F2** | Patch F2 tenta antes; invalidate é fallback |
-| L-INV-02 | Idem | `FloatingConversationWindow.tsx` | **Ativo** | **Pós-F2** | |
-| L-INV-03 | Idem | `MobileConversationOverlay.tsx` | **Ativo** | **Pós-F2** | |
-| L-INV-04 | `invalidateFloatingChatLists()` | `floatingChatQueries.ts` | **Ativo** | **Pós-F2** | |
+| L-INV-01 | `invalidateQueries(['floating-chat', …])` pós-WS | `FloatingChatProvider.tsx` | **Migrado** | **Pós-F5.11** | Gated quando `CHAT_CORE_STORE` ON (F5.11); fallback OFF |
+| L-INV-02 | Idem | `FloatingConversationWindow.tsx` | **Migrado** | **Pós-F5.11** | Gated store ON |
+| L-INV-03 | Idem | `MobileConversationOverlay.tsx` | **Migrado** | **Pós-F5.11** | Gated store ON |
+| L-INV-04 | `invalidateFloatingChatLists()` | `floatingChatQueries.ts` | **Migrado** | **Pós-F5.11** | Só invocado em path OFF / CRM |
 | L-INV-05 | `invalidateQueries(['floating-chat'])` CRM | `ClientProfile.tsx`, `Leads.tsx`, `EmbeddedLeadConversationPanel.tsx` | **Ativo** | **F5** | Após SoT única |
 | L-INV-06 | Lista/mensagens `useState` + refetch WS | `src/pages/Chat.tsx` | **Migrado** | **Pós-F5.6** | Guardado quando `CHAT_CORE_STORE` ON; legado só com flag OFF |
 | L-INV-07 | `refreshCards()` kanban pós-WS | Kanban attendance hook | **Ativo** | **F5** | Board estado local |
@@ -166,8 +210,9 @@
 | L-CACHE-02 | `useState` conversas/mensagens Chat | `src/pages/Chat.tsx` | **Migrado** | **Pós-F5.6** | SoT = Domain Store quando flag ON |
 | L-CACHE-03 | React Query `floating-chat/*` | vários float | **Migrado** | **Pós-F5.6** | RQ só com `CHAT_CORE_STORE` OFF |
 | L-CACHE-04 | React Query `lead-profile/*` | lead embed | **Ativo** | **F5** | |
-| L-CACHE-05 | `chatRepository` stub F0 | `chat-core/repository/chatRepository.ts` | **Ativo** | **F5** | Substituir por store real |
+| L-CACHE-05 | `chatRepository` interface F0 | `chat-core/repository/chatRepository.ts` | **Migrado** | **Pós-F6** | Runtime usa `delegatingChatRepository`; interface permanece |
 | L-CACHE-06 | Dump completo inbox (sem cursor UI) | `Chat.tsx` load | **Migrado** | **F6** | API retorna cursor; UI load-more pendente |
+| L-CACHE-08 | Dump integral de mensagens (sem Load More UI) | `loadMessagesCommand` | **Migrado** | **F6.3+** | F6.1: Chat última página + Load More; F6.2: Window Cache; Floating ainda dump (`latestPage: false`) |
 | L-CACHE-07 | `clearChatPageCacheForSession` | `queryClient.ts` | **Ativo** | **F5** | Ligado ao cache v1/v2 |
 
 ---
@@ -179,6 +224,7 @@
 | L-MET-01 | `chatConversationsMetrics.ts` | `src/lib/` | **Migrado** | **F5** | Simplificar após legado HTTP removido |
 | L-MET-02 | Shadow metrics F4a | `shadowMetrics.ts` | **Migrado** | **Pós-F4b** | |
 | L-MET-03 | `chat-core/metrics/baseline.ts` | F0–F3 | **Migrado** | **F5** | Manter observabilidade core |
+| L-MET-04 | `chat-core/metrics/*` F5.12 performance layer | F5.12 | **Migrado** | **Pós-F6** | Telemetria DEV + `CHAT_CORE_METRICS`; baseline pré-F6 |
 
 ---
 
@@ -192,9 +238,9 @@ F3  ✓ registry + unread        → L-INST-01..02, L-UNR-* (Pós-F3)
 F4a ✓ API agregada backend      → L-HTTP-B03 shadow (Pós-F4b)
 F4b ✓ repository frontend      → L-HTTP-01..14, L-FF-06..11 (Pós-F4b)
 ─────────────────────────────────────────────────────────
-F5  ○ Chat Core store           → L-CACHE-*, L-INV-05..07, Chat.tsx estado
-F6  ○ cursor / load-more UI     → dump completo, paginação local residual
-F7  ○ Redis WS adapter           → L-RT-08, eventos legacy se aplicável
+F5  ✓ Chat Core store           → L-CACHE-*, L-INV-01..07, L-FF-12; certificado AUDIT_F5_FINAL
+F6  ✓ cursor / virt / freeze     → F6.0–F6.8 ✓ Architecture Freeze (ADR-010); Floating dump residual
+F7  ✓ Redis WS adapter           → L-RT-08 / L-FF-14 Migrado (PHASE8_CLOSEOUT)
 ```
 
 ---
@@ -232,6 +278,19 @@ F7  ○ Redis WS adapter           → L-RT-08, eventos legacy se aplicável
 
 | Data | Sprint | Alteração |
 |---|---|---|
+| 2026-07-14 | **Phase 5** | Store/Legacy coexistence: ADR-011 Float latest-page; invalidate coalesce; cache precedence; socket telemetry; `check:chat-sot-guards`. **Sem remoção física.** |
+| 2026-07-13 | **F6.8** | Architecture Freeze: ADR-010 + contratos/API/store/flags/deps docs. Classificação ACTIVE/ROLLBACK/DEPRECATED/REMOVE_READY. Sem remoção de código. 202 testes store. |
+| 2026-07-13 | **F6.7** | Performance Certification: AUDIT_F6 + baseline F6 + legacy readiness + F7 liberada. Sem alteração de código. 202 testes store. |
+| 2026-07-13 | **F6.5** | Realtime Render Optimization: `useStableSelector`, `dispatchBatch`, Bridge coalesce, memo rows. 190 testes store. |
+| 2026-07-13 | **F6.6** | Warm Window + Predictive Prefetch idle; heat score; `useConversationWarmup`. 202 testes store. |
+| 2026-07-13 | **F6.4** | Message Virtualization: engine/height/overscan + hooks; Chat thread `mode:core` (store ON); TanStack legado no Floating/OFF. 178 testes store. |
+| 2026-07-13 | **F6.3** | Conversation Virtualization: engine/overscan/height cache + hooks; Chat sidebar virtualizada (store ON). Floating intacto. 166 testes store. |
+| 2026-07-13 | **F6.2** | Sliding Window Cache: registry/eviction/pin/memory (~5 páginas); actions/selectors/hooks + `windowMetrics`. UX inalterada. 154 testes store. |
+| 2026-07-13 | **F6.1** | Incremental Load More no Chat: última página na abertura, botão + scroll preserve + guards + `loadMoreMetrics`. Floating permanece dump integral. 143 testes store. |
+| 2026-07-13 | **F6.0** | Cursor Engine: estado/actions/selectors/hooks + `loadMessagesCursorCommand` + merge + scroll foundation + `cursorMetrics`. UX inalterada. L-CACHE-08 **Migrado**. 132 testes store. |
+| 2026-07-13 | **F5.12** | Performance Baseline & Telemetry: camada `metrics/*` (render/reducer/selector/http/socket/memory/report); gate DEV + `CHAT_CORE_METRICS`; L-MET-04 **Migrado**. Sem mudança funcional. 118 testes store. |
+| 2026-07-09 | **AUDIT F5 FINAL** | Certificação arquitetura F5: **GO condicionado** para F6. 110 testes store. L-FF-12, L-INV-01..04, L-CACHE-05 → **Migrado**. Resumo: 22 Ativo \| 26 Migrado \| 0 Removido. |
+| 2026-07-09 | **F5.11** | Realtime Unification: Bridge → Store como único writer realtime (store ON); gates em Chat/Floating; `realtime/policy.ts`; remove double window sync quando F1 ON. |
 | 2026-07-09 | **F5.10** | Messages Command Unification: `loadMessagesCommand` único (Chat + Floating); `repositorySync.listMessages` usa `toDomainMessage()`; `applyStoreMessagesInternal`; removidos pipelines `surface: 'core'|'float'`. Corrige thread vazia `/chat`. |
 | 2026-07-09 | **F5.9** | Inbox Command Unification: `loadInboxCommand` único; `applyStoreConversationList` removido da UI; bootstrap/refresh unificados. |
 | 2026-07-08 | **F5.7** | Estabilização: `store/public.ts` (API UI); shadow logs gated `CHAT_CORE_METRICS`; cleanup código morto; wiring validado. **0** mudanças de status no inventário. |

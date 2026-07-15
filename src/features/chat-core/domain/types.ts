@@ -30,6 +30,8 @@ export type ChatDomainConversation = {
   contactName: string | null;
   phoneNumber: string | null;
   attendanceStatus: string | null;
+  /** WhatsApp archive (CRM-owned); not CRM attendance. */
+  waArchived?: boolean;
   assignedToUserId: string | null;
   clientId: string | null;
   leadId: string | null;
@@ -67,6 +69,8 @@ export type ChatAttendanceCounts = {
   team: number;
   unassigned: number;
   closed: number;
+  /** WhatsApp-archived conversations (CRM-owned wa_archived). */
+  wa_archived: number;
   unread: number;
 };
 

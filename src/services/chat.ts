@@ -7,6 +7,10 @@ import {
 } from '@/lib/chatAvatarUrl';
 import { chatAvatarDebugLog } from '@/lib/chatAvatarDebug';
 import { DEFAULT_CHAT_TAG_COLOR, normalizeHexColor } from '@/lib/chatKanbanTagStyle';
+import {
+  invalidateChatInstancesHttpCache,
+  listInstancesSingleFlight,
+} from '@/services/chatInstancesHttpCache';
 
 /** Etapa 4 — mesmos valores persistidos em `chat_instances.metadata`. */
 export type InstanceSyncMode = 'none' | 'days_7' | 'days_30' | 'days_90' | 'full';
@@ -226,6 +230,8 @@ export interface ChatConversation {
   updated_at?: string;
   /** Etapa 5 */
   attendance_status?: ChatAttendanceStatus | null;
+  /** WhatsApp archive (CRM-owned `wa_archived`) — independent of attendance_status. */
+  wa_archived?: boolean;
   assigned_to_user_id?: string | null;
   /** Fila de equipe (transferência para equipe); sem operador até assumir */
   assigned_team_id?: string | null;
@@ -464,13 +470,15 @@ export function normalizeConversation(raw: any): ChatConversation {
         : DEFAULT_COMMUNICATION_PROVIDER,
     instance_name: raw.instance_name,
     client_id: raw.client_id ?? null,
-    leadId: raw.lead_id ?? null,
+    // Idempotente: API usa lead_id; ChatConversation já normalizado usa leadId.
+    // Sem isso, mapLegacyConversationToDomain (dupla normalização) apaga o vínculo CRM.
+    leadId: raw.lead_id ?? raw.leadId ?? null,
     lead_status: raw.lead_status ?? null,
     external_chat_id: raw.external_chat_id,
     conversation_type: (raw.conversation_type as ChatConversationType | undefined) ?? null,
-    contactName: raw.contact_name ?? null,
-    profileName: raw.profile_name ?? null,
-    phoneNumber: raw.phone_number ?? null,
+    contactName: raw.contact_name ?? raw.contactName ?? null,
+    profileName: raw.profile_name ?? raw.profileName ?? null,
+    phoneNumber: raw.phone_number ?? raw.phoneNumber ?? null,
     avatarUrl,
     avatar_url: avatarColumn,
     final_avatar_url: trimStr(raw?.final_avatar_url),
@@ -519,6 +527,14 @@ export function normalizeConversation(raw: any): ChatConversation {
     created_at: raw.created_at,
     updated_at: raw.updated_at,
     attendance_status: (raw.attendance_status as ChatAttendanceStatus | undefined) ?? null,
+    wa_archived:
+      typeof raw.wa_archived === 'boolean'
+        ? raw.wa_archived
+        : typeof raw.waArchived === 'boolean'
+          ? raw.waArchived
+          : typeof metadata?.wa_archived === 'boolean'
+            ? metadata.wa_archived
+            : false,
     assigned_to_user_id: raw.assigned_to_user_id ?? null,
     assigned_team_id: raw.assigned_team_id ?? null,
     assigned_team_name: raw.assigned_team_name ?? null,
@@ -811,12 +827,15 @@ export type ChatBotRuleInput = {
 };
 
 export const chatService = {
-  async listInstances(): Promise<ChatInstance[]> {
-    const response = await apiClient.get<ChatInstance[]>('/api/chat/instances');
-    if (response.error) {
-      throw new Error(response.error);
-    }
-    return response.data || [];
+  /** MB-008: single-flight + soft TTL; mutations invalidam cache. */
+  async listInstances(options?: { force?: boolean }): Promise<ChatInstance[]> {
+    return listInstancesSingleFlight(async () => {
+      const response = await apiClient.get<ChatInstance[]>('/api/chat/instances');
+      if (response.error) {
+        throw new Error(response.error);
+      }
+      return response.data || [];
+    }, options);
   },
 
   async patchInstance(id: string, payload: { enabledInChat: boolean }) {
@@ -827,6 +846,7 @@ export const chatService = {
     if (!response.data) {
       throw new Error('Falha ao atualizar instância');
     }
+    invalidateChatInstancesHttpCache();
     return response.data;
   },
 
@@ -838,6 +858,7 @@ export const chatService = {
     if (!response.data) {
       throw new Error('Falha ao criar instância');
     }
+    invalidateChatInstancesHttpCache();
     return response.data;
   },
 
@@ -854,6 +875,7 @@ export const chatService = {
     if (response.error) {
       throw new Error(response.error);
     }
+    invalidateChatInstancesHttpCache();
     return response.data;
   },
 
@@ -1229,7 +1251,7 @@ export const chatService = {
     /** Etapa 5: `tenant` = inbox do tenant; padrão `owner` */
     inboxScope?: 'owner' | 'tenant';
     /** `queue` = fila operacional (Etapa 5); `queued` aceite por compatibilidade */
-    attendanceFilter?: 'mine' | 'unassigned' | 'queue' | 'queued' | 'closed' | 'team' | 'waiting';
+    attendanceFilter?: 'mine' | 'unassigned' | 'queue' | 'queued' | 'closed' | 'team' | 'waiting' | 'wa_archived';
     /** Fase 2: `groups` = conversas de grupo (flag global `whatsapp_groups_enabled`, default on). */
     conversationFilter?: 'all' | 'groups';
   }) {
@@ -1273,7 +1295,7 @@ export const chatService = {
     search?: string;
     startDate?: string;
     endDate?: string;
-    attendanceFilter?: 'mine' | 'unassigned' | 'queue' | 'queued' | 'closed' | 'team' | 'waiting';
+    attendanceFilter?: 'mine' | 'unassigned' | 'queue' | 'queued' | 'closed' | 'team' | 'waiting' | 'wa_archived';
     conversationFilter?: 'all' | 'groups';
     unreadOnly?: boolean;
     tagIds?: string[];
@@ -1363,6 +1385,7 @@ export const chatService = {
     mine: number;
     unassigned: number;
     closed: number;
+    wa_archived: number;
     unread: number;
   }> {
     const params = new URLSearchParams();
@@ -1374,6 +1397,7 @@ export const chatService = {
       team: number;
       unassigned: number;
       closed: number;
+      wa_archived?: number;
       unread: number;
     }>(`/api/chat/conversations/attendance-counts?${params.toString()}`);
     if (response.error) {
@@ -1386,7 +1410,27 @@ export const chatService = {
       team: d?.team ?? 0,
       unassigned: d?.unassigned ?? 0,
       closed: d?.closed ?? 0,
+      wa_archived: d?.wa_archived ?? 0,
       unread: d?.unread ?? 0,
+    };
+  },
+
+  /**
+   * WhatsApp archive via UazAPI (`wa_archived`). CRM-owned — independent of attendance_status.
+   */
+  async setConversationWaArchived(conversationId: string, archived: boolean) {
+    const response = await apiClient.patch<{
+      success: boolean;
+      conversation?: ChatConversation;
+    }>(`/api/chat/conversations/${conversationId}/wa-archive`, { archived });
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    return {
+      success: Boolean(response.data?.success),
+      conversation: response.data?.conversation
+        ? normalizeConversation(response.data.conversation)
+        : undefined,
     };
   },
 
@@ -1886,6 +1930,7 @@ export const chatService = {
     if (response.error) {
       throw new Error(response.error);
     }
+    invalidateChatInstancesHttpCache();
     return response.data;
   },
 

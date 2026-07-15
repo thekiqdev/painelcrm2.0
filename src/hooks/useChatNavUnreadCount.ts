@@ -6,7 +6,6 @@ import {
   ensureChatInstances,
   fetchChatAttendanceCounts,
   getChatGlobalUnreadCount,
-  shouldUseChatAttendanceReconcile,
   shouldUseChatUnreadEngine,
   subscribeChatUnreadEngine,
 } from '@/features/chat-core/runtime';
@@ -14,7 +13,6 @@ import { filterEnabledChatInstanceIds } from '@/features/chat-core/instance-regi
 import { REALTIME_WINDOW_EVENTS } from '@/services/realtimeClient';
 import { CHAT_NAV_UNREAD_REFRESH_EVENT } from '@/lib/chatNavUnreadEvents';
 
-const POLL_MS = 120_000;
 const DEBOUNCE_MS = 900;
 
 /**
@@ -104,17 +102,13 @@ export function useChatNavUnreadCount(enabled: boolean): number {
     window.addEventListener(REALTIME_WINDOW_EVENTS.conversationUpdated, onRealtime);
     window.addEventListener(REALTIME_WINDOW_EVENTS.notificationCreated, onRefresh);
 
-    const useLegacyPoll =
-      !shouldUseChatUnreadEngine() ||
-      (!shouldUseChatAttendanceReconcile() && shouldUseChatUnreadEngine());
-    const t = useLegacyPoll ? window.setInterval(() => void refresh(), POLL_MS) : undefined;
+    // Phase 9 — sem setInterval: updates via Socket / unread engine / evento manual.
 
     return () => {
       window.removeEventListener(CHAT_NAV_UNREAD_REFRESH_EVENT, onRefresh);
       window.removeEventListener(REALTIME_WINDOW_EVENTS.messageCreated, onRealtime);
       window.removeEventListener(REALTIME_WINDOW_EVENTS.conversationUpdated, onRealtime);
       window.removeEventListener(REALTIME_WINDOW_EVENTS.notificationCreated, onRefresh);
-      if (t !== undefined) window.clearInterval(t);
       if (debounceRef.current !== null) {
         window.clearTimeout(debounceRef.current);
         debounceRef.current = null;

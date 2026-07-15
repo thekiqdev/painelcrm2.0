@@ -23,6 +23,10 @@ import {
 import { executeChatCommand, mapLegacyConversationResult } from './commandDispatcher';
 import { loadInboxCommand, clearInboxCommand } from './loadInbox';
 import { loadMessagesCommand } from './loadMessages';
+import {
+  loadMessagesCursorCommand,
+  resetConversationCursorCommand,
+} from './loadMessagesCursor';
 
 export {
   loadInboxCommand,
@@ -35,6 +39,17 @@ export {
   loadMessagesCommand,
   type LoadMessagesResult,
 } from './loadMessages';
+export {
+  loadMessagesCursorCommand,
+  resetConversationCursorCommand,
+  type LoadMessagesCursorParams,
+  type LoadMessagesCursorResult,
+} from './loadMessagesCursor';
+export {
+  DEFAULT_MESSAGES_PAGE_SIZE,
+  type GetMessagesPageParams,
+  type MessagesPageResult,
+} from './messagesPageFetch';
 
 function useShadowStore(): boolean {
   return isChatPhaseFlagEnabled('CHAT_CORE_STORE') && shouldUseChatDomainStore();
@@ -284,6 +299,8 @@ export const chatCoreCommands = {
   loadInbox: loadInboxCommand,
   clearInbox: clearInboxCommand,
   loadMessages: loadMessagesCommand,
+  loadMessagesCursor: loadMessagesCursorCommand,
+  resetConversationCursor: resetConversationCursorCommand,
   sendMessage: sendMessageCommand,
   markMessageRead: markMessageReadCommand,
   markConversationRead: markConversationReadCommand,

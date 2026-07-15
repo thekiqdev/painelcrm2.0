@@ -6,6 +6,11 @@ import type { ChatConversation } from '@/services/chat';
 import type { ChatDomainConversation } from '../domain/types';
 
 export function domainConversationToUi(conversation: ChatDomainConversation): ChatConversation {
+  const waArchived =
+    typeof conversation.waArchived === 'boolean'
+      ? conversation.waArchived
+      : Boolean((conversation.raw as ChatConversation | undefined)?.wa_archived);
+
   if (conversation.raw && typeof conversation.raw === 'object') {
     const raw = conversation.raw as ChatConversation;
     if (typeof raw.id === 'string') {
@@ -15,6 +20,10 @@ export function domainConversationToUi(conversation: ChatDomainConversation): Ch
         unreadCount: conversation.unreadCount ?? raw.unreadCount ?? 0,
         lastMessageAt: conversation.lastMessageAt ?? raw.lastMessageAt ?? null,
         lastMessagePreview: conversation.lastMessagePreview ?? raw.lastMessagePreview ?? null,
+        // Domain fields vencem o raw (evita leadId/client_id stale após upsert).
+        client_id: conversation.clientId ?? raw.client_id ?? null,
+        leadId: conversation.leadId ?? raw.leadId ?? null,
+        wa_archived: waArchived,
       };
     }
   }
@@ -32,6 +41,7 @@ export function domainConversationToUi(conversation: ChatDomainConversation): Ch
     client_id: conversation.clientId,
     leadId: conversation.leadId,
     attendance_status: conversation.attendanceStatus as ChatConversation['attendance_status'],
+    wa_archived: waArchived,
     assigned_to_user_id: conversation.assignedToUserId,
     conversation_type: conversation.conversationType as ChatConversation['conversation_type'],
   };

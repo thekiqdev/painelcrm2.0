@@ -1,6 +1,8 @@
 import { QueryClient } from "@tanstack/react-query";
 import { clearActiveChatPersistentCache } from "@/lib/chatPersistentCache";
 import { clearChatPageCacheForSession } from "@/lib/chatPageCache";
+import { resetChatInstancesHttpCache } from "@/services/chatInstancesHttpCache";
+import { resetTenantCompanyHttpCache } from "@/services/tenantCompanyHttpCache";
 
 let lastChatCacheScope: { tenantId: string; userId: string } | null = null;
 
@@ -35,4 +37,6 @@ export function clearAllCachedAppData(): void {
     lastChatCacheScope = null;
   }
   queryClient.clear();
+  resetChatInstancesHttpCache();
+  resetTenantCompanyHttpCache();
 }

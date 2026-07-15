@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { useVirtualizer, type Virtualizer } from '@tanstack/react-virtual';
 import { markChatPerf } from '@/lib/chatPerformance';
+import { shouldUseChatDomainStore } from '@/features/chat-core/store/flags';
+import {
+  useMessageVirtualization,
+  type UseMessageVirtualizationResult,
+} from '@/features/chat-core/virtualization/useMessageVirtualization';
 
 export const CHAT_VIRTUALIZE_MIN_COUNT = 40;
 export const CHAT_VIRTUALIZE_OVERSCAN_PAGE = 12;
@@ -27,16 +32,32 @@ export type UseVirtualizedMessagesOptions<T extends MessageWithId> = {
   enabled: boolean;
 };
 
+/** Layout item do motor F6.4 (Domain Store). */
+export type CoreVirtualMessageItem<T extends MessageWithId> = {
+  index: number;
+  offsetTop: number;
+  height: number;
+  item: T;
+};
+
 export type UseVirtualizedMessagesResult<T extends MessageWithId> = {
   enabled: boolean;
+  /** `core` = F6.4 Message Virtual Engine; `legacy` = @tanstack/react-virtual. */
+  mode: 'core' | 'legacy' | 'off';
   virtualizer: Virtualizer<HTMLElement, Element> | null;
+  core: {
+    totalHeight: number;
+    visibleItems: CoreVirtualMessageItem<T>[];
+    measureElement: (messageId: string, element: HTMLElement | null) => void;
+    measureRef: (element: HTMLElement | null) => void;
+  } | null;
   onScroll: () => void;
   scrollToBottom: (behavior?: ScrollBehavior) => void;
   scrollToMessageId: (id: string) => boolean;
   isNearBottom: () => boolean;
 };
 
-export function useVirtualizedMessages<T extends MessageWithId>(
+function useLegacyVirtualizedMessages<T extends MessageWithId>(
   options: UseVirtualizedMessagesOptions<T>,
 ): UseVirtualizedMessagesResult<T> {
   const { messages, scrollRef, conversationKey, variant, enabled } = options;
@@ -80,7 +101,6 @@ export function useVirtualizedMessages<T extends MessageWithId>(
     [enabled, messages.length, scrollRef, virtualizer],
   );
 
-  /** Evita reexecutar efeitos de scroll quando só a identidade do callback muda. */
   const scrollToBottomRef = useRef(scrollToBottom);
   scrollToBottomRef.current = scrollToBottom;
 
@@ -154,10 +174,64 @@ export function useVirtualizedMessages<T extends MessageWithId>(
 
   return {
     enabled,
+    mode: enabled ? 'legacy' : 'off',
     virtualizer: enabled ? virtualizer : null,
+    core: null,
     onScroll,
     scrollToBottom,
     scrollToMessageId,
     isNearBottom,
   };
+}
+
+function mapCoreResult<T extends MessageWithId>(
+  core: UseMessageVirtualizationResult<T>,
+): UseVirtualizedMessagesResult<T> {
+  return {
+    enabled: core.enabled,
+    mode: core.enabled ? 'core' : 'off',
+    virtualizer: null,
+    core: core.enabled
+      ? {
+          totalHeight: core.totalHeight,
+          visibleItems: core.visibleItems,
+          measureElement: core.measureElement,
+          measureRef: core.measureRef,
+        }
+      : null,
+    onScroll: core.onScroll,
+    scrollToBottom: core.scrollToBottom,
+    scrollToMessageId: core.scrollToMessageId,
+    isNearBottom: core.isNearBottom,
+  };
+}
+
+/**
+ * Virtualização de mensagens.
+ * - Chat + CHAT_CORE_STORE ON → F6.4 Message Virtual Engine (`mode: 'core'`).
+ * - Floating / store OFF → `@tanstack/react-virtual` legado (`mode: 'legacy'`).
+ */
+export function useVirtualizedMessages<T extends MessageWithId>(
+  options: UseVirtualizedMessagesOptions<T>,
+): UseVirtualizedMessagesResult<T> {
+  const useCore =
+    options.variant === 'page' && shouldUseChatDomainStore() && options.enabled;
+
+  const coreResult = useMessageVirtualization({
+    messages: options.messages,
+    scrollRef: options.scrollRef,
+    conversationKey: options.conversationKey,
+    enabled: useCore,
+    nearBottomThreshold: CHAT_NEAR_BOTTOM_THRESHOLD_PAGE,
+  });
+
+  const legacyResult = useLegacyVirtualizedMessages({
+    ...options,
+    enabled: options.enabled && !useCore,
+  });
+
+  if (useCore) {
+    return mapCoreResult(coreResult);
+  }
+  return legacyResult;
 }

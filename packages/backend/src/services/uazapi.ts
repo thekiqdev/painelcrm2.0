@@ -320,6 +320,24 @@ export class UazapiService {
     });
   }
 
+  /**
+   * POST /chat/archive — arquivar (`archive: true`) ou desarquivar (`archive: false`).
+   * Contrato UazAPI: `{ number, archive }`.
+   */
+  async archiveChat(
+    instanceToken: string,
+    payload: { number: string; archive: boolean },
+  ) {
+    return this.request('/chat/archive', {
+      method: 'POST',
+      body: JSON.stringify({
+        number: payload.number,
+        archive: payload.archive,
+      }),
+      token: instanceToken,
+    });
+  }
+
   /** POST /group/info — detalhes, participantes, convite opcional (token da instância). */
   async groupInfo(instanceToken: string, payload: Record<string, unknown>) {
     return this.request<unknown>('/group/info', {

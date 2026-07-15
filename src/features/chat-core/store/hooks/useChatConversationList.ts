@@ -1,17 +1,15 @@
 /**
- * F5.4 — lista de conversas do Chat Principal (read-only via Domain Store).
+ * F5.4 / F6.5 — lista de conversas do Chat Principal (selector estável).
  */
 
-import { useCallback, useMemo, useSyncExternalStore } from 'react';
 import type { ChatConversation } from '@/services/chat';
 import { shouldUseChatDomainStore } from '../flags';
-import { ensureChatDomainStoreSession, getChatDomainStoreSession } from '../session';
-import { createInitialChatDomainState } from '../state';
 import { selectChatConversationsForUi } from '../chatSelectors';
 import { selectLoadingConversations } from '../selectors';
 import type { ChatRenderSource } from '../chatMetrics';
 import { auditLogHook } from '../f5HydrationAudit';
-import { recordStoreSubscription } from '../consolidatedMetrics';
+import { useStableSelector } from './useStableSelector';
+import { conversationsUiEqual } from '../selectorMemo';
 
 export type ChatConversationListData = {
   conversations: ChatConversation[];
@@ -20,6 +18,18 @@ export type ChatConversationListData = {
   source: ChatRenderSource;
 };
 
+type ConversationListSlice = {
+  conversations: ChatConversation[];
+  loadingConversations: boolean;
+};
+
+function conversationListEqual(a: ConversationListSlice, b: ConversationListSlice): boolean {
+  return (
+    a.loadingConversations === b.loadingConversations &&
+    conversationsUiEqual(a.conversations, b.conversations)
+  );
+}
+
 export function useChatConversationList(params: {
   enabled?: boolean;
   repositoryLoading?: boolean;
@@ -27,29 +37,17 @@ export function useChatConversationList(params: {
 }): ChatConversationListData {
   const useStore = (params.enabled ?? true) && shouldUseChatDomainStore();
 
-  const subscribeStore = useCallback((onChange: () => void) => {
-    const store = ensureChatDomainStoreSession();
-    if (!store) return () => undefined;
-    return store.subscribe(() => {
-      recordStoreSubscription();
-      onChange();
-    });
-  }, []);
-
-  const getStoreSnapshot = useCallback(() => {
-    return ensureChatDomainStoreSession()?.getState() ?? createInitialChatDomainState();
-  }, []);
-
-  const storeState = useSyncExternalStore(
-    useStore ? subscribeStore : () => () => undefined,
-    getStoreSnapshot,
-    getStoreSnapshot,
+  const slice = useStableSelector(
+    (state): ConversationListSlice => ({
+      conversations: selectChatConversationsForUi(state),
+      loadingConversations: selectLoadingConversations(state),
+    }),
+    {
+      enabled: useStore,
+      name: 'useChatConversationList',
+      equalityFn: conversationListEqual,
+    },
   );
-
-  const rows = useMemo(() => {
-    if (!useStore) return [];
-    return selectChatConversationsForUi(storeState);
-  }, [useStore, storeState]);
 
   if (!useStore) {
     auditLogHook(0, 'react-query');
@@ -61,10 +59,10 @@ export function useChatConversationList(params: {
     };
   }
 
-  auditLogHook(rows.length, 'store');
+  auditLogHook(slice.conversations.length, 'store');
   return {
-    conversations: rows,
-    isLoading: selectLoadingConversations(storeState) || Boolean(params.repositoryLoading),
+    conversations: slice.conversations,
+    isLoading: slice.loadingConversations || Boolean(params.repositoryLoading),
     isSyncing: Boolean(params.repositorySyncing),
     source: 'store',
   };

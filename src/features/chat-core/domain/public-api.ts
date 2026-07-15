@@ -34,7 +34,7 @@ export type ChatCoreCommandHandlers = {
       inboxScope: ChatInboxScope;
       surface?: string;
       quickFilter?: 'all' | 'mine' | 'unread';
-      attendanceFilter?: '' | 'mine' | 'queue' | 'team' | 'closed';
+      attendanceFilter?: '' | 'mine' | 'queue' | 'team' | 'closed' | 'wa_archived';
       channelOrigin?: 'all' | 'uazapi' | 'official';
       conversationFilter?: 'groups';
       includeOfficialWhenAll?: boolean;
@@ -104,6 +104,21 @@ export type ChatCorePublicApi = ChatCoreCommands &
   ChatCoreSelectors &
   ChatCoreEventApplier & {
     readonly isWired: boolean;
-    readonly phase: 'F0' | 'F5.1' | 'F5.5' | 'F5.6' | 'F5.7' | 'F5.9' | 'F5.10';
+    readonly phase:
+      | 'F0'
+      | 'F5.1'
+      | 'F5.5'
+      | 'F5.6'
+      | 'F5.7'
+      | 'F5.9'
+      | 'F5.10'
+      | 'F5.11'
+      | 'F6.0'
+      | 'F6.1'
+      | 'F6.2'
+      | 'F6.3'
+      | 'F6.4'
+      | 'F6.5'
+      | 'F6.6';
     readonly commands: ChatCoreCommandHandlers;
   };

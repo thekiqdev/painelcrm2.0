@@ -17,12 +17,12 @@ import {
   reconcileChatAttendanceCounts,
   shouldUseChatAttendanceReconcile,
   shouldUseChatUnreadEngine,
-  startChatUnreadPeriodicReconcile,
   stopChatUnreadPeriodicReconcile,
 } from '../unread-engine';
 import { requestChatReconcile, subscribeChatReconcile } from '../reconcile';
 import type { ChatReconcileReason, ChatReconcileScope } from '../reconcile';
 import { bootstrapChatCoreStoreSession, ensureChatCoreStoreRuntimeWired } from './storeBootstrap';
+import { recordPollingRemoved, recordSocketUpdate } from '../metrics/zeroPollingMetrics';
 
 let wired = false;
 let unsubscribeReconcile: (() => void) | null = null;
@@ -48,22 +48,16 @@ function onWindowMessageCreated(e: Event): void {
   const dir = d?.direction as string | undefined;
   if (dir && dir !== 'incoming') return;
   applyChatUnreadIncomingMessage(cid, false);
+  recordSocketUpdate();
 }
 
 function onWindowConversationUpdated(e: Event): void {
   if (!shouldUseChatUnreadEngine()) return;
   applyChatUnreadFromConversationPayload((e as CustomEvent).detail);
+  recordSocketUpdate();
 }
 
-function onOnline(): void {
-  requestChatReconcile('all', 'network_online');
-}
-
-function onVisibilityChange(): void {
-  if (document.visibilityState === 'visible') {
-    requestChatReconcile('all', 'tab_visible');
-  }
-}
+/** Phase 9 — sem reconcile HTTP em online/focus (Socket entrega eventos). */
 
 /** Instala listeners globais uma única vez. Sem efeito funcional com flags OFF. */
 export function ensureChatF3RuntimeWired(): void {
@@ -80,14 +74,12 @@ export function ensureChatF3RuntimeWired(): void {
   window.addEventListener(REALTIME_WINDOW_EVENTS.whatsappInstanceRemoved, (e) => {
     applyChatInstanceRemoved((e as CustomEvent).detail);
     invalidateChatInstanceRegistry('instance_removed');
+    // Instância removida = inconsistência real → reconcile pontual (não periódico).
     requestChatReconcile('all', 'inconsistency');
   });
-  window.addEventListener('online', onOnline);
-  document.addEventListener('visibilitychange', onVisibilityChange);
 
-  if (shouldUseChatUnreadEngine() && shouldUseChatAttendanceReconcile()) {
-    startChatUnreadPeriodicReconcile();
-  }
+  stopChatUnreadPeriodicReconcile();
+  recordPollingRemoved(2); // periodic unread + (nav legacy poll retired at call sites)
 }
 
 export function bootstrapChatF3Session(

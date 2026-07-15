@@ -6,6 +6,7 @@ import {
   chatRealtimeBridge,
   shouldUseSingleChatSocket,
 } from '@/features/chat-core/realtime/bridge';
+import { recordDedicatedChatSocketOpen } from '@/features/chat-core/realtime/dedicatedSocketTelemetry';
 
 type AttendancePayload = { conversation?: { id?: string } };
 
@@ -55,6 +56,7 @@ export function useKanbanAttendanceSocketRefresh(
         withCredentials: true,
       });
       ownsDedicated = true;
+      recordDedicatedChatSocketOpen('KanbanAttendance');
     }
 
     let debounce: ReturnType<typeof setTimeout> | null = null;

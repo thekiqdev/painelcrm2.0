@@ -12,52 +12,74 @@ import type {
   ConnectionState,
   UnreadState,
 } from './types';
+import { timeSelector } from '../metrics/selectorMetrics';
 
 export function selectConversation(
   state: ChatDomainState,
   id: ChatConversationId,
 ): ChatDomainConversation | null {
-  return state.conversations.byId[id] ?? null;
+  return timeSelector('selectConversation', () => state.conversations.byId[id] ?? null);
 }
 
 export function selectConversations(state: ChatDomainState): readonly ChatDomainConversation[] {
-  return state.conversations.orderedIds
-    .map((id) => state.conversations.byId[id])
-    .filter((c): c is ChatDomainConversation => Boolean(c));
+  return timeSelector('selectConversations', () =>
+    state.conversations.orderedIds
+      .map((id) => state.conversations.byId[id])
+      .filter((c): c is ChatDomainConversation => Boolean(c)),
+  );
 }
 
 export function selectMessages(
   state: ChatDomainState,
   conversationId: ChatConversationId,
 ): readonly ChatDomainMessage[] {
-  const ids = state.messages.byConversationId[conversationId] ?? [];
-  return ids
-    .map((id) => state.messages.byId[id])
-    .filter((m): m is ChatDomainMessage => Boolean(m) && typeof m.id === 'string' && m.id.length > 0);
+  return timeSelector('selectMessages', () => {
+    const ids = state.messages.byConversationId[conversationId] ?? [];
+    return ids
+      .map((id) => state.messages.byId[id])
+      .filter(
+        (m): m is ChatDomainMessage => Boolean(m) && typeof m.id === 'string' && m.id.length > 0,
+      );
+  });
 }
 
 export function selectUnread(state: ChatDomainState): UnreadState {
-  return state.unread;
+  return timeSelector('selectUnread', () => state.unread);
 }
 
 export function selectSelectedConversation(state: ChatDomainState): ChatDomainConversation | null {
-  const id = state.selection.selectedConversationId;
-  if (!id) return null;
-  return selectConversation(state, id);
+  return timeSelector('selectSelectedConversation', () => {
+    const id = state.selection.selectedConversationId;
+    if (!id) return null;
+    return state.conversations.byId[id] ?? null;
+  });
 }
 
 export function selectConnection(state: ChatDomainState): ConnectionState {
-  return state.connection;
+  return timeSelector('selectConnection', () => state.connection);
 }
 
 export function selectInstances(state: ChatDomainState): readonly ChatDomainInstance[] {
-  return state.instances.orderedIds
-    .map((id) => state.instances.byId[id])
-    .filter((i): i is ChatDomainInstance => Boolean(i));
+  return timeSelector('selectInstances', () =>
+    state.instances.orderedIds
+      .map((id) => state.instances.byId[id])
+      .filter((i): i is ChatDomainInstance => Boolean(i)),
+  );
 }
 
 export function selectLoadingConversations(state: ChatDomainState): boolean {
-  return state.loading.conversations;
+  return timeSelector('selectLoadingConversations', () => state.loading.conversations);
+}
+
+/** Alias F5.12 — loading de mensagens por conversa. */
+export function selectLoadingMessages(
+  state: ChatDomainState,
+  conversationId: ChatConversationId,
+): boolean {
+  return timeSelector(
+    'selectLoadingMessages',
+    () => state.loading.messages[conversationId] === true,
+  );
 }
 
 export const chatDomainSelectors: ChatDomainSelectors = {

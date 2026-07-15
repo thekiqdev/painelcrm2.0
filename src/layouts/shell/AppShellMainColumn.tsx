@@ -1,10 +1,15 @@
+import React from 'react';
 import { cn } from '@/lib/utils';
 import { MobileAppNavigation } from '@/components/navigation/MobileAppNavigation';
 import { useMobileShellChrome } from '@/contexts/MobileShellChromeContext';
 import { RequireModuleView } from '@/components/RequireModuleView';
 
 /** Coluna principal: `main` + bottom nav. */
-export function AppShellMainColumn({ children }: { children: React.ReactNode }) {
+export const AppShellMainColumn = React.memo(function AppShellMainColumn({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const { suppressMobileBottomNav, showMobileGlobalHeader } = useMobileShellChrome();
   return (
     <>
@@ -22,4 +27,4 @@ export function AppShellMainColumn({ children }: { children: React.ReactNode }) 
       {!suppressMobileBottomNav ? <MobileAppNavigation /> : null}
     </>
   );
-}
+});

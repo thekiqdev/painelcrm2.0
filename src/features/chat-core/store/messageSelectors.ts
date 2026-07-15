@@ -7,6 +7,7 @@ import type { ChatDomainState } from './types';
 import { selectMessages as selectRawMessages } from './selectors';
 import { domainMessageToUi } from './domainMessageToUi';
 import type { ChatMessage } from '@/services/chat';
+import { timeSelector } from '../metrics/selectorMetrics';
 
 export function sortDomainMessages(
   list: readonly ChatDomainMessage[],
@@ -36,7 +37,9 @@ export function selectConversationMessages(
   state: ChatDomainState,
   conversationId: ChatConversationId,
 ): readonly ChatDomainMessage[] {
-  return sortDomainMessages(selectRawMessages(state, conversationId));
+  return timeSelector('selectConversationMessages', () =>
+    sortDomainMessages(selectRawMessages(state, conversationId)),
+  );
 }
 
 /** Alias documental — lista de mensagens de domínio por conversa. */

@@ -14,6 +14,16 @@ import { isChatAggregatedSurfaceEnabled, type ChatAggregatedSurface } from '@/li
 import { recordChatConversationsFetch } from '@/lib/chatConversationsMetrics';
 import { chatService, type ChatConversation } from '@/services/chat';
 
+function filterWaArchivedList(
+  items: ChatConversation[],
+  attendanceFilter: FetchMergedConversationsParams['attendanceFilter'],
+): ChatConversation[] {
+  if (attendanceFilter === 'wa_archived') {
+    return items.filter((c) => Boolean(c.wa_archived));
+  }
+  return items.filter((c) => !c.wa_archived);
+}
+
 export type { ChatInboxScope, ChatAggregatedSurface };
 
 export type ChatConversationsListParams = FetchMergedConversationsParams & {
@@ -117,7 +127,7 @@ async function fetchAggregatedList(
     });
 
     return {
-      items,
+      items: filterWaArchivedList(items, params.attendanceFilter),
       nextCursor: meta.nextCursor,
       hasMore: meta.hasMore,
       source: 'aggregated',

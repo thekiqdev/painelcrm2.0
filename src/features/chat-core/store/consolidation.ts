@@ -12,6 +12,7 @@ import { shouldUseChatDomainStore } from './flags';
 import { getChatDomainStoreSession } from './session';
 import { recordStoreUpdate } from './consolidatedMetrics';
 import { auditLogApplyStoreConversationList } from './f5HydrationAudit';
+import { selectConversationsForUi } from './conversationSelectors';
 
 export function isChatStoreSourceOfTruth(): boolean {
   return shouldUseChatDomainStore();
@@ -48,6 +49,59 @@ export function applyStoreConversationListInternal(
 /** @deprecated F5.9 — use loadInboxCommand. Mantido para testes legados. */
 export function applyStoreConversationList(conversations: readonly ChatConversation[]): void {
   applyStoreConversationListInternal(conversations);
+}
+
+/**
+ * Upsert após confirmação do servidor (link CRM, archive, patch pontual).
+ * Não substitui `loadInboxCommand` para hidratação da lista.
+ */
+export function applyStoreConversationUpsert(conversation: ChatConversation): boolean {
+  if (!shouldUseChatDomainStore()) return false;
+  const store = getChatDomainStoreSession();
+  if (!store) return false;
+  const existing = store.getState().conversations.byId[conversation.id];
+  const mapped = mapLegacyConversationToDomain(conversation);
+  const merged = existing
+    ? {
+        ...existing,
+        ...mapped,
+        raw:
+          mapped.raw &&
+          existing.raw &&
+          typeof existing.raw === 'object' &&
+          typeof mapped.raw === 'object'
+            ? { ...(existing.raw as Record<string, unknown>), ...(mapped.raw as Record<string, unknown>) }
+            : (mapped.raw ?? existing.raw),
+      }
+    : mapped;
+  store.dispatch(chatDomainActionCreators.upsertConversation(merged));
+  recordStoreUpdate('conversations');
+  return true;
+}
+
+export function applyStoreConversationRemove(conversationId: string): boolean {
+  if (!shouldUseChatDomainStore()) return false;
+  const store = getChatDomainStoreSession();
+  if (!store) return false;
+  store.dispatch(chatDomainActionCreators.removeConversation(conversationId));
+  recordStoreUpdate('conversations');
+  return true;
+}
+
+/**
+ * Ponte para o `setConversations` legado do Chat.tsx quando o store é SoT.
+ * Evita no-ops silenciosos em vínculo CRM / archive / badge.
+ */
+export function applyStoreConversationsUiUpdate(
+  action: ChatConversation[] | ((prev: ChatConversation[]) => ChatConversation[]),
+): boolean {
+  if (!shouldUseChatDomainStore()) return false;
+  const store = getChatDomainStoreSession();
+  if (!store) return false;
+  const prev = selectConversationsForUi(store.getState());
+  const next = typeof action === 'function' ? action(prev) : action;
+  applyStoreConversationListInternal(next);
+  return true;
 }
 
 /**

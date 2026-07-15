@@ -13,6 +13,12 @@ import { getPostAuthHomePath } from '@/utils/superAdminRedirect';
 import { COMMERCIAL_402_REDIRECT_FLAG } from '@/lib/commercialAccessPaths';
 import { withMarketingAttribution } from '@/lib/marketingAttribution';
 import { navigateToSignupSuccess } from '@/lib/signupSuccessNavigation';
+import {
+  AUTH_PERF_MARKS,
+  loadPostMeBootstrap,
+  markAuthPerf,
+  measureAuthPerf,
+} from '@/contexts/authBootstrap';
 
 interface User {
   id: string;
@@ -142,7 +148,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const fetchCurrentUser = async (): Promise<User | null> => {
     try {
+      // MB-006: hop 1 = /me; hop 2 = features ∥ migration-flags (paralelo).
+      markAuthPerf(AUTH_PERF_MARKS.meStart);
       const response = await apiClient.get<User>('/api/auth/me');
+      markAuthPerf(AUTH_PERF_MARKS.meDone);
+      measureAuthPerf('perf:auth-me', AUTH_PERF_MARKS.meStart, AUTH_PERF_MARKS.meDone);
       if (response.error) {
         // Só sessão realmente inválida (401) deve zerar o token; outros erros não deslogam o trial expirado por engano.
         const status = (response.details as { status?: number } | undefined)?.status;
@@ -165,8 +175,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setSession({ token: apiClient.getToken() || '' });
         setProfile(response.data);
         setRegistrationComplete(response.data.registration_complete || false);
-        await fetchMeFeatures();
-        await bootstrapChatMigrationFlags();
+        markAuthPerf(AUTH_PERF_MARKS.postMeStart);
+        await loadPostMeBootstrap({
+          loadFeatures: fetchMeFeatures,
+          loadMigrationFlags: bootstrapChatMigrationFlags,
+        });
+        markAuthPerf(AUTH_PERF_MARKS.ready);
+        measureAuthPerf(
+          'perf:auth-post-me-parallel',
+          AUTH_PERF_MARKS.postMeStart,
+          AUTH_PERF_MARKS.ready,
+        );
+        measureAuthPerf('perf:auth-total', AUTH_PERF_MARKS.meStart, AUTH_PERF_MARKS.ready);
         setLoading(false);
         return response.data;
       }
@@ -234,8 +254,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(response.data.user);
         setProfile(response.data.user);
         setRegistrationComplete(response.data.user.registration_complete || false);
+        // fetchCurrentUser já carrega features ∥ migration-flags (MB-006).
         const fresh = await fetchCurrentUser();
-        await fetchMeFeatures();
         if (!apiClient.getToken()) {
           toast.error('Sessão inválida. Faça login novamente.');
           return '/login';
