@@ -52,7 +52,13 @@ export const InstancesList: React.FC<InstancesListProps> = ({ onAddInstance, onI
         needsReconfiguration: boolean;
         lastSeenAt: string | null;
         callbackUrlMasked: string | null;
-        statusLabel: "OK" | "Precisa reconfigurar" | "Secret ausente" | "Nunca recebeu webhook";
+        synced: boolean | null;
+        statusLabel:
+          | "OK"
+          | "Precisa reconfigurar"
+          | "Secret ausente"
+          | "Nunca recebeu webhook"
+          | "Desync com provedor";
       }
     >
   >({});
@@ -287,9 +293,30 @@ export const InstancesList: React.FC<InstancesListProps> = ({ onAddInstance, onI
       } else if (s) {
         u.searchParams.set("secret", "********");
       }
+      // v2 path: /webhooks/uazapi/v2/:instanceId/:token
+      u.pathname = u.pathname.replace(
+        /(\/v2\/[0-9a-f-]{36}\/)([^/]+)/i,
+        (_m, prefix: string, token: string) => {
+          const decoded = (() => {
+            try {
+              return decodeURIComponent(token);
+            } catch {
+              return token;
+            }
+          })();
+          if (decoded.length <= 4) return `${prefix}********`;
+          return `${prefix}********${decoded.slice(-4)}`;
+        },
+      );
       return u.toString();
     } catch {
-      return raw.replace(/([?&]secret=)([^&]+)/i, (_m, p1, p2) => `${p1}${"*".repeat(Math.max(8, p2.length - 4))}${p2.slice(-4)}`);
+      return raw
+        .replace(/([?&]secret=)([^&]+)/i, (_m, p1, p2) => `${p1}${"*".repeat(Math.max(8, p2.length - 4))}${p2.slice(-4)}`)
+        .replace(/(\/v2\/[0-9a-f-]{36}\/)([^/?#]+)/i, (_m, prefix, token) => {
+          const t = String(token);
+          if (t.length <= 4) return `${prefix}********`;
+          return `${prefix}********${t.slice(-4)}`;
+        });
     }
   };
 
@@ -297,8 +324,15 @@ export const InstancesList: React.FC<InstancesListProps> = ({ onAddInstance, onI
     hasSecret: boolean;
     needsReconfiguration: boolean;
     lastSeenAt: string | null;
-  }): "OK" | "Precisa reconfigurar" | "Secret ausente" | "Nunca recebeu webhook" => {
+    synced: boolean | null;
+  }):
+    | "OK"
+    | "Precisa reconfigurar"
+    | "Secret ausente"
+    | "Nunca recebeu webhook"
+    | "Desync com provedor" => {
     if (!input.hasSecret) return "Secret ausente";
+    if (input.synced === false) return "Desync com provedor";
     if (input.needsReconfiguration) return "Precisa reconfigurar";
     if (!input.lastSeenAt) return "Nunca recebeu webhook";
     return "OK";
@@ -311,7 +345,16 @@ export const InstancesList: React.FC<InstancesListProps> = ({ onAddInstance, onI
       const hasSecret = Boolean(data.webhookStatus?.has_secret);
       const needsReconfiguration = Boolean(data.webhookStatus?.needs_reconfiguration);
       const lastSeenAt = data.webhookStatus?.last_seen_at ?? null;
+      const synced =
+        typeof data.webhookStatus?.synced === "boolean"
+          ? data.webhookStatus.synced
+          : typeof data.synced === "boolean"
+            ? data.synced
+            : null;
       const callbackRaw =
+        (typeof data.webhookStatus?.callback_url === "string"
+          ? data.webhookStatus.callback_url
+          : null) ||
         (typeof data.database?.url === "string" ? data.database.url : null) ||
         (typeof (data.database as Record<string, unknown> | null)?.["webhook_url"] === "string"
           ? String((data.database as Record<string, unknown>)["webhook_url"])
@@ -324,7 +367,13 @@ export const InstancesList: React.FC<InstancesListProps> = ({ onAddInstance, onI
           needsReconfiguration,
           lastSeenAt,
           callbackUrlMasked,
-          statusLabel: deriveWebhookStatusLabel({ hasSecret, needsReconfiguration, lastSeenAt }),
+          synced,
+          statusLabel: deriveWebhookStatusLabel({
+            hasSecret,
+            needsReconfiguration,
+            lastSeenAt,
+            synced,
+          }),
         },
       }));
     } catch (error) {

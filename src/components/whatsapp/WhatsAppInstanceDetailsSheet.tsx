@@ -33,7 +33,13 @@ type Props = {
     needsReconfiguration: boolean;
     lastSeenAt: string | null;
     callbackUrlMasked: string | null;
-    statusLabel: "OK" | "Precisa reconfigurar" | "Secret ausente" | "Nunca recebeu webhook";
+    synced?: boolean | null;
+    statusLabel:
+      | "OK"
+      | "Precisa reconfigurar"
+      | "Secret ausente"
+      | "Nunca recebeu webhook"
+      | "Desync com provedor";
   } | null;
   webhookLoading?: boolean;
   webhookActionLoading?: boolean;
@@ -143,8 +149,21 @@ export function WhatsAppInstanceDetailsSheet({
                     {webhookStatus?.statusLabel ?? "—"}
                   </Badge>
                 </p>
-                <p>Último webhook recebido: {webhookStatus?.lastSeenAt ? new Date(webhookStatus.lastSeenAt).toLocaleString("pt-BR") : "—"}</p>
+                <p>
+                  Último delivery recebido:{" "}
+                  {webhookStatus?.lastSeenAt
+                    ? new Date(webhookStatus.lastSeenAt).toLocaleString("pt-BR")
+                    : "—"}
+                </p>
                 <p>Secret configurado: {webhookStatus?.hasSecret ? "Sim" : "Não"}</p>
+                <p>
+                  Sync com Uaz:{" "}
+                  {webhookStatus?.synced === true
+                    ? "Sim"
+                    : webhookStatus?.synced === false
+                      ? "Não"
+                      : "—"}
+                </p>
                 <p className="break-all">Callback atual: {webhookStatus?.callbackUrlMasked ?? "—"}</p>
               </div>
               <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">

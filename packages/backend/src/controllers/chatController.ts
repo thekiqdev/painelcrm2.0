@@ -2430,12 +2430,22 @@ function classifyWebhookError(error: any): UazChatLogFields['webhook_result'] {
   return 'failed';
 }
 
+type AutoConfigureWebhookOpts = {
+  /**
+   * Caminhos iniciados pelo utilizador (repair / reconfigure / force).
+   * Sempre POST na Uaz — nunca skip `already_configured`.
+   */
+  force?: boolean;
+};
+
 /**
- * Função auxiliar para configurar webhook automaticamente
- * Não falha se houver erro, apenas loga
+ * Função auxiliar para configurar webhook automaticamente.
+ * Não falha se houver erro, apenas loga.
+ * Com `opts.force`, sempre faz POST na Uaz (repair / reconfigure / force).
  */
-async function autoConfigureWebhook(instance: ChatInstanceRow) {
+async function autoConfigureWebhook(instance: ChatInstanceRow, opts?: AutoConfigureWebhookOpts) {
   const tenantId = await resolveTenantIdForUser(instance.user_id);
+  const force = Boolean(opts?.force);
   const baseLog: UazChatLogFields = {
     event_type: 'webhook_auto_configure',
     tenant_id: tenantId,
@@ -2468,6 +2478,9 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
 
     const existingWebhook = instance.metadata?.webhook;
     const tokenChanged = instance.metadata?.tokenChanged || false;
+    const needsReconfigureFlag =
+      Boolean(existingWebhook?.needsReconfigure) ||
+      Boolean((instance as any).webhook_needs_reconfiguration);
 
     if (tokenChanged) {
       logUazChat('info', {
@@ -2481,7 +2494,18 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
         oldWebhookUrl: existingWebhook?.url,
         newWebhookUrl: webhookUrl.split('?')[0],
       });
-    } else if (existingWebhook?.url === resolvedUrl && !existingWebhook?.needsReconfigure) {
+    } else if (force) {
+      logUazChat('info', {
+        ...baseLog,
+        phase: 'force_reconfigure',
+        detail: 'user-initiated: ignorando already_configured',
+      });
+      console.log('[Auto-Webhook] Force reconfigure — posting to provider', {
+        instance: instance.external_instance_name,
+        instanceId: instance.id,
+        url: resolvedUrl,
+      });
+    } else if (existingWebhook?.url === resolvedUrl && !needsReconfigureFlag) {
       logUazChat('info', {
         ...baseLog,
         webhook_result: 'skipped',
@@ -2650,10 +2674,10 @@ async function autoConfigureWebhook(instance: ChatInstanceRow) {
         instance.id,
       ]
     );
+    // Não atualizar webhook_secret_last_seen_at aqui — só no ingress real do handler.
     await pool.query(
       `UPDATE chat_instances
-       SET webhook_secret_last_seen_at = now(),
-           webhook_needs_reconfiguration = false,
+       SET webhook_needs_reconfiguration = false,
            metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
            updated_at = now()
        WHERE id = $2`,
@@ -5039,7 +5063,6 @@ export async function configureInstanceWebhook(req: AuthRequest, res: Response) 
         SET metadata = metadata || $1::jsonb,
             webhook_secret = $3,
             webhook_secret_created_at = COALESCE(webhook_secret_created_at, now()),
-            webhook_secret_last_seen_at = now(),
             webhook_needs_reconfiguration = false,
             updated_at = now()
         WHERE id = $2
@@ -5100,6 +5123,11 @@ export async function getInstanceWebhook(req: AuthRequest, res: Response) {
 
     // Buscar configuração do banco de dados
     const dbWebhook = instance.metadata?.webhook || null;
+    const columnSecret = normalizeIncomingWebhookSecret((instance as any).webhook_secret);
+    const canonicalCallbackUrl =
+      columnSecret && isSecretStrongEnough(columnSecret)
+        ? buildInstanceWebhookUrl(id, columnSecret)
+        : null;
 
     // Buscar configuração da UazAPI
     let uazapiWebhook = null;
@@ -5113,18 +5141,29 @@ export async function getInstanceWebhook(req: AuthRequest, res: Response) {
       // Não falhar se UazAPI não retornar, apenas logar
     }
 
+    const providerUrlRaw = Array.isArray(uazapiWebhook)
+      ? (uazapiWebhook[0] as { url?: string } | undefined)?.url
+      : (uazapiWebhook as { url?: string } | null)?.url;
+    const providerUrl = typeof providerUrlRaw === 'string' ? providerUrlRaw : null;
+    const synced = Boolean(
+      canonicalCallbackUrl && providerUrl && canonicalCallbackUrl === providerUrl,
+    );
+
     res.json({
       instanceId: id,
       webhookStatus: {
-        has_secret: isSecretStrongEnough(normalizeIncomingWebhookSecret((instance as any).webhook_secret) ?? null),
-        needs_reconfiguration: Boolean((instance as any).webhook_needs_reconfiguration),
+        has_secret: isSecretStrongEnough(columnSecret ?? null),
+        needs_reconfiguration:
+          Boolean((instance as any).webhook_needs_reconfiguration) ||
+          (providerUrl != null && !synced),
         last_seen_at: (instance as any).webhook_secret_last_seen_at ?? null,
+        callback_url: canonicalCallbackUrl,
+        provider_url: providerUrl,
+        synced,
       },
       database: dbWebhook,
       uazapi: uazapiWebhook,
-      synced: dbWebhook && uazapiWebhook ? 
-        dbWebhook.url === (Array.isArray(uazapiWebhook) ? (uazapiWebhook[0] as any)?.url : (uazapiWebhook as any)?.url) : 
-        false,
+      synced,
     });
   } catch (error: any) {
     console.error('Error getting webhook configuration:', error);
@@ -5148,7 +5187,7 @@ export async function forceConfigureWebhook(req: AuthRequest, res: Response) {
       instance: instance.external_instance_name,
     });
 
-    await autoConfigureWebhook(instance);
+    await autoConfigureWebhook(instance, { force: true });
 
     // Buscar webhook configurado
     let webhookResult = null;
@@ -5178,7 +5217,7 @@ export async function reconfigureInstanceWebhook(req: AuthRequest, res: Response
 
     const previousSecret = normalizeIncomingWebhookSecret((instance as any).webhook_secret) ?? null;
     const tenantId = await resolveTenantIdForUser(userId);
-    await autoConfigureWebhook(instance);
+    await autoConfigureWebhook(instance, { force: true });
 
     const fresh = await pool.query<ChatInstanceRow>('SELECT * FROM chat_instances WHERE id = $1 LIMIT 1', [id]);
     const row = fresh.rows[0];
@@ -5240,7 +5279,7 @@ export async function repairInstanceWebhook(req: AuthRequest, res: Response) {
       return;
     }
 
-    await autoConfigureWebhook(inst);
+    await autoConfigureWebhook(inst, { force: true });
 
     const after = await pool.query<ChatInstanceRow>('SELECT * FROM chat_instances WHERE id = $1 LIMIT 1', [id]);
     const row = after.rows[0];
@@ -5295,23 +5334,25 @@ export async function rotateInstanceWebhookSecret(req: AuthRequest, res: Respons
       return;
     }
 
+    const defaultEvents = ['messages', 'messages_update', 'chats', 'connection', 'leads'];
+    const defaultExcludeMessages = ['wasSentByApi'];
     const webhookBody: Record<string, any> = {
       enabled: true,
       url: callbackUrl,
-      events: ['messages', 'messages_update', 'chats', 'connection', 'leads'],
-      excludeMessages: ['wasSentByApi'],
+      events: defaultEvents,
+      excludeMessages: defaultExcludeMessages,
       addUrlEvents: true,
       AddUrlTypesMessages: true,
       secret: nextSecret,
     };
     await uazapiService.configureWebhook(instance.instance_token, webhookBody);
 
+    // last_seen só no ingress real — rotate não simula delivery.
     await pool.query(
       `UPDATE chat_instances
        SET webhook_secret = $1,
            webhook_secret_version = COALESCE(webhook_secret_version, 1) + 1,
            webhook_secret_created_at = COALESCE(webhook_secret_created_at, now()),
-           webhook_secret_last_seen_at = now(),
            webhook_needs_reconfiguration = false,
            metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
            updated_at = now()
@@ -5323,6 +5364,21 @@ export async function rotateInstanceWebhookSecret(req: AuthRequest, res: Respons
           webhook_url: callbackUrl,
           webhook_previous_secret_mask: maskSecretForLogs(previousSecret),
           webhook_rotated_at: new Date().toISOString(),
+          webhook: {
+            url: callbackUrl,
+            webhookSecretInQuery: useLegacyQueryWebhookUrlRegistration(),
+            webhookSecretMask: maskSecretForLogs(nextSecret),
+            webhook_route_version: useLegacyQueryWebhookUrlRegistration() ? 'v1' : 'v2',
+            path_based_webhook: !useLegacyQueryWebhookUrlRegistration(),
+            events: defaultEvents,
+            excludeMessages: defaultExcludeMessages,
+            configuredAt: new Date().toISOString(),
+            autoConfigured: false,
+            rotated: true,
+            needsReconfigure: false,
+            uazDeliverySecrets: [nextSecret],
+            uazDeliverySecretsSyncedAt: new Date().toISOString(),
+          },
         }),
         id,
       ]
@@ -12005,8 +12061,19 @@ function logSanitizedUazGetWebhookAudit(
       const x = new URL(u);
       const host = x.host;
       const path = truncateWebhookDebugLabel(x.pathname, 48);
-      const iid = x.searchParams.get('instanceId') ?? x.searchParams.get('instance_id');
-      const sec = x.searchParams.get('secret');
+      const iid =
+        x.searchParams.get('instanceId') ??
+        x.searchParams.get('instance_id') ??
+        (() => {
+          const m = x.pathname.match(/\/v2\/([0-9a-f-]{36})\//i);
+          return m?.[1] ?? null;
+        })();
+      const sec =
+        x.searchParams.get('secret') ??
+        (() => {
+          const m = x.pathname.match(/\/v2\/[0-9a-f-]{36}\/([^/?#]+)/i);
+          return m?.[1] ? decodeURIComponent(m[1]) : null;
+        })();
       const secLen = sec?.length ?? 0;
       const secFp = webhookSecretFingerprint(sec);
       const hay = `${host}${path}${u}`;
@@ -12031,13 +12098,23 @@ function logSanitizedUazGetWebhookAudit(
     const matchUrl = urls.find((urlStr) => {
       try {
         const x = new URL(urlStr);
-        return (x.searchParams.get('instanceId') ?? x.searchParams.get('instance_id')) === instanceId;
+        const qid = x.searchParams.get('instanceId') ?? x.searchParams.get('instance_id');
+        if (qid === instanceId) return true;
+        const m = x.pathname.match(/\/v2\/([0-9a-f-]{36})\//i);
+        return m?.[1] === instanceId;
       } catch {
         return false;
       }
     });
     if (matchUrl) {
-      const secLen = new URL(matchUrl).searchParams.get('secret')?.length ?? 0;
+      const x = new URL(matchUrl);
+      const sec =
+        x.searchParams.get('secret') ??
+        (() => {
+          const m = x.pathname.match(/\/v2\/[0-9a-f-]{36}\/([^/?#]+)/i);
+          return m?.[1] ? decodeURIComponent(m[1]) : null;
+        })();
+      const secLen = sec?.length ?? 0;
       lengthsMatchHint = secLen > 0 && secLen === effectiveSecret.trim().length;
     }
   } catch {

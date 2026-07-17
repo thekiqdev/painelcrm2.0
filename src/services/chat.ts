@@ -59,6 +59,10 @@ export type ChatInstanceWebhookStatusResponse = {
     has_secret: boolean;
     needs_reconfiguration: boolean;
     last_seen_at: string | null;
+    /** URL canónica a partir da coluna webhook_secret (autoridade local). */
+    callback_url?: string | null;
+    provider_url?: string | null;
+    synced?: boolean;
   };
   database?: Record<string, unknown> | null;
   uazapi?: unknown;
