@@ -312,6 +312,7 @@ Se latest page / race / geração descartada / scroll, a bolha mais recente do p
 | TF7 · E3 Espelho + force | [`SPRINT_TF7_E3_CLOSEOUT.md`](./SPRINT_TF7_E3_CLOSEOUT.md) | **CLOSED** |
 | TF7 · E4 Harden / Float | [`SPRINT_TF7_E4_CLOSEOUT.md`](./SPRINT_TF7_E4_CLOSEOUT.md) | **CLOSED** (aguarda QA) |
 | **TF8** · Shell load / escala F5 | [`PLAN_TF8_SHELL_LOAD_SCALE.md`](./PLAN_TF8_SHELL_LOAD_SCALE.md) · [`SPRINT_TF8_CLOSEOUT.md`](./SPRINT_TF8_CLOSEOUT.md) | **CLOSED** (aguarda QA F5) |
+| TF7+TF8 · Resumo consulta | [`SUMMARY_TF7_TF8_WARM_SHELL_SCALE.md`](./SUMMARY_TF7_TF8_WARM_SHELL_SCALE.md) | mapa executivo |
 | TF8 · E1 F5 skip WS | [`SPRINT_TF8_E1_CLOSEOUT.md`](./SPRINT_TF8_E1_CLOSEOUT.md) | **CLOSED** |
 | TF8 · E2 operations-dashboard | [`SPRINT_TF8_E2_CLOSEOUT.md`](./SPRINT_TF8_E2_CLOSEOUT.md) | **CLOSED** |
 | TF8 · E3 warmup msgs | [`SPRINT_TF8_E3_CLOSEOUT.md`](./SPRINT_TF8_E3_CLOSEOUT.md) | **CLOSED** |
