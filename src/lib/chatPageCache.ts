@@ -50,6 +50,28 @@ export function buildChatPageFiltersKey(parts: Record<string, unknown>): string 
   return JSON.stringify(parts);
 }
 
+/**
+ * TF7 E4 — chave alinhada Chat↔Float (defaults de attendance/channel/listFilter).
+ * Warm Float só acerta se o Chat gravou com os mesmos defaults (ou filtros iguais).
+ */
+export function buildDefaultChatPageInboxFiltersKey(parts: {
+  tenantId: string;
+  inboxScope: string;
+  instanceIds: readonly string[];
+  attendance?: string;
+  channel?: string;
+  listFilter?: string;
+}): string {
+  return buildChatPageFiltersKey({
+    tenant: parts.tenantId ?? '',
+    inbox: parts.inboxScope,
+    attendance: parts.attendance ?? '',
+    channel: parts.channel ?? 'all',
+    listFilter: parts.listFilter ?? 'all',
+    instances: [...parts.instanceIds].sort().join(','),
+  });
+}
+
 export function clearChatPageCacheForSession(scope: ChatPageCacheScope): void {
   try {
     localStorage.removeItem(scopedKey(scope));
@@ -66,6 +88,7 @@ export function readChatPageCache(
   conversations: ChatConversation[];
   lastConversationId: string | null;
   messagesByConversation: Record<string, ChatMessage[]>;
+  updatedAt: number;
 } | null {
   const raw = readRaw(scope);
   if (!raw) return null;
@@ -74,7 +97,19 @@ export function readChatPageCache(
     conversations: raw.conversations,
     lastConversationId: raw.lastConversationId,
     messagesByConversation: raw.messagesByConversation ?? {},
+    updatedAt: raw.updatedAt ?? 0,
   };
+}
+
+/** TF7 E2 — timestamp do último seed/espelho (para freshness / skip GET). */
+export function readChatPageCacheUpdatedAt(
+  scope: ChatPageCacheScope,
+  filtersKey: string,
+): number | null {
+  const raw = readRaw(scope);
+  if (!raw) return null;
+  if (raw.filtersKey !== filtersKey) return null;
+  return typeof raw.updatedAt === 'number' ? raw.updatedAt : null;
 }
 
 export function saveChatPageConversations(

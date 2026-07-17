@@ -306,6 +306,16 @@ Se latest page / race / geração descartada / scroll, a bolha mais recente do p
 | 4 · Chat latest parity | `SPRINT_TF4_CLOSEOUT.md` | **CLOSED** (aguardando teste) |
 | **TF5** · Dup WS + ordem lista | `SPRINT_TF5_CLOSEOUT.md` (+ [`AUDIT_TF5_…`](./AUDIT_TF5_DUPLICATE_MESSAGES_INBOX_ORDER.md)) | **CLOSED** (aguardando teste) |
 | **TF6** · Pressão load inbox | [`SPRINT_TF6_CLOSEOUT.md`](./SPRINT_TF6_CLOSEOUT.md) (+ audit/plan) | **CLOSED** (aguardando teste + ops) |
+| **TF7** · Warm Store + TTL + force sync | [`PLAN_TF7_WARM_STORE_CACHE.md`](./PLAN_TF7_WARM_STORE_CACHE.md) (+ [`AUDIT_TF7_…`](./AUDIT_TF7_WARM_STORE_CACHE.md)) · [`SPRINT_TF7_CLOSEOUT.md`](./SPRINT_TF7_CLOSEOUT.md) | **CLOSED** (E1–E4; aguarda QA) |
+| TF7 · E1 Warm | [`SPRINT_TF7_E1_CLOSEOUT.md`](./SPRINT_TF7_E1_CLOSEOUT.md) | **CLOSED** |
+| TF7 · E2 TTL longo | [`SPRINT_TF7_E2_CLOSEOUT.md`](./SPRINT_TF7_E2_CLOSEOUT.md) | **CLOSED** |
+| TF7 · E3 Espelho + force | [`SPRINT_TF7_E3_CLOSEOUT.md`](./SPRINT_TF7_E3_CLOSEOUT.md) | **CLOSED** |
+| TF7 · E4 Harden / Float | [`SPRINT_TF7_E4_CLOSEOUT.md`](./SPRINT_TF7_E4_CLOSEOUT.md) | **CLOSED** (aguarda QA) |
+| **TF8** · Shell load / escala F5 | [`PLAN_TF8_SHELL_LOAD_SCALE.md`](./PLAN_TF8_SHELL_LOAD_SCALE.md) · [`SPRINT_TF8_CLOSEOUT.md`](./SPRINT_TF8_CLOSEOUT.md) | **CLOSED** (aguarda QA F5) |
+| TF8 · E1 F5 skip WS | [`SPRINT_TF8_E1_CLOSEOUT.md`](./SPRINT_TF8_E1_CLOSEOUT.md) | **CLOSED** |
+| TF8 · E2 operations-dashboard | [`SPRINT_TF8_E2_CLOSEOUT.md`](./SPRINT_TF8_E2_CLOSEOUT.md) | **CLOSED** |
+| TF8 · E3 warmup msgs | [`SPRINT_TF8_E3_CLOSEOUT.md`](./SPRINT_TF8_E3_CLOSEOUT.md) | **CLOSED** |
+| TF8 · E4 shell polls | [`SPRINT_TF8_E4_CLOSEOUT.md`](./SPRINT_TF8_E4_CLOSEOUT.md) | **CLOSED** |
 
 ---
 
@@ -313,7 +323,7 @@ Se latest page / race / geração descartada / scroll, a bolha mais recente do p
 
 | | |
 |---|---|
-| Plano | **ATIVO** (TF1–TF6 entregues; aguarda QA) |
+| Plano | **CLOSED** (TF1–TF8; aguarda QA F5 final) |
 | Predecessor | Ownership Closure **CLOSED** |
-| Ordem | **… → TF5 dedupe → TF6 inbox load (flag + limit50 + coalesce)** |
-| Próximo comando | **Ops:** confirmar shadow OFF → teste manual TF6 |
+| Ordem | **… → TF7 warm → TF8 shell (E1→E2→E3→E4)** |
+| Próximo comando | **QA F5 TF8** (checklist em `SPRINT_TF8_CLOSEOUT.md`) |

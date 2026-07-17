@@ -13,7 +13,11 @@ import {
   recordWarmWindowMiss,
 } from '../metrics/prefetchMetrics';
 
-export const DEFAULT_WARM_CONVERSATION_COUNT = 5;
+/**
+ * TF8 E3 — Cap warmup de mensagens (selected + 0–1 vizinho).
+ * Antes F6.6 usava 5; em F5 gerava 5× GET /messages em sequência.
+ */
+export const DEFAULT_WARM_CONVERSATION_COUNT = 2;
 
 export type WarmWindowEntry = {
   conversationId: ChatConversationId;
@@ -132,12 +136,15 @@ export function createWarmWindowEngine(
 
 /** Sessão singleton do Warm Window (Chat principal). */
 let sessionEngine: WarmWindowEngine | null = null;
+let sessionCapacity = 0;
 
 export function getWarmWindowEngine(
   capacity: number = DEFAULT_WARM_CONVERSATION_COUNT,
 ): WarmWindowEngine {
-  if (!sessionEngine) {
-    sessionEngine = createWarmWindowEngine(capacity);
+  const limit = Math.max(1, capacity);
+  if (!sessionEngine || sessionCapacity !== limit) {
+    sessionEngine = createWarmWindowEngine(limit);
+    sessionCapacity = limit;
   }
   return sessionEngine;
 }
@@ -146,4 +153,5 @@ export function getWarmWindowEngine(
 export function resetWarmWindowEngineForTests(): void {
   sessionEngine?.clear();
   sessionEngine = null;
+  sessionCapacity = 0;
 }

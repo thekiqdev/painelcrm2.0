@@ -27,7 +27,7 @@ export type UseConversationWarmupParams = {
     lastMessageAt?: string | null;
   }[];
   enabled?: boolean;
-  /** Capacidade da warm window (default 5). */
+  /** Capacidade da warm window (default 2 — TF8 E3). */
   warmCount?: number;
 };
 

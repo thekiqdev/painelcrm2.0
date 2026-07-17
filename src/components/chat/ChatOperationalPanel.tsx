@@ -40,11 +40,11 @@ export const ChatOperationalPanel: React.FC<Props> = ({
   const [data, setData] = useState<ChatOperationsDashboardDto | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (force = false) => {
     if (!enabled) return;
     setLoading(true);
     try {
-      const d = await chatService.getOperationsDashboard();
+      const d = await chatService.getOperationsDashboard({ force });
       if (d) {
         setData(d);
         onSlaContext(buildSlaContextFromDashboard(d));
@@ -58,7 +58,8 @@ export const ChatOperationalPanel: React.FC<Props> = ({
   }, [enabled, onSlaContext]);
 
   useEffect(() => {
-    void load();
+    // refreshTrigger > 0 = refresh explícito → força GET; mount inicial usa TTL/cache.
+    void load(refreshTrigger > 0);
   }, [load, refreshTrigger]);
 
   if (!enabled) return null;

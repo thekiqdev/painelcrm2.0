@@ -1,10 +1,11 @@
 /**
  * F5.9 — único pipeline Repository → Command → Domain Store (inbox).
- * TF6 — limit=50, cursor/load-more, TTL coalesce.
+ * TF6 — limit=50, cursor/load-more, coalesce.
+ * TF7 E2 — freshness TTL longo + skip GET (WS connected vs disconnected).
  */
 
 import type { ChatConversation } from '@/services/chat';
-import type { ChatDomainConversation, ChatInboxScope, ChatInstanceId } from '../domain/types';
+import type { ChatDomainConversation } from '../domain/types';
 import { mapLegacyConversationToDomain } from '../store/domainMappers';
 import {
   applyStoreConversationListInternal,
@@ -18,13 +19,22 @@ import {
   type ChatConversationsListResult,
 } from '@/repositories/chatConversationsRepository';
 import { fetchInboxConversationsPage, type LoadInboxFetchParams, type LoadInboxSurface } from './inboxFetch';
+import {
+  chatRealtimeBridge,
+  subscribeChatRealtimeBridgeStatus,
+} from '../realtime/bridge';
+import {
+  clearChatPageCacheForSession,
+  type ChatPageCacheScope,
+} from '@/lib/chatPageCache';
+import { logInboxCacheEvent } from './inboxCacheDiag';
 
 export type LoadInboxParams = LoadInboxFetchParams & {
   /** Quando true, permite gravar lista vazia no Store. */
   allowEmpty?: boolean;
   /** replace = 1ª página; append = “Carregar mais”. */
   mode?: 'replace' | 'append';
-  /** Ignora TTL / in-flight stale short-circuit. */
+  /** Ignora freshness / in-flight stale short-circuit. */
   force?: boolean;
 };
 
@@ -40,8 +50,14 @@ export type LoadInboxResult = {
   source: ChatConversationsListResult['source'] | 'cache';
 };
 
-/** TTL leve — evita storm Chat+Float no mesmo filtro. */
+/** TTL legado TF6 (coalesce curto) — mantido para compat; E2 usa FRESH. */
 export const INBOX_LOAD_TTL_MS = 20_000;
+
+/** TF7 E2 — skip GET enquanto fresco e WS conectado (SPA + pós-warm). */
+export const INBOX_FRESH_TTL_MS = 5 * 60_000;
+
+/** TF7 E2 — TTL mais curto quando realtime não está connected (missed events). */
+export const INBOX_FRESH_TTL_DISCONNECTED_MS = 30_000;
 
 let loadInboxGeneration = 0;
 const inFlight = new Map<string, Promise<LoadInboxResult>>();
@@ -53,14 +69,18 @@ type InboxSuccessCache = {
   hasMore: boolean;
 };
 
-const lastSuccessByFilterKey = new Map<string, InboxSuccessCache>();
-const pageMetaByFilterKey = new Map<string, { nextCursor: string | null; hasMore: boolean }>();
+/** Chave sem `surface` — Chat e Float compartilham freshness (TF7 E2 / 2.5). */
+const lastSuccessByFreshnessKey = new Map<string, InboxSuccessCache>();
+const pageMetaByFreshnessKey = new Map<string, { nextCursor: string | null; hasMore: boolean }>();
 
-function buildFilterKey(params: LoadInboxParams): string {
+/** TF8 E1 — um soft reconcile pendente após seed disk com WS down. */
+let pendingSoftReconcileParams: LoadInboxParams | null = null;
+let softReconcileStatusUnsub: (() => void) | null = null;
+
+function buildFreshnessKey(params: LoadInboxParams): string {
   const {
     instanceIds,
     inboxScope,
-    surface = 'chat',
     quickFilter = 'all',
     attendanceFilter = '',
     channelOrigin = 'all',
@@ -70,7 +90,6 @@ function buildFilterKey(params: LoadInboxParams): string {
   return JSON.stringify({
     ids: [...instanceIds].sort(),
     inboxScope,
-    surface,
     quickFilter,
     attendanceFilter: attendanceFilter ?? '',
     channelOrigin,
@@ -81,11 +100,27 @@ function buildFilterKey(params: LoadInboxParams): string {
 
 function buildLoadKey(params: LoadInboxParams): string {
   return JSON.stringify({
-    filter: buildFilterKey(params),
+    filter: buildFreshnessKey(params),
     cursor: params.cursor ?? null,
     mode: params.mode ?? 'replace',
     limit: params.limit ?? DEFAULT_INBOX_PAGE_SIZE,
   });
+}
+
+/** True se o bridge/socket realtime está apto a manter a inbox fresca via WS. */
+export function isChatRealtimeConnectedForInboxFresh(): boolean {
+  try {
+    if (chatRealtimeBridge.status === 'connected') return true;
+    return chatRealtimeBridge.getSocket()?.connected === true;
+  } catch {
+    return false;
+  }
+}
+
+export function getEffectiveInboxFreshTtlMs(): number {
+  return isChatRealtimeConnectedForInboxFresh()
+    ? INBOX_FRESH_TTL_MS
+    : INBOX_FRESH_TTL_DISCONNECTED_MS;
 }
 
 function shouldWriteToStore(items: ChatConversation[], allowEmpty: boolean): boolean {
@@ -134,12 +169,131 @@ function mergeConversationLists(
   return [...byId.values()];
 }
 
-/** Invalida loads em voo e opcionalmente limpa o Store. */
-export function clearInboxCommand(options?: { allowEmpty?: boolean }): void {
+function resultFromStore(meta: { nextCursor: string | null; hasMore: boolean }): LoadInboxResult {
+  const store = getChatDomainStoreSession();
+  const items = store ? selectConversationsForUi(store.getState()) : [];
+  const domain = items.map(mapLegacyConversationToDomain);
+  return {
+    items,
+    domain,
+    applied: false,
+    stale: false,
+    nextCursor: meta.nextCursor,
+    hasMore: meta.hasMore,
+    source: 'cache',
+  };
+}
+
+/**
+ * TF7 E2 / TF8 E1 — após warm, semeia freshness a partir de `chatPageCache.updatedAt`.
+ * Seed de disk usa sempre TTL **longo** (5 min), independente do WS no instante do F5.
+ * Revalidate em sessão continua via `getEffectiveInboxFreshTtlMs()` em `loadInboxCommand`.
+ */
+export function markInboxFreshFromClient(params: LoadInboxParams, at: number): boolean {
+  if (!shouldUseChatDomainStore()) return false;
+  if (!Number.isFinite(at) || at <= 0) return false;
+  if (readStoreConversationCount() <= 0) return false;
+
+  const freshnessKey = buildFreshnessKey(params);
+  const age = Date.now() - at;
+  // TF8 E1: seed disk ≠ TTL disconnected (30s)
+  if (age < 0 || age >= INBOX_FRESH_TTL_MS) return false;
+
+  const meta = pageMetaByFreshnessKey.get(freshnessKey) ?? {
+    nextCursor: null,
+    hasMore: false,
+  };
+  const result = resultFromStore(meta);
+  // `at` = agora: permite skip imediato no boot mesmo com WS down (TTL sessão 30s).
+  // A frescura do disk já foi validada acima com INBOX_FRESH_TTL_MS.
+  lastSuccessByFreshnessKey.set(freshnessKey, {
+    at: Date.now(),
+    result,
+    ...meta,
+  });
+  return true;
+}
+
+function ensureSoftReconcileWired(): void {
+  if (softReconcileStatusUnsub) return;
+  softReconcileStatusUnsub = subscribeChatRealtimeBridgeStatus((status) => {
+    if (status !== 'connected') return;
+    flushPendingInboxSoftReconcile();
+  });
+}
+
+/**
+ * TF8 E1 — após seed+skip com WS down, agenda 1× force quando o realtime conectar.
+ * Se WS já connected: no-op (SPA / sessão viva — TTL cobre).
+ */
+export function scheduleInboxSoftReconcileOnRealtimeConnected(params: LoadInboxParams): void {
+  if (!shouldUseChatDomainStore()) return;
+  if (isChatRealtimeConnectedForInboxFresh()) {
+    logInboxCacheEvent('inbox_soft_reconcile', { scheduled: false, reason: 'ws_already_connected' });
+    return;
+  }
+  pendingSoftReconcileParams = {
+    ...params,
+    mode: 'replace',
+    force: undefined,
+  };
+  ensureSoftReconcileWired();
+  logInboxCacheEvent('inbox_soft_reconcile', { scheduled: true, reason: 'await_ws_connected' });
+}
+
+function flushPendingInboxSoftReconcile(): void {
+  const pending = pendingSoftReconcileParams;
+  if (!pending) return;
+  pendingSoftReconcileParams = null;
+  logInboxCacheEvent('inbox_soft_reconcile', { scheduled: false, reason: 'ws_connected_force' });
+  void loadInboxCommand({
+    ...pending,
+    force: true,
+    mode: 'replace',
+  });
+}
+
+/** @internal testes */
+export function getPendingInboxSoftReconcileForTests(): LoadInboxParams | null {
+  return pendingSoftReconcileParams;
+}
+
+/** @internal testes — simula bridge connected. */
+export function flushInboxSoftReconcileForTests(): void {
+  flushPendingInboxSoftReconcile();
+}
+
+/** TF7 E3 / TF8 — limpa freshness/in-flight sem esvaziar o Store. */
+export function invalidateInboxFreshness(): void {
   loadInboxGeneration += 1;
   inFlight.clear();
-  lastSuccessByFilterKey.clear();
-  pageMetaByFilterKey.clear();
+  lastSuccessByFreshnessKey.clear();
+  pageMetaByFreshnessKey.clear();
+  pendingSoftReconcileParams = null;
+}
+
+/**
+ * TF7 E3 — force GET da inbox (ignora TTL).
+ * Com `clearPageCacheScope`, apaga localStorage e força rede (hard sync).
+ */
+export async function forceReloadInboxCommand(
+  params: LoadInboxParams,
+  options?: { clearPageCacheScope?: ChatPageCacheScope },
+): Promise<LoadInboxResult> {
+  invalidateInboxFreshness();
+  if (options?.clearPageCacheScope) {
+    clearChatPageCacheForSession(options.clearPageCacheScope);
+  }
+  return loadInboxCommand({
+    ...params,
+    force: true,
+    mode: 'replace',
+  });
+}
+
+/** Invalida loads em voo e opcionalmente limpa o Store. */
+export function clearInboxCommand(options?: { allowEmpty?: boolean }): void {
+  invalidateInboxFreshness();
   if (!shouldUseChatDomainStore()) return;
   if (options?.allowEmpty !== false) {
     ensureChatDomainStoreSession();
@@ -153,7 +307,7 @@ export function getInboxPageMeta(params: LoadInboxParams): {
   hasMore: boolean;
 } {
   return (
-    pageMetaByFilterKey.get(buildFilterKey(params)) ?? {
+    pageMetaByFreshnessKey.get(buildFreshnessKey(params)) ?? {
       nextCursor: null,
       hasMore: false,
     }
@@ -169,8 +323,9 @@ export function getLoadInboxGenerationForTests(): number {
 export function resetLoadInboxStateForTests(): void {
   loadInboxGeneration = 0;
   inFlight.clear();
-  lastSuccessByFilterKey.clear();
-  pageMetaByFilterKey.clear();
+  lastSuccessByFreshnessKey.clear();
+  pageMetaByFreshnessKey.clear();
+  pendingSoftReconcileParams = null;
 }
 
 /**
@@ -179,16 +334,24 @@ export function resetLoadInboxStateForTests(): void {
  */
 export async function loadInboxCommand(params: LoadInboxParams): Promise<LoadInboxResult> {
   const mode = params.mode ?? 'replace';
-  const filterKey = buildFilterKey(params);
+  const freshnessKey = buildFreshnessKey(params);
   const force = params.force === true;
 
   if (mode === 'replace' && !force && shouldUseChatDomainStore()) {
-    const cached = lastSuccessByFilterKey.get(filterKey);
+    const cached = lastSuccessByFreshnessKey.get(freshnessKey);
+    const ttl = getEffectiveInboxFreshTtlMs();
     if (
       cached &&
-      Date.now() - cached.at < INBOX_LOAD_TTL_MS &&
+      Date.now() - cached.at < ttl &&
       readStoreConversationCount() > 0
     ) {
+      logInboxCacheEvent('inbox_fetch_skipped_fresh', {
+        ttlMs: ttl,
+        ageMs: Date.now() - cached.at,
+        storeCount: readStoreConversationCount(),
+        reason: isChatRealtimeConnectedForInboxFresh() ? 'ws_connected' : 'disk_seed_or_session',
+        wsConnected: isChatRealtimeConnectedForInboxFresh(),
+      });
       return {
         ...cached.result,
         applied: false,
@@ -207,6 +370,9 @@ export async function loadInboxCommand(params: LoadInboxParams): Promise<LoadInb
   const task = (async (): Promise<LoadInboxResult> => {
     const generation = ++loadInboxGeneration;
     try {
+      if (mode === 'replace') {
+        logInboxCacheEvent('inbox_fetch_network', { force, storeCount: readStoreConversationCount() });
+      }
       const page = await fetchInboxConversationsPage({
         ...params,
         limit: params.limit ?? DEFAULT_INBOX_PAGE_SIZE,
@@ -219,7 +385,7 @@ export async function loadInboxCommand(params: LoadInboxParams): Promise<LoadInb
         nextCursor: page.nextCursor,
         hasMore: page.hasMore,
       };
-      pageMetaByFilterKey.set(filterKey, pageMeta);
+      pageMetaByFreshnessKey.set(freshnessKey, pageMeta);
 
       if (generation !== loadInboxGeneration) {
         return {
@@ -242,7 +408,7 @@ export async function loadInboxCommand(params: LoadInboxParams): Promise<LoadInb
           source: page.source,
         };
         if (mode === 'replace') {
-          lastSuccessByFilterKey.set(filterKey, {
+          lastSuccessByFreshnessKey.set(freshnessKey, {
             at: Date.now(),
             result,
             ...pageMeta,
@@ -273,7 +439,7 @@ export async function loadInboxCommand(params: LoadInboxParams): Promise<LoadInb
         source: page.source,
       };
       if (mode === 'replace' && applied) {
-        lastSuccessByFilterKey.set(filterKey, {
+        lastSuccessByFreshnessKey.set(freshnessKey, {
           at: Date.now(),
           result,
           ...pageMeta,
@@ -287,6 +453,30 @@ export async function loadInboxCommand(params: LoadInboxParams): Promise<LoadInb
 
   inFlight.set(loadKey, task);
   return task;
+}
+
+/**
+ * TF8 E4 — se um loadInbox (ex. limit=50) já está em voo, o bubble pode juntar-se
+ * em vez de abrir GET limit=4 paralelo.
+ */
+export function getInFlightInboxLoad(
+  params: LoadInboxParams,
+): Promise<LoadInboxResult> | null {
+  const loadKey = buildLoadKey({
+    ...params,
+    mode: params.mode ?? 'replace',
+    limit: params.limit ?? DEFAULT_INBOX_PAGE_SIZE,
+  });
+  return inFlight.get(loadKey) ?? null;
+}
+
+/** TF8 E4 — items da última inbox fresca (sem HTTP). */
+export function peekFreshInboxItems(params: LoadInboxParams): ChatConversation[] | null {
+  const freshnessKey = buildFreshnessKey(params);
+  const cached = lastSuccessByFreshnessKey.get(freshnessKey);
+  if (!cached) return null;
+  if (Date.now() - cached.at >= getEffectiveInboxFreshTtlMs()) return null;
+  return cached.result.items;
 }
 
 /**

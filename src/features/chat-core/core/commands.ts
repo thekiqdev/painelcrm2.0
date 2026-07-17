@@ -36,14 +36,40 @@ export {
   loadInboxCommand,
   clearInboxCommand,
   loadMoreInboxCommand,
+  forceReloadInboxCommand,
+  invalidateInboxFreshness,
   getInboxPageMeta,
+  markInboxFreshFromClient,
+  getEffectiveInboxFreshTtlMs,
+  isChatRealtimeConnectedForInboxFresh,
+  scheduleInboxSoftReconcileOnRealtimeConnected,
   DEFAULT_INBOX_PAGE_SIZE,
   INBOX_LOAD_TTL_MS,
+  INBOX_FRESH_TTL_MS,
+  INBOX_FRESH_TTL_DISCONNECTED_MS,
   mergeConversationLists,
+  getInFlightInboxLoad,
+  peekFreshInboxItems,
   type LoadInboxParams,
   type LoadInboxResult,
   type LoadInboxSurface,
 } from './loadInbox';
+export {
+  resolveBubbleRecentConversations,
+  peekBubbleRecentFromDomainStore,
+} from './resolveBubbleRecent';
+export {
+  warmInboxFromPageCache,
+  type WarmInboxFromPageCacheParams,
+  type WarmInboxFromPageCacheResult,
+} from './warmInboxFromPageCache';
+export {
+  mirrorStoreInboxToPageCache,
+  mirrorStoreMessagesToPageCache,
+  attachInboxPageCacheMirror,
+  INBOX_PAGE_CACHE_MIRROR_MAX,
+} from './inboxPageCacheMirror';
+export { logInboxCacheEvent, type InboxCacheDiagEvent } from './inboxCacheDiag';
 export {
   loadMessagesCommand,
   openConversationMessagesCommand,

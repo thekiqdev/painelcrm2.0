@@ -1,6 +1,7 @@
 /**
  * F5.2 — hook da lista de conversas do Floating Chat (Store ou React Query).
  * TF6 — limit=50 + load more + page meta.
+ * TF7 E4 — warm + freshness + mirror + force (parity com Chat).
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
@@ -15,13 +16,24 @@ import {
   type ChatInboxScope,
 } from '@/repositories/chatConversationsRepository';
 import {
+  buildDefaultChatPageInboxFiltersKey,
+  readChatPageCacheUpdatedAt,
+  type ChatPageCacheScope,
+} from '@/lib/chatPageCache';
+import { useAuth } from '@/contexts/AuthContext';
+import {
   getInboxPageMeta,
   loadInboxCommand,
   loadMoreInboxCommand,
+  forceReloadInboxCommand,
   mergeConversationLists,
+  warmInboxFromPageCache,
+  markInboxFreshFromClient,
+  mirrorStoreInboxToPageCache,
+  scheduleInboxSoftReconcileOnRealtimeConnected,
 } from '../../core/commands';
 import { shouldUseChatDomainStore } from '../flags';
-import { getChatDomainStoreSession } from '../session';
+import { ensureChatDomainStoreSession, getChatDomainStoreSession } from '../session';
 import { EMPTY_CHAT_DOMAIN_STATE } from '../state';
 import {
   selectConversationsForUi,
@@ -43,6 +55,8 @@ export type FloatingConversationListData = {
   hasMore: boolean;
   isLoadingMore: boolean;
   loadMore: () => Promise<void>;
+  /** TF7 E4 — force GET (ignora TTL); opcional limpar disk. */
+  refreshInbox: (opts?: { clearLocalCache?: boolean }) => Promise<void>;
 };
 
 export function useFloatingConversationListData(params: {
@@ -54,6 +68,25 @@ export function useFloatingConversationListData(params: {
   const useStore = shouldUseChatDomainStore();
   const { instanceIds, inboxScope, quick, listOpen } = params;
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+
+  const cacheScope = useMemo<ChatPageCacheScope>(
+    () => ({
+      tenantId: user?.tenant_id ?? '__owner__',
+      userId: user?.id ?? '',
+    }),
+    [user?.tenant_id, user?.id],
+  );
+
+  const pageFiltersKey = useMemo(
+    () =>
+      buildDefaultChatPageInboxFiltersKey({
+        tenantId: user?.tenant_id ?? '',
+        inboxScope,
+        instanceIds,
+      }),
+    [user?.tenant_id, inboxScope, instanceIds],
+  );
 
   const [rqHasMore, setRqHasMore] = useState(false);
   const [rqNextCursor, setRqNextCursor] = useState<string | null>(null);
@@ -119,6 +152,30 @@ export function useFloatingConversationListData(params: {
   const loadStoreInbox = useCallback(async () => {
     if (!useStore || !listOpen || instanceIds.length === 0) return;
     const generation = ++loadGenerationRef.current;
+    ensureChatDomainStoreSession();
+
+    // TF7 E4 — warm + seed freshness (mesmo contrato Chat E1/E2).
+    if (cacheScope.userId) {
+      const warm = warmInboxFromPageCache({
+        scope: cacheScope,
+        filtersKey: pageFiltersKey,
+      });
+      if (warm.warmed && warm.cachedUpdatedAt != null) {
+        const seeded = markInboxFreshFromClient(inboxParams, warm.cachedUpdatedAt);
+        if (seeded) {
+          scheduleInboxSoftReconcileOnRealtimeConnected(inboxParams);
+        }
+      } else if (!warm.warmed) {
+        const diskAt = readChatPageCacheUpdatedAt(cacheScope, pageFiltersKey);
+        if (diskAt != null) {
+          const seeded = markInboxFreshFromClient(inboxParams, diskAt);
+          if (seeded) {
+            scheduleInboxSoftReconcileOnRealtimeConnected(inboxParams);
+          }
+        }
+      }
+    }
+
     const cachedCount = getChatDomainStoreSession()?.getState().conversations.orderedIds.length ?? 0;
     setStoreLoading(cachedCount === 0);
     setStoreFetching(true);
@@ -128,6 +185,10 @@ export function useFloatingConversationListData(params: {
       if (generation !== loadGenerationRef.current) return;
 
       setStoreHasMore(result.hasMore || getInboxPageMeta(inboxParams).hasMore);
+
+      if (result.source !== 'cache' && result.applied && cacheScope.userId) {
+        mirrorStoreInboxToPageCache(cacheScope, pageFiltersKey, null);
+      }
 
       const durationMs = Math.round(performance.now() - start);
       const store = getChatDomainStoreSession();
@@ -148,7 +209,15 @@ export function useFloatingConversationListData(params: {
         setStoreFetching(false);
       }
     }
-  }, [useStore, listOpen, instanceIds, inboxParams, quick]);
+  }, [
+    useStore,
+    listOpen,
+    instanceIds,
+    inboxParams,
+    quick,
+    cacheScope,
+    pageFiltersKey,
+  ]);
 
   useEffect(() => {
     if (!useStore) return;
@@ -168,10 +237,63 @@ export function useFloatingConversationListData(params: {
     try {
       const result = await loadMoreInboxCommand(inboxParams);
       setStoreHasMore(result.hasMore);
+      if (result.applied && cacheScope.userId) {
+        mirrorStoreInboxToPageCache(cacheScope, pageFiltersKey, null);
+      }
     } finally {
       setStoreLoadingMore(false);
     }
-  }, [useStore, storeLoadingMore, inboxParams, storeHasMore]);
+  }, [
+    useStore,
+    storeLoadingMore,
+    inboxParams,
+    storeHasMore,
+    cacheScope,
+    pageFiltersKey,
+  ]);
+
+  const refreshInbox = useCallback(
+    async (opts?: { clearLocalCache?: boolean }) => {
+      if (!useStore || instanceIds.length === 0) {
+        if (!useStore) {
+          await queryClient.invalidateQueries({
+            queryKey: floatingChatConversationsQueryKey(instanceIds, inboxScope, quick),
+          });
+        }
+        return;
+      }
+      const generation = ++loadGenerationRef.current;
+      setStoreFetching(true);
+      try {
+        const result = await forceReloadInboxCommand(
+          inboxParams,
+          opts?.clearLocalCache && cacheScope.userId
+            ? { clearPageCacheScope: cacheScope }
+            : undefined,
+        );
+        if (generation !== loadGenerationRef.current) return;
+        setStoreHasMore(result.hasMore);
+        if (cacheScope.userId) {
+          mirrorStoreInboxToPageCache(cacheScope, pageFiltersKey, null);
+        }
+      } finally {
+        if (generation === loadGenerationRef.current) {
+          setStoreFetching(false);
+          setStoreLoading(false);
+        }
+      }
+    },
+    [
+      useStore,
+      instanceIds,
+      inboxScope,
+      quick,
+      queryClient,
+      inboxParams,
+      cacheScope,
+      pageFiltersKey,
+    ],
+  );
 
   const loadMoreRq = useCallback(async () => {
     if (useStore || rqLoadingMore || !rqNextCursor) return;
@@ -212,6 +334,7 @@ export function useFloatingConversationListData(params: {
       hasMore: rqHasMore,
       isLoadingMore: rqLoadingMore,
       loadMore: loadMoreRq,
+      refreshInbox,
     };
   }
 
@@ -223,5 +346,6 @@ export function useFloatingConversationListData(params: {
     hasMore: storeHasMore,
     isLoadingMore: storeLoadingMore,
     loadMore: loadMoreStore,
+    refreshInbox,
   };
 }

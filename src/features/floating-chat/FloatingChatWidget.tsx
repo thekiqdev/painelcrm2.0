@@ -9,7 +9,7 @@ import { useSharedChatNavUnreadCount } from '@/hooks/chatNavUnreadContext';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { listBubbleChatConversations } from '@/repositories/chatConversationsRepository';
+import { resolveBubbleRecentConversations } from '@/features/chat-core/core/resolveBubbleRecent';
 import {
   FLOATING_CHAT_LIST_STALE_MS,
   floatingChatBubbleQueryKey,
@@ -73,8 +73,7 @@ function FloatingChatChrome() {
     queryKey: floatingChatBubbleQueryKey(instanceIds, inboxScope),
     enabled: instanceIds.length > 0,
     queryFn: () =>
-      listBubbleChatConversations({
-        surface: 'float',
+      resolveBubbleRecentConversations({
         instanceIds,
         inboxScope,
       }),

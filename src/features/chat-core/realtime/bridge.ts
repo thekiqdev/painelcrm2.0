@@ -56,7 +56,30 @@ const internal: BridgeInternal = {
   logicalConsumers: 0,
 };
 
+function setBridgeStatus(next: ChatRealtimeBridgeStatus): void {
+  if (internal.status === next) return;
+  internal.status = next;
+  for (const listener of statusListeners) {
+    try {
+      listener(next);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+const statusListeners = new Set<(status: ChatRealtimeBridgeStatus) => void>();
 const domainHandlers = new Set<ChatRealtimeEventHandler>();
+
+/** TF8 E1 — soft reconcile inbox quando o bridge passa a connected. */
+export function subscribeChatRealtimeBridgeStatus(
+  listener: (status: ChatRealtimeBridgeStatus) => void,
+): () => void {
+  statusListeners.add(listener);
+  return () => {
+    statusListeners.delete(listener);
+  };
+}
 
 function bridgeDevLog(message: string, detail?: Record<string, unknown>): void {
   if (!import.meta.env.DEV) return;
@@ -156,7 +179,7 @@ function attachWindowForwarders(socket: Socket): void {
 
 function attachLifecycleMetrics(socket: Socket): void {
   socket.on('connect', () => {
-    internal.status = 'connected';
+    setBridgeStatus('connected');
     const durationMs =
       internal.connectStartedAt != null
         ? Math.round(performance.now() - internal.connectStartedAt)
@@ -178,7 +201,7 @@ function attachLifecycleMetrics(socket: Socket): void {
   });
 
   socket.on('disconnect', (reason) => {
-    internal.status = 'disconnected';
+    setBridgeStatus('disconnected');
     recordChatSocket({
       action: 'close',
       socketId: socket.id,
@@ -189,6 +212,7 @@ function attachLifecycleMetrics(socket: Socket): void {
 
   socket.on('reconnect', (attempt) => {
     internal.reconnectCount += 1;
+    setBridgeStatus('connected');
     recordChatSocket({
       action: 'observed',
       socketId: socket.id,
@@ -220,7 +244,7 @@ function ensureSocket(token: string): Socket {
   }
 
   internal.token = token;
-  internal.status = 'connecting';
+  setBridgeStatus('connecting');
   internal.connectStartedAt = performance.now();
 
   const socket = io(getSocketUrl(), {
@@ -252,7 +276,7 @@ function hardDisconnect(): void {
     internal.socket = null;
   }
   internal.token = null;
-  internal.status = 'idle';
+  setBridgeStatus('idle');
   internal.windowForwardAttached = false;
   internal.connectStartedAt = null;
   internal.logicalConsumers = 0;

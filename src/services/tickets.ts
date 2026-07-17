@@ -1,5 +1,15 @@
 import { apiClient } from '@/integrations/api/client';
 import { Ticket, TicketActivity, TicketCategory, TicketStatus } from '@/types/tickets';
+import { getActiveChatCacheSession } from '@/lib/queryClient';
+import {
+  ticketCategoriesCache,
+  ticketMenuCountCache,
+} from '@/services/shellPollHttpCaches';
+
+function shellSessionKey(suffix: string): string {
+  const scope = getActiveChatCacheSession();
+  return scope ? `${scope.tenantId}:${scope.userId}:${suffix}` : `__session__:${suffix}`;
+}
 
 export const ticketsService = {
   // Get tickets with filters
@@ -142,10 +152,16 @@ export const ticketsService = {
     );
   },
 
-  async getMenuCount(): Promise<number> {
-    const response = await apiClient.get<{ count: number }>('/api/tickets/menu-count');
-    if (response.error) return 0;
-    return Number(response.data?.count ?? 0);
+  async getMenuCount(options?: { force?: boolean }): Promise<number> {
+    return ticketMenuCountCache.get(
+      shellSessionKey('tickets-menu-count'),
+      async () => {
+        const response = await apiClient.get<{ count: number }>('/api/tickets/menu-count');
+        if (response.error) return 0;
+        return Number(response.data?.count ?? 0);
+      },
+      options,
+    );
   },
 
   async bulkUpdateTickets(payload: {
@@ -206,15 +222,21 @@ export const ticketsService = {
   },
 
   // Get ticket categories
-  async getTicketCategories(): Promise<TicketCategory[]> {
-    try {
-      const response = await apiClient.get<TicketCategory[]>('/api/ticket-categories');
-      if (response.error) throw new Error(response.error);
-      return response.data || [];
-    } catch (error: any) {
-      console.error('Error fetching ticket categories:', error);
-      throw error;
-    }
+  async getTicketCategories(options?: { force?: boolean }): Promise<TicketCategory[]> {
+    return ticketCategoriesCache.get(
+      shellSessionKey('ticket-categories'),
+      async () => {
+        try {
+          const response = await apiClient.get<TicketCategory[]>('/api/ticket-categories');
+          if (response.error) throw new Error(response.error);
+          return response.data || [];
+        } catch (error: unknown) {
+          console.error('Error fetching ticket categories:', error);
+          throw error;
+        }
+      },
+      options,
+    ) as Promise<TicketCategory[]>;
   },
 
   // Create ticket category
@@ -228,6 +250,7 @@ export const ticketsService = {
     try {
       const response = await apiClient.post<TicketCategory>('/api/ticket-categories', categoryData);
       if (response.error) throw new Error(response.error);
+      ticketCategoriesCache.invalidate(shellSessionKey('ticket-categories'));
       return response.data;
     } catch (error: any) {
       console.error('Error creating ticket category:', error);
@@ -246,6 +269,7 @@ export const ticketsService = {
     try {
       const response = await apiClient.patch<TicketCategory>(`/api/ticket-categories/${id}`, categoryData);
       if (response.error) throw new Error(response.error);
+      ticketCategoriesCache.invalidate(shellSessionKey('ticket-categories'));
       return response.data;
     } catch (error: any) {
       console.error('Error updating ticket category:', error);
@@ -258,6 +282,7 @@ export const ticketsService = {
     try {
       const response = await apiClient.delete(`/api/ticket-categories/${id}`);
       if (response.error) throw new Error(response.error);
+      ticketCategoriesCache.invalidate(shellSessionKey('ticket-categories'));
     } catch (error: any) {
       console.error('Error deleting ticket category:', error);
       throw error;

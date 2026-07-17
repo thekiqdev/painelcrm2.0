@@ -2,6 +2,8 @@ import { QueryClient } from "@tanstack/react-query";
 import { clearActiveChatPersistentCache } from "@/lib/chatPersistentCache";
 import { clearChatPageCacheForSession } from "@/lib/chatPageCache";
 import { resetChatInstancesHttpCache } from "@/services/chatInstancesHttpCache";
+import { resetOperationsDashboardHttpCache } from "@/services/operationsDashboardHttpCache";
+import { resetShellPollHttpCaches } from "@/services/shellPollHttpCaches";
 import { resetTenantCompanyHttpCache } from "@/services/tenantCompanyHttpCache";
 
 let lastChatCacheScope: { tenantId: string; userId: string } | null = null;
@@ -9,6 +11,11 @@ let lastChatCacheScope: { tenantId: string; userId: string } | null = null;
 /** Regista sessão ativa para limpeza no logout (multi-tenant). */
 export function registerChatCacheSession(tenantId: string, userId: string): void {
   lastChatCacheScope = { tenantId, userId };
+}
+
+/** Escopo da sessão de chat (TF8 E2 — chave do cache operations-dashboard). */
+export function getActiveChatCacheSession(): { tenantId: string; userId: string } | null {
+  return lastChatCacheScope;
 }
 
 /**
@@ -38,5 +45,7 @@ export function clearAllCachedAppData(): void {
   }
   queryClient.clear();
   resetChatInstancesHttpCache();
+  resetOperationsDashboardHttpCache();
+  resetShellPollHttpCaches();
   resetTenantCompanyHttpCache();
 }

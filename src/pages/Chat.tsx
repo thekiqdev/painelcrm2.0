@@ -202,6 +202,13 @@ import {
   mergeConversationLists,
   loadMessagesCommand,
   openConversationMessagesCommand,
+  warmInboxFromPageCache,
+  markInboxFreshFromClient,
+  forceReloadInboxCommand,
+  mirrorStoreInboxToPageCache,
+  mirrorStoreMessagesToPageCache,
+  attachInboxPageCacheMirror,
+  scheduleInboxSoftReconcileOnRealtimeConnected,
 } from '@/features/chat-core/core/commands';
 import { DEFAULT_INBOX_PAGE_SIZE } from '@/repositories/chatConversationsRepository';
 import { useChatPerfRender } from '@/features/chat-core/metrics/renderMetrics';
@@ -283,8 +290,10 @@ import {
 } from '@/lib/chatRealtimeDiagnostics';
 import { emitChatNavUnreadRefresh } from '@/lib/chatNavUnreadEvents';
 import {
-  buildChatPageFiltersKey,
+  buildDefaultChatPageInboxFiltersKey,
+  clearChatPageCacheForSession,
   readChatPageCache,
+  readChatPageCacheUpdatedAt,
   readChatPageMessages,
   saveChatPageConversations,
   saveChatPageLastConversation,
@@ -497,13 +506,13 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
 
   const chatPageFiltersKey = useMemo(
     () =>
-      buildChatPageFiltersKey({
-        tenant: user?.tenant_id ?? '',
-        inbox: chatInboxScope,
+      buildDefaultChatPageInboxFiltersKey({
+        tenantId: user?.tenant_id ?? '',
+        inboxScope: chatInboxScope,
+        instanceIds: Array.from(enabledInstanceIds),
         attendance: chatAttendanceFilter,
         channel: chatChannelOrigin,
         listFilter: chatListConversationFilter,
-        instances: Array.from(enabledInstanceIds).sort().join(','),
       }),
     [
       user?.tenant_id,
@@ -524,8 +533,23 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   );
 
   useLayoutEffect(() => {
-    if (isChatStoreSourceOfTruth()) return;
     if (!chatPageCacheScope.userId) return;
+
+    // TF7 E1 — Store ON: warm Domain Store do localStorage (disco nunca SoT; GET segue em background).
+    if (isChatStoreSourceOfTruth()) {
+      ensureChatDomainStoreSession();
+      const warm = warmInboxFromPageCache({
+        scope: chatPageCacheScope,
+        filtersKey: chatPageFiltersKey,
+      });
+      if (!warm.warmed) return;
+      conversationsHydratedRef.current = true;
+      if (!routeConversationId && !selectedConversationIdRef.current && warm.lastConversationId) {
+        setSelectedConversationId(warm.lastConversationId);
+      }
+      return;
+    }
+
     const cached = readChatPageCache(chatPageCacheScope, chatPageFiltersKey);
     if (!cached?.conversations.length) return;
     setConversations((prev) => (prev.length > 0 ? prev : cached.conversations));
@@ -545,6 +569,17 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       ensureChatDomainStoreSession();
     }
   }, []);
+
+  // TF7 E3 — espelho contínuo Store → localStorage (WS / upserts), debounce no helper.
+  useEffect(() => {
+    if (!isChatStoreSourceOfTruth()) return;
+    if (!chatPageCacheScope.userId) return;
+    return attachInboxPageCacheMirror({
+      scope: chatPageCacheScope,
+      filtersKey: chatPageFiltersKey,
+      getLastConversationId: () => selectedConversationIdRef.current,
+    });
+  }, [chatPageCacheScope, chatPageFiltersKey]);
 
   useEffect(() => {
     beginPerfScenario('chat_open');
@@ -851,18 +886,31 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
           ? ('groups' as const)
           : undefined;
 
-      const result = await loadInboxCommand({
+      const inboxParams = {
         instanceIds: ids,
         inboxScope: effectiveInboxScope,
-        surface: 'chat',
-        quickFilter: 'all',
+        surface: 'chat' as const,
+        quickFilter: 'all' as const,
         attendanceFilter: attendanceFilterParam,
         channelOrigin: origin,
         conversationFilter,
         includeOfficialWhenAll: origin === 'all',
         limit: DEFAULT_INBOX_PAGE_SIZE,
         force: options?.force === true,
-      });
+      };
+
+      // TF7 E2 — após warm E1 (F5), semear freshness do disk para skip GET se ainda fresco.
+      if (!inboxParams.force && isChatStoreSourceOfTruth()) {
+        const diskAt = readChatPageCacheUpdatedAt(chatPageCacheScope, chatPageFiltersKey);
+        if (diskAt != null) {
+          const seeded = markInboxFreshFromClient(inboxParams, diskAt);
+          if (seeded) {
+            scheduleInboxSoftReconcileOnRealtimeConnected(inboxParams);
+          }
+        }
+      }
+
+      const result = await loadInboxCommand(inboxParams);
 
       const uniqueConversations = result.items;
       loadedConvCount =
@@ -881,14 +929,23 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
         });
       }
 
-      if (!isChatStoreSourceOfTruth() && result.source !== 'cache') {
-        setConversations(uniqueConversations);
-        saveChatPageConversations(
-          chatPageCacheScope,
-          chatPageFiltersKey,
-          uniqueConversations,
-          selectedConversationIdRef.current,
-        );
+      // TF7 E1/E3 — espelhar cache local (Store ON lê do Store; OFF usa items do GET).
+      if (result.source !== 'cache' && result.applied) {
+        if (!isChatStoreSourceOfTruth()) {
+          setConversations(uniqueConversations);
+          saveChatPageConversations(
+            chatPageCacheScope,
+            chatPageFiltersKey,
+            uniqueConversations,
+            selectedConversationIdRef.current,
+          );
+        } else {
+          mirrorStoreInboxToPageCache(
+            chatPageCacheScope,
+            chatPageFiltersKey,
+            selectedConversationIdRef.current,
+          );
+        }
       }
 
       try {
@@ -932,6 +989,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     chatInboxScope,
     chatAttendanceFilter,
     chatPageFiltersKey,
+    chatPageCacheScope,
     scheduleOperationsPanelRefresh,
     chatChannelOrigin,
     whatsappGroupsUiEnabled,
@@ -1055,6 +1113,8 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
             recordOpenPipelineStaleAbort();
             return;
           }
+          // TF7 E3 — espelhar msgs no disk para warm no próximo open.
+          mirrorStoreMessagesToPageCache(chatPageCacheScope, conversationId);
           // Pin viewport após hydrate (virt core: layout de append não cobre replace).
           requestAnimationFrame(() => {
             scrollMessagesToBottomRef.current?.();
@@ -3667,6 +3727,85 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     else toast.error('Tipo de arquivo não suportado para envio pelo WhatsApp.');
   };
 
+  /** TF7 E3 — atualizar lista do servidor (force GET + rewrite cache). */
+  const handleRefreshInboxList = useCallback(
+    async (opts?: { clearLocalCache?: boolean }) => {
+      const ids = Array.from(enabledInstanceIdsRef.current);
+      if (ids.length === 0) {
+        toast.message('Nenhuma conexão ativa', {
+          description: 'Ative pelo menos um WhatsApp no filtro da lista.',
+        });
+        return;
+      }
+      const effectiveInboxScope =
+        user?.tenant_id && chatInboxScope === 'tenant' ? 'tenant' : 'owner';
+      const origin = chatChannelOrigin;
+      const conversationFilter =
+        whatsappGroupsUiEnabled &&
+        chatListConversationFilter === 'groups' &&
+        origin !== 'official'
+          ? ('groups' as const)
+          : undefined;
+
+      recordManualRefresh();
+      setSyncingConversations(true);
+      try {
+        const result = await forceReloadInboxCommand(
+          {
+            instanceIds: ids,
+            inboxScope: effectiveInboxScope,
+            surface: 'chat',
+            quickFilter: 'all',
+            attendanceFilter: chatAttendanceFilter || undefined,
+            channelOrigin: origin,
+            conversationFilter,
+            includeOfficialWhenAll: origin === 'all',
+            limit: DEFAULT_INBOX_PAGE_SIZE,
+          },
+          opts?.clearLocalCache ? { clearPageCacheScope: chatPageCacheScope } : undefined,
+        );
+        if (!isChatStoreSourceOfTruth()) {
+          setConversations(result.items);
+          if (result.items.length > 0) {
+            saveChatPageConversations(
+              chatPageCacheScope,
+              chatPageFiltersKey,
+              result.items,
+              selectedConversationIdRef.current,
+            );
+          } else if (opts?.clearLocalCache) {
+            clearChatPageCacheForSession(chatPageCacheScope);
+          }
+        } else {
+          mirrorStoreInboxToPageCache(
+            chatPageCacheScope,
+            chatPageFiltersKey,
+            selectedConversationIdRef.current,
+          );
+        }
+        setInboxHasMore(result.hasMore);
+        toast.success(opts?.clearLocalCache ? 'Cache limpo e lista atualizada' : 'Lista atualizada');
+      } catch (error) {
+        console.error('Erro ao atualizar inbox:', error);
+        toast.error('Não foi possível atualizar a lista', {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      } finally {
+        setSyncingConversations(false);
+      }
+    },
+    [
+      user?.tenant_id,
+      chatInboxScope,
+      chatChannelOrigin,
+      chatAttendanceFilter,
+      whatsappGroupsUiEnabled,
+      chatListConversationFilter,
+      chatPageCacheScope,
+      chatPageFiltersKey,
+    ],
+  );
+
   const handleSyncConversations = async () => {
     if (!selectedInstanceId) return;
     try {
@@ -5735,6 +5874,43 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                         </ToggleGroup>
                       </div>
                     ) : null}
+                    <div className="space-y-1.5 border-t border-border pt-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        Cache / sincronização
+                      </p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 w-full justify-start gap-2 text-xs"
+                        disabled={syncingConversationsView}
+                        onClick={() => {
+                          setFiltersPopoverOpen(false);
+                          void handleRefreshInboxList();
+                        }}
+                      >
+                        <RefreshCw
+                          className={cn(
+                            'h-3.5 w-3.5',
+                            syncingConversationsView && 'animate-spin',
+                          )}
+                        />
+                        Atualizar lista
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-full justify-start text-xs text-muted-foreground"
+                        disabled={syncingConversationsView}
+                        onClick={() => {
+                          setFiltersPopoverOpen(false);
+                          void handleRefreshInboxList({ clearLocalCache: true });
+                        }}
+                      >
+                        Limpar cache local e atualizar
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </PopoverContent>

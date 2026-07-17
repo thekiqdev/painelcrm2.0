@@ -1,4 +1,6 @@
 import { apiClient } from '@/integrations/api/client';
+import { getActiveChatCacheSession } from '@/lib/queryClient';
+import { kanbanTagsCache } from '@/services/shellPollHttpCaches';
 
 export const CHAT_KANBAN_BASE = '/api/chat/kanban';
 /** Alias do contrato pedido (também registado em `/api/chat/kanban/attach-conversation`). */
@@ -126,11 +128,20 @@ export function createChatKanbanService(
 
   return {
   isOpsLayer,
-  async listTenantKanbanTags(): Promise<ChatKanbanTenantTag[]> {
-    const res = await apiClient.get<ChatKanbanTenantTag[]>(`${base}/tags`);
-    if (res.error) throw new Error(res.error);
-    const data = res.data as unknown;
-    return Array.isArray(data) ? data : [];
+  async listTenantKanbanTags(options?: { force?: boolean }): Promise<ChatKanbanTenantTag[]> {
+    const scope = getActiveChatCacheSession();
+    const keyBase = scope ? `${scope.tenantId}:${scope.userId}` : '__session__';
+    const cacheKey = `${keyBase}:kanban-tags:${base}`;
+    return kanbanTagsCache.get(
+      cacheKey,
+      async () => {
+        const res = await apiClient.get<ChatKanbanTenantTag[]>(`${base}/tags`);
+        if (res.error) throw new Error(res.error);
+        const data = res.data as unknown;
+        return Array.isArray(data) ? data : [];
+      },
+      options,
+    ) as Promise<ChatKanbanTenantTag[]>;
   },
 
   async createTenantKanbanTag(label: string, color?: string): Promise<ChatKanbanTenantTag> {
@@ -140,6 +151,9 @@ export function createChatKanbanService(
     });
     if (res.error) throw new Error(res.error);
     if (!res.data) throw new Error('Falha ao criar tag');
+    const scope = getActiveChatCacheSession();
+    const keyBase = scope ? `${scope.tenantId}:${scope.userId}` : '__session__';
+    kanbanTagsCache.invalidate(`${keyBase}:kanban-tags:${base}`);
     return res.data;
   },
 
@@ -150,6 +164,9 @@ export function createChatKanbanService(
     const res = await apiClient.patch<ChatKanbanTenantTag>(`${base}/tags/${tagId}`, body);
     if (res.error) throw new Error(res.error);
     if (!res.data) throw new Error('Falha ao atualizar tag');
+    const scope = getActiveChatCacheSession();
+    const keyBase = scope ? `${scope.tenantId}:${scope.userId}` : '__session__';
+    kanbanTagsCache.invalidate(`${keyBase}:kanban-tags:${base}`);
     return res.data;
   },
 

@@ -161,6 +161,7 @@ export function createPredictivePrefetchController(
   const runQueue = async (
     queue: ChatConversationId[],
     gen: number,
+    selectedId: ChatConversationId | null,
   ): Promise<ChatConversationId[]> => {
     const loaded: ChatConversationId[] = [];
     for (const id of queue) {
@@ -169,6 +170,10 @@ export function createPredictivePrefetchController(
       if (isConversationAlreadyWarm(state, id)) {
         options.warmEngine.markWarm(id);
         recordPrefetchHit(id);
+        continue;
+      }
+      // TF8 E3: open pipeline owns selected hydrate — não competir GET no first paint.
+      if (selectedId && id === selectedId) {
         continue;
       }
       if (inFlight.has(id)) continue;
@@ -213,7 +218,7 @@ export function createPredictivePrefetchController(
       const start = () => {
         cancelIdle = null;
         recordIdlePrefetch(queue.length);
-        void runQueue(queue, gen);
+        void runQueue(queue, gen, params.selectedId);
       };
 
       if (!idleOnly) {
@@ -221,10 +226,40 @@ export function createPredictivePrefetchController(
         return;
       }
 
-      cancelIdle = scheduleIdleTask(start, {
-        timeout: options.idleTimeoutMs ?? 3500,
-        fallbackDelay: options.idleFallbackMs ?? 800,
-      });
+      // TF8 E3: após paint (rAF×2) + idle — não competir first paint com /messages.
+      const idleTimeout = options.idleTimeoutMs ?? 5000;
+      const idleFallback = options.idleFallbackMs ?? 1600;
+      let raf1 = 0;
+      let raf2 = 0;
+      const cancelPaint = () => {
+        if (raf1 && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(raf1);
+        if (raf2 && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(raf2);
+        raf1 = 0;
+        raf2 = 0;
+      };
+
+      const armIdle = () => {
+        cancelIdle = scheduleIdleTask(start, {
+          timeout: idleTimeout,
+          fallbackDelay: idleFallback,
+        });
+      };
+
+      if (typeof requestAnimationFrame === 'function') {
+        raf1 = requestAnimationFrame(() => {
+          raf2 = requestAnimationFrame(() => {
+            raf1 = 0;
+            raf2 = 0;
+            armIdle();
+          });
+        });
+        cancelIdle = () => {
+          cancelPaint();
+          cancelIdle = null;
+        };
+      } else {
+        armIdle();
+      }
     },
 
     cancel,
@@ -233,7 +268,7 @@ export function createPredictivePrefetchController(
       const queue = build(params);
       lastQueue = queue;
       const gen = ++generation;
-      return runQueue(queue, gen);
+      return runQueue(queue, gen, params.selectedId);
     },
 
     getInFlight() {

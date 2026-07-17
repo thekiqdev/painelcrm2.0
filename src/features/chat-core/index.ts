@@ -13,19 +13,38 @@ export {
   loadInboxCommand,
   clearInboxCommand,
   loadMoreInboxCommand,
+  forceReloadInboxCommand,
+  invalidateInboxFreshness,
   loadMessagesCommand,
   openConversationMessagesCommand,
   loadMessagesCursorCommand,
   resetConversationCursorCommand,
+  warmInboxFromPageCache,
+  markInboxFreshFromClient,
+  scheduleInboxSoftReconcileOnRealtimeConnected,
+  mirrorStoreInboxToPageCache,
+  mirrorStoreMessagesToPageCache,
+  attachInboxPageCacheMirror,
   chatCoreCommands,
 } from './core/commands';
 export type { LoadInboxParams, LoadInboxResult, LoadInboxSurface } from './core/loadInbox';
+export type {
+  WarmInboxFromPageCacheParams,
+  WarmInboxFromPageCacheResult,
+} from './core/warmInboxFromPageCache';
 export {
   getInboxPageMeta,
+  getEffectiveInboxFreshTtlMs,
+  isChatRealtimeConnectedForInboxFresh,
   DEFAULT_INBOX_PAGE_SIZE,
   INBOX_LOAD_TTL_MS,
+  INBOX_FRESH_TTL_MS,
+  INBOX_FRESH_TTL_DISCONNECTED_MS,
   mergeConversationLists,
 } from './core/loadInbox';
+export { INBOX_PAGE_CACHE_MIRROR_MAX } from './core/inboxPageCacheMirror';
+export { logInboxCacheEvent } from './core/inboxCacheDiag';
+export type { InboxCacheDiagEvent } from './core/inboxCacheDiag';
 export type { LoadMessagesResult, LoadMessagesCommandOptions } from './core/loadMessages';
 export type {
   LoadMessagesCursorParams,

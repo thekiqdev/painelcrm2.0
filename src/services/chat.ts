@@ -11,6 +11,8 @@ import {
   invalidateChatInstancesHttpCache,
   listInstancesSingleFlight,
 } from '@/services/chatInstancesHttpCache';
+import { getOperationsDashboardSingleFlight } from '@/services/operationsDashboardHttpCache';
+import { getActiveChatCacheSession } from '@/lib/queryClient';
 
 /** Etapa 4 — mesmos valores persistidos em `chat_instances.metadata`. */
 export type InstanceSyncMode = 'none' | 'days_7' | 'days_30' | 'days_90' | 'full';
@@ -2020,29 +2022,38 @@ export const chatService = {
     );
   },
 
-  /** Fase 7 — painel operacional (mesmo payload que o cartão «Atendimento» no Chat). */
-  async getOperationsDashboard(): Promise<ChatOperationsDashboardDto> {
-    const response = await apiClient.get<ChatOperationsDashboardDto>('/api/chat/operations-dashboard');
-    if (response.error) throw new Error(response.error);
-    return (
-      response.data ?? {
-        summary: {
-          open: 0,
-          pending: 0,
-          in_progress: 0,
-          waiting_customer: 0,
-          closed_today: 0,
-          sla_at_risk: 0,
-          sla_breached: 0,
-          avg_first_response_sec: null,
-          avg_next_reply_sec: null,
-        },
-        sla_context: { risk_percent: 80, tenant_first_minutes: null, tenant_next_minutes: null },
-        by_queue: [],
-        by_assignee: [],
-        attendees: [],
-        automation_logs: [],
-      }
+  /** Fase 7 — painel operacional (mesmo payload que o cartão «Atendimento» no Chat).
+   * TF8 E2: single-flight + TTL 60s keyed por tenant:user (Chat ∥ Panel ∥ Settings). */
+  async getOperationsDashboard(options?: { force?: boolean }): Promise<ChatOperationsDashboardDto> {
+    const scope = getActiveChatCacheSession();
+    const cacheKey = scope ? `${scope.tenantId}:${scope.userId}` : '__session__';
+    return getOperationsDashboardSingleFlight(
+      cacheKey,
+      async () => {
+        const response = await apiClient.get<ChatOperationsDashboardDto>('/api/chat/operations-dashboard');
+        if (response.error) throw new Error(response.error);
+        return (
+          response.data ?? {
+            summary: {
+              open: 0,
+              pending: 0,
+              in_progress: 0,
+              waiting_customer: 0,
+              closed_today: 0,
+              sla_at_risk: 0,
+              sla_breached: 0,
+              avg_first_response_sec: null,
+              avg_next_reply_sec: null,
+            },
+            sla_context: { risk_percent: 80, tenant_first_minutes: null, tenant_next_minutes: null },
+            by_queue: [],
+            by_assignee: [],
+            attendees: [],
+            automation_logs: [],
+          }
+        );
+      },
+      options,
     );
   },
 
