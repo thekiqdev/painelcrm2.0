@@ -8,7 +8,7 @@ import type { PermissionCatalogKey } from '@/permissions/permissionCatalog';
 function pathToModule(pathname: string): string | null {
   if (pathname.startsWith('/project-templates')) return 'project_templates';
   if (pathname.startsWith('/support/tickets')) return 'tickets';
-  if (pathname.startsWith('/meu-plano')) return 'meu_plano';
+  if (pathname.startsWith('/meu-plano') || pathname === '/plano' || pathname === '/planos') return 'meu_plano';
   if (pathname === '/dashboard' || pathname.startsWith('/dashboard/')) return 'dashboard';
   if (pathname.startsWith('/clients')) return 'clients';
   if (pathname.startsWith('/leads')) return 'leads';

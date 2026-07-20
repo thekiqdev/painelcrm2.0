@@ -2,9 +2,9 @@
 
 | Campo | Valor |
 |-------|--------|
-| **Status** | Aprovado para execução sequencial (gate por sprint) |
+| **Status** | Série WI1–WI4 **concluída**. Continuação custom: [PLANO_WHATSAPP_CUSTOM_QUANTITY.md](./PLANO_WHATSAPP_CUSTOM_QUANTITY.md) (**WC**) |
 | **Data** | 2026-07-20 |
-| **Hub comercial** | `/meu-plano` (não existe `/planos` no app autenticado; alias opcional na WI3) |
+| **Hub comercial** | `/meu-plano` (não existe `/planos` no app autenticado; alias opcional na WI3 / WC2) |
 | **Padrão a reutilizar** | Add-on de assentos (`seat_addon`) |
 | **Prefixo de sprints** | **WI** (WhatsApp Instances) |
 
@@ -204,3 +204,5 @@ OK WI4 → …
 ```
 
 **Próximo passo agora:** plano WI1–WI4 **concluído**. Ops: aplicar migrations `293`–`295` em produção.
+
+**Seguinte série:** custom com quantidade obrigatória + Meu Plano — [PLANO_WHATSAPP_CUSTOM_QUANTITY.md](./PLANO_WHATSAPP_CUSTOM_QUANTITY.md) (aguardar **OK Sprint WC1**).

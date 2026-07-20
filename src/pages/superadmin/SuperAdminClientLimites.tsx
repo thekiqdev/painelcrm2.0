@@ -21,6 +21,7 @@ interface TenantUsagePayload {
   whatsapp_instances?: UsageItem;
   storage_mb: number | null;
   contacts_count: number | null;
+  plan_type?: 'standard' | 'custom';
   plan_limits: {
     max_users: number | null;
     max_profiles: number | null;
@@ -122,17 +123,29 @@ export default function SuperAdminClientLimites() {
 
   const saveLimits = async () => {
     if (!id) return;
-    setSavingLimits(true);
     const toNum = (s: string) => {
       const n = parseInt(s.trim(), 10);
       return s.trim() === '' || isNaN(n) ? null : n;
     };
+    const isCustom = data?.plan_type === 'custom';
+    const wa = toNum(overrideWhatsApp);
+    if (isCustom && wa == null) {
+      toast.error('Plano personalizado exige a quantidade contratada de conexões WhatsApp.');
+      return;
+    }
+    if (isCustom && wa != null && data?.whatsapp_instances && wa < data.whatsapp_instances.current) {
+      toast.error(
+        `A quantidade não pode ser menor que o uso atual (${data.whatsapp_instances.current} conexões).`,
+      );
+      return;
+    }
+    setSavingLimits(true);
     const res = await apiClient.put<{ overrides: TenantUsagePayload['overrides'] }>(
       `/api/superadmin/tenants/${id}/limits`,
       {
         max_users: toNum(overrideUsers),
         max_profiles: toNum(overrideProfiles),
-        max_whatsapp_instances: toNum(overrideWhatsApp),
+        max_whatsapp_instances: wa,
       }
     );
     setSavingLimits(false);
@@ -213,10 +226,19 @@ export default function SuperAdminClientLimites() {
             <CardHeader>
               <CardTitle>Limites personalizados</CardTitle>
               <CardDescription>
-                Defina um limite específico para esta empresa. Deixe em branco para usar o limite do plano.
+                {data.plan_type === 'custom'
+                  ? 'No plano personalizado, a quantidade de conexões WhatsApp é a quantidade contratada (obrigatória). Usuários/perfis: deixe em branco para usar o piso do plano.'
+                  : 'Defina um limite específico para esta empresa. Deixe em branco para usar o limite do plano.'}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {data.plan_type === 'custom' && data.whatsapp_instances?.limit == null && (
+                <p className="flex items-center gap-1.5 text-sm text-amber-700 dark:text-amber-200">
+                  <AlertTriangle className="h-4 w-4 shrink-0" />
+                  Esta empresa está sem teto de WhatsApp (ilimitado). Defina a quantidade contratada abaixo para
+                  ativar limite e extras no Meu Plano.
+                </p>
+              )}
               <div className="grid gap-4 sm:grid-cols-3">
                 <div className="space-y-2">
                   <Label>Usuários (limite personalizado)</Label>
@@ -239,18 +261,29 @@ export default function SuperAdminClientLimites() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>Instâncias WhatsApp (limite personalizado)</Label>
+                  <Label>
+                    {data.plan_type === 'custom'
+                      ? 'Conexões WhatsApp contratadas (obrigatório)'
+                      : 'Instâncias WhatsApp (limite personalizado)'}
+                  </Label>
                   <Input
                     type="number"
-                    min={0}
+                    min={data.whatsapp_instances?.current ?? 0}
                     placeholder={
-                      data.plan_limits.max_whatsapp_instances != null
-                        ? `Plano: ${data.plan_limits.max_whatsapp_instances}`
-                        : 'Ilimitado no plano'
+                      data.plan_type === 'custom'
+                        ? 'Ex: 2'
+                        : data.plan_limits.max_whatsapp_instances != null
+                          ? `Plano: ${data.plan_limits.max_whatsapp_instances}`
+                          : 'Ilimitado no plano'
                     }
                     value={overrideWhatsApp}
                     onChange={(e) => setOverrideWhatsApp(e.target.value)}
                   />
+                  {data.plan_type === 'custom' && data.whatsapp_instances ? (
+                    <p className="text-xs text-muted-foreground">
+                      Uso atual: {data.whatsapp_instances.current}. Mínimo permitido = uso atual.
+                    </p>
+                  ) : null}
                 </div>
               </div>
               <Button onClick={saveLimits} disabled={savingLimits}>

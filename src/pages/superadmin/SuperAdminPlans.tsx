@@ -627,10 +627,31 @@ export default function SuperAdminPlans() {
             )}
             {form.plan_type === 'custom' && (
               <div className="space-y-3">
+                <div className="grid gap-2">
+                  <Label>Conexões WhatsApp inclusas no pacote (piso)</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Quantidade já coberta no preço base do personalizado (ex.: 0 ou 1). A quantidade contratada de cada
+                    empresa fica no override do tenant. Extras acima do piso usam o valor por conexão abaixo.
+                  </p>
+                  <Input
+                    type="number"
+                    min={0}
+                    className="max-w-[160px]"
+                    value={form.max_whatsapp_instances ?? ''}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        max_whatsapp_instances: e.target.value === '' ? null : parseInt(e.target.value, 10),
+                      }))
+                    }
+                    placeholder="Ex: 0"
+                  />
+                </div>
                 <div>
-                  <Label>Preço por usuário e por conexão WhatsApp</Label>
+                  <Label>Preço por usuário e por conexão WhatsApp extra</Label>
                   <p className="text-sm text-muted-foreground mt-0.5">
-                    Valor por usuário (obrigatório) e valor opcional por conexão extra, por periodicidade.
+                    Valor por usuário (obrigatório). Valor por conexão extra (opcional) — usado no Meu Plano quando a
+                    empresa tem teto contratado.
                   </p>
                 </div>
                 <div className="space-y-2">

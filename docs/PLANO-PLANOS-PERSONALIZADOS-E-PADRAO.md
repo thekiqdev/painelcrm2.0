@@ -97,6 +97,7 @@ Este documento descreve a implementação do **plano personalizado** (preço por
 ### 2.4 Limites em plano custom
 
 - Ao associar um tenant a um plano **custom**, os limites efetivos (usuários, instâncias) vêm dos overrides do tenant (ou de um fluxo “contratação” onde o Super Admin define max_users_override e max_whatsapp_instances_override). O `tenantLimitService` já usa overrides; basta que, na UI de criação/edição do tenant ou na “contratação”, esses valores sejam definidos quando o plano for custom.
+- **Lacuna operacional (pós-WI):** se override e `plans.max_whatsapp_instances` forem NULL, o limite efetivo continua **ilimitado** e o Meu Plano não vende extras. Correção: série **WC** — [PLANO_WHATSAPP_CUSTOM_QUANTITY.md](architecture/commercial/PLANO_WHATSAPP_CUSTOM_QUANTITY.md) (WC1 quantidade obrigatória; WC2 contratação no `/meu-plano` / `/plano` / `/planos`). Backfill de legados = WC3 opcional.
 
 ---
 

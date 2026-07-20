@@ -61,6 +61,8 @@ export const TENANT_CRM_PATH_PREFIXES: readonly string[] = [
   '/messages',
   '/members',
   '/meu-plano',
+  '/plano',
+  '/planos',
   '/register/steps',
   '/onboarding',
 ];

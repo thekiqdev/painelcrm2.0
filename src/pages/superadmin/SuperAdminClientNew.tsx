@@ -74,9 +74,21 @@ export default function SuperAdminClientNew() {
       toast.error('Selecione um plano');
       return;
     }
-    setSaving(true);
     const selectedPlan = plans.find((p) => p.id === form.plan_id);
     const isCustom = selectedPlan?.plan_type === 'custom';
+    if (isCustom) {
+      const u = form.max_users_override === '' || form.max_users_override === null ? null : Number(form.max_users_override);
+      const w = form.max_whatsapp_instances_override === '' || form.max_whatsapp_instances_override === null ? null : Number(form.max_whatsapp_instances_override);
+      if (u == null || Number.isNaN(u) || u < 0) {
+        toast.error('Informe a quantidade de usuários contratada (plano personalizado).');
+        return;
+      }
+      if (w == null || Number.isNaN(w) || w < 0 || !Number.isInteger(w)) {
+        toast.error('Informe a quantidade de conexões WhatsApp contratada (plano personalizado).');
+        return;
+      }
+    }
+    setSaving(true);
     const payload: Record<string, unknown> = {
       name: form.name.trim(),
       slug: form.slug.trim().toLowerCase(),
@@ -86,10 +98,8 @@ export default function SuperAdminClientNew() {
       trial_ends_at: datetimeLocalToTrialEndsAtIso(form.trial_ends_at),
     };
     if (isCustom) {
-      const u = form.max_users_override === '' || form.max_users_override === null ? null : Number(form.max_users_override);
-      const w = form.max_whatsapp_instances_override === '' || form.max_whatsapp_instances_override === null ? null : Number(form.max_whatsapp_instances_override);
-      if (u != null) payload.max_users_override = u;
-      if (w != null) payload.max_whatsapp_instances_override = w;
+      payload.max_users_override = Number(form.max_users_override);
+      payload.max_whatsapp_instances_override = Number(form.max_whatsapp_instances_override);
     }
     const res = await apiClient.post<{ id: string }>('/api/superadmin/tenants', payload);
     setSaving(false);
@@ -169,7 +179,7 @@ export default function SuperAdminClientNew() {
               {form.plan_id && plans.find((p) => p.id === form.plan_id)?.plan_type === 'custom' && (
                 <div className="grid gap-4 sm:grid-cols-2 pt-2">
                   <div className="space-y-2">
-                    <Label>Quantidade de usuários (cobrança personalizada)</Label>
+                    <Label>Quantidade de usuários (obrigatório)</Label>
                     <Input
                       type="number"
                       min={0}
@@ -179,7 +189,7 @@ export default function SuperAdminClientNew() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>Quantidade de instâncias WhatsApp</Label>
+                    <Label>Quantidade de conexões WhatsApp (obrigatório)</Label>
                     <Input
                       type="number"
                       min={0}
@@ -187,6 +197,10 @@ export default function SuperAdminClientNew() {
                       onChange={(e) => setForm((f) => ({ ...f, max_whatsapp_instances_override: e.target.value === '' ? '' : parseInt(e.target.value, 10) }))}
                       placeholder="Ex: 2"
                     />
+                    <p className="text-xs text-muted-foreground">
+                      Quantidade contratada desta empresa. Sem isso o limite fica ilimitado e extras no Meu Plano não
+                      funcionam.
+                    </p>
                   </div>
                 </div>
               )}

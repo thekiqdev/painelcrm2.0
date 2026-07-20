@@ -4,7 +4,7 @@
  */
 export function isCommercialHubFrontendPath(pathname: string): boolean {
   const p = pathname || '';
-  if (p === '/meu-plano') return true;
+  if (p === '/meu-plano' || p === '/plano' || p === '/planos') return true;
   if (p.startsWith('/checkout')) return true;
   if (p.startsWith('/saas-billing')) return true;
   if (p === '/login' || p === '/register' || p.startsWith('/register/')) return true;

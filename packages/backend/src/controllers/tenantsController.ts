@@ -19,6 +19,10 @@ import { SUPERADMIN_OPS_KANBAN_TENANT_ID } from '../config/superadminOpsKanban.j
 import { calculateInvoiceAmount, type BillingInterval } from '../services/billingService.js';
 import { createInvoice, getInvoiceById } from '../services/invoiceService.js';
 import { trySettleZeroAmountBillingIfEligible } from '../commercial/zeroAmountSettlementService.js';
+import {
+  validateCustomWhatsAppOverride,
+  validateCustomWhatsAppOverrideAgainstUsage,
+} from '../services/customPlanWhatsAppContract.js';
 
 const createTenantSchema = z.object({
   name: z.string().min(1),
@@ -87,7 +91,7 @@ export async function getTenant(req: AuthRequest, res: Response): Promise<void> 
   try {
     const { id } = req.params;
     const result = await pool.query(
-      `SELECT t.*, p.name AS plan_name, p.slug AS plan_slug
+      `SELECT t.*, p.name AS plan_name, p.slug AS plan_slug, p.plan_type AS plan_type
        FROM tenants t
        JOIN plans p ON p.id = t.plan_id
        WHERE t.id = $1`,
@@ -119,10 +123,20 @@ export async function createTenant(req: AuthRequest, res: Response): Promise<voi
       res.status(400).json({ error: 'Já existe um cliente com este slug' });
       return;
     }
-    const planCheck = await pool.query('SELECT id FROM plans WHERE id = $1', [body.plan_id]);
+    const planCheck = await pool.query<{ id: string; plan_type: string }>(
+      'SELECT id, plan_type FROM plans WHERE id = $1',
+      [body.plan_id],
+    );
     if (planCheck.rows.length === 0) {
       res.status(400).json({ error: 'Plano não encontrado' });
       return;
+    }
+    if (planCheck.rows[0].plan_type === 'custom') {
+      const waErr = validateCustomWhatsAppOverride(body.max_whatsapp_instances_override);
+      if (waErr) {
+        res.status(400).json({ error: waErr, code: 'CUSTOM_WHATSAPP_QUANTITY_REQUIRED' });
+        return;
+      }
     }
     const trialEndsAt = body.trial_ends_at
       ? (typeof body.trial_ends_at === 'string' ? new Date(body.trial_ends_at) : body.trial_ends_at)
@@ -169,7 +183,15 @@ export async function updateTenant(req: AuthRequest, res: Response): Promise<voi
   try {
     const { id } = req.params;
     const body = updateTenantSchema.parse(req.body);
-    const tenantResult = await pool.query('SELECT id, plan_id, status FROM tenants WHERE id = $1', [id]);
+    const tenantResult = await pool.query<{
+      id: string;
+      plan_id: string;
+      status: string;
+      max_whatsapp_instances_override: number | null;
+    }>(
+      'SELECT id, plan_id, status, max_whatsapp_instances_override FROM tenants WHERE id = $1',
+      [id],
+    );
     if (tenantResult.rows.length === 0) {
       res.status(404).json({ error: 'Cliente não encontrado' });
       return;
@@ -183,10 +205,29 @@ export async function updateTenant(req: AuthRequest, res: Response): Promise<voi
         return;
       }
     }
+    const nextPlanId = body.plan_id ?? current.plan_id;
     if (body.plan_id !== undefined) {
-      const planCheck = await pool.query('SELECT id FROM plans WHERE id = $1', [body.plan_id]);
+      const planCheck = await pool.query<{ id: string; plan_type: string }>(
+        'SELECT id, plan_type FROM plans WHERE id = $1',
+        [body.plan_id],
+      );
       if (planCheck.rows.length === 0) {
         res.status(400).json({ error: 'Plano não encontrado' });
+        return;
+      }
+    }
+    const nextPlan = await pool.query<{ plan_type: string }>(
+      'SELECT plan_type FROM plans WHERE id = $1',
+      [nextPlanId],
+    );
+    if (nextPlan.rows[0]?.plan_type === 'custom') {
+      const nextOverride =
+        body.max_whatsapp_instances_override !== undefined
+          ? body.max_whatsapp_instances_override
+          : current.max_whatsapp_instances_override;
+      const waErr = validateCustomWhatsAppOverride(nextOverride);
+      if (waErr) {
+        res.status(400).json({ error: waErr, code: 'CUSTOM_WHATSAPP_QUANTITY_REQUIRED' });
         return;
       }
     }
@@ -224,6 +265,8 @@ export async function updateTenant(req: AuthRequest, res: Response): Promise<voi
       'company_whatsapp',
       'billing_email',
       'billing_phone',
+      'max_users_override',
+      'max_whatsapp_instances_override',
     ];
     for (const key of fields) {
       if (body[key] !== undefined) {
@@ -584,7 +627,7 @@ export async function getTenantUsage(req: AuthRequest, res: Response): Promise<v
     const tenantResult = await pool.query(
       `SELECT t.id, t.plan_id,
         t.max_users_override, t.max_profiles_override, t.max_whatsapp_instances_override,
-        p.max_users, p.max_profiles, p.max_whatsapp_instances
+        p.max_users, p.max_profiles, p.max_whatsapp_instances, p.plan_type
        FROM tenants t JOIN plans p ON p.id = t.plan_id WHERE t.id = $1`,
       [id]
     );
@@ -614,6 +657,7 @@ export async function getTenantUsage(req: AuthRequest, res: Response): Promise<v
       whatsapp_instances: { current: whatsappLimit.current, limit: whatsappLimit.limit },
       storage_mb: null,
       contacts_count: contactsCount,
+      plan_type: row.plan_type ?? 'standard',
       plan_limits: {
         max_users: row.max_users,
         max_profiles: row.max_profiles,
@@ -642,11 +686,37 @@ export async function putTenantLimits(req: AuthRequest, res: Response): Promise<
   try {
     const { id } = req.params;
     const body = putTenantLimitsSchema.parse(req.body);
-    const tenantResult = await pool.query('SELECT id FROM tenants WHERE id = $1', [id]);
+    const tenantResult = await pool.query<{
+      id: string;
+      plan_type: string;
+    }>(
+      `SELECT t.id, p.plan_type
+       FROM tenants t JOIN plans p ON p.id = t.plan_id WHERE t.id = $1`,
+      [id],
+    );
     if (tenantResult.rows.length === 0) {
       res.status(404).json({ error: 'Cliente não encontrado' });
       return;
     }
+    const isCustom = tenantResult.rows[0].plan_type === 'custom';
+
+    if (isCustom && body.max_whatsapp_instances !== undefined) {
+      const waErr = validateCustomWhatsAppOverride(body.max_whatsapp_instances);
+      if (waErr) {
+        res.status(400).json({ error: waErr, code: 'CUSTOM_WHATSAPP_QUANTITY_REQUIRED' });
+        return;
+      }
+      const usage = await checkTenantWhatsAppInstancesLimit(id);
+      const below = validateCustomWhatsAppOverrideAgainstUsage(
+        body.max_whatsapp_instances as number,
+        usage.current,
+      );
+      if (below) {
+        res.status(400).json({ error: below, code: 'CUSTOM_WHATSAPP_BELOW_USAGE' });
+        return;
+      }
+    }
+
     const updates: string[] = [];
     const values: any[] = [];
     let i = 1;

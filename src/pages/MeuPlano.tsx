@@ -393,6 +393,8 @@ const SEATS_SHORT_HINT =
 
 const WHATSAPP_CONNECTIONS_HINT =
   'Conexões extras são cobradas proporcionalmente ao ciclo atual e passam a integrar o seu limite contratado.';
+const WHATSAPP_CONNECTIONS_HINT_CUSTOM =
+  'No plano personalizado, a quantidade contratada define o teto. Você pode comprar conexões extras aqui (quando houver preço no catálogo) ou pedir ajuste ao administrador da conta.';
 
 /** Checklist padrão quando o plano não traz `benefits` do catálogo — alinhado ao posicionamento do produto. */
 const DEFAULT_INCLUDED_FEATURES: { icon: string; label: string }[] = [
@@ -1072,7 +1074,6 @@ export default function MeuPlano() {
     commercialMode === 'active' &&
     canManage &&
     contractedWhatsapp != null &&
-    planWaIncluded != null &&
     contractedWhatsapp > instanceDowngradeFloor;
   const currentPriceCents =
     isCustom && priceRow ? priceRow.price_per_user_cents * contractedSeats : plan.price_cents;
@@ -1184,12 +1185,12 @@ export default function MeuPlano() {
           variant: 'border-emerald-500/35 bg-emerald-500/5' as const,
           title: 'Plano em dia',
           description:
-            'Sua conta está ativa. Abaixo você pode trocar de plano, gerir assentos (plano por usuário) ou revisar benefícios.' +
+            'Sua conta está ativa. Abaixo você pode trocar de plano, gerir assentos e conexões WhatsApp ou revisar benefícios.' +
             (nb ? ` ${nb.title}: ${nb.detail}` : periodFallback),
           primaryLabel: 'Trocar de plano',
           onPrimary: () => scrollToId('meu-plano-catalogo'),
-          secondaryLabel: isCustom ? 'Gerir assentos' : undefined,
-          onSecondary: isCustom ? () => scrollToId('meu-plano-usuarios-assentos') : undefined,
+          secondaryLabel: isCustom ? 'Gerir conexões' : undefined,
+          onSecondary: isCustom ? () => scrollToId('meu-plano-whatsapp-conexoes') : undefined,
         };
       }
       case 'suspended_other': {
@@ -1857,11 +1858,13 @@ export default function MeuPlano() {
       <Card id="meu-plano-whatsapp-conexoes" className="min-w-0 border-border/80">
         <CardHeader className="space-y-1 pb-2">
           <CardTitle className="text-base md:text-lg">Conexões WhatsApp</CardTitle>
-          <CardDescription className="text-xs leading-relaxed">{WHATSAPP_CONNECTIONS_HINT}</CardDescription>
+          <CardDescription className="text-xs leading-relaxed">
+            {isCustom ? WHATSAPP_CONNECTIONS_HINT_CUSTOM : WHATSAPP_CONNECTIONS_HINT}
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3 text-sm">
           {limitsWhatsapp != null ? (
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
               <div className="rounded-2xl bg-muted/50 px-3.5 py-2.5 md:px-4 md:py-3">
                 <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Em uso</p>
                 <p className="mt-0.5 text-lg font-semibold tabular-nums">
@@ -1873,6 +1876,19 @@ export default function MeuPlano() {
                   <p className="mt-1 text-xs text-muted-foreground">Sem teto numérico neste plano (ilimitado).</p>
                 )}
               </div>
+              {isCustom && contractedWhatsapp != null && (
+                <div className="rounded-2xl bg-muted/50 px-3.5 py-2.5 md:px-4 md:py-3">
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Conexões contratadas
+                  </p>
+                  <p className="mt-0.5 text-lg font-semibold tabular-nums">{contractedWhatsapp} contratadas</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {planWaIncluded != null
+                      ? `Inclusas no pacote: ${planWaIncluded}. Extras acima disso entram na renovação.`
+                      : 'Quantidade definida no contrato desta conta.'}
+                  </p>
+                </div>
+              )}
               {limitsWhatsapp.limit != null && (
                 <div className="rounded-2xl bg-muted/50 px-3.5 py-2.5 md:px-4 md:py-3">
                   <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Disponíveis</p>
@@ -1887,7 +1903,7 @@ export default function MeuPlano() {
                 </div>
               )}
               {myPlan.max_whatsapp_instances_scheduled_next_cycle != null && contractedWhatsapp != null && (
-                <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 sm:col-span-2 md:px-4 md:py-3">
+                <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 sm:col-span-2 lg:col-span-3 md:px-4 md:py-3">
                   <p className="text-[10px] font-medium uppercase tracking-wide text-amber-950 dark:text-amber-100">
                     Redução agendada
                   </p>
@@ -1933,7 +1949,9 @@ export default function MeuPlano() {
 
           {limitsWhatsapp?.limit == null && (
             <p className="text-muted-foreground">
-              Seu plano não limita conexões WhatsApp. Extras pagos não se aplicam enquanto o limite for ilimitado.
+              {isCustom
+                ? 'A quantidade de conexões ainda não foi definida para esta conta (ilimitado). Peça ao Super Admin ou ao suporte para definir a quantidade contratada — só então é possível comprar extras aqui.'
+                : 'Seu plano não limita conexões WhatsApp. Extras pagos não se aplicam enquanto o limite for ilimitado.'}
             </p>
           )}
 
@@ -1942,7 +1960,7 @@ export default function MeuPlano() {
             commercialMode === 'active' && (
               <p className="text-muted-foreground">
                 Este plano ainda não tem preço por conexão extra. Fale com o suporte ou peça ao Super Admin para
-                configurar o valor no catálogo.
+                configurar o valor no catálogo — o teto contratado já está ativo.
               </p>
             )}
 

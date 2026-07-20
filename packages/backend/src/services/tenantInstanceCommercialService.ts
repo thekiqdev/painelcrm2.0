@@ -189,20 +189,18 @@ export async function scheduleInstanceDowngradeNextCycle(params: {
     [tenantId]
   );
   const planIncluded = planRow.rows[0]?.max_whatsapp_instances ?? null;
-  if (planIncluded == null) {
+  const currentContracted = await effectiveContractedWhatsAppInstances(tenantId);
+  if (currentContracted == null) {
     throw new Error(
       'Este plano não tem limite de conexões WhatsApp (ilimitado). Redução agendada não se aplica.'
     );
   }
-  if (targetInstances < planIncluded) {
+  /** Piso do pacote; NULL no custom = 0 (quantidade contratada vem do override). */
+  const planFloor = planIncluded ?? 0;
+  if (targetInstances < planFloor) {
     throw new Error(
-      `Não é possível agendar abaixo das ${planIncluded} conexões inclusas no plano. Para menos, altere o plano.`
+      `Não é possível agendar abaixo das ${planFloor} conexões inclusas no plano. Para menos, altere o plano.`
     );
-  }
-
-  const currentContracted = await effectiveContractedWhatsAppInstances(tenantId);
-  if (currentContracted == null) {
-    throw new Error('Limite de conexões não disponível para agendar redução.');
   }
 
   if (targetInstances >= currentContracted) {

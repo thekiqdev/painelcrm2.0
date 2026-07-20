@@ -940,6 +940,24 @@ const App = () => (
                   </AppLayout>
               </AuthGuard>
             } />
+            <Route path="/plano" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <MeuPlano />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/planos" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <MeuPlano />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
             <Route path="/saas-billing/:billingId/pay" element={
               <AuthGuard requireAuth={true} redirectTo="/">
                   <AppLayout>

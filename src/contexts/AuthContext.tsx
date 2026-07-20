@@ -126,7 +126,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       user?.requires_checkout_resume === true ||
       user?.plan_expired === true ||
       user?.commercial_access_required === true;
-    if (needsCommercialHub && !skipPlanHub && !skipForSuperadminCrm && path !== '/meu-plano') {
+    if (
+      needsCommercialHub &&
+      !skipPlanHub &&
+      !skipForSuperadminCrm &&
+      path !== '/meu-plano' &&
+      path !== '/plano' &&
+      path !== '/planos'
+    ) {
       navigate('/meu-plano?reason=payment_required', { replace: true });
     }
   }, [
