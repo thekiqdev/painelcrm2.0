@@ -319,6 +319,7 @@ export async function runTransactionalNotification(params: {
     text: rendered.body,
     chatInstanceId: params.chatInstanceId ?? null,
   });
+  const durationMs = Date.now() - t0;
 
   if (send.ok) {
     if (send.chatInstanceId) {

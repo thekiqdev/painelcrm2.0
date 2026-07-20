@@ -152,8 +152,8 @@ export async function executeSaasRenewal(params: {
     price_source: renewalPricing.priceSource,
     whatsapp_extras_count: whatsappExtras.extrasCount,
     whatsapp_extras_cents: whatsappExtras.extrasCents,
-    whatsapp_unit_cents: unitPrice,
-    whatsapp_contracted: contractedWhatsappForRenewal,
+    whatsapp_unit_cents: unitPrice ?? undefined,
+    whatsapp_contracted: contractedWhatsappForRenewal ?? undefined,
   });
 
   const dueDate = periodStart;
