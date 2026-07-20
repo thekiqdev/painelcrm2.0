@@ -116,7 +116,14 @@ export class UazapiService {
     }
 
     if (!response.ok) {
-      const error = new Error(payload?.error || payload?.message || response.statusText || 'UazAPI request failed');
+      // Preferir message string: payloads Uaz usam `{ error: true, message: "..." }` —
+      // `payload.error` boolean virava Error("true") e mascarava o motivo real.
+      const errMsg =
+        (typeof payload?.message === 'string' && payload.message.trim()) ||
+        (typeof payload?.error === 'string' && payload.error.trim()) ||
+        response.statusText ||
+        'UazAPI request failed';
+      const error = new Error(errMsg);
       (error as any).status = response.status;
       (error as any).payload = payload;
       (error as any).responseText = text;

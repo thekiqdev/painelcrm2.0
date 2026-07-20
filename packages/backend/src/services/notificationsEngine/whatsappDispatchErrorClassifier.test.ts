@@ -8,7 +8,10 @@ describe('classifyWhatsAppDispatchError', () => {
   it('classifica 503 como transitório', () => {
     expect(classifyWhatsAppDispatchError('upstream 503')).toBe('transient');
   });
-  it('classifica timeout como transitório', () => {
-    expect(classifyWhatsAppDispatchError('ETIMEDOUT')).toBe('transient');
+  it('classifica WhatsApp disconnected / não conectada como transitório', () => {
+    expect(classifyWhatsAppDispatchError('WhatsApp disconnected')).toBe('transient');
+    expect(classifyWhatsAppDispatchError('Instância WhatsApp não está conectada (status=disconnected)')).toBe(
+      'transient',
+    );
   });
 });

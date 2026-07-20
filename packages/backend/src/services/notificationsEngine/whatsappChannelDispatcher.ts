@@ -6,6 +6,12 @@ import {
   isUazapiInvalidTokenSignal,
   markChatInstanceDisconnectedForInvalidToken,
 } from '../chatInstanceInvalidTokenSelfHeal.js';
+import {
+  CHAT_INSTANCE_OPERABLE_STATUS_SQL,
+  isChatInstanceStatusOperable,
+  isUazWhatsAppDisconnectedSignal,
+} from '../chatInstanceOperableStatus.js';
+import { refreshChatInstanceStatusFromUaz } from '../refreshChatInstanceStatusFromUaz.js';
 
 /**
  * Normalização final de texto WhatsApp (motor transacional + overrides).
@@ -32,8 +38,70 @@ export type WhatsAppDispatchResult =
   | { ok: true; providerMessageId: string }
   | { ok: false; error: string };
 
+type InstanceRow = {
+  id: string;
+  instance_token: string;
+  user_id: string;
+  external_instance_name: string | null;
+  status: string;
+};
+
+async function loadInstanceForDispatch(
+  pool: Pool,
+  senderUserId: string,
+): Promise<InstanceRow | null> {
+  const operable = await pool.query<InstanceRow>(
+    `SELECT i.id, i.instance_token, i.user_id, i.external_instance_name, i.status
+     FROM chat_instances i
+     WHERE i.user_id = $1 AND ${CHAT_INSTANCE_OPERABLE_STATUS_SQL}
+     ORDER BY i.updated_at DESC NULLS LAST
+     LIMIT 1`,
+    [senderUserId],
+  );
+  if (operable.rows[0]) return operable.rows[0];
+
+  const any = await pool.query<InstanceRow>(
+    `SELECT i.id, i.instance_token, i.user_id, i.external_instance_name, i.status
+     FROM chat_instances i
+     WHERE i.user_id = $1
+     ORDER BY i.updated_at DESC NULLS LAST
+     LIMIT 1`,
+    [senderUserId],
+  );
+  return any.rows[0] ?? null;
+}
+
+async function sendWithToken(
+  token: string,
+  phone: string,
+  outboundText: string,
+): Promise<{ id?: string; messageId?: string; key?: { id?: string } }> {
+  return (await uazapiService.sendTextMessage(token, {
+    number: phone,
+    text: outboundText,
+    readchat: false,
+    readmessages: false,
+    delay: 0,
+    track_source: 'painelcrm-notifications-engine',
+  })) as { id?: string; messageId?: string; key?: { id?: string } };
+}
+
+function providerMessageIdFromResponse(messageResponse: {
+  id?: string;
+  messageId?: string;
+  key?: { id?: string };
+}): string {
+  return String(
+    messageResponse?.id ||
+      messageResponse?.messageId ||
+      messageResponse?.key?.id ||
+      randomUUID(),
+  );
+}
+
 /**
- * Envia texto WhatsApp via UazAPI usando instância conectada do utilizador remetente.
+ * Envia texto WhatsApp via UazAPI usando instância operable do utilizador remetente.
+ * Refresh live de status (SSOT) antes do send; um retry após refresh em 503 disconnected.
  */
 export async function dispatchWhatsAppText(params: {
   pool: Pool;
@@ -50,48 +118,74 @@ export async function dispatchWhatsAppText(params: {
     return { ok: false, error: 'Remetente não pertence à empresa.' };
   }
 
-  const instanceResult = await params.pool.query<{
-    id: string;
-    instance_token: string;
-    user_id: string;
-    external_instance_name: string | null;
-  }>(
-    `SELECT i.id, i.instance_token, i.user_id, i.external_instance_name
-     FROM chat_instances i
-     WHERE i.user_id = $1 AND i.status = 'connected'
-     LIMIT 1`,
-    [params.senderUserId],
-  );
-
-  if (instanceResult.rows.length === 0) {
+  let instanceRow = await loadInstanceForDispatch(params.pool, params.senderUserId);
+  if (!instanceRow) {
     return { ok: false, error: 'Nenhuma instância WhatsApp ativa encontrada para o utilizador.' };
   }
 
-  const instanceRow = instanceResult.rows[0]!;
-  const token = instanceRow.instance_token;
+  try {
+    const refreshed = await refreshChatInstanceStatusFromUaz(params.pool, {
+      instanceId: instanceRow.id,
+      instanceToken: instanceRow.instance_token,
+      currentStatus: instanceRow.status,
+      source: 'dispatch_whatsapp_text_preflight',
+    });
+    instanceRow = { ...instanceRow, status: refreshed.status };
+    if (!refreshed.operable) {
+      return {
+        ok: false,
+        error: `Instância WhatsApp não está conectada (status=${refreshed.status}). Atualize a conexão e tente novamente.`,
+      };
+    }
+  } catch (refreshErr: unknown) {
+    const refreshMsg = refreshErr instanceof Error ? refreshErr.message : String(refreshErr);
+    const refreshStatus = extractUazapiErrorStatus(refreshErr);
+    if (isUazapiInvalidTokenSignal(refreshMsg, refreshStatus)) {
+      try {
+        await markChatInstanceDisconnectedForInvalidToken(params.pool, {
+          instanceId: instanceRow.id,
+          userId: instanceRow.user_id,
+          tenantId: params.tenantId,
+          externalInstanceName: instanceRow.external_instance_name,
+          reason: refreshMsg,
+          source: 'dispatch_whatsapp_text',
+        });
+      } catch (healErr: unknown) {
+        const healMsg = healErr instanceof Error ? healErr.message : String(healErr);
+        console.error('[chat_instance_health]', JSON.stringify({ action: 'self_heal_failed', error: healMsg }));
+      }
+      return { ok: false, error: refreshMsg.slice(0, 500) };
+    }
+    // Status check falhou (rede etc.): se DB já era operable, tenta send; senão aborta.
+    if (!isChatInstanceStatusOperable(instanceRow.status)) {
+      return {
+        ok: false,
+        error: `Não foi possível verificar o estado da instância WhatsApp: ${refreshMsg.slice(0, 400)}`,
+      };
+    }
+    console.warn(
+      '[notifications-engine] status_refresh_failed_continuing_with_db_status',
+      JSON.stringify({
+        instanceId: instanceRow.id,
+        status: instanceRow.status,
+        error: refreshMsg.slice(0, 240),
+      }),
+    );
+  }
 
   const outboundText = normalizeWhatsAppOutboundPlainText(params.text);
 
+  const attemptSend = async (): Promise<WhatsAppDispatchResult> => {
+    const messageResponse = await sendWithToken(instanceRow!.instance_token, params.phone, outboundText);
+    return { ok: true, providerMessageId: providerMessageIdFromResponse(messageResponse) };
+  };
+
   try {
-    const messageResponse = (await uazapiService.sendTextMessage(token, {
-      number: params.phone,
-      text: outboundText,
-      readchat: false,
-      readmessages: false,
-      delay: 0,
-      track_source: 'painelcrm-notifications-engine',
-    })) as { id?: string; messageId?: string; key?: { id?: string } };
-
-    const providerMessageId =
-      messageResponse?.id ||
-      messageResponse?.messageId ||
-      messageResponse?.key?.id ||
-      randomUUID();
-
-    return { ok: true, providerMessageId: String(providerMessageId) };
+    return await attemptSend();
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     const httpStatus = extractUazapiErrorStatus(e);
+
     if (isUazapiInvalidTokenSignal(msg, httpStatus)) {
       try {
         await markChatInstanceDisconnectedForInvalidToken(params.pool, {
@@ -106,7 +200,35 @@ export async function dispatchWhatsAppText(params: {
         const healMsg = healErr instanceof Error ? healErr.message : String(healErr);
         console.error('[chat_instance_health]', JSON.stringify({ action: 'self_heal_failed', error: healMsg }));
       }
+      return { ok: false, error: msg.slice(0, 500) };
     }
+
+    if (isUazWhatsAppDisconnectedSignal(msg, httpStatus)) {
+      try {
+        const again = await refreshChatInstanceStatusFromUaz(params.pool, {
+          instanceId: instanceRow.id,
+          instanceToken: instanceRow.instance_token,
+          currentStatus: instanceRow.status,
+          source: 'dispatch_whatsapp_text_after_disconnected',
+        });
+        instanceRow = { ...instanceRow, status: again.status };
+        if (again.operable) {
+          try {
+            return await attemptSend();
+          } catch (retryErr: unknown) {
+            const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+            return { ok: false, error: retryMsg.slice(0, 500) };
+          }
+        }
+        return {
+          ok: false,
+          error: `WhatsApp disconnected (status=${again.status}). Atualize a conexão e tente novamente.`,
+        };
+      } catch {
+        return { ok: false, error: msg.slice(0, 500) || 'WhatsApp disconnected' };
+      }
+    }
+
     return { ok: false, error: msg.slice(0, 500) };
   }
 }

@@ -186,7 +186,8 @@ async function sendWhatsAppMessage(
     const instanceResult = await pool.query(
       `SELECT i.id, i.instance_token, i.external_instance_name
        FROM chat_instances i
-       WHERE i.user_id = $1 AND i.status = 'connected'
+       WHERE i.user_id = $1 AND i.status IN ('connected', 'open')
+       ORDER BY i.updated_at DESC NULLS LAST
        LIMIT 1`,
       [userId]
     );
