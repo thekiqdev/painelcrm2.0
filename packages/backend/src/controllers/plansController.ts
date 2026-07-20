@@ -8,7 +8,35 @@ const BILLING_INTERVALS = ['monthly', 'quarterly', 'semi_annual', 'yearly'] as c
 const intervalPriceSchema = z.object({
   billing_interval: z.enum(BILLING_INTERVALS),
   price_per_user_cents: z.number().int().min(0),
+  /** NULL = extras WhatsApp não vendáveis (WI2). */
+  price_per_instance_cents: z.number().int().min(0).nullable().optional(),
 });
+
+const INTERVAL_PRICES_SELECT =
+  'SELECT billing_interval, price_per_user_cents, price_per_instance_cents FROM plan_interval_prices WHERE plan_id = $1 ORDER BY billing_interval';
+
+async function loadIntervalPricesForPlan(planId: string): Promise<
+  Array<{
+    billing_interval: string;
+    price_per_user_cents: number;
+    price_per_instance_cents: number | null;
+  }>
+> {
+  const pricesRows = await pool.query(INTERVAL_PRICES_SELECT, [planId]);
+  return pricesRows.rows;
+}
+
+function normalizeInstanceCents(v: number | null | undefined): number | null {
+  if (v == null) return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.trunc(n);
+}
+
+/** Exposto para testes WI2. */
+export function normalizePlanPricePerInstanceCents(v: number | null | undefined): number | null {
+  return normalizeInstanceCents(v);
+}
 
 const benefitSchema = z.object({
   icon: z.string().optional().default('Check'),
@@ -93,12 +121,9 @@ export async function listPlans(_req: AuthRequest, res: Response): Promise<void>
     const plans = result.rows;
     for (const plan of plans) {
       if (!Array.isArray(plan.benefits)) plan.benefits = [];
-      if (plan.plan_type === 'custom') {
-        const pricesRows = await pool.query(
-          'SELECT billing_interval, price_per_user_cents FROM plan_interval_prices WHERE plan_id = $1',
-          [plan.id]
-        );
-        plan.interval_prices = pricesRows.rows;
+      plan.interval_prices = await loadIntervalPricesForPlan(plan.id);
+      if (plan.plan_type !== 'custom' && plan.interval_prices.length === 0) {
+        delete plan.interval_prices;
       }
     }
     res.json(plans);
@@ -121,11 +146,7 @@ export async function listPublicPlans(_req: Request, res: Response): Promise<voi
     for (const plan of plans) {
       if (!Array.isArray(plan.benefits)) plan.benefits = [];
       if (plan.plan_type === 'custom') {
-        const pricesRows = await pool.query(
-          'SELECT billing_interval, price_per_user_cents FROM plan_interval_prices WHERE plan_id = $1',
-          [plan.id]
-        );
-        plan.interval_prices = pricesRows.rows;
+        plan.interval_prices = await loadIntervalPricesForPlan(plan.id);
       }
     }
     res.json(plans);
@@ -150,12 +171,9 @@ export async function getPlan(req: AuthRequest, res: Response): Promise<void> {
     );
     plan.features = featuresResult.rows;
     if (!Array.isArray(plan.benefits)) plan.benefits = [];
-    if (plan.plan_type === 'custom') {
-      const pricesRows = await pool.query(
-        'SELECT billing_interval, price_per_user_cents FROM plan_interval_prices WHERE plan_id = $1',
-        [id]
-      );
-      plan.interval_prices = pricesRows.rows;
+    plan.interval_prices = await loadIntervalPricesForPlan(id);
+    if (plan.plan_type !== 'custom' && plan.interval_prices.length === 0) {
+      delete plan.interval_prices;
     }
     res.json(plan);
   } catch (error: any) {
@@ -203,19 +221,20 @@ export async function createPlan(req: AuthRequest, res: Response): Promise<void>
       ]
     );
     const plan = result.rows[0];
-    if (planType === 'custom' && body.interval_prices?.length) {
+    if (body.interval_prices?.length) {
       for (const ip of body.interval_prices) {
         await pool.query(
-          `INSERT INTO plan_interval_prices (plan_id, billing_interval, price_per_user_cents)
-           VALUES ($1, $2, $3)`,
-          [plan.id, ip.billing_interval, ip.price_per_user_cents]
+          `INSERT INTO plan_interval_prices (plan_id, billing_interval, price_per_user_cents, price_per_instance_cents)
+           VALUES ($1, $2, $3, $4)`,
+          [
+            plan.id,
+            ip.billing_interval,
+            ip.price_per_user_cents,
+            normalizeInstanceCents(ip.price_per_instance_cents),
+          ]
         );
       }
-      const pricesRows = await pool.query(
-        'SELECT billing_interval, price_per_user_cents FROM plan_interval_prices WHERE plan_id = $1',
-        [plan.id]
-      );
-      plan.interval_prices = pricesRows.rows;
+      plan.interval_prices = await loadIntervalPricesForPlan(plan.id);
     }
     res.status(201).json(plan);
   } catch (error) {
@@ -320,20 +339,24 @@ export async function updatePlan(req: AuthRequest, res: Response): Promise<void>
       await pool.query('DELETE FROM plan_interval_prices WHERE plan_id = $1', [id]);
       for (const ip of body.interval_prices) {
         await pool.query(
-          `INSERT INTO plan_interval_prices (plan_id, billing_interval, price_per_user_cents)
-           VALUES ($1, $2, $3)`,
-          [id, ip.billing_interval, ip.price_per_user_cents]
+          `INSERT INTO plan_interval_prices (plan_id, billing_interval, price_per_user_cents, price_per_instance_cents)
+           VALUES ($1, $2, $3, $4)`,
+          [
+            id,
+            ip.billing_interval,
+            ip.price_per_user_cents,
+            normalizeInstanceCents(ip.price_per_instance_cents),
+          ]
         );
       }
     }
     const r = await pool.query('SELECT * FROM plans WHERE id = $1', [id]);
     const plan = r.rows[0];
-    if (plan?.plan_type === 'custom') {
-      const pricesRows = await pool.query(
-        'SELECT billing_interval, price_per_user_cents FROM plan_interval_prices WHERE plan_id = $1',
-        [id]
-      );
-      plan.interval_prices = pricesRows.rows;
+    if (plan) {
+      plan.interval_prices = await loadIntervalPricesForPlan(id);
+      if (plan.plan_type !== 'custom' && plan.interval_prices.length === 0) {
+        delete plan.interval_prices;
+      }
     }
     res.json(plan);
   } catch (error) {
@@ -391,22 +414,16 @@ export async function getDefaultPlan(_req: AuthRequest, res: Response): Promise<
         return;
       }
       const plan = fallback.rows[0];
-      if (plan.plan_type === 'custom') {
-        const pricesRows = await pool.query(
-          'SELECT billing_interval, price_per_user_cents FROM plan_interval_prices WHERE plan_id = $1',
-          [plan.id]
-        );
-        plan.interval_prices = pricesRows.rows;
+      plan.interval_prices = await loadIntervalPricesForPlan(plan.id);
+      if (plan.plan_type !== 'custom' && (!plan.interval_prices || plan.interval_prices.length === 0)) {
+        delete plan.interval_prices;
       }
       return void res.json(plan);
     }
     const plan = row.rows[0];
-    if (plan.plan_type === 'custom') {
-      const pricesRows = await pool.query(
-        'SELECT billing_interval, price_per_user_cents FROM plan_interval_prices WHERE plan_id = $1',
-        [plan.id]
-      );
-      plan.interval_prices = pricesRows.rows;
+    plan.interval_prices = await loadIntervalPricesForPlan(plan.id);
+    if (plan.plan_type !== 'custom' && (!plan.interval_prices || plan.interval_prices.length === 0)) {
+      delete plan.interval_prices;
     }
     res.json(plan);
   } catch (error: any) {

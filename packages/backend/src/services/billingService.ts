@@ -149,6 +149,86 @@ export async function calculateSeatAddonProrata(
   };
 }
 
+export interface InstanceAddonProrataBreakdown {
+  formula: 'per_instance_price × conexoes_novas × (dias_restantes_no_ciclo / dias_totais_do_ciclo)';
+  period_start: string;
+  period_end: string;
+  today: string;
+  remaining_window_start: string;
+  total_period_days: number;
+  remaining_period_days: number;
+  price_per_instance_full_period_cents: number;
+  additional_instances: number;
+  amount_cents: number;
+}
+
+/**
+ * Cobrança incremental de conexões WhatsApp: proporcional ao tempo restante do ciclo atual.
+ */
+export async function calculateInstanceAddonProrata(
+  planId: string,
+  billingInterval: BillingInterval,
+  additionalInstances: number,
+  periodStart: unknown,
+  periodEnd: unknown,
+  options?: { contractedPricePerInstanceCents?: number | null }
+): Promise<InstanceAddonProrataBreakdown> {
+  if (additionalInstances < 1) {
+    throw new Error('É necessário informar pelo menos 1 nova conexão WhatsApp');
+  }
+  const startIso = periodBoundaryToYmd(periodStart);
+  const endIso = periodBoundaryToYmd(periodEnd);
+
+  let pricePerInstance: number;
+  const contractedPi = options?.contractedPricePerInstanceCents;
+  if (contractedPi != null && contractedPi >= 0) {
+    pricePerInstance = contractedPi;
+  } else {
+    const priceRow = await pool.query<{ price_per_instance_cents: number | null }>(
+      `SELECT price_per_instance_cents
+       FROM plan_interval_prices
+       WHERE plan_id = $1 AND billing_interval = $2`,
+      [planId, billingInterval]
+    );
+    const raw = priceRow.rows[0]?.price_per_instance_cents;
+    if (raw == null || raw < 0) {
+      throw new Error(
+        `Plano sem preço por conexão WhatsApp para o intervalo "${billingInterval}". Defina o valor no Super Admin.`
+      );
+    }
+    pricePerInstance = raw;
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  const totalPeriodDays = Math.max(1, inclusiveCalendarDaysBetween(startIso, endIso));
+  const windowStart = startIso > today ? startIso : today;
+  let remainingDays = 0;
+  if (windowStart <= endIso) {
+    remainingDays = inclusiveCalendarDaysBetween(windowStart, endIso);
+  }
+  remainingDays = Math.min(remainingDays, totalPeriodDays);
+  if (remainingDays < 1) {
+    throw new Error('Não há dias restantes neste ciclo para cobrar conexões adicionais proporcionalmente');
+  }
+  const ratio = remainingDays / totalPeriodDays;
+  const raw = additionalInstances * pricePerInstance * ratio;
+  const amountCents = Math.max(0, Math.round(raw));
+  if (amountCents < 1) {
+    throw new Error('Valor calculado para o addon de conexões é zero; verifique o período e a quantidade');
+  }
+  return {
+    formula: 'per_instance_price × conexoes_novas × (dias_restantes_no_ciclo / dias_totais_do_ciclo)',
+    period_start: startIso,
+    period_end: endIso,
+    today,
+    remaining_window_start: windowStart,
+    total_period_days: totalPeriodDays,
+    remaining_period_days: remainingDays,
+    price_per_instance_full_period_cents: pricePerInstance,
+    additional_instances: additionalInstances,
+    amount_cents: amountCents,
+  };
+}
+
 export async function calculateInvoiceAmount(
   planId: string,
   billingInterval: BillingInterval,
@@ -253,6 +333,55 @@ export interface CalculateSaasRenewalInvoiceAmountParams {
   contracted_price_per_user_cents?: number | null;
   /** Quando informado, aplica override comercial na renovação. */
   tenantId?: string | null;
+}
+
+/**
+ * Extras de conexões WhatsApp na renovação: (contratadas − inclusas no plano) × preço unitário.
+ * Plano ilimitado (`planIncluded == null`) → 0. Sem preço → 0.
+ */
+export function computeWhatsAppInstanceRenewalExtrasCents(params: {
+  planIncludedInstances: number | null;
+  contractedInstances: number | null;
+  pricePerInstanceCents: number | null | undefined;
+}): { extrasCount: number; extrasCents: number } {
+  const included = params.planIncludedInstances;
+  const contracted = params.contractedInstances;
+  const unit = params.pricePerInstanceCents;
+  if (included == null || contracted == null || contracted < 1) {
+    return { extrasCount: 0, extrasCents: 0 };
+  }
+  if (unit == null || unit < 0) {
+    return { extrasCount: 0, extrasCents: 0 };
+  }
+  const extrasCount = Math.max(0, Math.trunc(contracted) - Math.trunc(included));
+  if (extrasCount < 1) {
+    return { extrasCount: 0, extrasCents: 0 };
+  }
+  return {
+    extrasCount,
+    extrasCents: Math.max(0, Math.round(extrasCount * unit)),
+  };
+}
+
+/**
+ * Resolve preço unitário de conexão para renovação: snapshot contratado, senão catálogo do intervalo.
+ */
+export async function resolveWhatsAppInstanceUnitPriceForRenewal(params: {
+  planId: string;
+  billingInterval: BillingInterval;
+  contractedPricePerInstanceCents?: number | null;
+}): Promise<number | null> {
+  const snap = params.contractedPricePerInstanceCents;
+  if (snap != null && snap >= 0) return snap;
+  const priceRow = await pool.query<{ price_per_instance_cents: number | null }>(
+    `SELECT price_per_instance_cents
+     FROM plan_interval_prices
+     WHERE plan_id = $1 AND billing_interval = $2`,
+    [params.planId, params.billingInterval]
+  );
+  const raw = priceRow.rows[0]?.price_per_instance_cents;
+  if (raw == null || raw < 0) return null;
+  return raw;
 }
 
 /**

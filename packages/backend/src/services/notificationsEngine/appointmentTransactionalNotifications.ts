@@ -8,6 +8,7 @@ import {
   isSkippedByTenantPreference,
 } from './notificationEngineOrchestrator.js';
 import { resolveWhatsAppSenderUserIdForTenant } from './whatsappSenderResolve.js';
+import { resolveWhatsAppRoutingForEventKey } from './whatsappInstanceRoutingService.js';
 import {
   isNotificationsEngineBusinessEventsEnabled,
   isNotificationsEngineEnabled,
@@ -153,11 +154,20 @@ async function gateAndPublishAppointment(params: {
     return;
   }
 
-  const senderUserId = await resolveWhatsAppSenderUserIdForTenant(
-    params.pool,
-    params.tenantId,
-    params.preferredSenderUserId,
-  );
+  let senderUserId: string | null = null;
+  let chatInstanceId: string | null = null;
+
+  const routed = await resolveWhatsAppRoutingForEventKey(params.pool, params.tenantId, params.eventKey);
+  if (routed) {
+    senderUserId = routed.sender_user_id;
+    chatInstanceId = routed.chat_instance_id;
+  } else {
+    senderUserId = await resolveWhatsAppSenderUserIdForTenant(
+      params.pool,
+      params.tenantId,
+      params.preferredSenderUserId,
+    );
+  }
   if (!senderUserId) {
     neLogWarn('missing_whatsapp_sender', { tenant_id: params.tenantId, event_key: params.eventKey });
     return;
@@ -176,7 +186,12 @@ async function gateAndPublishAppointment(params: {
     mergeContext: params.mergeContext,
     eventOccurredAt: params.eventOccurredAt,
     actor: { type: 'user', user_id: params.actorUserId },
-    metadata: params.metadata,
+    metadata: {
+      ...params.metadata,
+      whatsapp_routing_source: chatInstanceId ? 'explicit' : 'fallback',
+      ...(chatInstanceId ? { whatsapp_routed_chat_instance_id: chatInstanceId } : {}),
+    },
+    chatInstanceId,
   });
 
   if (!result.ok) {
@@ -377,11 +392,24 @@ export async function publishAppointmentConfirmationRequest(params: {
 
   const phone = normalizeWhatsappPhone(recipient.phone);
   if (!phone) return { ok: false, status: 'failed', reason: 'invalid_phone' };
-  const senderUserId = await resolveWhatsAppSenderUserIdForTenant(
+
+  let senderUserId: string | null = null;
+  let chatInstanceId: string | null = null;
+  const routed = await resolveWhatsAppRoutingForEventKey(
     params.pool,
     params.tenantId,
-    a.responsible_user_id ?? a.created_by ?? params.actorUserId,
+    'appointment.confirmation_request',
   );
+  if (routed) {
+    senderUserId = routed.sender_user_id;
+    chatInstanceId = routed.chat_instance_id;
+  } else {
+    senderUserId = await resolveWhatsAppSenderUserIdForTenant(
+      params.pool,
+      params.tenantId,
+      a.responsible_user_id ?? a.created_by ?? params.actorUserId,
+    );
+  }
   if (!senderUserId) return { ok: false, status: 'failed', reason: 'missing_whatsapp_sender' };
 
   const responsavel = await loadResponsibleLabel(params.pool, a.responsible_user_id);
@@ -414,7 +442,10 @@ export async function publishAppointmentConfirmationRequest(params: {
       module: 'agenda',
       appointment_id: a.id,
       kind: 'confirmation_request',
+      whatsapp_routing_source: chatInstanceId ? 'explicit' : 'fallback',
+      ...(chatInstanceId ? { whatsapp_routed_chat_instance_id: chatInstanceId } : {}),
     },
+    chatInstanceId,
   });
   if (!result.ok) {
     return {

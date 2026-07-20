@@ -57,7 +57,7 @@ describe('dispatchWhatsAppText status SSOT', () => {
       text: 'Olá fatura',
     });
 
-    expect(result).toEqual({ ok: true, providerMessageId: 'msg-1' });
+    expect(result).toEqual({ ok: true, providerMessageId: 'msg-1', chatInstanceId: 'inst-1' });
     expect(uazapiService.getInstanceStatus).toHaveBeenCalledWith('tok');
     expect(uazapiService.sendTextMessage).toHaveBeenCalledTimes(1);
     const updateSql = String(query.mock.calls[3]?.[0] ?? '');
@@ -135,7 +135,7 @@ describe('dispatchWhatsAppText status SSOT', () => {
       text: 'Retry',
     });
 
-    expect(result).toEqual({ ok: true, providerMessageId: 'msg-retry' });
+    expect(result).toEqual({ ok: true, providerMessageId: 'msg-retry', chatInstanceId: 'inst-1' });
     expect(uazapiService.sendTextMessage).toHaveBeenCalledTimes(2);
     expect(uazapiService.getInstanceStatus).toHaveBeenCalledTimes(2);
   });

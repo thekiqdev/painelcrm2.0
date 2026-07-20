@@ -51,6 +51,8 @@ export interface ChatInstance {
   can_manage?: boolean;
   webhook_secret_last_seen_at?: string | null;
   webhook_needs_reconfiguration?: boolean;
+  /** WR3: chips de finalidade (Chat, Faturas, Agenda…). */
+  purpose_badges?: string[];
 }
 
 export type ChatInstanceWebhookStatusResponse = {
@@ -862,8 +864,27 @@ export const chatService = {
     }, options);
   },
 
-  async patchInstance(id: string, payload: { enabledInChat: boolean }) {
-    const response = await apiClient.patch<ChatInstance>(`/api/chat/instances/${id}`, payload);
+  async patchInstance(
+    id: string,
+    payload: {
+      enabledInChat?: boolean;
+      useForInvoice?: boolean;
+      moduleKey?: string;
+      useForModule?: boolean;
+    },
+  ) {
+    const response = await apiClient.patch<ChatInstance & {
+      purpose_routing?: {
+        enabled_in_chat: boolean;
+        use_for_invoice: boolean;
+        modules?: Array<{
+          module_key: string;
+          label: string;
+          enabled: boolean;
+          routed_instance_id: string | null;
+        }>;
+      };
+    }>(`/api/chat/instances/${id}`, payload);
     if (response.error) {
       throw new Error(response.error);
     }
@@ -871,6 +892,30 @@ export const chatService = {
       throw new Error('Falha ao atualizar instância');
     }
     invalidateChatInstancesHttpCache();
+    return response.data;
+  },
+
+  async getInstancePurposeRouting(id: string) {
+    const response = await apiClient.get<{
+      instance_id: string;
+      enabled_in_chat: boolean;
+      use_for_invoice: boolean;
+      invoice_routed_instance_id: string | null;
+      modules: Array<{
+        module_key: string;
+        label: string;
+        enabled: boolean;
+        routed_instance_id: string | null;
+      }>;
+      auto_seeded?: boolean;
+      auto_seed_reason?: string;
+    }>(`/api/chat/instances/${id}/purpose-routing`);
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    if (!response.data) {
+      throw new Error('Falha ao carregar finalidades da instância');
+    }
     return response.data;
   },
 

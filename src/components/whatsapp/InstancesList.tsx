@@ -25,9 +25,17 @@ import { resetWhatsAppIntegrationCaches } from "@/lib/whatsappInstanceCacheReset
 interface InstancesListProps {
   onAddInstance: () => void;
   onInstanceCreated?: () => void;
+  /** WI1: false quando quota do plano esgotada */
+  canAddInstance?: boolean;
+  limitLabel?: string | null;
 }
 
-export const InstancesList: React.FC<InstancesListProps> = ({ onAddInstance, onInstanceCreated }) => {
+export const InstancesList: React.FC<InstancesListProps> = ({
+  onAddInstance,
+  onInstanceCreated,
+  canAddInstance = true,
+  limitLabel = null,
+}) => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [instances, setInstances] = useState<ChatInstance[]>([]);
@@ -501,11 +509,30 @@ export const InstancesList: React.FC<InstancesListProps> = ({ onAddInstance, onI
           <h3 className="text-lg font-semibold text-foreground">Nenhuma conexão ainda</h3>
           <p className="mt-2 max-w-md text-sm text-muted-foreground">
             Adicione um número para o seu time atender pelo chat integrado.
+            {limitLabel ? ` (${limitLabel})` : null}
           </p>
-          <Button className="mt-6 h-12 px-8 text-base" onClick={onAddInstance} size="lg">
+          <Button
+            className="mt-6 h-12 px-8 text-base"
+            onClick={onAddInstance}
+            size="lg"
+            disabled={!canAddInstance}
+            title={!canAddInstance ? "Limite de conexões do plano atingido" : undefined}
+          >
             <Plus className="mr-2 h-5 w-5" />
             Conectar WhatsApp
           </Button>
+          {!canAddInstance ? (
+            <p className="mt-3 text-sm text-muted-foreground">
+              Limite do plano atingido.{" "}
+              <button
+                type="button"
+                className="font-medium text-primary underline-offset-4 hover:underline"
+                onClick={() => navigate("/meu-plano")}
+              >
+                Ir para Meu Plano
+              </button>
+            </p>
+          ) : null}
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
@@ -613,6 +640,7 @@ export const InstancesList: React.FC<InstancesListProps> = ({ onAddInstance, onI
         onRefresh={() => (activeSheetInstance ? handleCheckStatus(activeSheetInstance) : undefined)}
         onOpenQR={() => (activeSheetInstance ? handleGenerateQRCode(activeSheetInstance) : undefined)}
         onDisconnect={() => (activeSheetInstance ? handleDeleteClick(activeSheetInstance) : undefined)}
+        onInstanceUpdated={loadInstances}
         webhookStatus={activeSheetInstance ? webhookStatusByInstance[activeSheetInstance.id] ?? null : null}
         webhookLoading={activeSheetInstance ? webhookStatusLoadingId === activeSheetInstance.id : false}
         webhookActionLoading={activeSheetInstance ? webhookActionLoadingId === activeSheetInstance.id : false}

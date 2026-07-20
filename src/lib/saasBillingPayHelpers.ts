@@ -17,6 +17,7 @@ export interface SaasBillingPurchaseResult {
   pix_copy_paste?: string;
   inline_pay_token?: string;
   seat_addon_additional_seats?: number;
+  instance_addon_additional_instances?: number;
   billing_reason?: string;
 }
 
@@ -74,6 +75,7 @@ export function buildSaasBillingDisplayResult(
     payment_method: p.payment_method,
     billing_reason: p.billing_reason,
     seat_addon_additional_seats: p.seat_addon_additional_seats,
+    instance_addon_additional_instances: p.instance_addon_additional_instances,
     ...merge,
   };
 

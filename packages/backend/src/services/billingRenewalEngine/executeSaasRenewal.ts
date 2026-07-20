@@ -13,7 +13,12 @@ import {
   type CreateInvoiceInput,
 } from '../invoiceService.js';
 import { publishPlatformBillingChargeCreated } from '../platformNotifications/platformBusinessNotifications.js';
-import { calculateSaasRenewalInvoiceAmount, type BillingInterval } from '../billingService.js';
+import {
+  calculateSaasRenewalInvoiceAmount,
+  computeWhatsAppInstanceRenewalExtrasCents,
+  resolveWhatsAppInstanceUnitPriceForRenewal,
+  type BillingInterval,
+} from '../billingService.js';
 import { trySettleZeroAmountBillingIfEligible } from '../../commercial/zeroAmountSettlementService.js';
 import { getActiveGateway } from '../../modules/payments/gatewayProvider.js';
 import { getActiveConfig } from '../paymentGatewayConfigService.js';
@@ -80,19 +85,36 @@ export async function executeSaasRenewal(params: {
     name: string;
     price_cents: number | null;
     plan_type: string | null;
-  }>('SELECT name, price_cents, plan_type FROM plans WHERE id = $1', [planId]);
+    max_whatsapp_instances: number | null;
+  }>('SELECT name, price_cents, plan_type, max_whatsapp_instances FROM plans WHERE id = $1', [planId]);
   const planName = planRow.rows[0]?.name ?? null;
   const planType = planRow.rows[0]?.plan_type ?? 'standard';
+  const planIncludedWhatsapp = planRow.rows[0]?.max_whatsapp_instances ?? null;
 
-  const tenantSeats = await pool.query<{ max_users_scheduled_next_cycle: number | null }>(
-    `SELECT max_users_scheduled_next_cycle FROM tenants WHERE id = $1`,
+  const tenantSeats = await pool.query<{
+    max_users_scheduled_next_cycle: number | null;
+    max_whatsapp_instances_override: number | null;
+    max_whatsapp_instances_scheduled_next_cycle: number | null;
+  }>(
+    `SELECT max_users_scheduled_next_cycle,
+            max_whatsapp_instances_override,
+            max_whatsapp_instances_scheduled_next_cycle
+     FROM tenants WHERE id = $1`,
     [subscription.tenant_id]
   );
   const scheduledNext = tenantSeats.rows[0]?.max_users_scheduled_next_cycle;
+  const whatsappOverride = tenantSeats.rows[0]?.max_whatsapp_instances_override ?? null;
+  const whatsappScheduled = tenantSeats.rows[0]?.max_whatsapp_instances_scheduled_next_cycle ?? null;
   const isCustom = planType === 'custom';
   let usersForRenewal = subscription.users_count ?? null;
   if (isCustom && scheduledNext != null && scheduledNext >= 1) {
     usersForRenewal = scheduledNext;
+  }
+
+  let contractedWhatsappForRenewal: number | null =
+    whatsappOverride != null ? whatsappOverride : planIncludedWhatsapp;
+  if (whatsappScheduled != null && whatsappScheduled >= 1) {
+    contractedWhatsappForRenewal = whatsappScheduled;
   }
 
   const renewalPricing = await calculateSaasRenewalInvoiceAmount({
@@ -105,7 +127,22 @@ export async function executeSaasRenewal(params: {
     contracted_price_per_user_cents: subscription.contracted_price_per_user_cents,
     tenantId: subscription.tenant_id,
   });
-  const amountCents = renewalPricing.amountCents;
+
+  const subPiRow = await pool.query<{ c: number | null }>(
+    `SELECT contracted_price_per_instance_cents AS c FROM subscriptions WHERE id = $1`,
+    [subscription.id]
+  );
+  const unitPrice = await resolveWhatsAppInstanceUnitPriceForRenewal({
+    planId,
+    billingInterval: interval,
+    contractedPricePerInstanceCents: subPiRow.rows[0]?.c ?? null,
+  });
+  const whatsappExtras = computeWhatsAppInstanceRenewalExtrasCents({
+    planIncludedInstances: planIncludedWhatsapp,
+    contractedInstances: contractedWhatsappForRenewal,
+    pricePerInstanceCents: unitPrice,
+  });
+  const amountCents = renewalPricing.amountCents + whatsappExtras.extrasCents;
 
   billingLog('job', 'saas_renewal_pricing_source', {
     jobId: job.id,
@@ -113,6 +150,10 @@ export async function executeSaasRenewal(params: {
     tenant_id: subscription.tenant_id,
     amount_cents: amountCents,
     price_source: renewalPricing.priceSource,
+    whatsapp_extras_count: whatsappExtras.extrasCount,
+    whatsapp_extras_cents: whatsappExtras.extrasCents,
+    whatsapp_unit_cents: unitPrice,
+    whatsapp_contracted: contractedWhatsappForRenewal,
   });
 
   const dueDate = periodStart;
@@ -217,6 +258,17 @@ export async function executeSaasRenewal(params: {
     if (!sync.ok) {
       console.error('[recurringBillingJobService] falha ao aplicar assentos agendados', sync.error);
     }
+  }
+
+  if (whatsappScheduled != null && whatsappScheduled >= 1) {
+    await pool.query(
+      `UPDATE tenants
+       SET max_whatsapp_instances_override = $1,
+           max_whatsapp_instances_scheduled_next_cycle = NULL,
+           updated_at = now()
+       WHERE id = $2`,
+      [whatsappScheduled, subscription.tenant_id]
+    );
   }
 
   await pool.query(

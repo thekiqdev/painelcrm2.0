@@ -6,8 +6,16 @@ export interface TenantLimitsUsers {
   allowed: boolean;
 }
 
+export interface TenantLimitsWhatsAppInstances {
+  current: number;
+  limit: number | null;
+  allowed: boolean;
+}
+
 export interface TenantLimits {
   users: TenantLimitsUsers;
+  /** Presente desde WI1; clientes antigos podem ignorar. */
+  whatsapp_instances?: TenantLimitsWhatsAppInstances;
 }
 
 export interface TenantUser {

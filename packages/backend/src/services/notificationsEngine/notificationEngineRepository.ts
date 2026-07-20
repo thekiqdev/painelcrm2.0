@@ -83,6 +83,7 @@ export type OutboundDeliveryDispatchRow = {
   rendered_body: string;
   rendered_subject: string | null;
   dispatch_sender_user_id: string | null;
+  dispatch_chat_instance_id: string | null;
   retry_count: number;
   next_retry_at: Date | null;
   dispatch_not_before: Date | null;
@@ -513,7 +514,8 @@ export async function getOutboundDeliveryForDispatch(
 ): Promise<OutboundDeliveryDispatchRow | null> {
   const r = await client.query<OutboundDeliveryDispatchRow>(
     `SELECT id, tenant_id, event_key, channel, recipient_type, recipient_address,
-            rendered_body, rendered_subject, dispatch_sender_user_id, retry_count, next_retry_at,
+            rendered_body, rendered_subject, dispatch_sender_user_id,
+            dispatch_chat_instance_id, retry_count, next_retry_at,
             dispatch_not_before
      FROM notification_outbound_deliveries
      WHERE id = $1
@@ -587,6 +589,20 @@ export async function setDispatchSenderIfNull(
          updated_at = now()
      WHERE id = $1`,
     [deliveryId, senderUserId],
+  );
+}
+
+export async function setDispatchChatInstanceIfNull(
+  client: Pool | PoolClient,
+  deliveryId: string,
+  chatInstanceId: string,
+): Promise<void> {
+  await client.query(
+    `UPDATE notification_outbound_deliveries
+     SET dispatch_chat_instance_id = COALESCE(dispatch_chat_instance_id, $2::uuid),
+         updated_at = now()
+     WHERE id = $1`,
+    [deliveryId, chatInstanceId],
   );
 }
 

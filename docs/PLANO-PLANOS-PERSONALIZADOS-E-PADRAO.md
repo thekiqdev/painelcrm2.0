@@ -45,19 +45,21 @@ Este documento descreve a implementação do **plano personalizado** (preço por
   - UNIQUE(plan_id, billing_interval).
 
 - Para plano **custom**, não se usa mais `plans.price_cents` e `plans.billing_interval` como únicos; o valor da cobrança será:  
-  `amount_cents = price_per_user_cents * contracted_users` (e opcionalmente considerar instâncias se houver preço por instância no futuro).
+  `amount_cents = price_per_user_cents * contracted_users` (+ extras de conexões WhatsApp na renovação, ver abaixo).
 
 - **Intervalos:** mensal, trimestral, semestral, anual (quarterly, semi_annual, yearly além do monthly já existente).
 
+- **Preço por conexão WhatsApp (WI2–WI4):** `plan_interval_prices.price_per_instance_cents` (nullable = extras não vendáveis). Snapshot em `subscriptions.contracted_price_per_instance_cents`. Add-on self-service: `billing_reason = instance_addon`. Na **renovação SaaS**:
+  `extras = max(0, contracted_instances − plans.max_whatsapp_instances) × preço unitário`
+  (contratadas = override ou schedule `max_whatsapp_instances_scheduled_next_cycle`).
+
 ### 1.3 Tenant e cobrança em planos personalizados
 
-- **Tenant:** já existem `max_users_override`, `max_profiles_override`, `max_whatsapp_instances_override`. Para plano custom, esses overrides (ou valores definidos na contratação) representam a “quantidade contratada” que entra no cálculo da cobrança.
+- **Tenant:** já existem `max_users_override`, `max_profiles_override`, `max_whatsapp_instances_override`, `max_users_scheduled_next_cycle`, `max_whatsapp_instances_scheduled_next_cycle`. Para plano custom, esses overrides (ou valores definidos na contratação) representam a “quantidade contratada” que entra no cálculo da cobrança.
 - **tenant_billing:** já tem `amount_cents`, `billing_interval`, `plan_id`. Para plano custom, ao gerar cobrança:
   - Obter `contracted_users` (ex.: `max_users_override` do tenant ou limite efetivo) e `billing_interval` escolhido.
   - Buscar `price_per_user_cents` em `plan_interval_prices` para esse plano e intervalo.
-  - `amount_cents = price_per_user_cents * contracted_users` (arredondar/validar como inteiro).
-
-- Opcional (futuro): preço por instância WhatsApp em planos custom; por simplicidade na primeira versão pode-se considerar só “preço por usuário” e usar as instâncias apenas como limite (sem valor unitário extra).
+  - `amount_cents = price_per_user_cents * contracted_users` (arredondar/validar como inteiro); na renovação somar extras WhatsApp se houver.
 
 ### 1.4 Migrations sugeridas
 

@@ -10,6 +10,7 @@ export const COMMERCIAL_BILLING_REASONS = [
   'plan_renewal',
   'manual_charge',
   'seat_addon',
+  'instance_addon',
 ] as const;
 
 export interface CommercialBillingHubRow {

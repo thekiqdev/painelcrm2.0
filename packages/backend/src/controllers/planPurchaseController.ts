@@ -601,6 +601,9 @@ export async function postPlanCheckoutPreparePayment(req: AuthRequest, res: Resp
     if (pending.seat_addon_additional_seats != null) {
       response.seat_addon_additional_seats = pending.seat_addon_additional_seats;
     }
+    if (pending.instance_addon_additional_instances != null) {
+      response.instance_addon_additional_instances = pending.instance_addon_additional_instances;
+    }
     if (pending.invoice_url) response.invoice_url = pending.invoice_url;
     if (pending.bank_slip_url) response.bank_slip_url = pending.bank_slip_url;
     if (pending.bank_slip_digitable_line) response.bank_slip_digitable_line = pending.bank_slip_digitable_line;

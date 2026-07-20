@@ -35,7 +35,7 @@ export function normalizeWhatsAppOutboundPlainText(raw: string): string {
 }
 
 export type WhatsAppDispatchResult =
-  | { ok: true; providerMessageId: string }
+  | { ok: true; providerMessageId: string; chatInstanceId?: string }
   | { ok: false; error: string };
 
 type InstanceRow = {
@@ -69,6 +69,22 @@ async function loadInstanceForDispatch(
     [senderUserId],
   );
   return any.rows[0] ?? null;
+}
+
+async function loadInstanceByIdForTenant(
+  pool: Pool,
+  tenantId: string,
+  chatInstanceId: string,
+): Promise<InstanceRow | null> {
+  const r = await pool.query<InstanceRow>(
+    `SELECT i.id, i.instance_token, i.user_id, i.external_instance_name, i.status
+     FROM chat_instances i
+     INNER JOIN users u ON u.id = i.user_id
+     WHERE i.id = $1 AND u.tenant_id = $2
+     LIMIT 1`,
+    [chatInstanceId, tenantId],
+  );
+  return r.rows[0] ?? null;
 }
 
 async function sendWithToken(
@@ -109,16 +125,35 @@ export async function dispatchWhatsAppText(params: {
   senderUserId: string;
   phone: string;
   text: string;
+  /** WR1: forçar instância (ex.: routing de faturas). */
+  chatInstanceId?: string | null;
 }): Promise<WhatsAppDispatchResult> {
+  let senderUserId = params.senderUserId;
   const member = await params.pool.query(`SELECT 1 FROM users WHERE id = $1 AND tenant_id = $2 LIMIT 1`, [
-    params.senderUserId,
+    senderUserId,
     params.tenantId,
   ]);
   if (member.rows.length === 0) {
     return { ok: false, error: 'Remetente não pertence à empresa.' };
   }
 
-  let instanceRow = await loadInstanceForDispatch(params.pool, params.senderUserId);
+  let instanceRow: InstanceRow | null = null;
+  if (params.chatInstanceId) {
+    instanceRow = await loadInstanceByIdForTenant(params.pool, params.tenantId, params.chatInstanceId);
+    if (!instanceRow) {
+      return { ok: false, error: 'Instância WhatsApp de roteamento não encontrada nesta conta.' };
+    }
+    senderUserId = instanceRow.user_id;
+    const ownerOk = await params.pool.query(`SELECT 1 FROM users WHERE id = $1 AND tenant_id = $2 LIMIT 1`, [
+      senderUserId,
+      params.tenantId,
+    ]);
+    if (ownerOk.rows.length === 0) {
+      return { ok: false, error: 'Dono da instância WhatsApp não pertence à empresa.' };
+    }
+  } else {
+    instanceRow = await loadInstanceForDispatch(params.pool, senderUserId);
+  }
   if (!instanceRow) {
     return { ok: false, error: 'Nenhuma instância WhatsApp ativa encontrada para o utilizador.' };
   }
@@ -177,7 +212,11 @@ export async function dispatchWhatsAppText(params: {
 
   const attemptSend = async (): Promise<WhatsAppDispatchResult> => {
     const messageResponse = await sendWithToken(instanceRow!.instance_token, params.phone, outboundText);
-    return { ok: true, providerMessageId: providerMessageIdFromResponse(messageResponse) };
+    return {
+      ok: true,
+      providerMessageId: providerMessageIdFromResponse(messageResponse),
+      chatInstanceId: instanceRow!.id,
+    };
   };
 
   try {

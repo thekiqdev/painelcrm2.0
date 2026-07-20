@@ -49,6 +49,8 @@ const BILLING_INTERVALS = [
 interface IntervalPrice {
   billing_interval: string;
   price_per_user_cents: number;
+  /** null = extras WhatsApp não vendáveis (WI2) */
+  price_per_instance_cents?: number | null;
 }
 
 interface PlanBenefit {
@@ -95,7 +97,11 @@ const defaultPlan: Partial<Plan> = {
   is_default: false,
   is_free: false,
   free_access_days: null,
-  interval_prices: BILLING_INTERVALS.map(({ key }) => ({ billing_interval: key, price_per_user_cents: 0 })),
+  interval_prices: BILLING_INTERVALS.map(({ key }) => ({
+    billing_interval: key,
+    price_per_user_cents: 0,
+    price_per_instance_cents: null,
+  })),
   is_active: true,
   sort_order: 0,
   features: {} as Record<string, boolean>,
@@ -232,8 +238,30 @@ export default function SuperAdminPlans() {
       free_access_days: form.is_free ? (form.free_access_days ?? null) : null,
       interval_prices:
         form.plan_type === 'custom' && form.interval_prices
-          ? form.interval_prices.filter((ip) => ip.billing_interval && ip.price_per_user_cents > 0)
-          : undefined,
+          ? form.interval_prices
+              .filter((ip) => ip.billing_interval && ip.price_per_user_cents > 0)
+              .map((ip) => ({
+                billing_interval: ip.billing_interval,
+                price_per_user_cents: ip.price_per_user_cents,
+                price_per_instance_cents:
+                  ip.price_per_instance_cents != null && ip.price_per_instance_cents > 0
+                    ? ip.price_per_instance_cents
+                    : null,
+              }))
+          : form.plan_type !== 'custom'
+            ? (form.interval_prices ?? [])
+                .filter(
+                  (ip) =>
+                    ip.billing_interval &&
+                    ip.price_per_instance_cents != null &&
+                    ip.price_per_instance_cents > 0
+                )
+                .map((ip) => ({
+                  billing_interval: ip.billing_interval,
+                  price_per_user_cents: 0,
+                  price_per_instance_cents: ip.price_per_instance_cents ?? null,
+                }))
+            : undefined,
       benefits: (form.benefits ?? [])
         .filter((b) => (b.label || '').trim())
         .map((b) => ({ icon: b.icon || 'Check', label: (b.label || '').trim() })),
@@ -356,9 +384,13 @@ export default function SuperAdminPlans() {
                           <span className="text-sm">
                             {plan.interval_prices.map((ip) => {
                               const label = BILLING_INTERVALS.find((i) => i.key === ip.billing_interval)?.label ?? ip.billing_interval;
+                              const inst =
+                                ip.price_per_instance_cents != null && ip.price_per_instance_cents > 0
+                                  ? ` · ${formatPrice(ip.price_per_instance_cents)}/conexão`
+                                  : '';
                               return (
                                 <span key={ip.billing_interval} className="block">
-                                  {formatPrice(ip.price_per_user_cents)}/usuário ({label.toLowerCase()})
+                                  {formatPrice(ip.price_per_user_cents)}/usuário{inst} ({label.toLowerCase()})
                                 </span>
                               );
                             })}
@@ -554,13 +586,52 @@ export default function SuperAdminPlans() {
                     />
                   </div>
                 </div>
+                <div className="grid gap-2">
+                  <Label>Valor por conexão WhatsApp extra (vazio = não vendável)</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Preço unitário para conexões além do máximo incluso, na periodicidade do plano. Usado no Meu Plano (WI3).
+                  </p>
+                  <Input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="0,00"
+                    value={(() => {
+                      const interval = form.billing_interval ?? 'monthly';
+                      const row = (form.interval_prices ?? []).find((ip) => ip.billing_interval === interval);
+                      const cents = row?.price_per_instance_cents ?? 0;
+                      return cents > 0 ? `R$ ${centsToReaisInput(cents)}` : '';
+                    })()}
+                    onChange={(e) => {
+                      const raw = e.target.value.replace(/\D/g, '');
+                      const nextCents = raw === '' ? null : parseInt(raw, 10);
+                      const cents = nextCents != null && !isNaN(nextCents) ? nextCents : null;
+                      setForm((f) => {
+                        const interval = f.billing_interval ?? 'monthly';
+                        const list = [...(f.interval_prices ?? [])];
+                        const idx = list.findIndex((ip) => ip.billing_interval === interval);
+                        if (idx >= 0) {
+                          list[idx] = { ...list[idx], price_per_instance_cents: cents };
+                        } else {
+                          list.push({
+                            billing_interval: interval,
+                            price_per_user_cents: 0,
+                            price_per_instance_cents: cents,
+                          });
+                        }
+                        return { ...f, interval_prices: list };
+                      });
+                    }}
+                  />
+                </div>
               </>
             )}
             {form.plan_type === 'custom' && (
               <div className="space-y-3">
                 <div>
-                  <Label>Preço por usuário por periodicidade</Label>
-                  <p className="text-sm text-muted-foreground mt-0.5">Adicione valor e período. Cada periodicidade só pode ser usada uma vez.</p>
+                  <Label>Preço por usuário e por conexão WhatsApp</Label>
+                  <p className="text-sm text-muted-foreground mt-0.5">
+                    Valor por usuário (obrigatório) e valor opcional por conexão extra, por periodicidade.
+                  </p>
                 </div>
                 <div className="space-y-2">
                   {(form.interval_prices ?? []).map((ip, index) => {
@@ -573,12 +644,13 @@ export default function SuperAdminPlans() {
                       (i) => ip.billing_interval === i.key || !usedByOthers.has(i.key)
                     );
                     const cents = ip.price_per_user_cents ?? 0;
+                    const instanceCents = ip.price_per_instance_cents ?? 0;
                     return (
-                      <div key={`${index}-${ip.billing_interval || 'new'}`} className="flex items-center gap-2">
+                      <div key={`${index}-${ip.billing_interval || 'new'}`} className="flex flex-wrap items-center gap-2">
                         <Input
                           type="text"
                           inputMode="decimal"
-                          placeholder="Valor (R$)"
+                          placeholder="R$/usuário"
                           className="w-[120px] shrink-0"
                           value={cents > 0 ? `R$ ${centsToReaisInput(cents)}` : ''}
                           onChange={(e) => {
@@ -588,6 +660,24 @@ export default function SuperAdminPlans() {
                             setForm((f) => {
                               const list = [...(f.interval_prices ?? [])];
                               list[index] = { ...list[index], price_per_user_cents: nextCents };
+                              return { ...f, interval_prices: list };
+                            });
+                          }}
+                        />
+                        <Input
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="R$/conexão"
+                          className="w-[120px] shrink-0"
+                          title="Valor por conexão WhatsApp extra"
+                          value={instanceCents > 0 ? `R$ ${centsToReaisInput(instanceCents)}` : ''}
+                          onChange={(e) => {
+                            const raw = e.target.value.replace(/\D/g, '');
+                            const next = raw === '' ? null : parseInt(raw, 10);
+                            const nextCents = next != null && !isNaN(next) ? next : null;
+                            setForm((f) => {
+                              const list = [...(f.interval_prices ?? [])];
+                              list[index] = { ...list[index], price_per_instance_cents: nextCents };
                               return { ...f, interval_prices: list };
                             });
                           }}
@@ -646,7 +736,10 @@ export default function SuperAdminPlans() {
                   onClick={() =>
                     setForm((f) => ({
                       ...f,
-                      interval_prices: [...(f.interval_prices ?? []), { billing_interval: '', price_per_user_cents: 0 }],
+                      interval_prices: [
+                        ...(f.interval_prices ?? []),
+                        { billing_interval: '', price_per_user_cents: 0, price_per_instance_cents: null },
+                      ],
                     }))
                   }
                 >

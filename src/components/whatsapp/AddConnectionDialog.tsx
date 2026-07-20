@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { InfoIcon, CheckCircle2, QrCode, RefreshCw } from "lucide-react";
+import { Link } from "react-router-dom";
 import { toast } from "@/components/ui/sonner";
 import { chatService, type InstanceSyncMode } from "@/services/chat";
 import QRCodePopup from "./QRCodePopup";
@@ -29,12 +30,17 @@ interface AddConnectionDialogProps {
   isOpen: boolean;
   onClose: () => void;
   onAddConnection: (connectionName: string, connectionType: string, configData?: any) => void;
+  /** WI1: bloqueia submit se a quota do plano estiver esgotada */
+  limitReached?: boolean;
+  limitLabel?: string | null;
 }
 
 const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   isOpen,
   onClose,
   onAddConnection,
+  limitReached = false,
+  limitLabel = null,
 }) => {
   const [connectionName, setConnectionName] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
@@ -84,7 +90,15 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   
   const handleCreateInstance = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+    if (limitReached) {
+      toast.error("Limite de conexões WhatsApp do plano atingido", {
+        description: limitLabel
+          ? `${limitLabel}. Aumente o limite no Meu Plano.`
+          : "Aumente o limite no Meu Plano.",
+      });
+      return;
+    }
+
     setIsSubmitting(true);
     
     try {
@@ -210,6 +224,16 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
           {!isCreated ? (
             <form onSubmit={handleCreateInstance}>
               <div className="grid gap-4 py-4">
+                {limitReached ? (
+                  <Alert>
+                    <AlertDescription>
+                      Limite do plano atingido{limitLabel ? ` (${limitLabel})` : ""}.{" "}
+                      <Link to="/meu-plano" className="font-medium underline underline-offset-4">
+                        Ir para Meu Plano
+                      </Link>
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
                 <div className="grid gap-2">
                   <Label htmlFor="connectionName">Nome da Conexão</Label>
                   <Input
@@ -218,6 +242,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
                     value={connectionName}
                     onChange={(e) => setConnectionName(e.target.value)}
                     required
+                    disabled={limitReached}
                   />
                 </div>
                 
@@ -227,6 +252,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
                     value={phoneNumber}
                     onChange={setPhoneNumber}
                     required
+                    disabled={limitReached}
                   />
                   <p className="text-xs text-muted-foreground">
                     Digite o número no formato (XX) 9 XXXX-XXXX. O código do país (+55) será adicionado automaticamente.
@@ -283,7 +309,13 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
                 </Button>
                 <Button 
                   type="submit" 
-                  disabled={isSubmitting || !connectionName || !phoneNumber || extractPhoneNumbers(phoneNumber).length < 10}
+                  disabled={
+                    limitReached ||
+                    isSubmitting ||
+                    !connectionName ||
+                    !phoneNumber ||
+                    extractPhoneNumbers(phoneNumber).length < 10
+                  }
                 >
                   {isSubmitting ? "Criando..." : "Criar Instância"}
                 </Button>

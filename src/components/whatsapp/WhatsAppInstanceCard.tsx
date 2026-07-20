@@ -10,6 +10,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Loader2, MessageSquare, MoreVertical, QrCode, RefreshCw, Unplug, Eye } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { ChatInstance } from "@/services/chat";
 import {
@@ -70,6 +71,7 @@ export function WhatsAppInstanceCard({
   const activityHint = getActivityHint(instance);
   const syncUserMsg = getSyncStatusUserMessage(instance);
   const showRetryInitial = Boolean(syncUserMsg?.isError && onRetryInitialSync);
+  const purposeBadges = instance.purpose_badges ?? [];
 
   return (
     <Card
@@ -93,6 +95,15 @@ export function WhatsAppInstanceCard({
               Instância: <span className="font-medium">{instance.name || "—"}</span>
             </p>
             <p className="mt-1 text-xs font-medium text-foreground">{badgeText}</p>
+            {purposeBadges.length > 0 ? (
+              <div className="flex flex-wrap gap-1 pt-1">
+                {purposeBadges.map((label) => (
+                  <Badge key={label} variant="secondary" className="px-1.5 py-0 text-[10px] font-medium">
+                    {label}
+                  </Badge>
+                ))}
+              </div>
+            ) : null}
             <p className="truncate text-[11px] text-muted-foreground">
               {activityHint || "—"}
             </p>

@@ -108,6 +108,20 @@ interface SeatAddonPreviewResponse {
   };
 }
 
+interface InstanceAddonPreviewResponse {
+  current_contracted: number;
+  new_total: number;
+  billing_interval: string;
+  breakdown: {
+    period_start: string;
+    period_end: string;
+    remaining_period_days: number;
+    price_per_instance_full_period_cents: number;
+    additional_instances: number;
+    amount_cents: number;
+  };
+}
+
 interface CheckoutContextLite {
   cpf_cnpj: string;
   email: string;
@@ -126,6 +140,8 @@ function billingReasonLabel(reason: string): string {
   switch (reason) {
     case 'seat_addon':
       return 'Assentos adicionais';
+    case 'instance_addon':
+      return 'Conexões WhatsApp adicionais';
     case 'plan_upgrade':
       return 'Upgrade de plano';
     case 'plan_renewal':
@@ -173,6 +189,7 @@ export default function InternalBillingCheckout() {
   const [hubRow, setHubRow] = useState<CommercialBillingHubRow | null>(null);
   const [result, setResult] = useState<SaasBillingPurchaseResult | null>(null);
   const [seatPreview, setSeatPreview] = useState<SeatAddonPreviewResponse | null>(null);
+  const [instancePreview, setInstancePreview] = useState<InstanceAddonPreviewResponse | null>(null);
   const [billingCpf, setBillingCpf] = useState('');
   const [cpfError, setCpfError] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<PlanPurchasePm>('PIX');
@@ -197,9 +214,10 @@ export default function InternalBillingCheckout() {
   const summarySource = useMemo(() => {
     if (!result) return 'none';
     if (result.billing_reason === 'seat_addon' && seatPreview) return 'billing+seat_preview';
+    if (result.billing_reason === 'instance_addon' && instancePreview) return 'billing+instance_preview';
     if (hubRow) return 'billing+commercial_hub_row';
     return 'billing_pending_only';
-  }, [result, seatPreview, hubRow]);
+  }, [result, seatPreview, instancePreview, hubRow]);
 
   const ensureFreshSeatAddonPreview = useCallback(async (): Promise<boolean> => {
     const additional = result?.seat_addon_additional_seats ?? null;
@@ -216,6 +234,27 @@ export default function InternalBillingCheckout() {
     if (result.billing_id && Math.abs(res.data.breakdown.amount_cents - result.amount_cents) > 2) {
       toast.error(
         'O valor proporcional mudou em relação a esta cobrança. Volte ao Meu plano e gere novamente a cobrança de assentos.'
+      );
+      return false;
+    }
+    return true;
+  }, [result]);
+
+  const ensureFreshInstanceAddonPreview = useCallback(async (): Promise<boolean> => {
+    const additional = result?.instance_addon_additional_instances ?? null;
+    if (result?.billing_reason !== 'instance_addon' || additional == null || additional < 1) {
+      return true;
+    }
+    const res = await apiClient.post<InstanceAddonPreviewResponse>('/api/me/tenant/instance-addon/preview', {
+      additional_instances: additional,
+    });
+    if (res.error || !res.data) {
+      toast.error(res.error ?? 'Não foi possível recalcular o valor proporcional. Tente novamente.');
+      return false;
+    }
+    if (result.billing_id && Math.abs(res.data.breakdown.amount_cents - result.amount_cents) > 2) {
+      toast.error(
+        'O valor proporcional mudou em relação a esta cobrança. Volte ao Meu plano e gere novamente a cobrança de conexões.'
       );
       return false;
     }
@@ -305,6 +344,15 @@ export default function InternalBillingCheckout() {
         }
       }
 
+      if (pending.billing_reason === 'instance_addon' && pending.instance_addon_additional_instances != null) {
+        const prev = await apiClient.post<InstanceAddonPreviewResponse>('/api/me/tenant/instance-addon/preview', {
+          additional_instances: pending.instance_addon_additional_instances,
+        });
+        if (!cancelled && prev.data) {
+          setInstancePreview(prev.data);
+        }
+      }
+
       if (!cancelled && !ctxRes.error && ctxRes.data) {
         const d = ctxRes.data;
         const cpfDigits = String(d.cpf_cnpj ?? '').replace(/\D/g, '');
@@ -331,9 +379,12 @@ export default function InternalBillingCheckout() {
         summarySource:
           pending.billing_reason === 'seat_addon' && pending.seat_addon_additional_seats != null
             ? 'billing+seat_preview (async)'
-            : hub
-              ? 'billing+commercial_hub_row'
-              : 'billing_pending_only',
+            : pending.billing_reason === 'instance_addon' &&
+                pending.instance_addon_additional_instances != null
+              ? 'billing+instance_preview (async)'
+              : hub
+                ? 'billing+commercial_hub_row'
+                : 'billing_pending_only',
       });
     })();
 
@@ -427,6 +478,10 @@ export default function InternalBillingCheckout() {
         const ok = await ensureFreshSeatAddonPreview();
         if (!ok) return false;
       }
+      if (result.billing_reason === 'instance_addon') {
+        const ok = await ensureFreshInstanceAddonPreview();
+        if (!ok) return false;
+      }
 
       setPaymentMethod(method);
       prepareInFlightRef.current = true;
@@ -454,6 +509,8 @@ export default function InternalBillingCheckout() {
               tenant_id: p.tenant_id || user?.tenant_id || '',
               billing_reason: p.billing_reason ?? prev?.billing_reason,
               seat_addon_additional_seats: p.seat_addon_additional_seats ?? prev?.seat_addon_additional_seats,
+              instance_addon_additional_instances:
+                p.instance_addon_additional_instances ?? prev?.instance_addon_additional_instances,
             })
           );
           const apiPm = normalizePlanPurchasePaymentMethod(p.payment_method);
@@ -476,7 +533,7 @@ export default function InternalBillingCheckout() {
         prepareInFlightRef.current = false;
       }
     },
-    [result, billingCpf, paymentMethod, ensureFreshSeatAddonPreview, user?.tenant_id]
+    [result, billingCpf, paymentMethod, ensureFreshSeatAddonPreview, ensureFreshInstanceAddonPreview, user?.tenant_id]
   );
 
   useEffect(() => {
@@ -510,6 +567,10 @@ export default function InternalBillingCheckout() {
     }
     if (result.billing_reason === 'seat_addon') {
       const ok = await ensureFreshSeatAddonPreview();
+      if (!ok) return;
+    }
+    if (result.billing_reason === 'instance_addon') {
+      const ok = await ensureFreshInstanceAddonPreview();
       if (!ok) return;
     }
 
@@ -791,6 +852,38 @@ export default function InternalBillingCheckout() {
                   <p className="text-xs text-muted-foreground">
                     Ciclo: {seatPreview.breakdown.period_start} → {seatPreview.breakdown.period_end} ·{' '}
                     {seatPreview.breakdown.remaining_period_days} dias restantes neste período
+                  </p>
+                </div>
+              </>
+            )}
+            {reason === 'instance_addon' && instancePreview && (
+              <>
+                <div className="border-t pt-3 mt-2 space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                    Detalhe das conexões WhatsApp
+                  </p>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Conexões contratadas hoje</span>
+                    <span>{instancePreview.current_contracted}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Novas conexões</span>
+                    <span>+{instancePreview.breakdown.additional_instances}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Total após pagamento</span>
+                    <span className="font-medium">{instancePreview.new_total} conexões</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Valor por conexão (ciclo)</span>
+                    <span>
+                      {formatPrice(instancePreview.breakdown.price_per_instance_full_period_cents)} /{' '}
+                      {BILLING_INTERVAL_LABEL[instancePreview.billing_interval] ?? instancePreview.billing_interval}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Ciclo: {instancePreview.breakdown.period_start} → {instancePreview.breakdown.period_end} ·{' '}
+                    {instancePreview.breakdown.remaining_period_days} dias restantes neste período
                   </p>
                 </div>
               </>

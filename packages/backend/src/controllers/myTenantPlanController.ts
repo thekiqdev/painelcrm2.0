@@ -5,7 +5,11 @@
 import { Response } from 'express';
 import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
-import { checkTenantUsersLimit, checkTenantUsersLimitForAddOne } from '../services/tenantLimitService.js';
+import {
+  checkTenantUsersLimit,
+  checkTenantUsersLimitForAddOne,
+  checkTenantWhatsAppInstancesLimit,
+} from '../services/tenantLimitService.js';
 import { hashPassword } from '../utils/bcrypt.js';
 import { ROLE_DISPLAY_NAMES, getPermissionsForRole, isValidAppRole, type AppRole } from '../services/rolePermissionsService.js';
 import {
@@ -32,6 +36,11 @@ import {
   scheduleSeatDowngradeNextCycle,
   startSeatAddonCheckout,
 } from '../services/tenantSeatCommercialService.js';
+import {
+  previewInstanceAddonPurchase,
+  scheduleInstanceDowngradeNextCycle,
+  startInstanceAddonCheckout,
+} from '../services/tenantInstanceCommercialService.js';
 import { getInvoiceById } from '../services/invoiceService.js';
 import { ensureTenantOverdueStatusesFresh } from '../services/billingOverdueStatusService.js';
 import type { PaymentMethod } from '../modules/payments/paymentGatewayTypes.js';
@@ -849,12 +858,20 @@ export async function getMyTenantLimits(req: AuthRequest, res: Response): Promis
       res.status(403).json({ error: 'Usuário não vinculado a uma conta' });
       return;
     }
-    const usersLimit = await checkTenantUsersLimit(tenantId);
+    const [usersLimit, whatsappInstancesLimit] = await Promise.all([
+      checkTenantUsersLimit(tenantId),
+      checkTenantWhatsAppInstancesLimit(tenantId),
+    ]);
     res.json({
       users: {
         current: usersLimit.current,
         limit: usersLimit.limit,
         allowed: usersLimit.allowed,
+      },
+      whatsapp_instances: {
+        current: whatsappInstancesLimit.current,
+        limit: whatsappInstancesLimit.limit,
+        allowed: whatsappInstancesLimit.allowed,
       },
     });
   } catch (error: any) {
@@ -897,7 +914,9 @@ export async function getMyTenantPlan(req: AuthRequest, res: Response): Promise<
       `SELECT p.*, t.trial_ends_at, t.max_users_override, t.max_whatsapp_instances_override,
               t.status AS tenant_status, t.plan_period_start, t.plan_period_end,
               t.suspension_reason, t.activated_billing_id,
-              t.max_users_scheduled_next_cycle, t.seat_addon_pending_billing_id
+              t.max_users_scheduled_next_cycle, t.seat_addon_pending_billing_id,
+              t.instance_addon_pending_billing_id,
+              t.max_whatsapp_instances_scheduled_next_cycle
        FROM tenants t
        JOIN plans p ON p.id = t.plan_id
        WHERE t.id = $1`,
@@ -911,15 +930,21 @@ export async function getMyTenantPlan(req: AuthRequest, res: Response): Promise<
     if (!Array.isArray(plan.benefits)) plan.benefits = [];
     if (plan.plan_type === 'custom') {
       const pricesRows = await pool.query(
-        'SELECT billing_interval, price_per_user_cents FROM plan_interval_prices WHERE plan_id = $1',
+        'SELECT billing_interval, price_per_user_cents, price_per_instance_cents FROM plan_interval_prices WHERE plan_id = $1',
         [plan.id]
       );
       plan.interval_prices = pricesRows.rows;
+    } else {
+      const pricesRows = await pool.query(
+        'SELECT billing_interval, price_per_user_cents, price_per_instance_cents FROM plan_interval_prices WHERE plan_id = $1',
+        [plan.id]
+      );
+      if (pricesRows.rows.length > 0) plan.interval_prices = pricesRows.rows;
     }
     const activatedBid = plan.activated_billing_id ?? null;
     const pendingBilling = await getOpenTenantBillingSummary(ctx.tenantId, activatedBid);
 
-    let pending_seat_addon_billing: {
+    type PendingAddonBilling = {
       billing_id: string;
       status: string;
       amount_cents: number;
@@ -928,39 +953,53 @@ export async function getMyTenantPlan(req: AuthRequest, res: Response): Promise<
       gateway: string | null;
       invoice_number: string | null;
       has_gateway_reference: boolean;
-    } | null = null;
-    const seatBid = plan.seat_addon_pending_billing_id as string | null | undefined;
-    if (seatBid) {
-      const sb = await getInvoiceById(seatBid);
+    };
+
+    const buildPendingAddon = async (bid: string | null | undefined): Promise<PendingAddonBilling | null> => {
+      if (!bid) return null;
+      const sb = await getInvoiceById(bid);
       const open =
         sb &&
         ['pending', 'waiting_payment', 'processing', 'overdue'].includes(String(sb.status));
-      if (open && sb) {
-        const due = sb.due_date;
-        let dueStr: string | null = null;
-        if (due != null) {
-          const d = typeof due === 'string' || typeof due === 'number' ? new Date(due) : new Date(String(due));
-          if (!Number.isNaN(d.getTime())) dueStr = d.toISOString().slice(0, 10);
-        }
-        const pm = sb.payment_method;
-        const methodOk =
-          pm === 'PIX' || pm === 'BOLETO' || pm === 'CREDIT_CARD' ? pm : null;
-        pending_seat_addon_billing = {
-          billing_id: sb.id,
-          status: sb.status,
-          amount_cents: sb.amount_cents ?? 0,
-          due_date: dueStr,
-          payment_method: methodOk,
-          gateway: sb.gateway ?? null,
-          invoice_number: sb.invoice_number ?? null,
-          has_gateway_reference: !!(sb.gateway_reference_id && String(sb.gateway_reference_id).trim()),
-        };
-      } else {
-        await pool.query(
-          `UPDATE tenants SET seat_addon_pending_billing_id = NULL, updated_at = now() WHERE id = $1`,
-          [ctx.tenantId]
-        );
+      if (!open || !sb) return null;
+      const due = sb.due_date;
+      let dueStr: string | null = null;
+      if (due != null) {
+        const d = typeof due === 'string' || typeof due === 'number' ? new Date(due) : new Date(String(due));
+        if (!Number.isNaN(d.getTime())) dueStr = d.toISOString().slice(0, 10);
       }
+      const pm = sb.payment_method;
+      const methodOk = pm === 'PIX' || pm === 'BOLETO' || pm === 'CREDIT_CARD' ? pm : null;
+      return {
+        billing_id: sb.id,
+        status: sb.status,
+        amount_cents: sb.amount_cents ?? 0,
+        due_date: dueStr,
+        payment_method: methodOk,
+        gateway: sb.gateway ?? null,
+        invoice_number: sb.invoice_number ?? null,
+        has_gateway_reference: !!(sb.gateway_reference_id && String(sb.gateway_reference_id).trim()),
+      };
+    };
+
+    let pending_seat_addon_billing = await buildPendingAddon(
+      plan.seat_addon_pending_billing_id as string | null | undefined
+    );
+    if (plan.seat_addon_pending_billing_id && !pending_seat_addon_billing) {
+      await pool.query(
+        `UPDATE tenants SET seat_addon_pending_billing_id = NULL, updated_at = now() WHERE id = $1`,
+        [ctx.tenantId]
+      );
+    }
+
+    let pending_instance_addon_billing = await buildPendingAddon(
+      plan.instance_addon_pending_billing_id as string | null | undefined
+    );
+    if (plan.instance_addon_pending_billing_id && !pending_instance_addon_billing) {
+      await pool.query(
+        `UPDATE tenants SET instance_addon_pending_billing_id = NULL, updated_at = now() WHERE id = $1`,
+        [ctx.tenantId]
+      );
     }
 
     res.json({
@@ -976,7 +1015,10 @@ export async function getMyTenantPlan(req: AuthRequest, res: Response): Promise<
       activated_billing_id: activatedBid,
       pending_billing: pendingBilling,
       max_users_scheduled_next_cycle: plan.max_users_scheduled_next_cycle ?? null,
+      max_whatsapp_instances_scheduled_next_cycle:
+        plan.max_whatsapp_instances_scheduled_next_cycle ?? null,
       pending_seat_addon_billing,
+      pending_instance_addon_billing,
     });
   } catch (error: any) {
     console.error('getMyTenantPlan error:', error);
@@ -1082,6 +1124,10 @@ const scheduleSeatsNextCycleSchema = z.object({
   target_seats: z.number().int().min(1),
 });
 
+const scheduleInstancesNextCycleSchema = z.object({
+  target_instances: z.number().int().min(1),
+});
+
 async function assertTenantActiveForSeatCommerce(tenantId: string): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
   const r = await pool.query<{ status: string }>(`SELECT status FROM tenants WHERE id = $1`, [tenantId]);
   const st = r.rows[0]?.status;
@@ -1094,6 +1140,111 @@ async function assertTenantActiveForSeatCommerce(tenantId: string): Promise<{ ok
     };
   }
   return { ok: true };
+}
+
+async function assertTenantActiveForInstanceCommerce(
+  tenantId: string
+): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  const r = await pool.query<{ status: string }>(`SELECT status FROM tenants WHERE id = $1`, [tenantId]);
+  const st = r.rows[0]?.status;
+  if (st !== 'active') {
+    return {
+      ok: false,
+      status: 400,
+      error:
+        'Contratação de conexões WhatsApp só está disponível para contas ativas. Conclua trial ou pagamento pendente antes.',
+    };
+  }
+  return { ok: true };
+}
+
+const instanceAddonPreviewSchema = z.object({
+  additional_instances: z.number().int().min(1),
+});
+
+const instanceAddonCheckoutSchema = z.object({
+  additional_instances: z.number().int().min(1),
+  payment_method: z.enum(['PIX', 'BOLETO', 'CREDIT_CARD']).optional(),
+});
+
+/** POST /api/me/tenant/instance-addon/preview */
+export async function postInstanceAddonPreview(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const ctx = await getMyTenantAndPrimary(req);
+    if (!ctx || ctx.primaryUserId !== req.userId) {
+      res.status(403).json({ error: 'Apenas o administrador da conta pode contratar conexões WhatsApp' });
+      return;
+    }
+    const gate = await assertTenantActiveForInstanceCommerce(ctx.tenantId);
+    if (!gate.ok) {
+      res.status(gate.status).json({ error: gate.error });
+      return;
+    }
+    const body = instanceAddonPreviewSchema.parse(req.body || {});
+    const tp = await pool.query<{ plan_id: string }>(`SELECT plan_id FROM tenants WHERE id = $1`, [ctx.tenantId]);
+    const planId = tp.rows[0]?.plan_id;
+    if (!planId) {
+      res.status(400).json({ error: 'Plano não encontrado' });
+      return;
+    }
+    const preview = await previewInstanceAddonPurchase({
+      tenantId: ctx.tenantId,
+      planId,
+      additionalInstances: body.additional_instances,
+    });
+    res.json(preview);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Validation error', details: error.errors });
+      return;
+    }
+    const msg = error instanceof Error ? error.message : 'Internal server error';
+    console.error('postInstanceAddonPreview error:', error);
+    res.status(400).json({ error: msg });
+  }
+}
+
+/** POST /api/me/tenant/instance-addon/checkout */
+export async function postInstanceAddonCheckout(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const ctx = await getMyTenantAndPrimary(req);
+    if (!ctx || ctx.primaryUserId !== req.userId) {
+      res.status(403).json({ error: 'Apenas o administrador da conta pode contratar conexões WhatsApp' });
+      return;
+    }
+    const gate = await assertTenantActiveForInstanceCommerce(ctx.tenantId);
+    if (!gate.ok) {
+      res.status(gate.status).json({ error: gate.error });
+      return;
+    }
+    const body = instanceAddonCheckoutSchema.parse(req.body || {});
+    const tp = await pool.query<{ plan_id: string }>(`SELECT plan_id FROM tenants WHERE id = $1`, [ctx.tenantId]);
+    const planId = tp.rows[0]?.plan_id;
+    if (!planId) {
+      res.status(400).json({ error: 'Plano não encontrado' });
+      return;
+    }
+    const result = await startInstanceAddonCheckout({
+      tenantId: ctx.tenantId,
+      planId,
+      additionalInstances: body.additional_instances,
+      paymentMethod: body.payment_method as PaymentMethod | undefined,
+    });
+    res.json({
+      billing_id: result.billing.id,
+      billing: result.billing,
+      payment_urls: result.paymentUrls ?? null,
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Validation error', details: error.errors });
+      return;
+    }
+    const msg = error instanceof Error ? error.message : 'Internal server error';
+    console.error('postInstanceAddonCheckout error:', error);
+    const status = msg.includes('em aberto') ? 409 : 400;
+    res.status(status).json({ error: msg });
+  }
 }
 
 /** POST /api/me/tenant/seat-addon/preview — cálculo explícito do pró-rata (sem criar cobrança). */
@@ -1229,6 +1380,44 @@ export async function putSeatsScheduleNextCycle(req: AuthRequest, res: Response)
     }
     const msg = error instanceof Error ? error.message : 'Internal server error';
     console.error('putSeatsScheduleNextCycle error:', error);
+    res.status(400).json({ error: msg });
+  }
+}
+
+/** PUT /api/me/tenant/instances/schedule-next-cycle — agenda downgrade de conexões WhatsApp na próxima renovação. */
+export async function putInstancesScheduleNextCycle(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const ctx = await getMyTenantAndPrimary(req);
+    if (!ctx || ctx.primaryUserId !== req.userId) {
+      res.status(403).json({ error: 'Apenas o administrador da conta pode alterar conexões WhatsApp' });
+      return;
+    }
+    const gate = await assertTenantActiveForInstanceCommerce(ctx.tenantId);
+    if (!gate.ok) {
+      res.status(gate.status).json({ error: gate.error });
+      return;
+    }
+    const body = scheduleInstancesNextCycleSchema.parse(req.body || {});
+    const usage = await checkTenantWhatsAppInstancesLimit(ctx.tenantId);
+    const out = await scheduleInstanceDowngradeNextCycle({
+      tenantId: ctx.tenantId,
+      targetInstances: body.target_instances,
+      instancesInUse: usage.current,
+    });
+    res.json({
+      scheduled_next_cycle: out.scheduled,
+      message:
+        out.scheduled != null
+          ? 'Redução agendada: sem estorno; a nova quantidade vale na próxima cobrança. Até lá, o limite atual permanece.'
+          : 'Agendamento removido: a renovação seguirá a quantidade de conexões atualmente contratada.',
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Validation error', details: error.errors });
+      return;
+    }
+    const msg = error instanceof Error ? error.message : 'Internal server error';
+    console.error('putInstancesScheduleNextCycle error:', error);
     res.status(400).json({ error: msg });
   }
 }

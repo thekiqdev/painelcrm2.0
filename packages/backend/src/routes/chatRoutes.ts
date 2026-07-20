@@ -8,6 +8,7 @@ import {
   retryInitialInstanceSync,
   deleteInstance,
   patchInstance,
+  getInstancePurposeRouting,
   syncConversations,
   getChatRuntimeConfig,
   getConversations,
@@ -133,6 +134,7 @@ router.get('/instances/:id/status', getInstanceStatus);
 router.post('/instances/:id/initial-sync/retry', retryInitialInstanceSync);
 router.delete('/instances/:id', deleteInstance);
 router.patch('/instances/:id', patchInstance);
+router.get('/instances/:id/purpose-routing', getInstancePurposeRouting);
 router.get('/instances/:id/webhook', getInstanceWebhook);
 router.post('/instances/:id/webhook', configureInstanceWebhook);
 router.post('/instances/:id/webhook/force', forceConfigureWebhook);

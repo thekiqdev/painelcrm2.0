@@ -265,7 +265,8 @@ const QRCodePopup: React.FC<QRCodePopupProps> = ({
           clearInterval(pollInterval);
           
           toast.success("Conectado com sucesso!", {
-            description: "WhatsApp foi conectado com sucesso",
+            description:
+              "Se for a única conexão ativa, Chat, faturas e módulos ficam nesta instância automaticamente.",
           });
           
           // Auto-fechar após 1 segundo

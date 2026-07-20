@@ -36,6 +36,20 @@ import { DEFAULT_KANBAN_TAG_COLOR_UI } from '../services/chatKanbanTagStore.js';
 import { resolveTenantIdForUser } from '../utils/resolveTenantIdForUser.js';
 import { deleteChatInstanceComplete } from '../services/whatsappInstanceDeletionService.js';
 import { markChatInstanceDisconnectedForInvalidToken } from '../services/chatInstanceInvalidTokenSelfHeal.js';
+import {
+  checkTenantWhatsAppInstancesLimit,
+  formatWhatsAppInstancesLimitReachedMessage,
+} from '../services/tenantLimitService.js';
+import {
+  getInvoiceRoutedInstanceId,
+  instanceIsRoutedForInvoice,
+  listModuleRoutingsForInstance,
+  listPurposeBadgesByInstance,
+  maybeSeedDefaultPurposeRouting,
+  maybeSeedSoleOperableInstanceRouting,
+  setInstanceInvoiceRouting,
+  setInstanceModuleRouting,
+} from '../services/notificationsEngine/whatsappInstanceRoutingService.js';
 import { isWhatsappPhoneKeyInheritEnabled } from '../config/whatsappInheritEnv.js';
 import { useLegacyQueryWebhookUrlRegistration } from '../config/uazapiWebhookRouting.js';
 import {
@@ -299,9 +313,25 @@ const linkConversationSchema = z.object({
   id: z.string().uuid(),
 });
 
-const patchInstanceSchema = z.object({
-  enabledInChat: z.boolean(),
-});
+const patchInstanceSchema = z
+  .object({
+    enabledInChat: z.boolean().optional(),
+    useForInvoice: z.boolean().optional(),
+    moduleKey: z.string().min(1).optional(),
+    useForModule: z.boolean().optional(),
+  })
+  .refine(
+    (b) =>
+      b.enabledInChat !== undefined ||
+      b.useForInvoice !== undefined ||
+      (b.moduleKey !== undefined && b.useForModule !== undefined),
+    {
+      message: 'Informe enabledInChat, useForInvoice ou (moduleKey + useForModule)',
+    },
+  )
+  .refine((b) => (b.moduleKey !== undefined) === (b.useForModule !== undefined), {
+    message: 'moduleKey e useForModule devem ser enviados juntos',
+  });
 
 type ChatInstanceRow = {
   id: string;
@@ -2139,7 +2169,19 @@ async function reconcileConversationLastMessage(conversationId: string): Promise
 export async function listInstances(req: AuthRequest, res: Response) {
   const userId = req.userId!;
   const rows = await listInstancesForActor(userId);
-  const out = rows.map((row) => decorateInstanceForApi(row, userId));
+  const tenantId = await resolveTenantIdForUser(userId);
+  if (tenantId) {
+    await maybeSeedSoleOperableInstanceRouting(pool, tenantId);
+  }
+  const badges =
+    tenantId != null ? await listPurposeBadgesByInstance(pool, tenantId) : ({} as Record<string, string[]>);
+  const out = rows.map((row) => {
+    const decorated = decorateInstanceForApi(row, userId);
+    return {
+      ...decorated,
+      purpose_badges: badges[row.id] ?? [],
+    };
+  });
   res.json(out);
 }
 
@@ -2190,6 +2232,29 @@ export async function createInstance(req: AuthRequest, res: Response) {
         code: 'DUPLICATE_INSTANCE_NAME',
       });
       return;
+    }
+
+    // WI1: quota tenant-wide antes da UazAPI (evita órfãos no provedor)
+    const tenantIdForLimit = await resolveTenantIdForUser(userId);
+    if (tenantIdForLimit) {
+      const waLimit = await checkTenantWhatsAppInstancesLimit(tenantIdForLimit);
+      if (!waLimit.allowed && waLimit.limit != null) {
+        const msg = formatWhatsAppInstancesLimitReachedMessage(waLimit.current, waLimit.limit);
+        logUazChat('warn', {
+          event_type: 'create_instance_plan_limit',
+          tenant_id: tenantIdForLimit,
+          user_id: userId,
+          phase: 'preflight',
+          detail: msg,
+        });
+        res.status(403).json({
+          error: msg,
+          code: 'WHATSAPP_INSTANCE_LIMIT_REACHED',
+          current: waLimit.current,
+          limit: waLimit.limit,
+        });
+        return;
+      }
     }
 
     // Criar instância na UazAPI
@@ -2711,6 +2776,40 @@ async function autoConfigureWebhook(instance: ChatInstanceRow, opts?: AutoConfig
 }
 
 type BootstrapSyncTrigger = 'instance_connected' | 'status_poll_connected' | string;
+
+/** WR4: seed fatura+módulos na única conexão operable (não sobrescreve config existente). */
+async function trySeedPurposeRoutingOnConnect(
+  tenantId: string | null | undefined,
+  instanceId: string,
+  trigger: string,
+): Promise<void> {
+  if (!tenantId) return;
+  try {
+    const result = await maybeSeedDefaultPurposeRouting({
+      pool,
+      tenantId,
+      chatInstanceId: instanceId,
+    });
+    if (result.seeded) {
+      logUazChat('info', {
+        event_type: 'purpose_routing_auto_seeded',
+        tenant_id: tenantId,
+        instance_id: instanceId,
+        phase: trigger,
+        detail: `invoice+modules=${(result.modules ?? []).join(',')}`,
+      });
+    }
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    logUazChat('warn', {
+      event_type: 'purpose_routing_auto_seed_failed',
+      tenant_id: tenantId,
+      instance_id: instanceId,
+      phase: trigger,
+      detail: msg.slice(0, 240),
+    });
+  }
+}
 
 async function mergeInstanceMetadata(instanceId: string, patch: Record<string, unknown>) {
   await pool.query(
@@ -4820,6 +4919,7 @@ export async function connectInstance(req: AuthRequest, res: Response) {
         detail: String(response?.status),
       });
       await scheduleBootstrapSyncIfNeeded(userId, instanceToUse.id, 'instance_connected');
+      await trySeedPurposeRoutingOnConnect(tenantId, instanceToUse.id, 'instance_connected');
     }
 
     res.json(response);
@@ -4895,7 +4995,7 @@ export async function deleteInstance(req: AuthRequest, res: Response) {
   }
 }
 
-/** PATCH: ativar/desativar instância no chat (metadata.enabled_in_chat). */
+/** PATCH: ativar/desativar instância no chat e/ou routing de faturas (WR1). */
 export async function patchInstance(req: AuthRequest, res: Response) {
   try {
     const userId = req.userId!;
@@ -4905,26 +5005,78 @@ export async function patchInstance(req: AuthRequest, res: Response) {
     const instance = await loadInstanceForManage(userId, id, res);
     if (!instance) return;
 
-    await pool.query(
-      `UPDATE chat_instances
-       SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
-           updated_at = now()
-       WHERE id = $2 AND user_id = $3`,
-      [JSON.stringify({ enabled_in_chat: body.enabledInChat }), id, userId]
-    );
-
     const tenantId = await resolveTenantIdForUser(userId);
-    logUazChat('info', {
-      event_type: 'instance_chat_enabled_updated',
-      tenant_id: tenantId,
-      user_id: userId,
-      instance_id: id,
-      enabled_in_chat: body.enabledInChat,
-      detail: 'PATCH /instances/:id enabledInChat',
-    });
+    if (!tenantId) {
+      res.status(400).json({ error: 'Conta não encontrada para o utilizador' });
+      return;
+    }
+
+    if (body.enabledInChat !== undefined) {
+      await pool.query(
+        `UPDATE chat_instances
+         SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
+             updated_at = now()
+         WHERE id = $2 AND user_id = $3`,
+        [JSON.stringify({ enabled_in_chat: body.enabledInChat }), id, userId]
+      );
+      logUazChat('info', {
+        event_type: 'instance_chat_enabled_updated',
+        tenant_id: tenantId,
+        user_id: userId,
+        instance_id: id,
+        enabled_in_chat: body.enabledInChat,
+        detail: 'PATCH /instances/:id enabledInChat',
+      });
+    }
+
+    if (body.useForInvoice !== undefined) {
+      await setInstanceInvoiceRouting({
+        pool,
+        tenantId,
+        chatInstanceId: id,
+        useForInvoice: body.useForInvoice,
+      });
+      logUazChat('info', {
+        event_type: 'instance_invoice_routing_updated',
+        tenant_id: tenantId,
+        user_id: userId,
+        instance_id: id,
+        use_for_invoice: body.useForInvoice,
+        detail: 'PATCH /instances/:id useForInvoice',
+      });
+    }
+
+    if (body.moduleKey !== undefined && body.useForModule !== undefined) {
+      await setInstanceModuleRouting({
+        pool,
+        tenantId,
+        chatInstanceId: id,
+        moduleKey: body.moduleKey,
+        useForModule: body.useForModule,
+      });
+      logUazChat('info', {
+        event_type: 'instance_module_routing_updated',
+        tenant_id: tenantId,
+        user_id: userId,
+        instance_id: id,
+        module_key: body.moduleKey,
+        use_for_module: body.useForModule,
+        detail: 'PATCH /instances/:id moduleRouting',
+      });
+    }
 
     const out = await pool.query('SELECT * FROM chat_instances WHERE id = $1 AND user_id = $2', [id, userId]);
-    res.json(out.rows[0]);
+    const row = out.rows[0];
+    const useForInvoice = await instanceIsRoutedForInvoice(pool, tenantId, id);
+    const modules = await listModuleRoutingsForInstance(pool, tenantId, id);
+    res.json({
+      ...row,
+      purpose_routing: {
+        enabled_in_chat: (row?.metadata as Record<string, unknown> | null)?.enabled_in_chat !== false,
+        use_for_invoice: useForInvoice,
+        modules,
+      },
+    });
   } catch (error: any) {
     if (error?.name === 'ZodError') {
       res.status(400).json({ error: 'Payload inválido', details: error.errors });
@@ -4932,6 +5084,47 @@ export async function patchInstance(req: AuthRequest, res: Response) {
     }
     console.error('Error patching instance:', error);
     res.status(500).json({ error: error.message || 'Failed to update instance' });
+  }
+}
+
+/** GET: flags de finalidade (chat + faturas) para o detalhe da instância. */
+export async function getInstancePurposeRouting(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.userId!;
+    const { id } = req.params;
+    const instance = await loadInstanceForManage(userId, id, res);
+    if (!instance) return;
+
+    const tenantId = await resolveTenantIdForUser(userId);
+    if (!tenantId) {
+      res.status(400).json({ error: 'Conta não encontrada para o utilizador' });
+      return;
+    }
+
+    const seed = await maybeSeedDefaultPurposeRouting({
+      pool,
+      tenantId,
+      chatInstanceId: id,
+    });
+
+    const meta =
+      instance.metadata && typeof instance.metadata === 'object'
+        ? (instance.metadata as Record<string, unknown>)
+        : {};
+    const invoiceRoutedId = await getInvoiceRoutedInstanceId(pool, tenantId);
+    const modules = await listModuleRoutingsForInstance(pool, tenantId, id);
+    res.json({
+      instance_id: id,
+      enabled_in_chat: seed.seeded ? true : meta.enabled_in_chat !== false,
+      use_for_invoice: invoiceRoutedId === id,
+      invoice_routed_instance_id: invoiceRoutedId,
+      modules,
+      auto_seeded: seed.seeded,
+      auto_seed_reason: seed.reason,
+    });
+  } catch (error: any) {
+    console.error('Error getInstancePurposeRouting:', error);
+    res.status(500).json({ error: error.message || 'Failed to load purpose routing' });
   }
 }
 
@@ -5601,6 +5794,11 @@ export async function getInstanceStatus(req: AuthRequest, res: Response) {
             console.error('[GetInstanceStatus] Erro ao herdar conversas (não crítico):', err);
           });
       }
+    }
+
+    if (finalStatus === 'connected' || finalStatus === 'open') {
+      const pollTenantId = await resolveTenantIdForUser(userId);
+      await trySeedPurposeRoutingOnConnect(pollTenantId, instance.id, 'status_poll_connected');
     }
     
     res.json(result);
@@ -11224,6 +11422,7 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
             error: webhookError.message,
           });
         }
+        await trySeedPurposeRoutingOnConnect(tenantId, instance.id, 'webhook_connection');
       }
 
       // Criar notificações para mudanças de conexão

@@ -16,7 +16,8 @@ export type BillingReason =
   | 'plan_upgrade'
   | 'plan_renewal'
   | 'manual_charge'
-  | 'seat_addon';
+  | 'seat_addon'
+  | 'instance_addon';
 
 /** Idempotência estável por linha + método (evita colisão entre tenants; troca de método gera nova chave no gateway). */
 export function buildSaasCheckoutChargeIdempotencyKey(billingId: string, paymentMethod: string): string {
@@ -527,6 +528,30 @@ export async function cancelOpenSeatAddonBillingsExcept(
     `UPDATE tenants
      SET seat_addon_pending_billing_id = NULL, updated_at = now()
      WHERE id = $1 AND seat_addon_pending_billing_id = ANY($2::uuid[])`,
+    [tenantId, ids]
+  );
+}
+
+export async function cancelOpenInstanceAddonBillingsExcept(
+  tenantId: string,
+  exceptBillingId: string | null
+): Promise<void> {
+  const r = await pool.query<{ id: string }>(
+    `UPDATE tenant_billing
+     SET status = 'cancelled', updated_at = now()
+     WHERE tenant_id = $1
+       AND COALESCE(billing_reason, '') = 'instance_addon'
+       AND status = ANY($2::text[])
+       AND ($3::uuid IS NULL OR id <> $3::uuid)
+     RETURNING id`,
+    [tenantId, SAAS_PLAN_SIBLING_OPEN_STATUSES, exceptBillingId]
+  );
+  const ids = r.rows.map((row) => row.id);
+  if (ids.length === 0) return;
+  await pool.query(
+    `UPDATE tenants
+     SET instance_addon_pending_billing_id = NULL, updated_at = now()
+     WHERE id = $1 AND instance_addon_pending_billing_id = ANY($2::uuid[])`,
     [tenantId, ids]
   );
 }

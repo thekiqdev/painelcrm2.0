@@ -81,6 +81,7 @@ export async function checkTenantProfilesLimit(tenantId: string): Promise<{
 /**
  * Conta instâncias WhatsApp (chat_instances) dos usuários do tenant.
  * Limite: override do tenant ou max_whatsapp_instances do plano.
+ * `allowed` = pode adicionar mais uma (current < limit); null limit = ilimitado.
  */
 export async function checkTenantWhatsAppInstancesLimit(tenantId: string): Promise<{
   allowed: boolean;
@@ -101,4 +102,9 @@ export async function checkTenantWhatsAppInstancesLimit(tenantId: string): Promi
   }
   if (limit == null) return { allowed: true, current, limit: null };
   return { allowed: current < limit, current, limit };
+}
+
+/** Mensagem 403 estável para create instance / UI (WI1). */
+export function formatWhatsAppInstancesLimitReachedMessage(current: number, limit: number): string {
+  return `Limite de conexões WhatsApp atingido (${current} de ${limit}). Contrate extras em Meu Plano ou contacte o suporte.`;
 }

@@ -95,6 +95,7 @@ interface PlanBenefit {
 interface IntervalPrice {
   billing_interval: string;
   price_per_user_cents: number;
+  price_per_instance_cents?: number | null;
 }
 
 interface Plan {
@@ -106,6 +107,7 @@ interface Plan {
   billing_interval: string;
   plan_type: 'standard' | 'custom';
   max_users?: number | null;
+  max_whatsapp_instances?: number | null;
   is_free?: boolean;
   free_access_days?: number | null;
   benefits?: PlanBenefit[];
@@ -153,6 +155,24 @@ interface SeatAddonPreviewResponse {
   };
 }
 
+interface InstanceAddonPreviewResponse {
+  current_contracted: number;
+  new_total: number;
+  billing_interval: string;
+  breakdown: {
+    formula: string;
+    period_start: string;
+    period_end: string;
+    today: string;
+    remaining_window_start: string;
+    total_period_days: number;
+    remaining_period_days: number;
+    price_per_instance_full_period_cents: number;
+    additional_instances: number;
+    amount_cents: number;
+  };
+}
+
 interface MyPlanResponse {
   tenant_id: string;
   plan: Plan;
@@ -166,7 +186,9 @@ interface MyPlanResponse {
   activated_billing_id?: string | null;
   pending_billing?: PendingBillingSummary | null;
   max_users_scheduled_next_cycle?: number | null;
+  max_whatsapp_instances_scheduled_next_cycle?: number | null;
   pending_seat_addon_billing?: PendingSeatAddonBilling | null;
+  pending_instance_addon_billing?: PendingSeatAddonBilling | null;
 }
 
 /** Resposta de GET /api/me/tenant/subscription (Fase C hub comercial). */
@@ -369,6 +391,9 @@ function billingIntervalLabelPt(key: string): string {
 const SEATS_SHORT_HINT =
   'Usuários extras podem gerar custo adicional. Reduções valem para o próximo ciclo.';
 
+const WHATSAPP_CONNECTIONS_HINT =
+  'Conexões extras são cobradas proporcionalmente ao ciclo atual e passam a integrar o seu limite contratado.';
+
 /** Checklist padrão quando o plano não traz `benefits` do catálogo — alinhado ao posicionamento do produto. */
 const DEFAULT_INCLUDED_FEATURES: { icon: string; label: string }[] = [
   { icon: 'Check', label: 'Acesso a todos os módulos' },
@@ -389,6 +414,7 @@ function billingReasonLabelPt(reason: string): string {
     plan_renewal: 'Renovação',
     manual_charge: 'Cobrança avulsa',
     seat_addon: 'Assentos adicionais (pró-rata)',
+    instance_addon: 'Conexões WhatsApp (pró-rata)',
   };
   return m[reason] ?? reason;
 }
@@ -437,14 +463,22 @@ export default function MeuPlano() {
   const [seatAddonExtra, setSeatAddonExtra] = useState(1);
   const [seatAddonPreview, setSeatAddonPreview] = useState<SeatAddonPreviewResponse | null>(null);
   const [seatAddonLoading, setSeatAddonLoading] = useState(false);
+  const [instanceAddonInlineExpanded, setInstanceAddonInlineExpanded] = useState(false);
+  const [instanceAddonExtra, setInstanceAddonExtra] = useState(1);
+  const [instanceAddonPreview, setInstanceAddonPreview] = useState<InstanceAddonPreviewResponse | null>(null);
+  const [instanceAddonLoading, setInstanceAddonLoading] = useState(false);
   const [downgradeOpen, setDowngradeOpen] = useState(false);
   const [downgradeTarget, setDowngradeTarget] = useState(1);
+  const [instanceDowngradeOpen, setInstanceDowngradeOpen] = useState(false);
+  const [instanceDowngradeTarget, setInstanceDowngradeTarget] = useState(1);
   const [subscription, setSubscription] = useState<SaasSubscriptionPayload | null>(null);
   const [limitsUsers, setLimitsUsers] = useState<TenantUsersLimitsPayload | null>(null);
+  const [limitsWhatsapp, setLimitsWhatsapp] = useState<TenantUsersLimitsPayload | null>(null);
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [cancelSubmitting, setCancelSubmitting] = useState(false);
   const [commercialBillings, setCommercialBillings] = useState<CommercialBillingHubRow[]>([]);
   const seatAddonPreviewSeq = useRef(0);
+  const instanceAddonPreviewSeq = useRef(0);
   const isMobile = useIsMobile();
   const canManage = authUser?.can_manage_plan === true;
 
@@ -473,7 +507,10 @@ export default function MeuPlano() {
     const [resPlan, resSub, resLimits, resBill] = await Promise.all([
       apiClient.get<MyPlanResponse>('/api/me/tenant/plan'),
       apiClient.get<{ subscription: SaasSubscriptionPayload | null }>('/api/me/tenant/subscription'),
-      apiClient.get<{ users: TenantUsersLimitsPayload }>('/api/me/tenant/limits'),
+      apiClient.get<{
+        users: TenantUsersLimitsPayload;
+        whatsapp_instances?: TenantUsersLimitsPayload;
+      }>('/api/me/tenant/limits'),
       apiClient.get<{ billings: CommercialBillingHubRow[] }>('/api/me/tenant/commercial-billings'),
     ]);
     if (resPlan.data && resPlan.details?.status !== 403) {
@@ -481,6 +518,7 @@ export default function MeuPlano() {
     }
     if (resSub.data) setSubscription(resSub.data.subscription ?? null);
     if (resLimits.data?.users) setLimitsUsers(resLimits.data.users);
+    if (resLimits.data?.whatsapp_instances) setLimitsWhatsapp(resLimits.data.whatsapp_instances);
     if (resBill.data?.billings) setCommercialBillings(resBill.data.billings);
   }, []);
 
@@ -491,7 +529,10 @@ export default function MeuPlano() {
     Promise.all([
       apiClient.get<MyPlanResponse>('/api/me/tenant/plan'),
       apiClient.get<{ subscription: SaasSubscriptionPayload | null }>('/api/me/tenant/subscription'),
-      apiClient.get<{ users: TenantUsersLimitsPayload }>('/api/me/tenant/limits'),
+      apiClient.get<{
+        users: TenantUsersLimitsPayload;
+        whatsapp_instances?: TenantUsersLimitsPayload;
+      }>('/api/me/tenant/limits'),
       apiClient.get<{ billings: CommercialBillingHubRow[] }>('/api/me/tenant/commercial-billings'),
       apiClient.get<Plan[]>('/api/plans'),
     ]).then(([resPlan, resSub, resLimits, resBill, resPlans]) => {
@@ -507,6 +548,9 @@ export default function MeuPlano() {
       }
       if (resSub.data) setSubscription(resSub.data.subscription ?? null);
       else setSubscription(null);
+      if (resLimits.data?.users) setLimitsUsers(resLimits.data.users);
+      if (resLimits.data?.whatsapp_instances) setLimitsWhatsapp(resLimits.data.whatsapp_instances);
+      else setLimitsWhatsapp(null);
       if (resLimits.data?.users) setLimitsUsers(resLimits.data.users);
       else setLimitsUsers(null);
       if (resBill.data?.billings) setCommercialBillings(resBill.data.billings);
@@ -588,6 +632,53 @@ export default function MeuPlano() {
       setSeatAddonPreview(null);
     }
   }, [myPlan?.pending_seat_addon_billing, myPlan?.pending_seat_addon_billing?.billing_id]);
+
+  /** Preview de conexões WhatsApp extras. */
+  useEffect(() => {
+    if (!instanceAddonInlineExpanded || commercialMode !== 'active' || !myPlan) {
+      return;
+    }
+    if (instanceAddonExtra < 1) {
+      setInstanceAddonPreview(null);
+      return;
+    }
+    if (limitsWhatsapp?.limit == null) {
+      setInstanceAddonPreview(null);
+      return;
+    }
+    const seq = ++instanceAddonPreviewSeq.current;
+    const timer = setTimeout(async () => {
+      setInstanceAddonLoading(true);
+      setInstanceAddonPreview(null);
+      const res = await apiClient.post<InstanceAddonPreviewResponse>('/api/me/tenant/instance-addon/preview', {
+        additional_instances: instanceAddonExtra,
+      });
+      if (seq !== instanceAddonPreviewSeq.current) return;
+      setInstanceAddonLoading(false);
+      if (res.error || !res.data) {
+        toast.error(res.error ?? 'Não foi possível calcular o valor agora. Atualize a página em instantes ou tente novamente.');
+        return;
+      }
+      setInstanceAddonPreview(res.data);
+    }, 450);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [
+    instanceAddonInlineExpanded,
+    instanceAddonExtra,
+    myPlan,
+    myPlan?.tenant_id,
+    limitsWhatsapp?.limit,
+    commercialMode,
+  ]);
+
+  useEffect(() => {
+    if (myPlan?.pending_instance_addon_billing) {
+      setInstanceAddonInlineExpanded(false);
+      setInstanceAddonPreview(null);
+    }
+  }, [myPlan?.pending_instance_addon_billing, myPlan?.pending_instance_addon_billing?.billing_id]);
 
   const buildCheckoutState = useCallback(() => {
     if (!myPlan) return null;
@@ -698,7 +789,6 @@ export default function MeuPlano() {
       toast.error(freshPreviewRes.error ?? 'Não foi possível calcular o valor atualizado.');
       return;
     }
-    const freshPreview = freshPreviewRes.data;
 
     const res = await apiClient.post<{ billing_id: string }>('/api/me/tenant/seat-addon/checkout', {
       additional_seats: seatAddonExtra,
@@ -710,6 +800,39 @@ export default function MeuPlano() {
     }
     setSeatAddonInlineExpanded(false);
     setSeatAddonPreview(null);
+    toast.success('Abrindo a tela de pagamento para concluir.');
+    goOpenSaasBillingPay(res.data.billing_id);
+    await refreshAfterMutation();
+  };
+
+  const runInstanceAddonCheckout = async () => {
+    if (!myPlan || instanceAddonExtra < 1) return;
+    if (!canManage) {
+      toast.error('Apenas quem administra a conta pode contratar conexões WhatsApp extras.');
+      return;
+    }
+    setInstanceAddonLoading(true);
+
+    const freshPreviewRes = await apiClient.post<InstanceAddonPreviewResponse>(
+      '/api/me/tenant/instance-addon/preview',
+      { additional_instances: instanceAddonExtra }
+    );
+    if (freshPreviewRes.error || !freshPreviewRes.data) {
+      setInstanceAddonLoading(false);
+      toast.error(freshPreviewRes.error ?? 'Não foi possível calcular o valor atualizado.');
+      return;
+    }
+
+    const res = await apiClient.post<{ billing_id: string }>('/api/me/tenant/instance-addon/checkout', {
+      additional_instances: instanceAddonExtra,
+    });
+    setInstanceAddonLoading(false);
+    if (res.error || !res.data?.billing_id) {
+      toast.error(res.error ?? 'Não foi possível gerar a cobrança');
+      return;
+    }
+    setInstanceAddonInlineExpanded(false);
+    setInstanceAddonPreview(null);
     toast.success('Abrindo a tela de pagamento para concluir.');
     goOpenSaasBillingPay(res.data.billing_id);
     await refreshAfterMutation();
@@ -733,6 +856,27 @@ export default function MeuPlano() {
     }
     toast.success(res.data?.message ?? 'Agendamento atualizado.');
     setDowngradeOpen(false);
+    await refreshAfterMutation();
+  };
+
+  const runScheduleInstanceDowngrade = async () => {
+    if (!myPlan) return;
+    if (!canManage) {
+      toast.error('Apenas quem administra a conta pode agendar a redução de conexões.');
+      return;
+    }
+    setSaving(true);
+    const res = await apiClient.put<{ scheduled_next_cycle: number | null; message: string }>(
+      '/api/me/tenant/instances/schedule-next-cycle',
+      { target_instances: instanceDowngradeTarget }
+    );
+    setSaving(false);
+    if (res.error) {
+      toast.error(res.error);
+      return;
+    }
+    toast.success(res.data?.message ?? 'Agendamento atualizado.');
+    setInstanceDowngradeOpen(false);
     await refreshAfterMutation();
   };
 
@@ -914,6 +1058,22 @@ export default function MeuPlano() {
   const planMaxUsers = isCustom ? plan.max_users ?? null : null;
   const seatAddonCapacityReached = planMaxUsers != null && contractedSeats >= planMaxUsers;
   const canScheduleSeatDowngrade = isCustom && contractedSeats > (limitsUsers?.current ?? 1);
+  const instancePriceCents = priceRow?.price_per_instance_cents;
+  const canBuyWhatsappExtras =
+    commercialMode === 'active' &&
+    canManage &&
+    limitsWhatsapp?.limit != null &&
+    instancePriceCents != null &&
+    instancePriceCents >= 0;
+  const planWaIncluded = plan.max_whatsapp_instances ?? null;
+  const contractedWhatsapp = limitsWhatsapp?.limit ?? null;
+  const instanceDowngradeFloor = Math.max(planWaIncluded ?? 0, limitsWhatsapp?.current ?? 0);
+  const canScheduleInstanceDowngrade =
+    commercialMode === 'active' &&
+    canManage &&
+    contractedWhatsapp != null &&
+    planWaIncluded != null &&
+    contractedWhatsapp > instanceDowngradeFloor;
   const currentPriceCents =
     isCustom && priceRow ? priceRow.price_per_user_cents * contractedSeats : plan.price_cents;
   const otherPlans = allPlans.filter((p) => p.id !== plan.id);
@@ -1694,6 +1854,248 @@ export default function MeuPlano() {
         </Card>
       </div>
 
+      <Card id="meu-plano-whatsapp-conexoes" className="min-w-0 border-border/80">
+        <CardHeader className="space-y-1 pb-2">
+          <CardTitle className="text-base md:text-lg">Conexões WhatsApp</CardTitle>
+          <CardDescription className="text-xs leading-relaxed">{WHATSAPP_CONNECTIONS_HINT}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm">
+          {limitsWhatsapp != null ? (
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+              <div className="rounded-2xl bg-muted/50 px-3.5 py-2.5 md:px-4 md:py-3">
+                <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Em uso</p>
+                <p className="mt-0.5 text-lg font-semibold tabular-nums">
+                  {limitsWhatsapp.limit != null
+                    ? `${limitsWhatsapp.current} / ${limitsWhatsapp.limit} conexões`
+                    : `${limitsWhatsapp.current} ${limitsWhatsapp.current === 1 ? 'conexão' : 'conexões'}`}
+                </p>
+                {limitsWhatsapp.limit == null && (
+                  <p className="mt-1 text-xs text-muted-foreground">Sem teto numérico neste plano (ilimitado).</p>
+                )}
+              </div>
+              {limitsWhatsapp.limit != null && (
+                <div className="rounded-2xl bg-muted/50 px-3.5 py-2.5 md:px-4 md:py-3">
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Disponíveis</p>
+                  <p className="mt-0.5 text-lg font-semibold tabular-nums">
+                    {Math.max(0, limitsWhatsapp.limit - limitsWhatsapp.current)} disponíveis
+                  </p>
+                  {instancePriceCents != null && instancePriceCents >= 0 && (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Extra: {formatPrice(instancePriceCents)} / conexão ({billingIntervalLabel})
+                    </p>
+                  )}
+                </div>
+              )}
+              {myPlan.max_whatsapp_instances_scheduled_next_cycle != null && contractedWhatsapp != null && (
+                <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 sm:col-span-2 md:px-4 md:py-3">
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-amber-950 dark:text-amber-100">
+                    Redução agendada
+                  </p>
+                  <p className="mt-0.5 text-lg font-semibold text-foreground">
+                    {contractedWhatsapp} → {myPlan.max_whatsapp_instances_scheduled_next_cycle} conexões
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Efeito na próxima cobrança (
+                    {subscription?.next_billing_date ? formatDate(subscription.next_billing_date) : 'data da renovação'}
+                    ).
+                  </p>
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="text-muted-foreground">Limite de conexões não disponível no momento.</p>
+          )}
+
+          {myPlan.pending_instance_addon_billing && commercialMode === 'active' && (
+            <div
+              className="rounded-lg border border-sky-500/40 bg-sky-500/10 px-4 py-3 text-sm"
+              role="status"
+            >
+              <p className="font-medium text-foreground">Upgrade de conexões aguardando pagamento</p>
+              <p className="text-muted-foreground mt-1">
+                Valor {formatPrice(myPlan.pending_instance_addon_billing.amount_cents)} —{' '}
+                {billingStatusLabelPt(myPlan.pending_instance_addon_billing.status)}. As novas conexões só ficam ativas
+                após a confirmação do pagamento.
+              </p>
+              {canManage ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  className="mt-3"
+                  variant="secondary"
+                  onClick={() => goOpenSaasBillingPay(myPlan.pending_instance_addon_billing!.billing_id)}
+                >
+                  Continuar para pagamento
+                </Button>
+              ) : null}
+            </div>
+          )}
+
+          {limitsWhatsapp?.limit == null && (
+            <p className="text-muted-foreground">
+              Seu plano não limita conexões WhatsApp. Extras pagos não se aplicam enquanto o limite for ilimitado.
+            </p>
+          )}
+
+          {limitsWhatsapp?.limit != null &&
+            (instancePriceCents == null || instancePriceCents < 0) &&
+            commercialMode === 'active' && (
+              <p className="text-muted-foreground">
+                Este plano ainda não tem preço por conexão extra. Fale com o suporte ou peça ao Super Admin para
+                configurar o valor no catálogo.
+              </p>
+            )}
+
+          {(canBuyWhatsappExtras || canScheduleInstanceDowngrade) && (
+            <div className="space-y-4 pt-2 border-t">
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start">
+                {canBuyWhatsappExtras ? (
+                  <Button
+                    type="button"
+                    className="h-11 w-full sm:w-auto"
+                    variant={instanceAddonInlineExpanded ? 'secondary' : 'default'}
+                    disabled={!!myPlan.pending_instance_addon_billing}
+                    aria-expanded={instanceAddonInlineExpanded}
+                    onClick={() => {
+                      if (instanceAddonInlineExpanded) {
+                        setInstanceAddonInlineExpanded(false);
+                        setInstanceAddonPreview(null);
+                      } else {
+                        setInstanceAddonExtra(1);
+                        setInstanceAddonPreview(null);
+                        setInstanceAddonInlineExpanded(true);
+                      }
+                    }}
+                  >
+                    {instanceAddonInlineExpanded ? 'Fechar' : 'Adicionar conexões'}
+                  </Button>
+                ) : null}
+                <Button
+                  type="button"
+                  className="h-11 w-full sm:w-auto"
+                  variant="outline"
+                  disabled={saving || !!myPlan.pending_instance_addon_billing || !canScheduleInstanceDowngrade}
+                  onClick={() => {
+                    const def = Math.max(
+                      instanceDowngradeFloor,
+                      (contractedWhatsapp ?? instanceDowngradeFloor) - 1
+                    );
+                    setInstanceDowngradeTarget(def);
+                    setInstanceDowngradeOpen(true);
+                  }}
+                >
+                  Reduzir no próximo ciclo
+                </Button>
+                {!canScheduleInstanceDowngrade && contractedWhatsapp != null && planWaIncluded != null && (
+                  <p className="text-xs text-muted-foreground w-full">
+                    Só é possível agendar redução quando há conexões extras além do uso atual e do incluso no plano.
+                  </p>
+                )}
+              </div>
+
+              {canBuyWhatsappExtras && instanceAddonInlineExpanded && !myPlan.pending_instance_addon_billing && (
+                <div
+                  id="meu-plano-instance-addon-inline"
+                  className="rounded-xl border border-primary/20 bg-muted/20 p-5 space-y-5"
+                >
+                  <div>
+                    <h3 className="text-base font-semibold text-foreground">Adicionar conexões WhatsApp</h3>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Quantas <strong>novas</strong> conexões além das {limitsWhatsapp!.limit} já contratadas? O valor de
+                      hoje é proporcional ao tempo restante do período; o novo limite vale após o pagamento.
+                    </p>
+                  </div>
+                  <div className="space-y-2 max-w-xs">
+                    <label className="text-sm font-medium" htmlFor="instance-addon-extra-inline">
+                      Novas conexões
+                    </label>
+                    <Input
+                      id="instance-addon-extra-inline"
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={instanceAddonExtra}
+                      onChange={(e) => setInstanceAddonExtra(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                    />
+                  </div>
+                  {instanceAddonLoading && (
+                    <p className="text-sm text-muted-foreground">Atualizando valores…</p>
+                  )}
+                  {instanceAddonPreview && !instanceAddonLoading && (
+                    <div className="space-y-5">
+                      <div className="rounded-lg border bg-card px-4 py-4 space-y-3 text-sm">
+                        <p className="font-medium text-foreground">Resumo</p>
+                        <ul className="space-y-2 text-muted-foreground list-none pl-0">
+                          <li>
+                            Você possui hoje:{' '}
+                            <strong className="text-foreground">
+                              {instanceAddonPreview.current_contracted} conexões
+                            </strong>
+                          </li>
+                          <li>
+                            Está adicionando:{' '}
+                            <strong className="text-foreground">
+                              {instanceAddonPreview.breakdown.additional_instances}{' '}
+                              {instanceAddonPreview.breakdown.additional_instances === 1
+                                ? 'conexão'
+                                : 'conexões'}
+                            </strong>
+                          </li>
+                          <li>
+                            Novo total:{' '}
+                            <strong className="text-foreground">{instanceAddonPreview.new_total} conexões</strong>
+                          </li>
+                        </ul>
+                      </div>
+                      <div className="rounded-lg border bg-background px-4 py-4 space-y-2 text-sm">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          Cobrança agora
+                        </p>
+                        <p>
+                          Valor por conexão ({billingIntervalLabelPt(instanceAddonPreview.billing_interval)}):{' '}
+                          <strong>
+                            {formatPrice(instanceAddonPreview.breakdown.price_per_instance_full_period_cents)}
+                          </strong>
+                        </p>
+                        <p>
+                          {subscription?.days_until_next_billing != null &&
+                          subscription.days_until_next_billing >= 0 ? (
+                            <>
+                              Dias até a próxima renovação:{' '}
+                              <strong>{subscription.days_until_next_billing}</strong>
+                            </>
+                          ) : (
+                            <>
+                              Dias proporcionais considerados neste ciclo:{' '}
+                              <strong>{instanceAddonPreview.breakdown.remaining_period_days}</strong>
+                            </>
+                          )}
+                        </p>
+                        <p>
+                          Valor proporcional a pagar agora:{' '}
+                          <strong className="text-lg text-foreground">
+                            {formatPrice(instanceAddonPreview.breakdown.amount_cents)}
+                          </strong>
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        size="lg"
+                        className="w-full sm:w-auto"
+                        disabled={instanceAddonLoading}
+                        onClick={() => runInstanceAddonCheckout()}
+                      >
+                        Continuar para checkout
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <Dialog open={downgradeOpen} onOpenChange={setDowngradeOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -1729,6 +2131,48 @@ export default function MeuPlano() {
               Voltar
             </Button>
             <Button type="button" disabled={saving} onClick={() => runScheduleDowngrade()}>
+              {saving ? 'Salvando…' : 'Confirmar agendamento'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={instanceDowngradeOpen} onOpenChange={setInstanceDowngradeOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reduzir conexões na próxima renovação</DialogTitle>
+            <DialogDescription>
+              Sem estorno. A quantidade menor só vale na <strong>próxima cobrança</strong>. Até lá você mantém as{' '}
+              {contractedWhatsapp ?? '—'} conexões atuais. Mínimo:{' '}
+              {instanceDowngradeFloor} (incluso no plano ou em uso).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <label className="text-sm font-medium" htmlFor="instance-downgrade-target">
+              Nova quantidade (a partir da próxima renovação)
+            </label>
+            <Input
+              id="instance-downgrade-target"
+              type="number"
+              min={instanceDowngradeFloor}
+              max={Math.max(instanceDowngradeFloor, (contractedWhatsapp ?? instanceDowngradeFloor) - 1)}
+              step={1}
+              value={instanceDowngradeTarget}
+              onChange={(e) =>
+                setInstanceDowngradeTarget(
+                  Math.min(
+                    Math.max(instanceDowngradeFloor, parseInt(e.target.value, 10) || instanceDowngradeFloor),
+                    Math.max(instanceDowngradeFloor, (contractedWhatsapp ?? instanceDowngradeFloor) - 1)
+                  )
+                )
+              }
+            />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setInstanceDowngradeOpen(false)}>
+              Voltar
+            </Button>
+            <Button type="button" disabled={saving} onClick={() => runScheduleInstanceDowngrade()}>
               {saving ? 'Salvando…' : 'Confirmar agendamento'}
             </Button>
           </DialogFooter>

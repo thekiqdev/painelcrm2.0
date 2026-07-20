@@ -18,7 +18,14 @@ router.get('/plan', ...tenantAuthCommercialHub, myTenantPlanController.getMyTena
 router.put('/plan', ...tenantAuthCommercialHub, myTenantPlanController.putMyTenantPlan);
 router.post('/seat-addon/preview', ...tenantAuthCommercialHub, myTenantPlanController.postSeatAddonPreview);
 router.post('/seat-addon/checkout', ...tenantAuthCommercialHub, myTenantPlanController.postSeatAddonCheckout);
+router.post('/instance-addon/preview', ...tenantAuthCommercialHub, myTenantPlanController.postInstanceAddonPreview);
+router.post('/instance-addon/checkout', ...tenantAuthCommercialHub, myTenantPlanController.postInstanceAddonCheckout);
 router.put('/seats/schedule-next-cycle', ...tenantAuthCommercialHub, myTenantPlanController.putSeatsScheduleNextCycle);
+router.put(
+  '/instances/schedule-next-cycle',
+  ...tenantAuthCommercialHub,
+  myTenantPlanController.putInstancesScheduleNextCycle
+);
 router.get('/plan-checkout-pending', ...tenantAuthCommercialHub, getPlanCheckoutPending);
 router.post(
   '/plan-checkout-prepare-payment',

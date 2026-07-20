@@ -177,7 +177,7 @@ export default function SuperAdminClientLimites() {
             {data.whatsapp_instances && (
               <UsageCard
                 title="Instâncias WhatsApp"
-                description="Conexões WhatsApp (chat_instances)"
+                description="Conexões WhatsApp (chat_instances). Extras acima do incluso no plano entram no valor da renovação."
                 current={data.whatsapp_instances.current}
                 limit={data.whatsapp_instances.limit}
                 icon={MessageCircle}

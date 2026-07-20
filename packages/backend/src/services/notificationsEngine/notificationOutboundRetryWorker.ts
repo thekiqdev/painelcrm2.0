@@ -11,10 +11,12 @@ import {
   getNextDeliveryAttemptNumber,
   clearOutboundDeliveryRetrySchedule,
   setDispatchSenderIfNull,
+  setDispatchChatInstanceIfNull,
   scheduleOutboundDeliveryRetry,
 } from './notificationEngineRepository.js';
 import { dispatchWhatsAppText } from './whatsappChannelDispatcher.js';
 import { resolveWhatsAppSenderUserIdForTenant } from './whatsappSenderResolve.js';
+import { resolveWhatsAppRoutingForEventKey } from './whatsappInstanceRoutingService.js';
 import {
   isNotificationsEngineEnabled,
   isNotificationsEngineWhatsAppSendEnabled,
@@ -64,9 +66,41 @@ async function redispatchOne(p: Pool, deliveryId: string): Promise<void> {
     return;
   }
 
-  const sender =
+  let sender =
     row.dispatch_sender_user_id ??
     (await resolveWhatsAppSenderUserIdForTenant(p, row.tenant_id, null));
+  let chatInstanceId: string | null = row.dispatch_chat_instance_id ?? null;
+
+  // Sticky instance: confirma que ainda pertence ao tenant; senão cai no routing atual.
+  if (chatInstanceId) {
+    const still = await p.query<{ sender_user_id: string }>(
+      `SELECT i.user_id::text AS sender_user_id
+       FROM chat_instances i
+       INNER JOIN users u ON u.id = i.user_id
+       WHERE i.id = $1 AND u.tenant_id = $2
+       LIMIT 1`,
+      [chatInstanceId, row.tenant_id],
+    );
+    if (still.rows[0]) {
+      sender = still.rows[0].sender_user_id;
+    } else {
+      neLogWarn('retry_sticky_instance_orphan', {
+        delivery_id: deliveryId,
+        tenant_id: row.tenant_id,
+        dispatch_chat_instance_id: chatInstanceId,
+      });
+      chatInstanceId = null;
+    }
+  }
+
+  if (!chatInstanceId) {
+    const routed = await resolveWhatsAppRoutingForEventKey(p, row.tenant_id, row.event_key);
+    if (routed) {
+      sender = routed.sender_user_id;
+      chatInstanceId = routed.chat_instance_id;
+    }
+  }
+
   if (!sender) {
     await updateDeliveryOutcome(p, deliveryId, {
       status: 'failed',
@@ -88,6 +122,9 @@ async function redispatchOne(p: Pool, deliveryId: string): Promise<void> {
   }
 
   await setDispatchSenderIfNull(p, deliveryId, sender);
+  if (chatInstanceId) {
+    await setDispatchChatInstanceIfNull(p, deliveryId, chatInstanceId);
+  }
   await updateDeliveryOutcome(p, deliveryId, {
     status: 'processing',
     errorMessage: null,
@@ -101,6 +138,7 @@ async function redispatchOne(p: Pool, deliveryId: string): Promise<void> {
     event_key: row.event_key,
     retry_count: row.retry_count,
     had_retry_schedule: row.next_retry_at != null,
+    sticky_chat_instance_id: chatInstanceId,
   });
 
   const t0 = Date.now();
@@ -110,7 +148,11 @@ async function redispatchOne(p: Pool, deliveryId: string): Promise<void> {
     senderUserId: sender,
     phone: row.recipient_address,
     text: row.rendered_body,
+    chatInstanceId,
   });
+  if (send.ok && send.chatInstanceId) {
+    await setDispatchChatInstanceIfNull(p, deliveryId, send.chatInstanceId);
+  }
   const durationMs = Date.now() - t0;
 
   if (send.ok) {

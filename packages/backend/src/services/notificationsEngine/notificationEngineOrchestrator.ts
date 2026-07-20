@@ -10,6 +10,7 @@ import {
   getNextDeliveryAttemptNumber,
   scheduleOutboundDeliveryRetry,
   setDispatchSenderIfNull,
+  setDispatchChatInstanceIfNull,
   clearOutboundDeliveryRetrySchedule,
 } from './notificationEngineRepository.js';
 import { renderStrictTemplates } from './strictMergeRenderer.js';
@@ -116,6 +117,8 @@ export async function runTransactionalNotification(params: {
   eventOccurredAt: Date | null;
   actor: Record<string, unknown>;
   metadata: Record<string, unknown>;
+  /** WR1: instância explícita (routing de faturas). */
+  chatInstanceId?: string | null;
 }): Promise<SimulateResult> {
   const event = await getEventByKey(params.pool, params.eventKey);
   if (!event || !event.is_active) {
@@ -298,6 +301,9 @@ export async function runTransactionalNotification(params: {
   }
 
   await setDispatchSenderIfNull(params.pool, deliveryId, params.senderUserId);
+  if (params.chatInstanceId) {
+    await setDispatchChatInstanceIfNull(params.pool, deliveryId, params.chatInstanceId);
+  }
   await updateDeliveryOutcome(params.pool, deliveryId, {
     status: 'processing',
     errorMessage: null,
@@ -311,11 +317,13 @@ export async function runTransactionalNotification(params: {
     senderUserId: params.senderUserId,
     phone: params.recipientPhone,
     text: rendered.body,
+    chatInstanceId: params.chatInstanceId ?? null,
   });
 
-  const durationMs = Date.now() - t0;
-
   if (send.ok) {
+    if (send.chatInstanceId) {
+      await setDispatchChatInstanceIfNull(params.pool, deliveryId, send.chatInstanceId);
+    }
     await clearOutboundDeliveryRetrySchedule(params.pool, deliveryId);
     const attemptNo = await getNextDeliveryAttemptNumber(params.pool, deliveryId);
     await updateDeliveryOutcome(params.pool, deliveryId, {

@@ -16,6 +16,7 @@ import {
 } from './notificationEngineOrchestrator.js';
 import { scheduleBillingNotificationSideEffect } from './billingNotificationFlush.js';
 import { resolveWhatsAppSenderUserIdForTenant } from './whatsappSenderResolve.js';
+import { resolveWhatsAppRoutingForEventKey } from './whatsappInstanceRoutingService.js';
 import {
   buildAbsoluteProposalPublicLinkUrl,
   decryptProposalPublicLinkToken,
@@ -114,11 +115,40 @@ async function gateAndPublish(
     return;
   }
 
-  const senderUserId = await resolveWhatsAppSenderUserIdForTenant(
-    pool,
-    input.tenantId,
-    input.preferredSenderUserId,
-  );
+  let senderUserId: string | null = null;
+  let chatInstanceId: string | null = null;
+  let routingSource: 'explicit' | 'fallback' = 'fallback';
+
+  const routed = await resolveWhatsAppRoutingForEventKey(pool, input.tenantId, input.eventKey);
+  if (routed) {
+    senderUserId = routed.sender_user_id;
+    chatInstanceId = routed.chat_instance_id;
+    routingSource = 'explicit';
+    neLogInfo('whatsapp_routing_explicit', {
+      tenant_id: input.tenantId,
+      event_key: input.eventKey,
+      purpose: routed.purpose,
+      module_key: routed.module_key,
+      chat_instance_id: chatInstanceId,
+      sender_user_id: senderUserId,
+    });
+  }
+
+  if (!senderUserId) {
+    senderUserId = await resolveWhatsAppSenderUserIdForTenant(
+      pool,
+      input.tenantId,
+      input.preferredSenderUserId,
+    );
+    if (senderUserId) {
+      neLogInfo('whatsapp_routing_fallback', {
+        tenant_id: input.tenantId,
+        event_key: input.eventKey,
+        sender_user_id: senderUserId,
+      });
+    }
+  }
+
   if (!senderUserId) {
     console.warn(
       `[notifications-engine/business] skip ${input.eventKey}: sem remetente WhatsApp no tenant ${input.tenantId}`,
@@ -139,7 +169,12 @@ async function gateAndPublish(
     mergeContext: input.mergeContext,
     eventOccurredAt: input.eventOccurredAt,
     actor: input.actor,
-    metadata: input.metadata,
+    metadata: {
+      ...input.metadata,
+      whatsapp_routing_source: routingSource,
+      ...(chatInstanceId ? { whatsapp_routed_chat_instance_id: chatInstanceId } : {}),
+    },
+    chatInstanceId,
   });
 
   if (!result.ok) {

@@ -17,6 +17,7 @@ import {
   findReusableSaasPlanCheckoutInvoice,
   cancelOpenPlanPurchaseBillingsAllIntervalsForTenant,
   cancelOpenSeatAddonBillingsExcept,
+  cancelOpenInstanceAddonBillingsExcept,
   SAAS_PLAN_CHECKOUT_REUSABLE_STATUSES,
   SAAS_PLAN_SIBLING_OPEN_STATUSES,
   ensureTenantBillingInlinePayToken,
@@ -439,6 +440,88 @@ async function activateSeatAddonFromBilling(billing: TenantBillingRow): Promise<
   }
 }
 
+function resolveInstanceAddonNewTotal(billing: TenantBillingRow): number | null {
+  const meta =
+    billing.gateway_metadata && typeof billing.gateway_metadata === 'object'
+      ? (billing.gateway_metadata as Record<string, unknown>)
+      : {};
+  const breakdown =
+    meta.instance_addon_breakdown && typeof meta.instance_addon_breakdown === 'object'
+      ? (meta.instance_addon_breakdown as Record<string, unknown>)
+      : {};
+  const fromMeta = breakdown.new_total_instances;
+  if (typeof fromMeta === 'number' && Number.isFinite(fromMeta) && fromMeta >= 1) {
+    return Math.trunc(fromMeta);
+  }
+  if (billing.users_count != null && billing.users_count >= 1) {
+    return billing.users_count;
+  }
+  return null;
+}
+
+async function activateInstanceAddonFromBilling(billing: TenantBillingRow): Promise<void> {
+  const newTotal = resolveInstanceAddonNewTotal(billing);
+  if (newTotal == null) {
+    console.warn('[SUBSCRIPTION] instance_addon sem new_total_instances válido', { billingId: billing.id });
+    return;
+  }
+  const r = await pool.query(
+    `UPDATE tenants
+     SET max_whatsapp_instances_override = $1,
+         instance_addon_pending_billing_id = NULL,
+         max_whatsapp_instances_scheduled_next_cycle = NULL,
+         updated_at = now()
+     WHERE id = $2 AND instance_addon_pending_billing_id = $3`,
+    [newTotal, billing.tenant_id, billing.id]
+  );
+  if ((r.rowCount ?? 0) === 0) {
+    const check = await pool.query<{ mi: number | null }>(
+      `SELECT max_whatsapp_instances_override AS mi FROM tenants WHERE id = $1`,
+      [billing.tenant_id]
+    );
+    const mi = check.rows[0]?.mi;
+    if (mi != null && mi >= newTotal) {
+      console.log('[SUBSCRIPTION] instance_addon idempotente — conexões já aplicadas', { billingId: billing.id });
+      return;
+    }
+    console.warn('[SUBSCRIPTION] instance_addon: pending pointer não casou; não aplicado', {
+      tenantId: billing.tenant_id,
+      billingId: billing.id,
+    });
+    return;
+  }
+
+  const meta =
+    billing.gateway_metadata && typeof billing.gateway_metadata === 'object'
+      ? (billing.gateway_metadata as Record<string, unknown>)
+      : {};
+  const breakdown =
+    meta.instance_addon_breakdown && typeof meta.instance_addon_breakdown === 'object'
+      ? (meta.instance_addon_breakdown as Record<string, unknown>)
+      : {};
+  const unitPrice = breakdown.price_per_instance_full_period_cents;
+  if (typeof unitPrice === 'number' && unitPrice >= 0) {
+    const sub = await getActiveSaasSubscriptionByTenant(billing.tenant_id);
+    if (sub) {
+      try {
+        await pool.query(
+          `UPDATE subscriptions
+           SET contracted_price_per_instance_cents = $1, updated_at = now()
+           WHERE id = $2`,
+          [Math.trunc(unitPrice), sub.id]
+        );
+      } catch (e) {
+        console.warn('[SUBSCRIPTION] instance_addon: falha ao gravar contracted_price_per_instance_cents', e);
+      }
+    }
+  }
+  console.log('[SUBSCRIPTION] instance_addon aplicado', {
+    tenantId: billing.tenant_id,
+    billingId: billing.id,
+    newTotal,
+  });
+}
+
 /**
  * Ativa o plano no tenant a partir da fatura paga.
  * Sempre calcula plan_period_start e plan_period_end no backend (nunca copia do gateway).
@@ -458,6 +541,10 @@ export async function activatePlanFromBilling(billingId: string): Promise<void> 
   const billingReason = billing.billing_reason ?? 'plan_purchase';
   if (billingReason === 'seat_addon') {
     await activateSeatAddonFromBilling(billing);
+    return;
+  }
+  if (billingReason === 'instance_addon') {
+    await activateInstanceAddonFromBilling(billing);
     return;
   }
 
@@ -695,6 +782,8 @@ export type PlanCheckoutPendingPayload = {
   inline_pay_token?: string;
   /** Só `seat_addon`: assentos adicionais da cobrança (metadata), para o checkout recalcular preview sem state da navegação. */
   seat_addon_additional_seats?: number;
+  /** Só `instance_addon`: conexões WhatsApp adicionais (metadata). */
+  instance_addon_additional_instances?: number;
   /** Motivo da fatura no checkout (ex.: `seat_addon` vs `plan_purchase`). */
   billing_reason?: string;
 };
@@ -706,6 +795,17 @@ function seatAddonAdditionalSeatsFromGatewayMetadata(
   const raw = gatewayMetadata['seat_addon_breakdown'];
   if (!raw || typeof raw !== 'object' || raw === null) return undefined;
   const n = Number((raw as Record<string, unknown>)['additional_seats']);
+  if (!Number.isInteger(n) || n < 1) return undefined;
+  return n;
+}
+
+function instanceAddonAdditionalInstancesFromGatewayMetadata(
+  gatewayMetadata: Record<string, unknown> | null | undefined
+): number | undefined {
+  if (!gatewayMetadata || typeof gatewayMetadata !== 'object') return undefined;
+  const raw = gatewayMetadata['instance_addon_breakdown'];
+  if (!raw || typeof raw !== 'object' || raw === null) return undefined;
+  const n = Number((raw as Record<string, unknown>)['additional_instances']);
   if (!Number.isInteger(n) || n < 1) return undefined;
   return n;
 }
@@ -788,6 +888,7 @@ const COMMERCIAL_SAAS_BILLING_REASONS = new Set([
   'plan_renewal',
   'manual_charge',
   'seat_addon',
+  'instance_addon',
 ]);
 
 const CHECKOUT_PRESENTABLE_BILLING_STATUSES = ['pending', 'waiting_payment', 'processing', 'overdue'] as const;
@@ -830,6 +931,10 @@ export async function getSaasBillingCheckoutPresentation(
 
   const seatAddonSeats =
     reason === 'seat_addon' ? seatAddonAdditionalSeatsFromGatewayMetadata(billing.gateway_metadata) : undefined;
+  const instanceAddonInstances =
+    reason === 'instance_addon'
+      ? instanceAddonAdditionalInstancesFromGatewayMetadata(billing.gateway_metadata)
+      : undefined;
 
   if (resolved) {
     const b = resolved.billing;
@@ -855,6 +960,9 @@ export async function getSaasBillingCheckoutPresentation(
       pix_copy_paste: u?.pixCopyPaste,
       inline_pay_token,
       ...(seatAddonSeats != null ? { seat_addon_additional_seats: seatAddonSeats } : {}),
+      ...(instanceAddonInstances != null
+        ? { instance_addon_additional_instances: instanceAddonInstances }
+        : {}),
     };
   }
 
@@ -878,6 +986,9 @@ export async function getSaasBillingCheckoutPresentation(
     payment_method: pmOut,
     billing_reason: reason,
     ...(seatAddonSeats != null ? { seat_addon_additional_seats: seatAddonSeats } : {}),
+    ...(instanceAddonInstances != null
+      ? { instance_addon_additional_instances: instanceAddonInstances }
+      : {}),
     inline_pay_token,
   };
 }
@@ -1328,6 +1439,184 @@ export async function subscribeSeatAddon(params: {
     };
   } catch (err) {
     console.error('[subscriptionService] subscribeSeatAddon gateway error:', err);
+    throw mapAsaasChargeError(err);
+  }
+}
+
+export async function subscribeInstanceAddon(params: {
+  tenantId: string;
+  planId: string;
+  billingInterval: BillingInterval;
+  newTotalInstances: number;
+  amountCents: number;
+  instanceAddonBreakdown: Record<string, unknown>;
+  paymentMethod?: PaymentMethod;
+  source?: 'superadmin' | 'self_service' | 'api';
+}): Promise<SubscribePlanResult> {
+  const {
+    tenantId,
+    planId,
+    billingInterval,
+    newTotalInstances,
+    amountCents,
+    instanceAddonBreakdown,
+    paymentMethod = 'BOLETO',
+    source = 'self_service',
+  } = params;
+
+  const dueDate = new Date();
+  dueDate.setDate(dueDate.getDate() + 7);
+  const dueDateStr = toYmd(dueDate) ?? '';
+
+  const config = await getActiveConfig('saas');
+  const gatewayKey = config?.gateway_key ?? 'asaas';
+
+  let billing = await findReusableSaasPlanCheckoutInvoice({
+    tenantId,
+    planId,
+    billingInterval,
+    usersCount: newTotalInstances,
+    billingReason: 'instance_addon',
+  });
+  await cancelOpenInstanceAddonBillingsExcept(tenantId, billing?.id ?? null);
+
+  if (billing && billing.amount_cents !== amountCents) {
+    await pool.query(`UPDATE tenant_billing SET amount_cents = $1, updated_at = now() WHERE id = $2`, [
+      amountCents,
+      billing.id,
+    ]);
+    const updated = await getInvoiceById(billing.id);
+    billing = updated ?? billing;
+  }
+
+  if (!billing) {
+    billing = await createInvoice({
+      tenant_id: tenantId,
+      plan_id: planId,
+      billing_interval: billingInterval,
+      amount_cents: amountCents,
+      due_date: dueDate,
+      source,
+      billing_reason: 'instance_addon',
+      users_count: newTotalInstances,
+      gateway: gatewayKey,
+    });
+  }
+
+  await pool.query(
+    `UPDATE tenants SET instance_addon_pending_billing_id = $1, updated_at = now() WHERE id = $2`,
+    [billing.id, tenantId]
+  );
+
+  await pool.query(
+    `UPDATE tenant_billing
+     SET gateway_metadata = COALESCE(gateway_metadata, '{}'::jsonb) || $1::jsonb, updated_at = now()
+     WHERE id = $2`,
+    [JSON.stringify({ instance_addon_breakdown: instanceAddonBreakdown }), billing.id]
+  );
+  billing = (await getInvoiceById(billing.id)) ?? billing;
+
+  const gateway = await getActiveGateway({ billingType: 'saas', tenantId });
+  if (!gateway) {
+    schedulePublishPlatformBillingChargeCreated(billing.id);
+    return { billing };
+  }
+
+  if (!billing.invoice_number) {
+    throw new Error('Fatura sem número — não é possível criar cobrança no gateway.');
+  }
+
+  try {
+    if (await hasTenantBillingPaymentAttemptsTable()) {
+      const ensured = await ensureSaasPlanCheckoutPaymentAttemptForSwitch({
+        billing,
+        tenantId,
+        requestedMethod: paymentMethod,
+        gateway,
+        gatewayKey,
+        amountCents,
+        dueDateStr,
+        invoiceNumber: billing.invoice_number ?? '',
+      });
+      schedulePublishPlatformBillingChargeCreated(ensured.billing.id);
+      return { billing: ensured.billing, paymentUrls: ensured.paymentUrls };
+    }
+
+    const sameMethodReuse = await resolveSaasPlanCheckoutPaymentIfEligible(
+      billing,
+      paymentMethod,
+      gateway,
+      gatewayKey
+    );
+    if (sameMethodReuse) {
+      const refreshed = await getInvoiceById(billing.id);
+      const outBilling = refreshed ?? sameMethodReuse.billing;
+      schedulePublishPlatformBillingChargeCreated(outBilling.id);
+      return {
+        billing: outBilling,
+        paymentUrls: sameMethodReuse.paymentUrls,
+      };
+    }
+
+    const customerId = await gateway.ensureCustomer?.(tenantId);
+    if (!customerId) throw new Error('ensureCustomer não retornou customerId');
+
+    if (
+      billing.gateway_reference_id &&
+      billing.payment_method &&
+      normPaymentMethod(billing.payment_method) !== normPaymentMethod(paymentMethod) &&
+      typeof gateway.cancelPayment === 'function'
+    ) {
+      try {
+        await gateway.cancelPayment(billing.gateway_reference_id);
+      } catch (e) {
+        console.warn('[subscriptionService] cancelPayment anterior ao trocar método (instance_addon)', e);
+      }
+    }
+
+    const idempotencyKeyForCharge = buildSaasCheckoutChargeIdempotencyKey(billing.id, paymentMethod);
+    const chargeResult = await gateway.createCharge({
+      customerId,
+      amountCents,
+      dueDate: clampDueDateIso10MinTodayForGateway(dueDateStr),
+      paymentMethod,
+      description: billing.invoice_number ?? 'Conexões WhatsApp adicionais',
+      idempotencyKey: idempotencyKeyForCharge,
+      externalReference: tenantId,
+    });
+
+    const gatewayMetadata = {
+      invoiceUrl: chargeResult.invoiceUrl,
+      bankSlipUrl: chargeResult.bankSlipUrl,
+      bankSlipDigitableLine: chargeResult.bankSlipDigitableLine,
+      pixQrCode: chargeResult.pixQrCode,
+      pixCopyPaste: chargeResult.pixCopyPaste,
+    };
+
+    await updateInvoiceGatewayData(billing.id, {
+      gateway: gatewayKey,
+      payment_method: paymentMethod,
+      gateway_reference_id: chargeResult.paymentId,
+      gateway_status: chargeResult.status,
+      idempotency_key: idempotencyKeyForCharge,
+      gateway_metadata: gatewayMetadata,
+    });
+
+    const updatedBilling = await getInvoiceById(billing.id);
+    const finalBilling = updatedBilling ?? billing;
+    schedulePublishPlatformBillingChargeCreated(finalBilling.id);
+    return {
+      billing: finalBilling,
+      paymentUrls: {
+        invoiceUrl: chargeResult.invoiceUrl,
+        bankSlipUrl: chargeResult.bankSlipUrl,
+        bankSlipDigitableLine: chargeResult.bankSlipDigitableLine,
+        pixQrCode: chargeResult.pixQrCode,
+        pixCopyPaste: chargeResult.pixCopyPaste,
+      },
+    };
+  } catch (err) {
+    console.error('[subscriptionService] subscribeInstanceAddon gateway error:', err);
     throw mapAsaasChargeError(err);
   }
 }

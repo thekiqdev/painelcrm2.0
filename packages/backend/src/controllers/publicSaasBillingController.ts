@@ -26,6 +26,8 @@ function billingReasonLabel(reason: string): string {
   switch (reason) {
     case 'seat_addon':
       return 'Assentos adicionais';
+    case 'instance_addon':
+      return 'Conexões WhatsApp adicionais';
     case 'plan_upgrade':
       return 'Upgrade de plano';
     case 'plan_renewal':
@@ -188,6 +190,9 @@ export async function postPublicSaasBillingPreparePayment(req: Request, res: Res
     if (pending.billing_reason) response.billing_reason = pending.billing_reason;
     if (pending.seat_addon_additional_seats != null) {
       response.seat_addon_additional_seats = pending.seat_addon_additional_seats;
+    }
+    if (pending.instance_addon_additional_instances != null) {
+      response.instance_addon_additional_instances = pending.instance_addon_additional_instances;
     }
     if (pending.invoice_url) response.invoice_url = pending.invoice_url;
     if (pending.bank_slip_url) response.bank_slip_url = pending.bank_slip_url;

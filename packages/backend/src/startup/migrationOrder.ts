@@ -442,5 +442,15 @@ export const MIGRATION_ORDER = [
   '291_chat_conversations_wa_archived.sql',
   /** Phase 0: clear polluted wa_archived from inbox */
   '292_chat_conversations_wa_archived_inbox_repair.sql',
+  /** WI2: preço por instância WhatsApp + snapshot contratual preparado */
+  '293_plan_interval_prices_price_per_instance.sql',
+  /** WI3: billing_reason instance_addon + pending pointer */
+  '294_instance_addon_billing.sql',
+  /** WI4: schedule redução de conexões WhatsApp no próximo ciclo */
+  '295_whatsapp_instances_schedule_next_cycle.sql',
+  /** WR1: roteamento instância WhatsApp por purpose (invoice/module) */
+  '296_tenant_whatsapp_instance_routing.sql',
+  /** WR3: sticky chat_instance_id no retry outbound */
+  '297_notification_outbound_dispatch_chat_instance.sql',
   'create-admin-user.sql',
 ];
