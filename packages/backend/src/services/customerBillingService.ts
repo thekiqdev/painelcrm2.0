@@ -1220,24 +1220,30 @@ async function executePayWithCard(
     );
   }
 
+  const creditCard = body.credit_card;
+  const cardholder = body.cardholder;
+  if (!creditCard || !cardholder) {
+    throw new PayWithCardError('Dados do cartão incompletos', 400, 'validation_error');
+  }
+
   const payInput: PayWithCreditCardInput = {
     paymentId: attempt.gateway_reference_id,
     creditCard: {
-      holderName: body.credit_card.holder_name.trim(),
-      number: body.credit_card.number,
-      expiryMonth: body.credit_card.expiry_month.trim(),
-      expiryYear: body.credit_card.expiry_year.trim(),
-      ccv: body.credit_card.cvv.trim(),
+      holderName: creditCard.holder_name.trim(),
+      number: creditCard.number,
+      expiryMonth: creditCard.expiry_month.trim(),
+      expiryYear: creditCard.expiry_year.trim(),
+      ccv: creditCard.cvv.trim(),
     },
     creditCardHolderInfo: {
-      name: body.cardholder.name.trim(),
-      email: body.cardholder.email.trim(),
-      cpfCnpj: body.cardholder.cpf_cnpj,
-      postalCode: body.cardholder.postal_code,
-      addressNumber: body.cardholder.address_number.trim(),
-      addressComplement: body.cardholder.address_complement ?? null,
-      phone: body.cardholder.phone,
-      mobilePhone: body.cardholder.mobile_phone ?? null,
+      name: cardholder.name.trim(),
+      email: cardholder.email.trim(),
+      cpfCnpj: cardholder.cpf_cnpj,
+      postalCode: cardholder.postal_code,
+      addressNumber: cardholder.address_number.trim(),
+      addressComplement: cardholder.address_complement ?? null,
+      phone: cardholder.phone,
+      mobilePhone: cardholder.mobile_phone ?? null,
     },
   };
 

@@ -130,6 +130,8 @@ export async function getPublicSaasBillingSummary(req: Request, res: Response): 
       available: boolean;
       status: string | null;
       has_active: boolean;
+      switch_on: boolean;
+      user_opted_off: boolean;
       qr_payload: string | null;
       qr_image: string | null;
     } | null = null;

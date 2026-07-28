@@ -377,10 +377,7 @@ async function execChargeCard(
     }
     const config = await getActiveConfig('saas');
     const gatewayKey = config?.gateway_key ?? inv.gateway ?? 'asaas';
-    const due =
-      inv.due_date instanceof Date
-        ? inv.due_date.toISOString().slice(0, 10)
-        : String(inv.due_date ?? '').slice(0, 10);
+    const due = String(inv.due_date ?? '').slice(0, 10);
     const idempotencyKey = `saas_card_${ctx.billingId}_${event.attempt ?? 1}`;
     try {
       const charge = await gateway.createCharge({
