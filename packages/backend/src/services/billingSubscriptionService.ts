@@ -76,6 +76,11 @@ export interface CreateSubscriptionInput {
   default_payment_method?: string | null; // PIX | BOLETO | CREDIT_CARD (para type=customer)
   cycles_unlimited?: boolean;
   max_cycles?: number | null;
+  /**
+   * Sprint A Pix Auto — draft pré-pagamento usa `trialing` (fora do scheduler).
+   * Default: `active`.
+   */
+  status?: 'active' | 'trialing' | 'paused' | 'past_due' | 'cancelled';
 }
 
 /**
@@ -87,13 +92,14 @@ export async function createSubscription(data: CreateSubscriptionInput): Promise
   if (!unlimited && (maxCycles == null || maxCycles < 1)) {
     throw new Error('max_cycles obrigatório e maior que zero quando cycles_unlimited é false');
   }
+  const status = data.status ?? 'active';
   const r = await pool.query<SubscriptionRow>(
     `INSERT INTO subscriptions (
       type, tenant_id, customer_id, plan_id, amount_cents, currency, billing_anchor_day,
       billing_cycle_count, billing_interval, status, next_billing_date,
       current_period_start, current_period_end, grace_period_days, default_payment_method, users_count, gateway, created_by,
       cycles_unlimited, max_cycles
-    ) VALUES ($1, $2, $3, $4, $5, 'BRL', $6, 0, $7, 'active', $8, $9, $10, COALESCE($11, 3), $12, $13, $14, $15, $16, $17)
+    ) VALUES ($1, $2, $3, $4, $5, 'BRL', $6, 0, $7, $18, $8, $9, $10, COALESCE($11, 3), $12, $13, $14, $15, $16, $17)
     RETURNING id, type, tenant_id, customer_id, plan_id, amount_cents, currency, billing_anchor_day,
       billing_cycle_count, billing_interval, status, next_billing_date, current_period_start, current_period_end,
       cancel_at_period_end, grace_period_days, default_payment_method, users_count, gateway, last_job_at, created_by, created_at, updated_at,
@@ -118,6 +124,7 @@ export async function createSubscription(data: CreateSubscriptionInput): Promise
       data.created_by ?? null,
       unlimited,
       maxCycles,
+      status,
     ]
   );
   return mapSubscriptionRow(r.rows[0] as SubscriptionRowDb);
@@ -140,6 +147,83 @@ export async function getActiveSaasSubscriptionByTenant(
      WHERE type = 'saas' AND tenant_id = $1 AND status = 'active'
      LIMIT 1`,
     [tenantId]
+  );
+  const row = r.rows[0];
+  return row ? mapSubscriptionRow(row) : null;
+}
+
+/**
+ * Sprint A — assinatura SaaS aberta para vincular fatura pré-pagamento:
+ * prefer active, senão trialing (draft checkout / pós-trial).
+ */
+export async function getOpenSaasSubscriptionByTenant(
+  tenantId: string
+): Promise<SubscriptionRow | null> {
+  const active = await getActiveSaasSubscriptionByTenant(tenantId);
+  if (active) return active;
+  const r = await pool.query<SubscriptionRowDb>(
+    `SELECT id, type, tenant_id, customer_id, plan_id, amount_cents, currency, billing_anchor_day,
+       billing_cycle_count, billing_interval, status, next_billing_date, current_period_start, current_period_end,
+       cancel_at_period_end, grace_period_days, default_payment_method, users_count, gateway, last_job_at, created_by, created_at, updated_at,
+       cycles_unlimited, max_cycles,
+       contracted_at, contracted_billing_interval, contracted_plan_price_cents, contracted_price_per_user_cents,
+       contract_currency, pricing_snapshot_source
+     FROM subscriptions
+     WHERE type = 'saas' AND tenant_id = $1 AND status = 'trialing'
+     ORDER BY updated_at DESC
+     LIMIT 1`,
+    [tenantId]
+  );
+  const row = r.rows[0];
+  return row ? mapSubscriptionRow(row) : null;
+}
+
+/**
+ * Promove draft `trialing` → `active` no pagamento (Sprint A Pix Auto).
+ */
+export async function promoteSaasTrialingSubscriptionToActive(opts: {
+  subscriptionId: string;
+  tenantId: string;
+  periodStart: string;
+  periodEnd: string;
+  planId: string | null;
+  billingInterval: string;
+  amountCents: number;
+  usersCount: number | null;
+}): Promise<SubscriptionRow | null> {
+  const dayPart = parseInt(opts.periodStart.slice(8, 10), 10);
+  const anchorDay =
+    Number.isFinite(dayPart) && dayPart >= 1 && dayPart <= 31 ? dayPart : null;
+  const r = await pool.query<SubscriptionRowDb>(
+    `UPDATE subscriptions
+     SET status = 'active',
+         current_period_start = $1,
+         current_period_end = $2,
+         next_billing_date = $2,
+         plan_id = COALESCE($5, plan_id),
+         billing_interval = $6,
+         amount_cents = $7,
+         users_count = COALESCE($8, users_count),
+         billing_anchor_day = COALESCE(billing_anchor_day, $9::smallint),
+         updated_at = now()
+     WHERE id = $3::uuid AND tenant_id = $4::uuid AND type = 'saas' AND status = 'trialing'
+     RETURNING id, type, tenant_id, customer_id, plan_id, amount_cents, currency, billing_anchor_day,
+       billing_cycle_count, billing_interval, status, next_billing_date, current_period_start, current_period_end,
+       cancel_at_period_end, grace_period_days, default_payment_method, users_count, gateway, last_job_at, created_by, created_at, updated_at,
+       cycles_unlimited, max_cycles,
+       contracted_at, contracted_billing_interval, contracted_plan_price_cents, contracted_price_per_user_cents,
+       contract_currency, pricing_snapshot_source`,
+    [
+      opts.periodStart,
+      opts.periodEnd,
+      opts.subscriptionId,
+      opts.tenantId,
+      opts.planId,
+      opts.billingInterval,
+      opts.amountCents,
+      opts.usersCount,
+      anchorDay,
+    ]
   );
   const row = r.rows[0];
   return row ? mapSubscriptionRow(row) : null;
@@ -552,6 +636,20 @@ export async function cancelSubscription(
       `UPDATE tenants SET status = 'trial', plan_period_end = CURRENT_DATE, updated_at = now() WHERE id = $1`,
       [tenantId]
     );
+    // Sprint C — cancela auth Pix Automático (fail-open)
+    try {
+      const { cancelPixAutomaticAuthorizationForSubscription } = await import(
+        './billing2/billingPixAutomaticService.js'
+      );
+      await cancelPixAutomaticAuthorizationForSubscription({
+        tenantId,
+        subscriptionId,
+        correlationId: `cancel_subscription:${subscriptionId}`,
+        reason: 'subscription_cancelled_immediate',
+      });
+    } catch (e) {
+      console.warn('[cancelSubscription] pix automatic cancel skipped', e);
+    }
     // lifecycle shadow observation
     const { observeBillingLifecycleEventWithKanbanActual } = await import('../lifecycle/lifecycleBillingObserver.js');
     void observeBillingLifecycleEventWithKanbanActual(
@@ -570,6 +668,20 @@ export async function cancelSubscription(
       `UPDATE subscriptions SET cancel_at_period_end = true, updated_at = now() WHERE id = $1 AND tenant_id = $2`,
       [subscriptionId, tenantId]
     );
+    // Sprint C — para de renovar via Pix Auto mesmo antes do fim do período
+    try {
+      const { cancelPixAutomaticAuthorizationForSubscription } = await import(
+        './billing2/billingPixAutomaticService.js'
+      );
+      await cancelPixAutomaticAuthorizationForSubscription({
+        tenantId,
+        subscriptionId,
+        correlationId: `cancel_at_period_end:${subscriptionId}`,
+        reason: 'subscription_cancel_at_period_end',
+      });
+    } catch (e) {
+      console.warn('[cancelSubscription] pix automatic cancel (period end) skipped', e);
+    }
   }
   return { ok: true };
 }
@@ -593,6 +705,19 @@ export async function expireCancelledSubscriptions(): Promise<number> {
         `UPDATE tenants SET status = 'trial', plan_period_end = CURRENT_DATE, updated_at = now() WHERE id = $1`,
         [sub.tenant_id]
       );
+      try {
+        const { cancelPixAutomaticAuthorizationForSubscription } = await import(
+          './billing2/billingPixAutomaticService.js'
+        );
+        await cancelPixAutomaticAuthorizationForSubscription({
+          tenantId: sub.tenant_id,
+          subscriptionId: sub.id,
+          correlationId: `expire_cancelled:${sub.id}`,
+          reason: 'subscription_expired_cancelled',
+        });
+      } catch (e) {
+        console.warn('[expireCancelledSubscriptions] pix automatic cancel skipped', e);
+      }
       // lifecycle shadow observation
       void observeBillingLifecycleEventWithKanbanActual(
         'subscription.cancelled',

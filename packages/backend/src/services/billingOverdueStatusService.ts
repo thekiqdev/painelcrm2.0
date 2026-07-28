@@ -92,8 +92,24 @@ export async function syncOverdueBillingStatuses(
     markOverdueTenantBillings(options),
   ]);
 
+  const { shouldCollectionPolicyOwnNotifications, scheduleCollectionPolicyExtensionPoint } =
+    await import('./collectionPolicy/hook.js');
+  const { tenantBillingCorrelationId } = await import('./billing2/billingCorrelationId.js');
+  const engineOwnsNotify = await shouldCollectionPolicyOwnNotifications();
+
   for (const billingId of overdueTenantBillingIds) {
-    schedulePublishPlatformBillingChargeOverdue(billingId);
+    if (!engineOwnsNotify) {
+      schedulePublishPlatformBillingChargeOverdue(billingId);
+    }
+    // Billing 2.0 Sprint 3 — payment.overdue (noop se engine OFF; destrutivas OFF por default)
+    scheduleCollectionPolicyExtensionPoint({
+      type: 'payment.overdue',
+      occurred_at: new Date().toISOString(),
+      billing_id: billingId,
+      tenant_id: options.tenantId ?? undefined,
+      correlation_id: tenantBillingCorrelationId(billingId),
+      attempt: 1,
+    });
     // lifecycle shadow observation (future — overdue route Sprint I+)
     void import('../lifecycle/lifecycleBillingObserver.js').then(({ observeFutureBillingLifecycleEvent }) =>
       observeFutureBillingLifecycleEvent(
@@ -101,6 +117,19 @@ export async function syncOverdueBillingStatuses(
         { tenantId: options.tenantId ?? undefined, invoiceId: billingId },
         { source: 'tenant_billing_overdue' },
       ),
+    );
+  }
+
+  // Sprint 5 — writer past_due (flag OFF = no-op; não suspende)
+  try {
+    const { syncSaasSubscriptionsPastDue } = await import(
+      './collectionPolicy/subscriptionPastDueWriter.js'
+    );
+    await syncSaasSubscriptionsPastDue({ tenantId: options.tenantId ?? null });
+  } catch (e: unknown) {
+    console.warn(
+      '[syncOverdueBillingStatuses] past_due writer skipped',
+      e instanceof Error ? e.message : e
     );
   }
 

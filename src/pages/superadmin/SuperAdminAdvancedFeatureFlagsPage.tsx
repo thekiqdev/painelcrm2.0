@@ -60,6 +60,7 @@ const NAMESPACE_ORDER = [
   'meta_readiness',
   'platform',
   'billing_recovery',
+  'billing2',
 ] as const;
 
 function formatWhen(iso?: string): string {
@@ -78,6 +79,7 @@ function isCriticalFlag(flag: PlatformFeatureFlagRow): boolean {
   if (flag.namespace === 'workflow') return true;
   if (flag.namespace === 'communication') return true;
   if (flag.namespace === 'billing_recovery') return true;
+  if (flag.namespace === 'billing2') return true;
   return false;
 }
 

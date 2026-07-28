@@ -1097,14 +1097,16 @@ export class PayWithCardError extends Error {
 
 export type PayWithCardRequestBody = {
   idempotency_key: string;
-  credit_card: {
+  /** Sprint 9 — captura com token persistido (sem PAN). */
+  use_saved_card?: boolean;
+  credit_card?: {
     holder_name: string;
     number: string;
     expiry_month: string;
     expiry_year: string;
     cvv: string;
   };
-  cardholder: {
+  cardholder?: {
     name: string;
     email: string;
     cpf_cnpj: string;
@@ -1501,31 +1503,57 @@ async function executeTenantBillingPayWithCard(
   const paymentId = (attempt?.gateway_reference_id ?? billing.gateway_reference_id)!.trim();
   const body = options.body;
 
-  const payInput: PayWithCreditCardInput = {
-    paymentId,
-    creditCard: {
-      holderName: body.credit_card.holder_name.trim(),
-      number: body.credit_card.number,
-      expiryMonth: body.credit_card.expiry_month.trim(),
-      expiryYear: body.credit_card.expiry_year.trim(),
-      ccv: body.credit_card.cvv.trim(),
-    },
-    creditCardHolderInfo: {
-      name: body.cardholder.name.trim(),
-      email: body.cardholder.email.trim(),
-      cpfCnpj: body.cardholder.cpf_cnpj,
-      postalCode: body.cardholder.postal_code,
-      addressNumber: body.cardholder.address_number.trim(),
-      addressComplement: body.cardholder.address_complement ?? null,
-      phone: body.cardholder.phone,
-      mobilePhone: body.cardholder.mobile_phone ?? null,
-    },
-  };
+  let payInput: PayWithCreditCardInput;
+  if (body.use_saved_card === true) {
+    const {
+      getActiveSaasCardTokenBySubscriptionId,
+      getActiveSaasCardTokenByTenantId,
+    } = await import('./billing2/billingCardTokenStore.js');
+    const saved = billing.subscription_id
+      ? await getActiveSaasCardTokenBySubscriptionId(billing.subscription_id)
+      : await getActiveSaasCardTokenByTenantId(billing.tenant_id);
+    if (!saved?.card_token) {
+      throw new PayWithCardError(
+        'Não há cartão salvo para esta assinatura. Informe os dados do cartão.',
+        409,
+        'conflict'
+      );
+    }
+    payInput = { paymentId, creditCardToken: saved.card_token };
+  } else {
+    if (!body.credit_card || !body.cardholder) {
+      throw new PayWithCardError('Verifique os dados do cartão e do titular.', 400, 'validation_error');
+    }
+    payInput = {
+      paymentId,
+      creditCard: {
+        holderName: body.credit_card.holder_name.trim(),
+        number: body.credit_card.number,
+        expiryMonth: body.credit_card.expiry_month.trim(),
+        expiryYear: body.credit_card.expiry_year.trim(),
+        ccv: body.credit_card.cvv.trim(),
+      },
+      creditCardHolderInfo: {
+        name: body.cardholder.name.trim(),
+        email: body.cardholder.email.trim(),
+        cpfCnpj: body.cardholder.cpf_cnpj,
+        postalCode: body.cardholder.postal_code,
+        addressNumber: body.cardholder.address_number.trim(),
+        addressComplement: body.cardholder.address_complement ?? null,
+        phone: body.cardholder.phone,
+        mobilePhone: body.cardholder.mobile_phone ?? null,
+      },
+    };
+  }
 
   let gwResult;
   try {
     gwResult = await gateway.payWithCreditCard!(payInput);
   } catch (e: unknown) {
+    if (body.use_saved_card === true && billing.subscription_id) {
+      const { markSaasCardTokenInvalid } = await import('./billing2/billingCardTokenStore.js');
+      await markSaasCardTokenInvalid(billing.subscription_id, 'pay_failed').catch(() => undefined);
+    }
     if (isAbortLikeError(e)) {
       throw new PayWithCardError(
         'A operação demorou demais. Verifique o status da cobrança em instantes.',
@@ -1606,17 +1634,79 @@ async function executeTenantBillingPayWithCard(
 
   if (internalStatus === 'paid') {
     await activatePlanFromBilling(billingId);
+    // Sprint 9 — persistir token gateway-safe se Asaas devolveu (sem PAN).
+    if (gwResult.creditCardToken?.trim()) {
+      try {
+        const { upsertSaasCardToken, cardTokenAuditSafe } = await import(
+          './billing2/billingCardTokenStore.js'
+        );
+        const { writeBillingAuditEvent } = await import('./collectionPolicy/billingAuditEventWriter.js');
+        let subscriptionId = billing.subscription_id;
+        if (!subscriptionId) {
+          const subR = await pool.query<{ id: string }>(
+            `SELECT id::text AS id FROM subscriptions
+             WHERE tenant_id = $1::uuid AND type = 'saas'
+               AND status IN ('active', 'past_due', 'trialing')
+             ORDER BY updated_at DESC LIMIT 1`,
+            [billing.tenant_id]
+          );
+          subscriptionId = subR.rows[0]?.id ?? null;
+        }
+        if (subscriptionId) {
+          await upsertSaasCardToken({
+            subscriptionId,
+            tenantId: billing.tenant_id,
+            cardToken: gwResult.creditCardToken.trim(),
+            cardBrand: gwResult.cardBrand ?? null,
+            cardLast4: gwResult.cardLast4 ?? null,
+            gateway: gatewayKey,
+          });
+          await writeBillingAuditEvent({
+            actor: 'pay_with_card',
+            actor_type: 'system',
+            action: 'card.token_saved',
+            entity_type: 'subscription',
+            entity_id: subscriptionId,
+            reason: body.use_saved_card ? 'reuse_or_refresh' : 'first_capture',
+            origin: 'saas_pay_with_card',
+            payload: {
+              tenant_id: billing.tenant_id,
+              billing_id: billingId,
+              brand: gwResult.cardBrand ?? null,
+              last4: gwResult.cardLast4 ?? null,
+              token_mask: cardTokenAuditSafe(gwResult.creditCardToken),
+            },
+          });
+        }
+      } catch (tokenErr) {
+        console.error('[executeTenantBillingPayWithCard] token persist failed', {
+          billingId,
+          error: tokenErr instanceof Error ? tokenErr.message : String(tokenErr),
+        });
+      }
+    }
     const { schedulePublishPlatformBillingPaymentConfirmed } = await import(
       './platformNotifications/platformBusinessNotifications.js'
     );
     schedulePublishPlatformBillingPaymentConfirmed(billingId);
-    if (attempt) {
-      const { supersedeOtherPendingTenantBillingAttemptsAfterPaid } = await import(
+    // Sprint B — cancela cobranças abertas do ciclo (ex. Pix Auto na linha principal); auth intacta.
+    {
+      const prevRef = billing.gateway_reference_id?.trim() || null;
+      const keep = gwResult.paymentId?.trim() || null;
+      const extras = prevRef && keep && prevRef !== keep ? [prevRef] : [];
+      const { cancelOpenTenantBillingCycleChargesAfterPaid } = await import(
         './billingGatewayChargeService.js'
       );
-      await supersedeOtherPendingTenantBillingAttemptsAfterPaid(billingId, attempt.id, billing.tenant_id).catch(
-        (err) =>
-          console.error('[executeTenantBillingPayWithCard] supersedeOtherPendingTenantBillingAttemptsAfterPaid:', err)
+      await cancelOpenTenantBillingCycleChargesAfterPaid({
+        billingId,
+        tenantId: billing.tenant_id,
+        keepGatewayReferenceId: keep,
+        paidAttemptId: attempt?.id ?? null,
+        extraCancelReferenceIds: extras,
+        gatewayKeyFallback: gatewayKey,
+        gatewayStatusRawForExtras: gwResult.status,
+      }).catch((err) =>
+        console.error('[executeTenantBillingPayWithCard] cycle_paid_cleanup:', err)
       );
     }
   }

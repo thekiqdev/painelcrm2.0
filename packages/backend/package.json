@@ -19,6 +19,8 @@
     "workers:dense": "tsx src/scripts/runDenseWorkers.ts",
     "outbox:worker": "tsx src/scripts/runOutboxPublisherWorker.ts",
     "billing:reconciliation": "tsx src/scripts/runReconciliation.ts",
+    "billing:reconciliation-l2": "tsx src/scripts/runReconciliationL2.ts",
+    "billing:dunning": "tsx src/scripts/runBillingDunning.ts",
     "billing:ops-reconciliation": "tsx src/scripts/runBillingReconciliation.ts",
     "tickets:auto-resolve": "tsx src/scripts/runTicketAutoResolve.ts",
     "billing:subscription-cycles-reconcile": "tsx src/scripts/runSubscriptionCyclesReconciliation.ts",

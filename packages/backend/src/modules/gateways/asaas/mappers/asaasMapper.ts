@@ -96,6 +96,9 @@ export function toAsaasPayment(
   };
   if (input.description) req.description = input.description;
   if (input.externalReference) req.externalReference = input.externalReference;
+  if (input.pixAutomaticAuthorizationId?.trim()) {
+    req.pixAutomaticAuthorizationId = input.pixAutomaticAuthorizationId.trim();
+  }
   return req;
 }
 

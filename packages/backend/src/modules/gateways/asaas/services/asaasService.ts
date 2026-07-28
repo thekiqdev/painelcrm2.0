@@ -270,31 +270,46 @@ function buildGateway(config?: AsaasConfig | null): PaymentGateway {
     async payWithCreditCard(input: PayWithCreditCardInput): Promise<PayWithCreditCardResult> {
       const start = Date.now();
       try {
-        const res = await asaasClient.payWithCreditCard(
-          input.paymentId,
-          {
-            creditCard: {
-              holderName: input.creditCard.holderName.trim(),
-              number: input.creditCard.number.replace(/\D/g, ''),
-              expiryMonth: input.creditCard.expiryMonth.trim(),
-              expiryYear: input.creditCard.expiryYear.trim(),
-              ccv: input.creditCard.ccv.trim(),
-            },
-            creditCardHolderInfo: {
-              name: input.creditCardHolderInfo.name.trim(),
-              email: input.creditCardHolderInfo.email.trim(),
-              cpfCnpj: input.creditCardHolderInfo.cpfCnpj.replace(/\D/g, ''),
-              postalCode: input.creditCardHolderInfo.postalCode.replace(/\D/g, ''),
-              addressNumber: input.creditCardHolderInfo.addressNumber.trim(),
-              addressComplement: input.creditCardHolderInfo.addressComplement ?? null,
-              phone: input.creditCardHolderInfo.phone.replace(/\D/g, ''),
-              mobilePhone: input.creditCardHolderInfo.mobilePhone?.replace(/\D/g, '') ?? null,
-            },
-          },
-          config
-        );
+        const token = input.creditCardToken?.trim();
+        const body =
+          token
+            ? { creditCardToken: token }
+            : {
+                creditCard: {
+                  holderName: input.creditCard!.holderName.trim(),
+                  number: input.creditCard!.number.replace(/\D/g, ''),
+                  expiryMonth: input.creditCard!.expiryMonth.trim(),
+                  expiryYear: input.creditCard!.expiryYear.trim(),
+                  ccv: input.creditCard!.ccv.trim(),
+                },
+                creditCardHolderInfo: {
+                  name: input.creditCardHolderInfo!.name.trim(),
+                  email: input.creditCardHolderInfo!.email.trim(),
+                  cpfCnpj: input.creditCardHolderInfo!.cpfCnpj.replace(/\D/g, ''),
+                  postalCode: input.creditCardHolderInfo!.postalCode.replace(/\D/g, ''),
+                  addressNumber: input.creditCardHolderInfo!.addressNumber.trim(),
+                  addressComplement: input.creditCardHolderInfo!.addressComplement ?? null,
+                  phone: input.creditCardHolderInfo!.phone.replace(/\D/g, ''),
+                  mobilePhone: input.creditCardHolderInfo!.mobilePhone?.replace(/\D/g, '') ?? null,
+                },
+              };
+        const res = await asaasClient.payWithCreditCard(input.paymentId, body, config);
         const paidAt =
           res.paymentDate ?? (res as { clientPaymentDate?: string }).clientPaymentDate ?? null;
+        const cc =
+          res.creditCard && typeof res.creditCard === 'object'
+            ? (res.creditCard as Record<string, unknown>)
+            : null;
+        const returnedToken =
+          (typeof res.creditCardToken === 'string' && res.creditCardToken) ||
+          (cc && typeof cc.creditCardToken === 'string' ? cc.creditCardToken : null) ||
+          null;
+        const cardBrand =
+          (cc && typeof cc.creditCardBrand === 'string' ? cc.creditCardBrand : null) ||
+          (typeof res.creditCardBrand === 'string' ? res.creditCardBrand : null);
+        const cardLast4 =
+          (cc && typeof cc.creditCardNumber === 'string' ? cc.creditCardNumber : null) ||
+          (typeof res.creditCardNumber === 'string' ? res.creditCardNumber : null);
         logGatewayOperation({
           gateway: GATEWAY_KEY,
           tenantId: undefined,
@@ -306,6 +321,9 @@ function buildGateway(config?: AsaasConfig | null): PaymentGateway {
           paymentId: res.id,
           status: res.status ?? '',
           paidAt: paidAt ?? undefined,
+          creditCardToken: returnedToken,
+          cardBrand,
+          cardLast4,
         };
       } catch (e: unknown) {
         logGatewayOperation({

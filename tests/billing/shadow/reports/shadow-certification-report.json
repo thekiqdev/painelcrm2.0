@@ -1,10 +1,10 @@
 {
   "sprint": "5.0-21A",
-  "generatedAt": "2026-07-07T16:52:01.532Z",
+  "generatedAt": "2026-07-27T20:16:13.310Z",
   "scenarioCount": 40,
   "metrics": {
-    "legacyExecutionMs": 43.21,
-    "aggregateExecutionMs": 38.96,
+    "legacyExecutionMs": 71.64,
+    "aggregateExecutionMs": 65.18,
     "historyParityPercent": 100,
     "calendarParityPercent": 100,
     "sidebarParityPercent": 99.4,
@@ -17,8 +17,8 @@
   "scenarios": [
     {
       "scenarioId": "first-charge-paid",
-      "legacyMs": 18.23090000000002,
-      "aggregateMs": 12.035199999999804,
+      "legacyMs": 21.07049999999981,
+      "aggregateMs": 18.664099999999962,
       "surfaces": [
         {
           "surface": "subscription",
@@ -88,8 +88,8 @@
     },
     {
       "scenarioId": "subscription-newly-created",
-      "legacyMs": 0.9054000000000997,
-      "aggregateMs": 0.5507999999999811,
+      "legacyMs": 0.718300000000454,
+      "aggregateMs": 1.0685999999996056,
       "surfaces": [
         {
           "surface": "subscription",
@@ -159,8 +159,8 @@
     },
     {
       "scenarioId": "subscription-paused",
-      "legacyMs": 0.3748000000000502,
-      "aggregateMs": 1.2678000000000793,
+      "legacyMs": 0.5259999999998399,
+      "aggregateMs": 1.5036000000000058,
       "surfaces": [
         {
           "surface": "subscription",
@@ -272,8 +272,8 @@
     },
     {
       "scenarioId": "subscription-resumed",
-      "legacyMs": 1.3534999999997126,
-      "aggregateMs": 0.7397000000000844,
+      "legacyMs": 0.6355999999996129,
+      "aggregateMs": 0.8591999999998734,
       "surfaces": [
         {
           "surface": "subscription",
@@ -385,8 +385,8 @@
     },
     {
       "scenarioId": "subscription-reactivated",
-      "legacyMs": 0.43149999999968713,
-      "aggregateMs": 0.7503999999998996,
+      "legacyMs": 0.5698000000002139,
+      "aggregateMs": 0.7695999999996275,
       "surfaces": [
         {
           "surface": "subscription",
@@ -498,8 +498,8 @@
     },
     {
       "scenarioId": "subscription-cancelled",
-      "legacyMs": 0.09259999999994761,
-      "aggregateMs": 0.3811000000000604,
+      "legacyMs": 0.10350000000016735,
+      "aggregateMs": 0.45049999999991996,
       "surfaces": [
         {
           "surface": "subscription",
@@ -626,8 +626,8 @@
     },
     {
       "scenarioId": "charge-paid",
-      "legacyMs": 0.6422000000002299,
-      "aggregateMs": 2.672399999999925,
+      "legacyMs": 0.4279999999998836,
+      "aggregateMs": 0.8060999999997875,
       "surfaces": [
         {
           "surface": "subscription",
@@ -697,8 +697,8 @@
     },
     {
       "scenarioId": "charge-overdue",
-      "legacyMs": 0.49710000000004584,
-      "aggregateMs": 0.9007999999998901,
+      "legacyMs": 0.6000000000003638,
+      "aggregateMs": 1.4836999999997715,
       "surfaces": [
         {
           "surface": "subscription",
@@ -768,8 +768,8 @@
     },
     {
       "scenarioId": "charge-future",
-      "legacyMs": 0.43499999999994543,
-      "aggregateMs": 0.9755000000000109,
+      "legacyMs": 1,
+      "aggregateMs": 2.65520000000015,
       "surfaces": [
         {
           "surface": "subscription",
@@ -839,8 +839,8 @@
     },
     {
       "scenarioId": "charge-manual",
-      "legacyMs": 0.85550000000012,
-      "aggregateMs": 0.9176000000002205,
+      "legacyMs": 0.8648000000002867,
+      "aggregateMs": 2.5262000000002445,
       "surfaces": [
         {
           "surface": "subscription",
@@ -910,8 +910,8 @@
     },
     {
       "scenarioId": "charge-early-generated",
-      "legacyMs": 1.0769999999997708,
-      "aggregateMs": 1.375,
+      "legacyMs": 0.7632999999996173,
+      "aggregateMs": 2.6190999999998894,
       "surfaces": [
         {
           "surface": "subscription",
@@ -981,8 +981,8 @@
     },
     {
       "scenarioId": "generate-jul-before-aug",
-      "legacyMs": 0.4827999999997701,
-      "aggregateMs": 0.8384000000000924,
+      "legacyMs": 0.6157999999995809,
+      "aggregateMs": 1.0388999999995576,
       "surfaces": [
         {
           "surface": "subscription",
@@ -1052,8 +1052,8 @@
     },
     {
       "scenarioId": "generate-oct-skip-sep",
-      "legacyMs": 0.9674999999997453,
-      "aggregateMs": 0.7235999999998057,
+      "legacyMs": 0.6345000000001164,
+      "aggregateMs": 0.7665999999999258,
       "surfaces": [
         {
           "surface": "subscription",
@@ -1123,8 +1123,8 @@
     },
     {
       "scenarioId": "generate-retroactive-months",
-      "legacyMs": 0.4758999999999105,
-      "aggregateMs": 0.7728000000001884,
+      "legacyMs": 0.46489999999994325,
+      "aggregateMs": 0.8595000000004802,
       "surfaces": [
         {
           "surface": "subscription",
@@ -1194,8 +1194,8 @@
     },
     {
       "scenarioId": "generate-multiple-future-months",
-      "legacyMs": 0.5282000000001972,
-      "aggregateMs": 0.6239999999997963,
+      "legacyMs": 0.988100000000486,
+      "aggregateMs": 2.4254999999993743,
       "surfaces": [
         {
           "surface": "subscription",
@@ -1265,8 +1265,8 @@
     },
     {
       "scenarioId": "retry-after-failure",
-      "legacyMs": 1.340099999999893,
-      "aggregateMs": 0.4139999999997599,
+      "legacyMs": 2.2597999999998137,
+      "aggregateMs": 1.295600000000377,
       "surfaces": [
         {
           "surface": "subscription",
@@ -1336,8 +1336,8 @@
     },
     {
       "scenarioId": "gateway-failed",
-      "legacyMs": 0.8649999999997817,
-      "aggregateMs": 0.5939000000003034,
+      "legacyMs": 0.8800000000001091,
+      "aggregateMs": 1.5960000000004584,
       "surfaces": [
         {
           "surface": "subscription",
@@ -1407,8 +1407,8 @@
     },
     {
       "scenarioId": "cycle-skipped",
-      "legacyMs": 0.4371000000001004,
-      "aggregateMs": 0.5895000000000437,
+      "legacyMs": 0.5393000000003667,
+      "aggregateMs": 0.5118000000002212,
       "surfaces": [
         {
           "surface": "subscription",
@@ -1478,8 +1478,8 @@
     },
     {
       "scenarioId": "cancelled-official",
-      "legacyMs": 0.5644999999999527,
-      "aggregateMs": 1.1882000000000517,
+      "legacyMs": 8.59649999999965,
+      "aggregateMs": 5.6810999999997875,
       "surfaces": [
         {
           "surface": "subscription",
@@ -1549,8 +1549,8 @@
     },
     {
       "scenarioId": "cancelled-legacy",
-      "legacyMs": 0.39640000000008513,
-      "aggregateMs": 1.0149999999998727,
+      "legacyMs": 0.5353999999997541,
+      "aggregateMs": 2.380099999999402,
       "surfaces": [
         {
           "surface": "subscription",
@@ -1620,8 +1620,8 @@
     },
     {
       "scenarioId": "invoice-deleted",
-      "legacyMs": 0.5050999999998567,
-      "aggregateMs": 0.45759999999972933,
+      "legacyMs": 0.8337000000001353,
+      "aggregateMs": 0.4938000000001921,
       "surfaces": [
         {
           "surface": "subscription",
@@ -1691,8 +1691,8 @@
     },
     {
       "scenarioId": "invoice-refund",
-      "legacyMs": 1.1822000000001935,
-      "aggregateMs": 0.6217000000001462,
+      "legacyMs": 1.0305000000007567,
+      "aggregateMs": 0.5991000000003623,
       "surfaces": [
         {
           "surface": "subscription",
@@ -1762,8 +1762,8 @@
     },
     {
       "scenarioId": "invoice-only",
-      "legacyMs": 0.32429999999976644,
-      "aggregateMs": 0.5356000000001586,
+      "legacyMs": 0.5933999999997468,
+      "aggregateMs": 0.5837000000001353,
       "surfaces": [
         {
           "surface": "subscription",
@@ -1833,8 +1833,8 @@
     },
     {
       "scenarioId": "projection-only",
-      "legacyMs": 0.3061000000002423,
-      "aggregateMs": 0.35629999999991924,
+      "legacyMs": 0.3383000000003449,
+      "aggregateMs": 0.6197999999994863,
       "surfaces": [
         {
           "surface": "subscription",
@@ -1904,8 +1904,8 @@
     },
     {
       "scenarioId": "timeline-without-cycle",
-      "legacyMs": 0.29579999999987194,
-      "aggregateMs": 0.3856999999998152,
+      "legacyMs": 0.33880000000044674,
+      "aggregateMs": 0.42849999999998545,
       "surfaces": [
         {
           "surface": "subscription",
@@ -2017,8 +2017,8 @@
     },
     {
       "scenarioId": "timeline-with-cycle",
-      "legacyMs": 0.28070000000025175,
-      "aggregateMs": 0.34130000000004657,
+      "legacyMs": 0.37920000000030996,
+      "aggregateMs": 1.1864999999997963,
       "surfaces": [
         {
           "surface": "subscription",
@@ -2088,8 +2088,8 @@
     },
     {
       "scenarioId": "next-billing-date-changed",
-      "legacyMs": 0.2957000000001244,
-      "aggregateMs": 0.3651999999997315,
+      "legacyMs": 0.44319999999970605,
+      "aggregateMs": 0.5785999999998239,
       "surfaces": [
         {
           "surface": "subscription",
@@ -2159,8 +2159,8 @@
     },
     {
       "scenarioId": "contract-interval-change",
-      "legacyMs": 0.5039000000001579,
-      "aggregateMs": 0.43200000000024374,
+      "legacyMs": 2.29740000000038,
+      "aggregateMs": 2.1315000000004147,
       "surfaces": [
         {
           "surface": "subscription",
@@ -2230,8 +2230,8 @@
     },
     {
       "scenarioId": "anchor-change",
-      "legacyMs": 0.41970000000037544,
-      "aggregateMs": 0.6867999999999483,
+      "legacyMs": 0.6738999999997759,
+      "aggregateMs": 0.6334000000006199,
       "surfaces": [
         {
           "surface": "subscription",
@@ -2301,8 +2301,8 @@
     },
     {
       "scenarioId": "month-gap",
-      "legacyMs": 0.3634999999999309,
-      "aggregateMs": 0.40419999999994616,
+      "legacyMs": 0.6210000000000946,
+      "aggregateMs": 0.6024999999999636,
       "surfaces": [
         {
           "surface": "subscription",
@@ -2372,8 +2372,8 @@
     },
     {
       "scenarioId": "gap-filled",
-      "legacyMs": 0.39620000000013533,
-      "aggregateMs": 0.5882000000001426,
+      "legacyMs": 0.6934000000001106,
+      "aggregateMs": 0.7188000000005559,
       "surfaces": [
         {
           "surface": "subscription",
@@ -2443,8 +2443,8 @@
     },
     {
       "scenarioId": "reschedule",
-      "legacyMs": 4.7301000000002205,
-      "aggregateMs": 0.41729999999961365,
+      "legacyMs": 16.152999999999338,
+      "aggregateMs": 0.8023999999995794,
       "surfaces": [
         {
           "surface": "subscription",
@@ -2514,8 +2514,8 @@
     },
     {
       "scenarioId": "job-mismatch",
-      "legacyMs": 0.3395999999997912,
-      "aggregateMs": 0.40180000000009386,
+      "legacyMs": 1.0081999999993059,
+      "aggregateMs": 0.9768999999996595,
       "surfaces": [
         {
           "surface": "subscription",
@@ -2585,8 +2585,8 @@
     },
     {
       "scenarioId": "job-reenqueue",
-      "legacyMs": 0.3467999999998028,
-      "aggregateMs": 0.9408000000003085,
+      "legacyMs": 0.5187000000005355,
+      "aggregateMs": 1.8235999999997148,
       "surfaces": [
         {
           "surface": "subscription",
@@ -2656,8 +2656,8 @@
     },
     {
       "scenarioId": "manual-renew",
-      "legacyMs": 0.332300000000032,
-      "aggregateMs": 0.35980000000017753,
+      "legacyMs": 0.9724999999998545,
+      "aggregateMs": 0.9030000000002474,
       "surfaces": [
         {
           "surface": "subscription",
@@ -2727,8 +2727,8 @@
     },
     {
       "scenarioId": "worker-renewal",
-      "legacyMs": 0.3625000000001819,
-      "aggregateMs": 0.48119999999971697,
+      "legacyMs": 0.47229999999944994,
+      "aggregateMs": 0.48589999999967404,
       "surfaces": [
         {
           "surface": "subscription",
@@ -2798,8 +2798,8 @@
     },
     {
       "scenarioId": "scheduler-renewal",
-      "legacyMs": 0.30940000000009604,
-      "aggregateMs": 0.6573000000003049,
+      "legacyMs": 0.3609999999998763,
+      "aggregateMs": 0.40539999999964493,
       "surfaces": [
         {
           "surface": "subscription",
@@ -2869,8 +2869,8 @@
     },
     {
       "scenarioId": "subscription-trial",
-      "legacyMs": 0.29300000000012005,
-      "aggregateMs": 0.47699999999986176,
+      "legacyMs": 0.3455999999996493,
+      "aggregateMs": 0.4117999999998574,
       "surfaces": [
         {
           "surface": "subscription",
@@ -2940,8 +2940,8 @@
     },
     {
       "scenarioId": "subscription-pending-activation",
-      "legacyMs": 0.33339999999998327,
-      "aggregateMs": 0.30569999999988795,
+      "legacyMs": 0.43220000000019354,
+      "aggregateMs": 0.4254000000000815,
       "surfaces": [
         {
           "surface": "subscription",
@@ -3011,8 +3011,8 @@
     },
     {
       "scenarioId": "subscription-expired",
-      "legacyMs": 0.340900000000147,
-      "aggregateMs": 0.4191000000000713,
+      "legacyMs": 0.34069999999974243,
+      "aggregateMs": 0.4080000000003565,
       "surfaces": [
         {
           "surface": "subscription",

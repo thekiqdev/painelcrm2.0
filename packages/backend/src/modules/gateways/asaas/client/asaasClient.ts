@@ -265,23 +265,22 @@ export async function getPixQrCode(
 }
 
 /**
- * Linha digitável do boleto (GET /v3/payments/{id}/identificationField).
- */
-/**
  * POST /v3/payments/{id}/payWithCreditCard — captura cartão em cobrança já criada (Desenho A).
+ * Com `creditCardToken`, PAN/holder não são enviados (Sprint 9).
  * Sem retry em 4xx; timeout longo conforme doc Asaas.
  */
 export async function payWithCreditCard(
   paymentId: string,
   body: {
-    creditCard: {
+    creditCardToken?: string;
+    creditCard?: {
       holderName: string;
       number: string;
       expiryMonth: string;
       expiryYear: string;
       ccv: string;
     };
-    creditCardHolderInfo: {
+    creditCardHolderInfo?: {
       name: string;
       email: string;
       cpfCnpj: string;
@@ -291,14 +290,23 @@ export async function payWithCreditCard(
       phone: string;
       mobilePhone?: string | null;
     };
-    creditCardToken?: string;
   },
   config?: AsaasConfig | null
 ): Promise<AsaasPaymentResponse> {
+  const payload: Record<string, unknown> = {};
+  if (body.creditCardToken?.trim()) {
+    payload.creditCardToken = body.creditCardToken.trim();
+  } else {
+    if (!body.creditCard || !body.creditCardHolderInfo) {
+      throw new Error('payWithCreditCard requer creditCardToken ou creditCard+holder');
+    }
+    payload.creditCard = body.creditCard;
+    payload.creditCardHolderInfo = body.creditCardHolderInfo;
+  }
   return request<AsaasPaymentResponse>(
     'POST',
     `/payments/${encodeURIComponent(paymentId)}/payWithCreditCard`,
-    body,
+    payload,
     config,
     { timeoutMs: PAY_WITH_CARD_TIMEOUT_MS, maxRetries: 0 }
   );
@@ -324,6 +332,82 @@ export async function getIdentificationField(
 
 export function isConfigured(config?: AsaasConfig | null): boolean {
   return !!getApiKey(config);
+}
+
+/** Sprint 10 — criar autorização Pix Automático com QR imediato (jornada 3). */
+export async function createPixAutomaticAuthorization(
+  body: {
+    customerId: string;
+    frequency: 'WEEKLY' | 'MONTHLY' | 'QUARTERLY' | 'SEMIANNUALLY' | 'ANNUALLY';
+    contractId: string;
+    startDate: string;
+    value: number;
+    description?: string;
+    immediateValue: number;
+    immediateDueDate: string;
+    immediateDescription?: string;
+    /** Validade do QR imediato em segundos (Asaas exige; default 3600). */
+    immediateExpirationSeconds?: number;
+  },
+  config?: AsaasConfig | null
+): Promise<Record<string, unknown>> {
+  const payload = {
+    customerId: body.customerId,
+    frequency: body.frequency,
+    contractId: body.contractId.slice(0, 35),
+    startDate: body.startDate,
+    value: body.value,
+    description: body.description?.slice(0, 35),
+    paymentCreationMode: 'MANUAL',
+    retryPolicy: 'NOT_ALLOWED',
+    immediateQrCode: {
+      /** Valor do 1º pagamento (obrigatório na API atual). */
+      originalValue: body.immediateValue,
+      value: body.immediateValue,
+      dueDate: body.immediateDueDate,
+      description: body.immediateDescription?.slice(0, 35) ?? 'Autorização Pix Automático',
+      /** Validade do QR imediato em segundos (obrigatório). */
+      expirationSeconds: body.immediateExpirationSeconds ?? 3600,
+    },
+  };
+  return request<Record<string, unknown>>(
+    'POST',
+    '/pix/automatic/authorizations',
+    payload,
+    config,
+    { timeoutMs: PAY_WITH_CARD_TIMEOUT_MS, maxRetries: 0 }
+  );
+}
+
+export async function getPixAutomaticAuthorization(
+  authorizationId: string,
+  config?: AsaasConfig | null
+): Promise<Record<string, unknown> | null> {
+  try {
+    return await request<Record<string, unknown>>(
+      'GET',
+      `/pix/automatic/authorizations/${encodeURIComponent(authorizationId)}`,
+      undefined,
+      config
+    );
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes('404')) return null;
+    throw e;
+  }
+}
+
+export async function cancelPixAutomaticAuthorization(
+  authorizationId: string,
+  config?: AsaasConfig | null
+): Promise<void> {
+  await request(
+    'DELETE',
+    `/pix/automatic/authorizations/${encodeURIComponent(authorizationId)}`,
+    undefined,
+    config,
+    { maxRetries: 0 }
+  );
 }
 
 export async function createWebhook(

@@ -33,6 +33,8 @@ interface GatewayListItem {
   key: string;
   name: string;
   is_enabled: boolean;
+  capabilities?: Record<string, boolean>;
+  registered?: boolean;
 }
 
 const MASK = '••••••••';
@@ -232,6 +234,23 @@ export default function SuperAdminPagamentos() {
                 {enabledGateways.length === 0 && (
                   <p className="text-sm text-muted-foreground">Nenhum gateway habilitado no sistema.</p>
                 )}
+                {form.gateway_key ? (
+                  <p className="text-xs text-muted-foreground">
+                    Capabilities:{' '}
+                    {(() => {
+                      const g = gateways.find((x) => x.key === form.gateway_key);
+                      const c = g?.capabilities;
+                      if (!c) return '—';
+                      const on = Object.entries(c)
+                        .filter(([, v]) => v)
+                        .map(([k]) => k);
+                      return on.length ? on.join(', ') : 'nenhuma';
+                    })()}
+                    {gateways.find((x) => x.key === form.gateway_key)?.registered === false
+                      ? ' · não registrado no runtime'
+                      : ''}
+                  </p>
+                ) : null}
               </div>
               <div className="grid gap-3 rounded-lg border p-4">
                 <div>

@@ -68,6 +68,20 @@ export async function getMySubscription(req: AuthRequest, res: Response): Promis
     const daysUntil = daysFromTodayToYmd(subscription.next_billing_date);
     const renewalOverdue = daysUntil !== null && daysUntil < 0;
 
+    let pix_automatic: Awaited<
+      ReturnType<
+        typeof import('../services/billing2/billingPixAutomaticService.js').getPixAutomaticPreferenceForTenant
+      >
+    > | null = null;
+    try {
+      const { getPixAutomaticPreferenceForTenant } = await import(
+        '../services/billing2/billingPixAutomaticService.js'
+      );
+      pix_automatic = await getPixAutomaticPreferenceForTenant(tenantId);
+    } catch {
+      pix_automatic = null;
+    }
+
     res.status(200).json({
       subscription: {
         id: subscription.id,
@@ -88,6 +102,7 @@ export async function getMySubscription(req: AuthRequest, res: Response): Promis
         renewal_overdue: renewalOverdue,
         will_cancel_at_period_end:
           subscription.status === 'active' && subscription.cancel_at_period_end === true,
+        pix_automatic,
       },
     });
   } catch (e) {
@@ -197,5 +212,127 @@ export async function patchMySubscription(req: AuthRequest, res: Response): Prom
   } catch (e) {
     console.error('[patchMySubscription]', e);
     res.status(500).json({ error: 'Erro ao atualizar plano' });
+  }
+}
+
+const pixAutoEnableSchema = z.object({
+  billing_id: z.string().uuid().optional().nullable(),
+});
+
+const pixAutoDisableSchema = z.object({
+  billing_id: z.string().uuid().optional().nullable(),
+});
+
+/** GET /api/me/tenant/pix-automatic — SSOT preferência (flag + status na assinatura). */
+export async function getMyPixAutomatic(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = await getMyTenantId(req);
+    if (!tenantId) {
+      res.status(403).json({ error: 'Usuário não vinculado a uma conta' });
+      return;
+    }
+    const { getPixAutomaticPreferenceForTenant } = await import(
+      '../services/billing2/billingPixAutomaticService.js'
+    );
+    const pix_automatic = await getPixAutomaticPreferenceForTenant(tenantId);
+    res.status(200).json({ ok: true, pix_automatic });
+  } catch (e) {
+    console.error('[getMyPixAutomatic]', e);
+    res.status(500).json({ error: 'Erro ao buscar Pix Automático' });
+  }
+}
+
+/** POST /api/me/tenant/pix-automatic/enable — switch ON (inicia auth; precisa fatura aberta). */
+export async function postMyPixAutomaticEnable(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = await getMyTenantIdIfPrimary(req);
+    if (!tenantId) {
+      res.status(403).json({
+        error: 'Apenas o administrador da conta pode alterar o Pix Automático.',
+      });
+      return;
+    }
+    const parsed = pixAutoEnableSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Dados inválidos', details: parsed.error.flatten() });
+      return;
+    }
+    const { enablePixAutomaticForTenant } = await import(
+      '../services/billing2/billingPixAutomaticService.js'
+    );
+    const result = await enablePixAutomaticForTenant({
+      tenantId,
+      billingId: parsed.data.billing_id ?? null,
+      correlationId: `me_pix_auto_enable:${tenantId}`,
+    });
+    if (!result.ok) {
+      const status =
+        result.detail === 'flag_pix_automatic_off'
+          ? 403
+          : result.detail === 'needs_open_billing'
+            ? 409
+            : result.detail === 'auth_already_active'
+              ? 409
+              : 400;
+      res.status(status).json({ ok: false, error: result.detail, code: result.detail });
+      return;
+    }
+    res.status(200).json({
+      ok: true,
+      authorization_id: result.authorization_id,
+      status: result.status,
+      pix_copy_paste: result.qr_payload,
+      pix_qr_code: result.qr_image,
+      billing_id: result.billing_id,
+    });
+  } catch (e) {
+    console.error('[postMyPixAutomaticEnable]', e);
+    res.status(500).json({ error: 'Erro ao ativar Pix Automático' });
+  }
+}
+
+/** POST /api/me/tenant/pix-automatic/disable — switch OFF (cancela auth Asaas + local). */
+export async function postMyPixAutomaticDisable(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = await getMyTenantIdIfPrimary(req);
+    if (!tenantId) {
+      res.status(403).json({
+        error: 'Apenas o administrador da conta pode alterar o Pix Automático.',
+      });
+      return;
+    }
+    const parsed = pixAutoDisableSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Dados inválidos', details: parsed.error.flatten() });
+      return;
+    }
+    const { cancelPixAutomaticAuthorizationForSubscription } = await import(
+      '../services/billing2/billingPixAutomaticService.js'
+    );
+    const result = await cancelPixAutomaticAuthorizationForSubscription({
+      tenantId,
+      billingId: parsed.data.billing_id ?? null,
+      correlationId: `me_pix_auto_disable:${tenantId}`,
+      reason: 'switch_off',
+    });
+    if (!result.ok) {
+      res.status(400).json({ ok: false, error: result.detail, code: result.detail });
+      return;
+    }
+    const { getPixAutomaticPreferenceForTenant } = await import(
+      '../services/billing2/billingPixAutomaticService.js'
+    );
+    const pix_automatic = await getPixAutomaticPreferenceForTenant(tenantId);
+    res.status(200).json({
+      ok: true,
+      detail: result.detail,
+      pix_automatic,
+      billing_id: result.billing_id,
+      pix_copy_paste: result.pix_copy_paste,
+      pix_qr_code: result.pix_qr_code,
+    });
+  } catch (e) {
+    console.error('[postMyPixAutomaticDisable]', e);
+    res.status(500).json({ error: 'Erro ao desativar Pix Automático' });
   }
 }

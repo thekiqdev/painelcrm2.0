@@ -38,6 +38,8 @@ import {
   changeSubscriptionPlan,
   createSubscription,
   getActiveSaasSubscriptionByTenant,
+  getOpenSaasSubscriptionByTenant,
+  promoteSaasTrialingSubscriptionToActive,
   patchActiveSaasSubscriptionIncompletePeriods,
   toYmd,
 } from './billingSubscriptionService.js';
@@ -218,6 +220,25 @@ async function ensureSaasSubscriptionAfterPaidActivation(params: {
   await withTenantRlsContext(tenantId, async () => {
     let activeSub = await getActiveSaasSubscriptionByTenant(tenantId);
     if (!activeSub) {
+      const open = await getOpenSaasSubscriptionByTenant(tenantId);
+      if (open?.status === 'trialing') {
+        activeSub = await promoteSaasTrialingSubscriptionToActive({
+          subscriptionId: open.id,
+          tenantId,
+          periodStart: periodStartStr,
+          periodEnd: periodEndStr,
+          planId,
+          billingInterval,
+          amountCents,
+          usersCount,
+        });
+        if (!activeSub) {
+          // Corrida: outro processo promoveu — reler active
+          activeSub = await getActiveSaasSubscriptionByTenant(tenantId);
+        }
+      }
+    }
+    if (!activeSub) {
       const config = await getActiveConfig('saas');
       const gatewayKey = config?.gateway_key ?? 'asaas';
       const billingSettings = await getBillingSettings();
@@ -240,6 +261,7 @@ async function ensureSaasSubscriptionAfterPaidActivation(params: {
           users_count: usersCount,
           gateway: gatewayKey,
           created_by: 'checkout',
+          status: 'active',
         });
       } catch (e: unknown) {
         const pgCode =
@@ -1046,6 +1068,83 @@ export async function prepareSaasCheckoutPaymentMethodForBilling(
 }
 
 /**
+ * Sprint A — garante subscription SaaS (trialing ou active) vinculada à fatura aberta
+ * antes do pagamento (Pix Automático /saas-pay). Não enfileira renovação (trialing).
+ */
+export async function ensureSaasSubscriptionLinkedToOpenBilling(
+  billingId: string
+): Promise<{ subscriptionId: string; created: boolean } | null> {
+  const billing = await getInvoiceById(billingId);
+  if (!billing) return null;
+  const reason = billing.billing_reason ?? 'plan_purchase';
+  if (!['plan_purchase', 'plan_upgrade', 'plan_renewal'].includes(reason)) {
+    if (billing.subscription_id) {
+      return { subscriptionId: billing.subscription_id, created: false };
+    }
+    return null;
+  }
+  if (billing.subscription_id) {
+    return { subscriptionId: billing.subscription_id, created: false };
+  }
+
+  return withTenantRlsContext(billing.tenant_id, async () => {
+    const existing = await getOpenSaasSubscriptionByTenant(billing.tenant_id);
+    if (existing) {
+      await setBillingSubscriptionId(billingId, existing.id);
+      return { subscriptionId: existing.id, created: false };
+    }
+
+    const interval = (billing.billing_interval || 'monthly') as BillingInterval;
+    const periodStart = new Date();
+    const periodEnd = addInterval(periodStart, interval);
+    const periodStartStr = toYmd(periodStart) ?? periodStart.toISOString().slice(0, 10);
+    const periodEndStr = toYmd(periodEnd) ?? periodEnd.toISOString().slice(0, 10);
+    const dayPart = parseInt(periodStartStr.slice(8, 10), 10);
+    const billing_anchor_day =
+      Number.isFinite(dayPart) && dayPart >= 1 && dayPart <= 31 ? dayPart : 1;
+    const config = await getActiveConfig('saas');
+    const gatewayKey = config?.gateway_key ?? billing.gateway ?? 'asaas';
+    const billingSettings = await getBillingSettings();
+
+    let createdSub;
+    try {
+      createdSub = await createSubscription({
+        type: 'saas',
+        tenant_id: billing.tenant_id,
+        plan_id: billing.plan_id,
+        amount_cents: billing.amount_cents,
+        billing_interval: interval,
+        next_billing_date: periodEndStr,
+        current_period_start: periodStartStr,
+        current_period_end: periodEndStr,
+        billing_anchor_day,
+        grace_period_days: billingSettings.grace_period_days,
+        users_count: billing.users_count ?? null,
+        gateway: gatewayKey,
+        created_by: 'checkout_draft',
+        status: 'trialing',
+      });
+    } catch (e: unknown) {
+      const pgCode =
+        typeof e === 'object' && e !== null && 'code' in e
+          ? String((e as { code: unknown }).code)
+          : '';
+      if (pgCode === '23505') {
+        const again = await getOpenSaasSubscriptionByTenant(billing.tenant_id);
+        if (again) {
+          await setBillingSubscriptionId(billingId, again.id);
+          return { subscriptionId: again.id, created: false };
+        }
+      }
+      throw e;
+    }
+
+    await setBillingSubscriptionId(billingId, createdSub.id);
+    return { subscriptionId: createdSub.id, created: true };
+  });
+}
+
+/**
  * Cria fatura para assinatura do plano (Fase 3: sem gateway; Fase 4: com gateway e paymentUrls).
  * Valida plano, calcula valor, cria invoice. Se gateway disponível, chama ensureCustomer, createCharge,
  * persiste gateway_reference_id e retorna paymentUrls.
@@ -1096,7 +1195,13 @@ export async function subscribePlan(
   const gateway = await getActiveGateway({ billingType: 'saas', tenantId });
 
   if (!gateway) {
-    const billing = await createInvoice(invoiceData);
+    const billingNoGw = await createInvoice(invoiceData);
+    try {
+      await ensureSaasSubscriptionLinkedToOpenBilling(billingNoGw.id);
+    } catch (e) {
+      console.warn('[subscribePlan] ensureSaasSubscriptionLinkedToOpenBilling (no gateway)', e);
+    }
+    const billing = (await getInvoiceById(billingNoGw.id)) ?? billingNoGw;
     const zeroSettlement = await trySettleZeroAmountBillingIfEligible({
       billingId: billing.id,
       amountCents,
@@ -1138,6 +1243,17 @@ export async function subscribePlan(
       billingReason,
     });
     billing = await createInvoice(invoiceData);
+  }
+
+  // Sprint A — draft subscription para Pix Automático /saas-pay (antes do paid).
+  try {
+    const linked = await ensureSaasSubscriptionLinkedToOpenBilling(billing.id);
+    if (linked) {
+      const refreshed = await getInvoiceById(billing.id);
+      if (refreshed) billing = refreshed;
+    }
+  } catch (e) {
+    console.warn('[subscribePlan] ensureSaasSubscriptionLinkedToOpenBilling', e);
   }
 
   const zeroSettlement = await trySettleZeroAmountBillingIfEligible({

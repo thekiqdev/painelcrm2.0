@@ -452,5 +452,15 @@ export const MIGRATION_ORDER = [
   '296_tenant_whatsapp_instance_routing.sql',
   /** WR3: sticky chat_instance_id no retry outbound */
   '297_notification_outbound_dispatch_chat_instance.sql',
+  /** Billing 2.0 S2 — Collection Policy + billing_audit_events */
+  '298_billing2_collection_policy_and_audit.sql',
+  /** Billing 2.0 — seeds platform_feature_flags namespace billing2 */
+  '299_billing2_platform_feature_flags.sql',
+  /** Billing 2.0 S9 — token cartão gateway-safe em subscriptions */
+  '300_billing2_subscription_card_token.sql',
+  /** Billing 2.0 S10 — Pix Automático authorization_id + status */
+  '301_billing2_pix_automatic_authorization.sql',
+  /** Billing 2.0 S11 — multi_gateway flag + Stripe skeleton catalog */
+  '302_billing2_multi_gateway.sql',
   'create-admin-user.sql',
 ];

@@ -110,6 +110,79 @@ export async function getPublicSaasBillingSummary(req: Request, res: Response): 
     const tenant_display_name = (tenantR.rows[0]?.name ?? '').trim() || null;
     const platform_support_url = process.env.PLATFORM_SUPPORT_URL?.trim() || null;
 
+    let saved_card: { brand: string | null; last4: string | null; gateway: string | null } | null =
+      null;
+    try {
+      const {
+        getActiveSaasCardTokenBySubscriptionId,
+        getActiveSaasCardTokenByTenantId,
+        toPublicSavedCard,
+      } = await import('../services/billing2/billingCardTokenStore.js');
+      const tok = row.subscription_id
+        ? await getActiveSaasCardTokenBySubscriptionId(row.subscription_id)
+        : await getActiveSaasCardTokenByTenantId(row.tenant_id);
+      saved_card = toPublicSavedCard(tok);
+    } catch {
+      saved_card = null;
+    }
+
+    let pix_automatic: {
+      available: boolean;
+      status: string | null;
+      has_active: boolean;
+      qr_payload: string | null;
+      qr_image: string | null;
+    } | null = null;
+    try {
+      const { isBilling2FlagEnabled } = await import('../services/billing2/billingFeatureFlags.js');
+      const available = await isBilling2FlagEnabled('pix_automatic');
+      const {
+        getPixAutomaticAuthBySubscriptionId,
+        getPixAutomaticAuthByTenantId,
+        toPublicPixAutomaticStatus,
+      } = await import('../services/billing2/billingPixAutomaticStore.js');
+      const auth = row.subscription_id
+        ? await getPixAutomaticAuthBySubscriptionId(row.subscription_id)
+        : await getPixAutomaticAuthByTenantId(row.tenant_id);
+      const pub = toPublicPixAutomaticStatus(auth);
+      const meta =
+        row.gateway_metadata && typeof row.gateway_metadata === 'object'
+          ? (row.gateway_metadata as Record<string, unknown>)
+          : {};
+      const status = pub?.status ?? null;
+      const has_active = pub?.has_active ?? false;
+      const user_opted_off =
+        status === 'cancelled' ||
+        status === 'cleared' ||
+        status === 'refused' ||
+        status === 'expired';
+      pix_automatic = {
+        available,
+        status,
+        has_active,
+        switch_on: !user_opted_off && (has_active || status === 'pending'),
+        user_opted_off,
+        qr_payload:
+          pub?.qr_payload ??
+          (typeof meta.pix_copy_paste === 'string' ? meta.pix_copy_paste : null),
+        qr_image:
+          pub?.qr_image ?? (typeof meta.pix_qr_code === 'string' ? meta.pix_qr_code : null),
+      };
+    } catch {
+      pix_automatic = null;
+    }
+
+    const pixFromAuth =
+      pix_automatic?.status === 'pending'
+        ? {
+            pix_qr_code: pix_automatic.qr_image ?? presentation?.pix_qr_code ?? null,
+            pix_copy_paste: pix_automatic.qr_payload ?? presentation?.pix_copy_paste ?? null,
+          }
+        : {
+            pix_qr_code: presentation?.pix_qr_code ?? null,
+            pix_copy_paste: presentation?.pix_copy_paste ?? null,
+          };
+
     res.json({
       ok: true,
       platform_name: (process.env.APP_PUBLIC_NAME || 'PainelCRM').trim() || 'PainelCRM',
@@ -135,8 +208,12 @@ export async function getPublicSaasBillingSummary(req: Request, res: Response): 
       invoice_url: presentation?.invoice_url ?? null,
       bank_slip_url: presentation?.bank_slip_url ?? null,
       bank_slip_digitable_line: presentation?.bank_slip_digitable_line ?? null,
-      pix_qr_code: presentation?.pix_qr_code ?? null,
-      pix_copy_paste: presentation?.pix_copy_paste ?? null,
+      pix_qr_code: pixFromAuth.pix_qr_code,
+      pix_copy_paste: pixFromAuth.pix_copy_paste,
+      /** Sprint 9 — cartão salvo (só máscara; sem token) */
+      saved_card,
+      /** Sprint 10 — Pix Automático */
+      pix_automatic,
     });
   } catch (e) {
     console.error('[publicSaasBilling summary]', e);
@@ -239,27 +316,39 @@ export async function getPublicSaasBillingStatus(req: Request, res: Response): P
   }
 }
 
-const payWithCardBodySchema = z.object({
-  inline_pay_token: z.string().uuid(),
-  idempotency_key: z.string().min(8).max(160),
-  credit_card: z.object({
-    holder_name: z.string().min(2).max(120),
-    number: z.string().min(13).max(22),
-    expiry_month: z.string().regex(/^\d{1,2}$/),
-    expiry_year: z.string().regex(/^\d{4}$/),
-    cvv: z.string().min(3).max(4),
-  }),
-  cardholder: z.object({
-    name: z.string().min(2).max(120),
-    email: z.string().email().max(200),
-    cpf_cnpj: z.string().min(11).max(18),
-    postal_code: z.string().min(5).max(12),
-    address_number: z.string().min(1).max(20),
-    phone: z.string().min(8).max(20),
-    address_complement: z.string().max(80).optional().nullable(),
-    mobile_phone: z.string().max(20).optional().nullable(),
-  }),
-});
+const payWithCardBodySchema = z
+  .object({
+    inline_pay_token: z.string().uuid(),
+    idempotency_key: z.string().min(8).max(160),
+    use_saved_card: z.boolean().optional(),
+    credit_card: z
+      .object({
+        holder_name: z.string().min(2).max(120),
+        number: z.string().min(13).max(22),
+        expiry_month: z.string().regex(/^\d{1,2}$/),
+        expiry_year: z.string().regex(/^\d{4}$/),
+        cvv: z.string().min(3).max(4),
+      })
+      .optional(),
+    cardholder: z
+      .object({
+        name: z.string().min(2).max(120),
+        email: z.string().email().max(200),
+        cpf_cnpj: z.string().min(11).max(18),
+        postal_code: z.string().min(5).max(12),
+        address_number: z.string().min(1).max(20),
+        phone: z.string().min(8).max(20),
+        address_complement: z.string().max(80).optional().nullable(),
+        mobile_phone: z.string().max(20).optional().nullable(),
+      })
+      .optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.use_saved_card === true) return;
+    if (!data.credit_card || !data.cardholder) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'cartão obrigatório', path: ['credit_card'] });
+    }
+  });
 
 export async function postPublicSaasBillingPayWithCard(req: Request, res: Response): Promise<void> {
   const token = resolveToken(req);
@@ -296,5 +385,98 @@ export async function postPublicSaasBillingPayWithCard(req: Request, res: Respon
       error: 'Não foi possível processar o pagamento.',
       code: 'gateway_error',
     });
+  }
+}
+
+/** Sprint 10 — inicia jornada Pix Automático (QR composto) para a fatura. */
+export async function postPublicSaasBillingStartPixAutomatic(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const token = resolveToken(req);
+  if (!token) {
+    res.status(400).json({ ok: false, error: 'Token inválido', code: 'invalid_token' });
+    return;
+  }
+  try {
+    const row = await getInvoiceByPlatformPublicPayToken(token);
+    if (!row) {
+      res.status(404).json({ ok: false, error: 'Cobrança não encontrada', code: 'not_found' });
+      return;
+    }
+    const openStatuses = new Set(['pending', 'waiting_payment', 'processing', 'overdue']);
+    if (!openStatuses.has(row.status)) {
+      res.status(400).json({ ok: false, error: 'Cobrança não está aberta', code: 'not_payable' });
+      return;
+    }
+    const { startPixAutomaticAuthorizationForBilling } = await import(
+      '../services/billing2/billingPixAutomaticService.js'
+    );
+    const result = await startPixAutomaticAuthorizationForBilling({
+      billingId: row.id,
+      correlationId: `saas_pay_pix_auto:${row.id}`,
+    });
+    if (!result.ok) {
+      const status =
+        result.detail === 'flag_pix_automatic_off'
+          ? 403
+          : result.detail === 'auth_already_active'
+            ? 409
+            : 400;
+      res.status(status).json({ ok: false, error: result.detail, code: result.detail });
+      return;
+    }
+    res.status(200).json({
+      ok: true,
+      authorization_id: result.authorization_id,
+      status: result.status,
+      pix_copy_paste: result.qr_payload,
+      pix_qr_code: result.qr_image,
+    });
+  } catch (e) {
+    console.error('[publicSaasBilling startPixAutomatic]', e);
+    res.status(500).json({ ok: false, error: 'Erro ao iniciar Pix Automático', code: 'server_error' });
+  }
+}
+
+/** Sprint C — switch OFF na fatura pública: cancela auth (não cancela payments do ciclo). */
+export async function postPublicSaasBillingCancelPixAutomatic(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const token = resolveToken(req);
+  if (!token) {
+    res.status(400).json({ ok: false, error: 'Token inválido', code: 'invalid_token' });
+    return;
+  }
+  try {
+    const row = await getInvoiceByPlatformPublicPayToken(token);
+    if (!row) {
+      res.status(404).json({ ok: false, error: 'Cobrança não encontrada', code: 'not_found' });
+      return;
+    }
+    const { cancelPixAutomaticAuthorizationForSubscription } = await import(
+      '../services/billing2/billingPixAutomaticService.js'
+    );
+    const result = await cancelPixAutomaticAuthorizationForSubscription({
+      tenantId: row.tenant_id,
+      subscriptionId: row.subscription_id,
+      billingId: row.id,
+      correlationId: `saas_pay_pix_auto_off:${row.id}`,
+      reason: 'switch_off_public_pay',
+    });
+    if (!result.ok) {
+      res.status(400).json({ ok: false, error: result.detail, code: result.detail });
+      return;
+    }
+    res.status(200).json({
+      ok: true,
+      detail: result.detail,
+      pix_copy_paste: result.pix_copy_paste,
+      pix_qr_code: result.pix_qr_code,
+    });
+  } catch (e) {
+    console.error('[publicSaasBilling cancelPixAutomatic]', e);
+    res.status(500).json({ ok: false, error: 'Erro ao desativar Pix Automático', code: 'server_error' });
   }
 }

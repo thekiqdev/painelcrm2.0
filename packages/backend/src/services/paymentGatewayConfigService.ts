@@ -114,16 +114,25 @@ export interface PaymentGatewayListItem {
   key: string;
   name: string;
   is_enabled: boolean;
+  /** Sprint 11 — capabilities do catálogo (não consulta HTTP). */
+  capabilities?: import('../modules/payments/gatewayCapabilities.js').GatewayCapabilities;
+  registered?: boolean;
 }
 
 /**
  * Lista gateways suportados (payment_gateways) para dropdown na configuração.
  */
 export async function listGateways(): Promise<PaymentGatewayListItem[]> {
-  const r = await pool.query<PaymentGatewayListItem>(
+  const r = await pool.query<{ key: string; name: string; is_enabled: boolean }>(
     `SELECT key, name, is_enabled FROM payment_gateways ORDER BY sort_order, name`
   );
-  return r.rows;
+  const { getGatewayCapabilities } = await import('../modules/payments/gatewayCapabilities.js');
+  const { isGatewayRegistered } = await import('../modules/payments/gatewayRegistry.js');
+  return r.rows.map((row) => ({
+    ...row,
+    capabilities: getGatewayCapabilities(row.key),
+    registered: isGatewayRegistered(row.key),
+  }));
 }
 
 /**

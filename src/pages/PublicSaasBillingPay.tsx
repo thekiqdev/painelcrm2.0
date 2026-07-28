@@ -44,6 +44,11 @@ import {
   createEmptyInlineCreditCardForm,
   type InlineCreditCardFormState,
 } from '@/components/payments/InlineCreditCardPaymentForm';
+import { PixAutomaticConsentSwitch, isPixAutomaticDefaultOnBillingReason } from '@/components/billing/PixAutomaticConsentSwitch';
+import {
+  resolvePixAutomaticSwitchOn,
+  usePixAutomaticAutoEnable,
+} from '@/lib/pixAutomaticCheckoutUx';
 
 const PAY_METHODS = [
   { value: 'PIX' as const, label: 'PIX', icon: QrCode },
@@ -90,6 +95,18 @@ interface SummaryResponse {
   bank_slip_digitable_line?: string | null;
   pix_qr_code?: string | null;
   pix_copy_paste?: string | null;
+  /** Sprint 9 — cartão salvo (máscara apenas) */
+  saved_card?: { brand: string | null; last4: string | null; gateway: string | null } | null;
+  /** Sprint 10 — Pix Automático */
+  pix_automatic?: {
+    available: boolean;
+    status: string | null;
+    has_active: boolean;
+    switch_on?: boolean;
+    user_opted_off?: boolean;
+    qr_payload: string | null;
+    qr_image: string | null;
+  } | null;
 }
 
 interface StatusResponse {
@@ -168,6 +185,8 @@ export default function PublicSaasBillingPay() {
   const [paid, setPaid] = useState(false);
   const [planCardForm, setPlanCardForm] = useState<InlineCreditCardFormState>(() => createEmptyInlineCreditCardForm());
   const [payingCard, setPayingCard] = useState(false);
+  const [startingPixAuto, setStartingPixAuto] = useState(false);
+  const [pixAutoUserOptedOff, setPixAutoUserOptedOff] = useState(false);
 
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -187,6 +206,18 @@ export default function PublicSaasBillingPay() {
       return;
     }
     setSummary(res.data);
+    const pa = res.data.pix_automatic;
+    if (
+      pa?.user_opted_off === true ||
+      pa?.status === 'cleared' ||
+      pa?.status === 'cancelled' ||
+      pa?.status === 'refused' ||
+      pa?.status === 'expired'
+    ) {
+      setPixAutoUserOptedOff(true);
+    } else if (pa?.switch_on || pa?.has_active || pa?.status === 'pending') {
+      setPixAutoUserOptedOff(false);
+    }
     const r: SaasBillingPurchaseResult = {
       billing_id: '',
       invoice_number: res.data.invoice_number ?? undefined,
@@ -323,6 +354,161 @@ export default function PublicSaasBillingPay() {
       setPayingCard(false);
     }
   };
+
+  const handlePayWithSavedCard = async () => {
+    if (!result?.billing_id || payingCard || !result.inline_pay_token) {
+      toast.error('Prepare o pagamento com cartão primeiro.');
+      return;
+    }
+    if (!summary?.saved_card?.last4) {
+      toast.error('Não há cartão salvo.');
+      return;
+    }
+    setPayingCard(true);
+    try {
+      const res = await publicApiPost<Record<string, unknown>>(
+        `/api/public/saas-billing/${encodeURIComponent(token)}/pay-with-card`,
+        {
+          inline_pay_token: result.inline_pay_token,
+          idempotency_key: crypto.randomUUID(),
+          use_saved_card: true,
+        }
+      );
+      if (res.error) {
+        toast.error(res.error);
+        return;
+      }
+      if (res.data?.ok && res.data?.billing_status === 'paid') {
+        setPaid(true);
+        toast.success('Pagamento confirmado com cartão salvo!');
+        return;
+      }
+      toast.success('Pagamento enviado. Aguardando confirmação…');
+    } finally {
+      setPayingCard(false);
+    }
+  };
+
+  const handlePixAutomaticToggle = async (nextOn: boolean) => {
+    if (!token || startingPixAuto) return;
+    setStartingPixAuto(true);
+    try {
+      if (nextOn) {
+        setPixAutoUserOptedOff(false);
+        const res = await publicApiPost<{
+          ok?: boolean;
+          pix_copy_paste?: string | null;
+          pix_qr_code?: string | null;
+          status?: string;
+        }>(`/api/public/saas-billing/${encodeURIComponent(token)}/start-pix-automatic`, {});
+        if (res.error) {
+          toast.error(
+            res.error.includes('404')
+              ? 'Não foi possível ativar o Pix Automático agora. Você pode pagar esta fatura normalmente.'
+              : res.error
+          );
+          return;
+        }
+        toast.success('Pix Automático preparado — pague o PIX para autorizar.');
+        await loadSummary();
+        if (res.data?.pix_copy_paste || res.data?.pix_qr_code) {
+          setPaymentMethod('PIX');
+          setResult((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  payment_method: 'PIX',
+                  pix_qr_code: res.data?.pix_qr_code ?? prev.pix_qr_code,
+                  pix_copy_paste: res.data?.pix_copy_paste ?? prev.pix_copy_paste,
+                }
+              : prev
+          );
+        }
+      } else {
+        setPixAutoUserOptedOff(true);
+        const res = await publicApiPost<{
+          ok?: boolean;
+          pix_copy_paste?: string | null;
+          pix_qr_code?: string | null;
+        }>(`/api/public/saas-billing/${encodeURIComponent(token)}/cancel-pix-automatic`, {});
+        if (res.error) {
+          toast.error(res.error);
+          return;
+        }
+        toast.success('Pix Automático desligado para as próximas cobranças.');
+        await loadSummary();
+        if (res.data?.pix_copy_paste || res.data?.pix_qr_code) {
+          setPaymentMethod('PIX');
+          setResult((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  payment_method: 'PIX',
+                  pix_qr_code: res.data?.pix_qr_code ?? prev.pix_qr_code,
+                  pix_copy_paste: res.data?.pix_copy_paste ?? prev.pix_copy_paste,
+                }
+              : prev
+          );
+        }
+      }
+    } finally {
+      setStartingPixAuto(false);
+    }
+  };
+
+  const pixAutoPref = summary?.pix_automatic
+    ? {
+        available: summary.pix_automatic.available,
+        switch_on:
+          summary.pix_automatic.switch_on ??
+          (summary.pix_automatic.has_active || summary.pix_automatic.status === 'pending'),
+        status: summary.pix_automatic.status,
+        has_active: summary.pix_automatic.has_active,
+        user_opted_off: summary.pix_automatic.user_opted_off === true,
+      }
+    : null;
+  const pixAutoDefaultOn = isPixAutomaticDefaultOnBillingReason(summary?.billing_reason);
+  const pixSwitchOn = resolvePixAutomaticSwitchOn({
+    pref: pixAutoPref,
+    userOptedOff: pixAutoUserOptedOff,
+    defaultOn: pixAutoDefaultOn,
+  });
+
+  const enablePixAutoOnce = useCallback(async (): Promise<boolean> => {
+    if (!token || !summary?.can_pay || !summary.tenant_has_valid_cpf) return false;
+    const res = await publicApiPost<{
+      ok?: boolean;
+      pix_copy_paste?: string | null;
+      pix_qr_code?: string | null;
+    }>(`/api/public/saas-billing/${encodeURIComponent(token)}/start-pix-automatic`, {});
+    if (res.error) {
+      console.warn('[PublicSaasBillingPay] auto-enable Pix Automático', res.error);
+      return false;
+    }
+    await loadSummary();
+    if (res.data?.pix_copy_paste || res.data?.pix_qr_code) {
+      setPaymentMethod('PIX');
+      setResult((prev) =>
+        prev
+          ? {
+              ...prev,
+              payment_method: 'PIX',
+              pix_qr_code: res.data?.pix_qr_code ?? prev.pix_qr_code,
+              pix_copy_paste: res.data?.pix_copy_paste ?? prev.pix_copy_paste,
+            }
+          : prev
+      );
+    }
+    return true;
+  }, [token, summary?.can_pay, summary?.tenant_has_valid_cpf, loadSummary]);
+
+  const { enabling: pixAutoEnabling } = usePixAutomaticAutoEnable({
+    enabled: Boolean(summary && pixAutoDefaultOn && summary.can_pay && !paid),
+    pref: pixAutoPref,
+    userOptedOff: pixAutoUserOptedOff,
+    canEnable: Boolean(summary?.pix_automatic?.available && summary.tenant_has_valid_cpf),
+    enableFn: enablePixAutoOnce,
+  });
 
   const onPaymentTabChange = (v: string) => {
     const pm = v as PlanPurchasePm;
@@ -535,6 +721,18 @@ export default function PublicSaasBillingPay() {
                         PIX exige CPF/CNPJ da empresa cadastrado na conta. Utilize boleto ou cartão, ou complete os dados no painel.
                       </p>
                     ) : null}
+                    {summary.pix_automatic?.available && summary.tenant_has_valid_cpf ? (
+                      <PixAutomaticConsentSwitch
+                        state={{
+                          available: true,
+                          switch_on: pixSwitchOn,
+                          status: summary.pix_automatic.status,
+                          has_active: summary.pix_automatic.has_active,
+                        }}
+                        disabled={startingPixAuto || pixAutoEnabling || !summary.can_pay}
+                        onToggle={handlePixAutomaticToggle}
+                      />
+                    ) : null}
                     {cpfError ? <p className="text-sm text-destructive">{cpfError}</p> : null}
 
                     <Tabs value={paymentMethod} onValueChange={onPaymentTabChange} className="w-full">
@@ -666,8 +864,33 @@ export default function PublicSaasBillingPay() {
 
                           <TabsContent value="CREDIT_CARD" className="mt-4 outline-none">
                             {hasCharge && paymentMethod === 'CREDIT_CARD' && result?.inline_pay_token ? (
-                              <div className="rounded-xl border bg-card p-4 shadow-sm">
-                                <p className="mb-4 text-sm font-medium text-foreground">Cartão de crédito</p>
+                              <div className="rounded-xl border bg-card p-4 shadow-sm space-y-4">
+                                <p className="text-sm font-medium text-foreground">Cartão de crédito</p>
+                                {summary.saved_card?.last4 ? (
+                                  <div className="rounded-lg border bg-muted/30 p-3 space-y-3">
+                                    <p className="text-sm text-foreground">
+                                      Cartão salvo
+                                      {summary.saved_card.brand ? ` · ${summary.saved_card.brand}` : ''}
+                                      {` ·•••• ${summary.saved_card.last4}`}
+                                    </p>
+                                    <Button
+                                      type="button"
+                                      className="w-full sm:w-auto"
+                                      disabled={payingCard}
+                                      onClick={() => void handlePayWithSavedCard()}
+                                    >
+                                      {payingCard ? (
+                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                      ) : (
+                                        <CreditCard className="mr-2 h-4 w-4" />
+                                      )}
+                                      Pagar com cartão salvo
+                                    </Button>
+                                    <p className="text-xs text-muted-foreground">
+                                      Para trocar o cartão, preencha o formulário abaixo (substitui o token salvo).
+                                    </p>
+                                  </div>
+                                ) : null}
                                 <InlineCreditCardPaymentForm
                                   form={planCardForm}
                                   setForm={setPlanCardForm}

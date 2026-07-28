@@ -163,6 +163,21 @@ const SuperAdminPlatformBillings = lazyWithReload(() => import("./pages/superadm
 const PublicSaasBillingPay = lazyWithReload(() => import("./pages/PublicSaasBillingPay"));
 const SuperAdminSubscriptionCyclesSettings = lazyWithReload(() => import("./pages/superadmin/SuperAdminSubscriptionCyclesSettings"));
 const SuperAdminBillingOperations = lazyWithReload(() => import("./pages/superadmin/SuperAdminBillingOperations"));
+const SuperAdminBilling2FeatureFlags = lazyWithReload(
+  () => import("./pages/superadmin/billing2/SuperAdminBilling2FeatureFlags")
+);
+const SuperAdminBilling2CollectionPolicyPage = lazyWithReload(
+  () => import("./pages/superadmin/billing2/SuperAdminBilling2CollectionPolicyPage")
+);
+const SuperAdminBilling2SubscriptionsPage = lazyWithReload(
+  () => import("./pages/superadmin/billing2/SuperAdminBilling2SubscriptionsPage")
+);
+const SuperAdminBilling2LogsPage = lazyWithReload(
+  () => import("./pages/superadmin/billing2/SuperAdminBilling2LogsPage")
+);
+const SuperAdminBilling2WebhooksPage = lazyWithReload(
+  () => import("./pages/superadmin/billing2/SuperAdminBilling2WebhooksPage")
+);
 const LifecycleDashboard = lazyWithReload(() => import("./pages/superadmin/LifecycleDashboard"));
 const SuperAdminAnnouncements = lazyWithReload(() => import("./pages/superadmin/SuperAdminAnnouncements"));
 const SuperAdminAnnouncementEditor = lazyWithReload(() => import("./pages/superadmin/SuperAdminAnnouncementEditor"));
@@ -1097,6 +1112,46 @@ const App = () => (
                 />
                 <Route path="subscription-cycles" element={<Suspense fallback={<LoadingFallback />}><SuperAdminSubscriptionCyclesSettings /></Suspense>} />
                 <Route path="billing/operations" element={<Suspense fallback={<LoadingFallback />}><SuperAdminBillingOperations /></Suspense>} />
+                <Route
+                  path="billing/feature-flags"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SuperAdminBilling2FeatureFlags />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="billing/collection-policy"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SuperAdminBilling2CollectionPolicyPage />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="billing/subscriptions"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SuperAdminBilling2SubscriptionsPage />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="billing/logs"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SuperAdminBilling2LogsPage />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="billing/webhooks"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SuperAdminBilling2WebhooksPage />
+                    </Suspense>
+                  }
+                />
                 <Route path="platform-notifications" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlatformNotifications /></Suspense>} />
                 <Route path="smtp" element={<Suspense fallback={<LoadingFallback />}><SuperAdminSmtpSettings /></Suspense>} />
                 <Route

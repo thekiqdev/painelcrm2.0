@@ -21,7 +21,6 @@ import {
   type TbAttemptStatus,
 } from '../../../services/tenantBillingPaymentAttemptsService.js';
 import { updateInvoiceGatewayData } from '../../../services/invoiceService.js';
-import { supersedeOtherPendingTenantBillingAttemptsAfterPaid } from '../../../services/billingGatewayChargeService.js';
 import { createClientTimelineEvent } from '../../../services/clientTimelineEventsService.js';
 
 export interface ApplyPaymentEventParams {
@@ -83,6 +82,62 @@ export async function applyPaymentEvent(params: ApplyPaymentEventParams): Promis
         );
         schedulePublishPlatformBillingPaymentConfirmed(entityId);
       }
+      // Sprint 5 — limpa past_due → active (independente do engine; fail-open)
+      try {
+        const { getInvoiceById } = await import('../../../services/invoiceService.js');
+        const inv = await getInvoiceById(entityId);
+        if (inv?.subscription_id) {
+          const { clearSubscriptionPastDueOnPaid } = await import(
+            '../../../services/collectionPolicy/subscriptionPastDueWriter.js'
+          );
+          const { tenantBillingCorrelationId } = await import(
+            '../../../services/billing2/billingCorrelationId.js'
+          );
+          await clearSubscriptionPastDueOnPaid({
+            subscriptionId: inv.subscription_id,
+            billingId: entityId,
+            correlationId: tenantBillingCorrelationId(entityId),
+          });
+        }
+        // Sprint B — cancela cobranças abertas deste ciclo (ex. Pix Auto + attempts); auth intacta.
+        if (inv?.tenant_id) {
+          const { cancelOpenTenantBillingCycleChargesAfterPaid } = await import(
+            '../../../services/billingGatewayChargeService.js'
+          );
+          await cancelOpenTenantBillingCycleChargesAfterPaid({
+            billingId: entityId,
+            tenantId: inv.tenant_id,
+            keepGatewayReferenceId: inv.gateway_reference_id,
+            gatewayKeyFallback: inv.gateway,
+            gatewayStatusRawForExtras: gatewayStatus,
+          }).catch((err) =>
+            console.error('[applyPaymentEvent] cycle_paid_cleanup failed:', err)
+          );
+        }
+      } catch (clearErr: unknown) {
+        console.warn(
+          '[applyPaymentEvent] clear past_due / cycle cleanup skipped',
+          clearErr instanceof Error ? clearErr.message : clearErr
+        );
+      }
+      // Billing 2.0 Sprint 3 — extension point (noop se engine flag OFF).
+      const { scheduleCollectionPolicyExtensionPoint } = await import(
+        '../../../services/collectionPolicy/hook.js'
+      );
+      const { tenantBillingCorrelationId } = await import(
+        '../../../services/billing2/billingCorrelationId.js'
+      );
+      scheduleCollectionPolicyExtensionPoint({
+        type: 'payment.paid',
+        occurred_at: new Date().toISOString(),
+        billing_id: entityId,
+        correlation_id: tenantBillingCorrelationId(entityId),
+        attempt: 1,
+        metadata: {
+          previous_status: currentStatus,
+          payment_method: paymentMethod ?? null,
+        },
+      });
     }
     return {
       previous_status: currentStatus,
@@ -267,8 +322,18 @@ export async function applyTenantBillingPaymentAttemptEvent(params: {
   });
 
   let paymentMethodForAggregate: string | null = null;
+  let keepGatewayReferenceId: string | null = null;
+  let prevInvoiceGatewayReferenceId: string | null = null;
+  let tenantIdForCleanup: string | null = null;
+  let gatewayKeyForCleanup: string | null = null;
+
   if (internalStatus === 'paid') {
     const { pool } = await import('../../../utils/db.js');
+    const { getInvoiceById } = await import('../../../services/invoiceService.js');
+    const before = await getInvoiceById(billingId);
+    prevInvoiceGatewayReferenceId = before?.gateway_reference_id?.trim() || null;
+    tenantIdForCleanup = before?.tenant_id ?? null;
+
     const attRow = await pool.query<{
       payment_method: string;
       gateway: string;
@@ -283,6 +348,8 @@ export async function applyTenantBillingPaymentAttemptEvent(params: {
     const att = attRow.rows[0];
     if (att) {
       paymentMethodForAggregate = att.payment_method;
+      keepGatewayReferenceId = att.gateway_reference_id?.trim() || null;
+      gatewayKeyForCleanup = att.gateway;
       await activateTenantBillingPaymentAttempt(billingId, attemptId);
       await updateInvoiceGatewayData(billingId, {
         gateway: att.gateway,
@@ -308,18 +375,29 @@ export async function applyTenantBillingPaymentAttemptEvent(params: {
     paymentMethod: paymentMethodForAggregate ?? undefined,
   });
 
-  if (internalStatus === 'paid') {
-    const { pool } = await import('../../../utils/db.js');
-    const tid = await pool.query<{ tenant_id: string }>(
-      `SELECT tenant_id FROM tenant_billing WHERE id = $1 LIMIT 1`,
-      [billingId]
+  // applyPaymentEvent já limpa attempts irmãos com keep = ref atual.
+  // Garante cancel da ref anterior na linha principal (ex. instrução Pix Auto) se foi sobrescrita.
+  if (
+    internalStatus === 'paid' &&
+    tenantIdForCleanup &&
+    prevInvoiceGatewayReferenceId &&
+    keepGatewayReferenceId &&
+    prevInvoiceGatewayReferenceId !== keepGatewayReferenceId
+  ) {
+    const { cancelOpenTenantBillingCycleChargesAfterPaid } = await import(
+      '../../../services/billingGatewayChargeService.js'
     );
-    const tenantId = tid.rows[0]?.tenant_id;
-    if (tenantId) {
-      await supersedeOtherPendingTenantBillingAttemptsAfterPaid(billingId, attemptId, tenantId).catch((err) =>
-        console.error('[paymentDomainService] supersedeOtherPendingTenantBillingAttemptsAfterPaid failed:', err)
-      );
-    }
+    await cancelOpenTenantBillingCycleChargesAfterPaid({
+      billingId,
+      tenantId: tenantIdForCleanup,
+      keepGatewayReferenceId,
+      paidAttemptId: attemptId,
+      extraCancelReferenceIds: [prevInvoiceGatewayReferenceId],
+      gatewayKeyFallback: gatewayKeyForCleanup,
+      gatewayStatusRawForExtras: gatewayStatus,
+    }).catch((err) =>
+      console.error('[applyTenantBillingPaymentAttemptEvent] cycle_paid_cleanup extras failed:', err)
+    );
   }
 
   return processed;

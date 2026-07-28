@@ -9,13 +9,42 @@ COMMENT ON COLUMN public.tenants.max_users_scheduled_next_cycle IS
 COMMENT ON COLUMN public.tenants.seat_addon_pending_billing_id IS
   'Fatura billing_reason=seat_addon em aberto; assentos extras só após pagamento confirmado.';
 
+-- Dados legados / app à frente das migrations: normaliza antes do CHECK.
+-- 1) string vazia → NULL (NULL é permitido e o app trata como plan_purchase)
+UPDATE public.tenant_billing
+SET billing_reason = NULL
+WHERE billing_reason IS NOT NULL
+  AND btrim(billing_reason) = '';
+
+-- 2) Vocabulário alinhado ao estado final (294 inclui instance_addon). Aceitar já aqui
+--    evita falha 23514 quando há linhas instance_addon antes desta migration.
+-- 3) Qualquer outro valor desconhecido → NULL (não bloqueia migrate; COALESCE no app).
+UPDATE public.tenant_billing
+SET billing_reason = NULL
+WHERE billing_reason IS NOT NULL
+  AND billing_reason NOT IN (
+    'plan_purchase',
+    'plan_upgrade',
+    'plan_renewal',
+    'manual_charge',
+    'seat_addon',
+    'instance_addon'
+  );
+
 ALTER TABLE public.tenant_billing DROP CONSTRAINT IF EXISTS tenant_billing_billing_reason_check;
 ALTER TABLE public.tenant_billing
   ADD CONSTRAINT tenant_billing_billing_reason_check
   CHECK (
     billing_reason IS NULL
-    OR billing_reason IN ('plan_purchase', 'plan_upgrade', 'plan_renewal', 'manual_charge', 'seat_addon')
+    OR billing_reason IN (
+      'plan_purchase',
+      'plan_upgrade',
+      'plan_renewal',
+      'manual_charge',
+      'seat_addon',
+      'instance_addon'
+    )
   );
 
 COMMENT ON COLUMN public.tenant_billing.billing_reason IS
-  'Motivo: plan_purchase, plan_upgrade, plan_renewal, manual_charge, seat_addon (pró-rata de assentos adicionais no ciclo atual)';
+  'Motivo: plan_purchase, plan_upgrade, plan_renewal, manual_charge, seat_addon, instance_addon';

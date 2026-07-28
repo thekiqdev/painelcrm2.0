@@ -6,9 +6,11 @@ import type { Request, Response, NextFunction } from 'express';
 import { createHash } from 'crypto';
 import { pool } from '../../../../utils/db.js';
 import { upsertWebhookEvent } from '../../../../services/paymentWebhookEventsService.js';
-import { isAsaasPaymentEvent } from '../asaasEvents.js';
+import { isAsaasPaymentEvent, isAsaasPixAutomaticEvent } from '../asaasEvents.js';
 import { handleWebhook, registerGatewayParser } from '../../../payments/webhook/webhookCore.js';
 import { asaasWebhookParser } from './asaasWebhookParser.js';
+import { handlePixAutomaticWebhookEvent } from '../../../../services/billing2/billingPixAutomaticService.js';
+
 
 registerGatewayParser('asaas', asaasWebhookParser);
 
@@ -224,6 +226,32 @@ export async function asaasWebhookHandler(
       status: 'pending',
       externalReference,
     });
+
+    // Sprint 10 — Pix Automático (antes do early-return de eventos sem payment_id).
+    if (isAsaasPixAutomaticEvent(eventType)) {
+      try {
+        await handlePixAutomaticWebhookEvent({
+          eventId,
+          eventType,
+          payload: obj,
+        });
+      } catch (e: unknown) {
+        console.error('[asaasWebhook] pix automatic handler', e);
+      }
+      await pool.query(
+        `UPDATE asaas_webhook_events SET status = 'processed', processed_at = now() WHERE event_id = $1`,
+        [eventId]
+      );
+      await upsertWebhookEvent({
+        gatewayKey: GATEWAY_KEY,
+        eventId,
+        payloadSummary: { ...payloadSummary, pix_automatic: true },
+        status: 'processed',
+        externalReference,
+      });
+      res.status(200).json({ received: true });
+      return;
+    }
 
     if (!paymentId || !isAsaasPaymentEvent(eventType)) {
       await pool.query(

@@ -29,6 +29,8 @@ import {
   postPublicSaasBillingPreparePayment,
   getPublicSaasBillingStatus,
   postPublicSaasBillingPayWithCard,
+  postPublicSaasBillingStartPixAutomatic,
+  postPublicSaasBillingCancelPixAutomatic,
 } from '../controllers/publicSaasBillingController.js';
 import { getPublicLegalPage } from '../controllers/publicLegalController.js';
 import {
@@ -212,6 +214,16 @@ router.post(
   '/saas-billing/:token/pay-with-card',
   payWithCardLimiter,
   postPublicSaasBillingPayWithCard,
+);
+router.post(
+  '/saas-billing/:token/start-pix-automatic',
+  saasPublicWriteLimiter,
+  postPublicSaasBillingStartPixAutomatic,
+);
+router.post(
+  '/saas-billing/:token/cancel-pix-automatic',
+  saasPublicWriteLimiter,
+  postPublicSaasBillingCancelPixAutomatic,
 );
 
 const appointmentPublicConfirmReadLimiter = rateLimit({

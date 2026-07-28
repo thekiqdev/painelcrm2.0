@@ -8,7 +8,6 @@ import {
   Wallet,
   Building2,
   Timer,
-  Clock,
   TriangleAlert,
   CircleCheck,
   Info,
@@ -17,6 +16,7 @@ import {
   PlugZap,
   BarChart3,
   Percent,
+  RefreshCw,
 } from 'lucide-react';
 import {
   Table,
@@ -51,15 +51,27 @@ import {
 type SuperadminDashboardResponse = {
   financial?: Partial<{
     mrr_cents: number;
+    mrr_catalog_cents: number;
+    mrr_contracted_cents: number;
+    mrr_source: 'catalog' | 'contracted';
+    arr_cents: number;
     received_this_month_cents: number;
     pending_cents: number;
     overdue_cents: number;
     open_billing_count: number;
     overdue_billing_count: number;
+    value_at_risk_cents: number;
+    renewals_due_30d_count: number;
+    renewals_due_30d_cents: number;
+    recovered_30d_cents: number;
+    recovered_30d_count: number;
+    definitions: Record<string, string>;
   }>;
   subscriptions?: Partial<{
     active_tenants: number;
     trial_tenants: number;
+    saas_active_count: number;
+    saas_past_due_count: number;
   }>;
   totals?: Partial<{
     plans: number;
@@ -271,13 +283,15 @@ type KpiAccent = 'default' | 'success' | 'warning' | 'danger';
 function ExecutiveKpiCard(props: {
   title: string;
   subtitle?: string;
+  /** Tooltip / title nativo com definição PRD */
+  titleAttr?: string;
   value: React.ReactNode;
   footnote?: React.ReactNode;
   icon: React.ElementType;
   accent?: KpiAccent;
   badge?: React.ReactNode;
 }) {
-  const { title, subtitle, value, footnote, icon: Icon, accent = 'default', badge } = props;
+  const { title, subtitle, titleAttr, value, footnote, icon: Icon, accent = 'default', badge } = props;
 
   const ring =
     accent === 'success'
@@ -289,12 +303,20 @@ function ExecutiveKpiCard(props: {
           : 'ring-1 ring-border/60';
 
   return (
-    <Card className={`relative overflow-hidden ${ring} bg-card/90 shadow-none backdrop-blur-sm transition-shadow hover:shadow-sm`}>
+    <Card
+      className={`relative overflow-hidden ${ring} bg-card/90 shadow-none backdrop-blur-sm transition-shadow hover:shadow-sm`}
+      title={titleAttr}
+    >
       <CardHeader className="flex flex-row items-start justify-between space-y-0 px-3 pb-1 pt-3">
         <div className="min-w-0 pr-2">
-          <CardTitle className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{title}</CardTitle>
+          <CardTitle className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            {title}
+          </CardTitle>
           {subtitle ? (
-            <CardDescription className="mt-0.5 line-clamp-2 text-[10px] leading-snug text-muted-foreground/90 sm:text-[11px]">
+            <CardDescription
+              className="mt-0.5 line-clamp-2 text-[10px] leading-snug text-muted-foreground/90 sm:text-[11px]"
+              title={titleAttr ?? subtitle}
+            >
               {subtitle}
             </CardDescription>
           ) : null}
@@ -484,13 +506,25 @@ export default function SuperAdminDashboard() {
   const subs = data?.subscriptions ?? {};
 
   const mrrCents = safeInt(fin.mrr_cents, 0);
+  const mrrCatalogCents = safeInt(fin.mrr_catalog_cents, mrrCents);
+  const mrrContractedCents = safeInt(fin.mrr_contracted_cents, mrrCents);
+  const mrrSource = fin.mrr_source === 'contracted' ? 'contracted' : 'catalog';
+  const arrCents = safeInt(fin.arr_cents, mrrCents * 12);
+  const defs = fin.definitions ?? {};
   const receivedMonthCents = safeInt(fin.received_this_month_cents, 0);
   const activeTenants = safeInt(subs.active_tenants ?? data?.totals?.active_tenants, 0);
   const trialTenants = safeInt(subs.trial_tenants, 0);
+  const saasActive = safeInt(subs.saas_active_count, 0);
+  const saasPastDue = safeInt(subs.saas_past_due_count, 0);
   const pendingCents = safeInt(fin.pending_cents, 0);
   const openBilling = safeInt(fin.open_billing_count, 0);
   const overdueCents = safeInt(fin.overdue_cents, 0);
   const overdueBilling = safeInt(fin.overdue_billing_count, 0);
+  const valueAtRisk = safeInt(fin.value_at_risk_cents, overdueCents);
+  const renewalsDue = safeInt(fin.renewals_due_30d_count, 0);
+  const renewalsDueCents = safeInt(fin.renewals_due_30d_cents, 0);
+  const recovered30dCents = safeInt(fin.recovered_30d_cents, 0);
+  const recovered30dCount = safeInt(fin.recovered_30d_count, 0);
 
   const recentTenants = data?.recent_tenants ?? [];
   const recentUsers = data?.recent_users ?? [];
@@ -534,14 +568,39 @@ export default function SuperAdminDashboard() {
       </header>
 
       <section className="space-y-3">
-        <SectionHeading title="Indicadores principais" description="MRR, caixa do mês, base ativa e risco de cobrança." />
-        <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+        <SectionHeading
+          title="Indicadores principais"
+          description="MRR (flag dashboard_mrr_contracted), caixa do mês, contratos SaaS e risco de cobrança. Hover nos subtítulos para definições PRD §12."
+        />
+        <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-7">
         <ExecutiveKpiCard
           title="Receita recorrente mensal"
-          subtitle="MRR estimado pela base"
+          subtitle={
+            mrrSource === 'contracted'
+              ? 'MRR contratado (subscriptions active + past_due)'
+              : 'MRR catálogo (tenants × preço de lista) — fallback'
+          }
+          titleAttr={defs.mrr ?? defs.mrr_contracted}
           icon={TrendingUp}
           value={formatCurrencyFromCents(mrrCents)}
+          footnote={
+            mrrSource === 'contracted'
+              ? `Catálogo: ${formatCurrencyFromCents(mrrCatalogCents)}`
+              : `Contratado: ${formatCurrencyFromCents(mrrContractedCents)} · ligue a flag para usar`
+          }
           accent="default"
+          badge={
+            <Badge variant="outline" className="text-[10px] font-normal">
+              {mrrSource === 'contracted' ? 'contratado' : 'catálogo'}
+            </Badge>
+          }
+        />
+        <ExecutiveKpiCard
+          title="ARR"
+          subtitle="MRR × 12"
+          titleAttr={defs.arr}
+          icon={BarChart3}
+          value={formatCurrencyFromCents(arrCents)}
         />
         <ExecutiveKpiCard
           title="Recebido no mês"
@@ -551,60 +610,45 @@ export default function SuperAdminDashboard() {
           value={formatCurrencyFromCents(receivedMonthCents)}
         />
         <ExecutiveKpiCard
-          title="Empresas ativas"
-          subtitle="Tenants com status ativo"
+          title="Assinaturas SaaS"
+          subtitle="Contratos active / past_due (não é tenant.status)"
           icon={Building2}
-          value={intFmt.format(activeTenants)}
+          value={`${intFmt.format(saasActive)} / ${intFmt.format(saasPastDue)}`}
+          footnote={`Tenants active: ${intFmt.format(activeTenants)} · trials: ${intFmt.format(trialTenants)}`}
         />
         <ExecutiveKpiCard
-          title="Trials ativos"
-          subtitle="Empresas em período de trial"
+          title="Renovações (30d)"
+          subtitle="Próximas cobranças de contratos SaaS"
           icon={Timer}
-          value={intFmt.format(trialTenants)}
-          badge={
-            trialTenants > 0 ? (
-              <Badge variant="secondary" className="hidden text-[10px] font-normal sm:inline-flex">
-                Em avaliação
-              </Badge>
-            ) : null
-          }
+          value={intFmt.format(renewalsDue)}
+          footnote={renewalsDue > 0 ? formatCurrencyFromCents(renewalsDueCents) : 'Nenhuma no horizonte'}
         />
         <ExecutiveKpiCard
-          title="Cobranças pendentes"
-          subtitle="Em aberto (pendente/aguardando)"
-          icon={Clock}
-          accent={openBilling > 0 ? 'warning' : 'default'}
-          value={formatCurrencyFromCents(pendingCents)}
-          footnote={openBilling > 0 ? `${intFmt.format(openBilling)} cobrança(ões)` : 'Sem cobranças em aberto neste grupo'}
-          badge={
-            openBilling > 0 ? (
-              <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-[10px] font-normal">
-                Em aberto
-              </Badge>
-            ) : null
-          }
-        />
-        <ExecutiveKpiCard
-          title="Inadimplência"
-          subtitle="Vencidas e atrasadas"
+          title="Valor em risco"
+          subtitle="Estoque overdue / vencidas (cobranças)"
+          titleAttr={defs.value_at_risk ?? defs.inadimplencia}
           icon={TriangleAlert}
           accent={overdueBilling > 0 ? 'danger' : 'default'}
-          value={formatCurrencyFromCents(overdueCents)}
+          value={formatCurrencyFromCents(valueAtRisk)}
           footnote={
             overdueBilling > 0
-              ? `${intFmt.format(overdueBilling)} cobrança(ões)`
-              : 'Nenhuma cobrança considerada em atraso'
+              ? `${intFmt.format(overdueBilling)} cobrança(ões) · pendentes ${formatCurrencyFromCents(pendingCents)}`
+              : openBilling > 0
+                ? `${intFmt.format(openBilling)} em aberto (não overdue)`
+                : 'Sem estoque em atraso'
           }
-          badge={
-            overdueBilling > 0 ? (
-              <Badge variant="outline" className="border-destructive/35 bg-destructive/10 text-[10px] font-normal">
-                Risco
-              </Badge>
-            ) : (
-              <Badge variant="secondary" className="text-[10px] font-normal">
-                Em dia
-              </Badge>
-            )
+        />
+        <ExecutiveKpiCard
+          title="Receita recuperada (30d)"
+          subtitle="Paid após vencimento (proxy funil)"
+          titleAttr={defs.recovered_30d}
+          icon={RefreshCw}
+          accent={recovered30dCents > 0 ? 'success' : 'default'}
+          value={formatCurrencyFromCents(recovered30dCents)}
+          footnote={
+            recovered30dCount > 0
+              ? `${intFmt.format(recovered30dCount)} fatura(s) pagas após due_date`
+              : 'Nenhuma recuperação no período'
           }
         />
         </div>

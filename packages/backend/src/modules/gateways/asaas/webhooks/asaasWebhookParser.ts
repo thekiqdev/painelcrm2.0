@@ -30,6 +30,10 @@ export function parseAsaasWebhookPayload(payload: unknown): ParsedWebhookPayload
 
   const metadata: Record<string, unknown> = {};
   if (paymentMethod) metadata.paymentMethod = paymentMethod;
+  // Sprint 10 — conciliation do 1º pagamento da jornada Pix Automático
+  if (payment && typeof payment.conciliationIdentifier === 'string') {
+    metadata.conciliationIdentifier = payment.conciliationIdentifier;
+  }
 
   return {
     eventId,

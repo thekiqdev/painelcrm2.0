@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -7,6 +7,17 @@ import { Label } from '@/components/ui/label';
 import { apiClient } from '@/integrations/api/client';
 import { toast } from '@/components/ui/sonner';
 import { useAuth } from '@/contexts/AuthContext';
+import { PixAutomaticConsentSwitch, isPixAutomaticDefaultOnBillingReason } from '@/components/billing/PixAutomaticConsentSwitch';
+import {
+  getMyPixAutomatic,
+  enableMyPixAutomatic,
+  disableMyPixAutomatic,
+  type PixAutomaticPreference,
+} from '@/services/tenantPixAutomatic';
+import {
+  resolvePixAutomaticSwitchOn,
+  usePixAutomaticAutoEnable,
+} from '@/lib/pixAutomaticCheckoutUx';
 import { formatMoneyBRL } from '@/lib/planCheckoutDisplay';
 import { formatCpfCnpjDigits } from '@/lib/brazilInputMasks';
 import { isValidCpfOrCnpj } from '@/utils/cpfCnpj';
@@ -193,6 +204,8 @@ export default function InternalBillingCheckout() {
   const [billingCpf, setBillingCpf] = useState('');
   const [cpfError, setCpfError] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<PlanPurchasePm>('PIX');
+  const [pixAutomatic, setPixAutomatic] = useState<PixAutomaticPreference | null>(null);
+  const [pixAutoUserOptedOff, setPixAutoUserOptedOff] = useState(false);
   const [loading, setLoading] = useState(false);
   const [payingCard, setPayingCard] = useState(false);
   const [paymentConfirmed, setPaymentConfirmed] = useState(false);
@@ -210,14 +223,6 @@ export default function InternalBillingCheckout() {
   const autoPixStartedForBillingRef = useRef<string | null>(null);
 
   const hasChargeReady = Boolean(result?.billing_id);
-
-  const summarySource = useMemo(() => {
-    if (!result) return 'none';
-    if (result.billing_reason === 'seat_addon' && seatPreview) return 'billing+seat_preview';
-    if (result.billing_reason === 'instance_addon' && instancePreview) return 'billing+instance_preview';
-    if (hubRow) return 'billing+commercial_hub_row';
-    return 'billing_pending_only';
-  }, [result, seatPreview, instancePreview, hubRow]);
 
   const ensureFreshSeatAddonPreview = useCallback(async (): Promise<boolean> => {
     const additional = result?.seat_addon_additional_seats ?? null;
@@ -449,6 +454,70 @@ export default function InternalBillingCheckout() {
       timeoutRef.current = null;
     };
   }, [result?.billing_id, paymentConfirmed, loadState, finalizePaidAndRedirect]);
+
+  useEffect(() => {
+    const reason = result?.billing_reason;
+    if (reason === 'seat_addon' || reason === 'instance_addon') {
+      setPixAutomatic(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const res = await getMyPixAutomatic();
+      if (cancelled) return;
+      if (res.data?.pix_automatic) {
+        setPixAutomatic(res.data.pix_automatic);
+        if (res.data.pix_automatic.user_opted_off) setPixAutoUserOptedOff(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [result?.billing_id, result?.billing_reason, loadState]);
+
+  const pixAutoDefaultOn = isPixAutomaticDefaultOnBillingReason(result?.billing_reason);
+  const pixSwitchOn = resolvePixAutomaticSwitchOn({
+    pref: pixAutomatic,
+    userOptedOff: pixAutoUserOptedOff,
+    defaultOn: pixAutoDefaultOn,
+  });
+
+  const enablePixAutoOnce = useCallback(async (): Promise<boolean> => {
+    const bid = billingId || result?.billing_id;
+    if (!bid) return false;
+    const res = await enableMyPixAutomatic(bid);
+    if (res.error) {
+      // Conta Asaas sem produto / etc. — não spammar toast no auto; usuário ainda vê switch ON e pode tentar de novo.
+      console.warn('[InternalBillingCheckout] auto-enable Pix Automático', res.error, res.code);
+      return false;
+    }
+    setPaymentMethod('PIX');
+    const pref = await getMyPixAutomatic();
+    if (pref.data?.pix_automatic) setPixAutomatic(pref.data.pix_automatic);
+    const qrImage = res.data.pix_qr_code ?? pref.data?.pix_automatic?.qr_image ?? null;
+    const qrPayload = res.data.pix_copy_paste ?? pref.data?.pix_automatic?.qr_payload ?? null;
+    if (qrImage || qrPayload) {
+      setResult((prev) =>
+        prev
+          ? {
+              ...prev,
+              payment_method: 'PIX',
+              pix_qr_code: qrImage ?? prev.pix_qr_code,
+              pix_copy_paste: qrPayload ?? prev.pix_copy_paste,
+            }
+          : prev
+      );
+    }
+    return true;
+  }, [billingId, result?.billing_id]);
+
+  const { enabling: pixAutoEnabling } = usePixAutomaticAutoEnable({
+    enabled: pixAutoDefaultOn && loadState === 'ok' && !paymentConfirmed,
+    pref: pixAutomatic,
+    userOptedOff: pixAutoUserOptedOff,
+    canEnable: Boolean(billingId || result?.billing_id) && Boolean(pixAutomatic?.available),
+    enableFn: enablePixAutoOnce,
+  });
 
   const runPreparePayment = useCallback(
     async (method: PlanPurchasePm, options?: { silent?: boolean }): Promise<boolean> => {
@@ -800,11 +869,6 @@ export default function InternalBillingCheckout() {
           <CardTitle className="text-xl">{title}</CardTitle>
           <CardDescription>
             Cobrança interna da sua conta — valor e dados abaixo são desta fatura específica.
-            {import.meta.env.DEV && (
-              <span className="block text-[10px] text-muted-foreground/80 mt-1 font-mono">
-                dev: {summarySource} · {result?.billing_id}
-              </span>
-            )}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -930,6 +994,77 @@ export default function InternalBillingCheckout() {
             </div>
           ) : (
             <>
+              {pixAutomatic?.available &&
+              result?.billing_reason !== 'seat_addon' &&
+              result?.billing_reason !== 'instance_addon' ? (
+                <div className="mb-4">
+                  <PixAutomaticConsentSwitch
+                    state={{
+                      available: true,
+                      switch_on: pixSwitchOn,
+                      status: pixAutomatic.status,
+                      has_active: pixAutomatic.has_active,
+                    }}
+                    disabled={pixAutoEnabling || paymentConfirmed}
+                    onToggle={async (nextOn) => {
+                      if (nextOn) {
+                        setPixAutoUserOptedOff(false);
+                        const res = await enableMyPixAutomatic(billingId || result?.billing_id);
+                        if (res.error) {
+                          toast.error(
+                            res.error.includes('404')
+                              ? 'Não foi possível ativar o Pix Automático agora. Você pode pagar esta fatura normalmente.'
+                              : res.error
+                          );
+                          return;
+                        }
+                        toast.success('Pix Automático preparado — use o PIX para autorizar.');
+                        setPaymentMethod('PIX');
+                        const pref = await getMyPixAutomatic();
+                        if (pref.data?.pix_automatic) setPixAutomatic(pref.data.pix_automatic);
+                        const qrImage = res.data.pix_qr_code ?? pref.data?.pix_automatic?.qr_image ?? null;
+                        const qrPayload =
+                          res.data.pix_copy_paste ?? pref.data?.pix_automatic?.qr_payload ?? null;
+                        if (qrImage || qrPayload) {
+                          setResult((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  payment_method: 'PIX',
+                                  pix_qr_code: qrImage ?? prev.pix_qr_code,
+                                  pix_copy_paste: qrPayload ?? prev.pix_copy_paste,
+                                }
+                              : prev
+                          );
+                        }
+                      } else {
+                        setPixAutoUserOptedOff(true);
+                        const res = await disableMyPixAutomatic(billingId || result?.billing_id);
+                        if (res.error) {
+                          toast.error(res.error);
+                          return;
+                        }
+                        toast.success('Pix Automático desligado para as próximas cobranças.');
+                        if (res.data?.pix_automatic) setPixAutomatic(res.data.pix_automatic);
+                        if (res.data?.pix_copy_paste || res.data?.pix_qr_code) {
+                          setResult((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  payment_method: 'PIX',
+                                  pix_qr_code: res.data!.pix_qr_code ?? prev.pix_qr_code,
+                                  pix_copy_paste: res.data!.pix_copy_paste ?? prev.pix_copy_paste,
+                                }
+                              : prev
+                          );
+                        } else if (billingId || result?.billing_id) {
+                          void runPreparePayment('PIX');
+                        }
+                      }
+                    }}
+                  />
+                </div>
+              ) : null}
               <div>
                 <Label className="text-sm font-medium">Forma de pagamento</Label>
                 <div className="mt-2 grid gap-2 sm:grid-cols-3">

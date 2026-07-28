@@ -41,6 +41,11 @@ router.get('/limits', ...tenantAuthCommercialHub, myTenantPlanController.getMyTe
 router.post('/subscription/cancel', ...tenantAuth, myTenantSubscriptionController.cancelMySubscription);
 router.patch('/subscription', ...tenantAuth, myTenantSubscriptionController.patchMySubscription);
 
+// Sprint C — Pix Automático (SSOT na assinatura)
+router.get('/pix-automatic', ...tenantAuthCommercialHub, myTenantSubscriptionController.getMyPixAutomatic);
+router.post('/pix-automatic/enable', ...tenantAuth, myTenantSubscriptionController.postMyPixAutomaticEnable);
+router.post('/pix-automatic/disable', ...tenantAuth, myTenantSubscriptionController.postMyPixAutomaticDisable);
+
 router.get('/payment-gateways', ...tenantAuth, myTenantPaymentGatewayController.getMyTenantPaymentGatewaysList);
 router.get('/payment-gateways/status', ...tenantAuth, myTenantPaymentGatewayController.getMyTenantPaymentGatewaysStatus);
 router.get('/payment-gateways/webhooks/events', ...tenantAuth, myTenantPaymentGatewayController.getMyTenantPaymentWebhookEvents);

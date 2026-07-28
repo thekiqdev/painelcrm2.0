@@ -1,11 +1,13 @@
 /**
  * Resolve o gateway de pagamento ativo a partir do contexto (tenantId, billingType).
  * Fase 3: considera apenas configs com status = 'active' (além de is_active).
+ * Sprint 11: gateway ≠ asaas no SaaS exige billing2.multi_gateway=ON; senão fallback Asaas.
  */
 import type { PaymentGateway, GatewayProviderContext, BillingType } from './paymentGatewayTypes.js';
 import { getActiveConfig } from '../../services/paymentGatewayConfigService.js';
 import { buildGateway } from './gatewayRegistry.js';
 import { getAsaasGateway } from '../gateways/asaas/index.js';
+import { getGatewayCapabilities } from './gatewayCapabilities.js';
 
 const cache = new Map<string, PaymentGateway>();
 const testOverrides = new Map<string, PaymentGateway>();
@@ -25,6 +27,15 @@ export function setResolverTestOverride(
   const key = cacheKey(billingType, tenantId);
   if (gateway) testOverrides.set(key, gateway);
   else testOverrides.delete(key);
+}
+
+async function isMultiGatewayEnabled(): Promise<boolean> {
+  try {
+    const { isBilling2FlagEnabled } = await import('../../services/billing2/billingFeatureFlags.js');
+    return await isBilling2FlagEnabled('multi_gateway');
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -48,17 +59,49 @@ export async function resolvePaymentGateway(
   try {
     const config = await getActiveConfig(billingType, tenantId);
 
-    // [DIAG] Resolução do gateway (plan-purchase PIX)
     console.log('[DIAG gatewayResolver]', {
       billingType,
       tenantId: tenantId ?? 'global',
       hasConfig: !!config,
       gateway_key: config?.gateway_key ?? null,
-      env: config?.credentials && typeof config.credentials === 'object' && 'env' in config.credentials ? config.credentials.env : null,
-      hasApiKey: !!(config?.credentials && typeof config.credentials === 'object' && 'api_key' in config.credentials && config.credentials.api_key),
+      env:
+        config?.credentials && typeof config.credentials === 'object' && 'env' in config.credentials
+          ? config.credentials.env
+          : null,
+      hasApiKey: !!(
+        config?.credentials &&
+        typeof config.credentials === 'object' &&
+        'api_key' in config.credentials &&
+        config.credentials.api_key
+      ),
     });
 
-    if (config && config.credentials && typeof config.credentials?.api_key === 'string' && config.credentials.api_key) {
+    if (
+      config &&
+      config.credentials &&
+      typeof config.credentials?.api_key === 'string' &&
+      config.credentials.api_key
+    ) {
+      const gatewayKey = (config.gateway_key || '').trim().toLowerCase();
+
+      // SaaS: 2º gateway só se flag multi_gateway ON (default OFF → Asaas).
+      if (billingType === 'saas' && gatewayKey && gatewayKey !== 'asaas') {
+        const multi = await isMultiGatewayEnabled();
+        if (!multi) {
+          console.warn(
+            '[gatewayResolver] billing2.multi_gateway OFF — ignorando gateway_key=%s; fallback Asaas',
+            gatewayKey
+          );
+          const asaasFallback = getAsaasGateway();
+          if (asaasFallback) {
+            asaasFallback.capabilities = getGatewayCapabilities('asaas');
+            cache.set(key, asaasFallback);
+            return asaasFallback;
+          }
+          return null;
+        }
+      }
+
       const gateway = buildGateway(config.gateway_key, config);
       if (gateway) {
         cache.set(key, gateway);
@@ -69,6 +112,7 @@ export async function resolvePaymentGateway(
     if (!config && billingType === 'saas') {
       const gateway = getAsaasGateway();
       if (gateway) {
+        gateway.capabilities = getGatewayCapabilities('asaas');
         cache.set(key, gateway);
         return gateway;
       }

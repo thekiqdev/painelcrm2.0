@@ -21,6 +21,10 @@ import {
   RadioTower,
   FileCode2,
   Activity,
+  LayoutDashboard,
+  SlidersHorizontal,
+  ListOrdered,
+  Webhook,
 } from "lucide-react";
 
 export type SuperAdminHubCardDef = {
@@ -63,13 +67,31 @@ export const superAdminHubAreas: SuperAdminHubAreaDef[] = [
     path: "/superadmin/financeiro",
     title: "Financeiro",
     description:
-      "Faturação da plataforma, gateway de cobrança SaaS, opções de ciclos de assinatura e relatórios exportáveis.",
+      "Faturação da plataforma, gateway de cobrança SaaS, Billing 2.0 (em preparação), opções de ciclos e relatórios.",
     cards: [
+      {
+        to: "/superadmin",
+        title: "Dashboard financeiro",
+        description: "MRR contratado/catálogo, ARR, inadimplência e alertas operacionais.",
+        icon: LayoutDashboard,
+      },
       {
         to: "/superadmin/platform-billings",
         title: "Cobranças da plataforma",
         description: "Consultar faturas e cobranças internas do PainelCRM (SaaS).",
         icon: Receipt,
+      },
+      {
+        to: "/superadmin/billing/subscriptions",
+        title: "Assinaturas",
+        description: "Contratos SaaS: status, próximo vencimento, past_due e faturas.",
+        icon: ListOrdered,
+      },
+      {
+        to: "/superadmin/billing/collection-policy",
+        title: "Cobrança Automática",
+        description: "Collection Policy: tentativas, canais, suspensão e PIX.",
+        icon: SlidersHorizontal,
       },
       {
         to: "/superadmin/pagamentos",
@@ -88,6 +110,24 @@ export const superAdminHubAreas: SuperAdminHubAreaDef[] = [
         title: "Operações billing",
         description: "Health score, recovery, heartbeats, filas e auto-healing do motor recorrente.",
         icon: Activity,
+      },
+      {
+        to: "/superadmin/billing/webhooks",
+        title: "Webhooks",
+        description: "Saúde, taxa OK/failed e reprocess seguro de webhooks Asaas.",
+        icon: Webhook,
+      },
+      {
+        to: "/superadmin/billing/logs",
+        title: "Logs de auditoria",
+        description: "Trilha append-only: filtros, detalhe sanitizado e export CSV.",
+        icon: ScrollText,
+      },
+      {
+        to: "/superadmin/billing/feature-flags",
+        title: "Feature Flags (Billing 2.0)",
+        description: "Inventário read-only das flags do Billing 2.0 (Sprint 0).",
+        icon: Flag,
       },
       {
         to: "/superadmin/reports",

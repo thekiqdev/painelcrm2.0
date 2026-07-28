@@ -120,6 +120,7 @@ router.post(
 
 // Billing Engine – relatórios e configurações (Fase 3)
 router.get('/billing/subscriptions', superadminBillingController.getBillingSubscriptions);
+router.get('/billing/subscriptions/:id', superadminBillingController.getBillingSubscriptionById);
 router.get('/billing/upcoming', superadminBillingController.getBillingUpcoming);
 router.get('/billing/jobs-failed', superadminBillingController.getBillingJobsFailed);
 router.get('/billing/recurring-jobs', superadminBillingController.getBillingRecurringJobsOps);
@@ -209,6 +210,29 @@ router.post(
 router.post('/billing/recovery/run', superadminBillingController.postBillingRecoveryRunHandler);
 router.get('/billing/settings', superadminBillingController.getBillingSettingsHandler);
 router.put('/billing/settings', superadminBillingController.putBillingSettingsHandler);
+/** Billing 2.0 Sprint 0 — inventário de flags (read-only). */
+router.get('/billing/feature-flags', superadminBillingController.getBilling2FeatureFlagsHandler);
+/** Billing 2.0 Sprint 2 — Collection Policy (CRUD mínimo). */
+router.get('/billing/collection-policy', superadminBillingController.getCollectionPolicyHandler);
+router.put('/billing/collection-policy', superadminBillingController.putCollectionPolicyHandler);
+/** Billing 2.0 Sprint 7 — Logs + Webhooks */
+router.get('/billing/audit-events/export.csv', superadminBillingController.getBillingAuditEventsExportHandler);
+router.get('/billing/audit-events', superadminBillingController.getBillingAuditEventsHandler);
+router.get('/billing/webhooks/health', superadminBillingController.getBillingWebhooksHealthHandler);
+router.post(
+  '/billing/webhooks/:eventId/reprocess',
+  superadminBillingController.postBillingWebhookReprocessHandler,
+);
+/** Billing 2.0 Sprint 8 — L2 + Dunning */
+router.get(
+  '/billing/reconciliation-l2/divergences',
+  superadminBillingController.getReconciliationL2DivergencesHandler,
+);
+router.post(
+  '/billing/reconciliation-l2/run',
+  superadminBillingController.postReconciliationL2RunHandler,
+);
+router.post('/billing/dunning/run', superadminBillingController.postBillingDunningRunHandler);
 router.get(
   '/billing/subscription-cycles-flags',
   superadminBillingController.getSubscriptionCyclesFlagsHandler,

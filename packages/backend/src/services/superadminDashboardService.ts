@@ -1,6 +1,7 @@
 import { pool } from '../utils/db.js';
 import { getGatewaysStatus } from './paymentGatewayConfigService.js';
 import { getSmtpSuperadminSettings } from './smtpSuperadminSettingsService.js';
+import { getDashboardMrrSnapshot } from './billing2/dashboardMrr.js';
 
 type DashboardSeverity = 'info' | 'warning' | 'critical';
 type DashboardGatewayStatus = 'configured' | 'not_configured' | 'unknown';
@@ -11,6 +12,13 @@ export type SuperadminDashboardPayload = {
   generated_at: string;
   financial: {
     mrr_cents: number;
+    /** Sempre calculado — preço de lista × tenants active */
+    mrr_catalog_cents: number;
+    /** Sempre calculado — subscriptions SaaS active+past_due */
+    mrr_contracted_cents: number;
+    /** Fonte efetiva de `mrr_cents` (flag dashboard_mrr_contracted) */
+    mrr_source: 'catalog' | 'contracted';
+    arr_cents: number;
     received_this_month_cents: number;
     pending_cents: number;
     overdue_cents: number;
@@ -19,6 +27,13 @@ export type SuperadminDashboardPayload = {
     open_billing_count: number;
     overdue_billing_count: number;
     paid_this_month_count: number;
+    value_at_risk_cents: number;
+    renewals_due_30d_count: number;
+    renewals_due_30d_cents: number;
+    /** Sprint 8 — pagos após vencimento nos últimos 30d (proxy de recuperação) */
+    recovered_30d_cents: number;
+    recovered_30d_count: number;
+    definitions?: Record<string, string>;
   };
   subscriptions: {
     active_tenants: number;
@@ -28,6 +43,9 @@ export type SuperadminDashboardPayload = {
     total_tenants: number;
     trials_expiring_soon: number;
     trial_expired: number;
+    /** Contratos SaaS (subscriptions), não tenants */
+    saas_active_count: number;
+    saas_past_due_count: number;
   };
   growth: {
     new_tenants_30d: number;
@@ -59,6 +77,7 @@ export type SuperadminDashboardPayload = {
       configured: boolean;
       enabled: boolean;
     };
+    failed_jobs_count?: number;
   };
   recent: {
     tenants: Array<{
@@ -145,6 +164,8 @@ export async function getSuperadminDashboardSnapshot(): Promise<SuperadminDashbo
         open_billing_count: string;
         overdue_billing_count: string;
         paid_this_month_count: string;
+        recovered_30d_cents: string;
+        recovered_30d_count: string;
       }>(
         `SELECT
            COALESCE(SUM(tb.amount_cents) FILTER (WHERE tb.status = 'paid' AND tb.paid_at >= date_trunc('month', now())), 0)::text AS received_this_month_cents,
@@ -154,7 +175,19 @@ export async function getSuperadminDashboardSnapshot(): Promise<SuperadminDashbo
            COALESCE(SUM(tb.amount_cents) FILTER (WHERE tb.status = 'refunded'), 0)::text AS refunded_cents,
            COUNT(*) FILTER (WHERE tb.status IN ('pending','waiting_payment','processing','overdue'))::text AS open_billing_count,
            COUNT(*) FILTER (WHERE tb.status = 'overdue' OR (tb.status IN ('pending','waiting_payment','processing') AND tb.due_date < CURRENT_DATE))::text AS overdue_billing_count,
-           COUNT(*) FILTER (WHERE tb.status = 'paid' AND tb.paid_at >= date_trunc('month', now()))::text AS paid_this_month_count
+           COUNT(*) FILTER (WHERE tb.status = 'paid' AND tb.paid_at >= date_trunc('month', now()))::text AS paid_this_month_count,
+           COALESCE(SUM(tb.amount_cents) FILTER (
+             WHERE tb.status = 'paid'
+               AND tb.paid_at >= now() - interval '30 days'
+               AND tb.due_date IS NOT NULL
+               AND tb.paid_at::date > tb.due_date
+           ), 0)::text AS recovered_30d_cents,
+           COUNT(*) FILTER (
+             WHERE tb.status = 'paid'
+               AND tb.paid_at >= now() - interval '30 days'
+               AND tb.due_date IS NOT NULL
+               AND tb.paid_at::date > tb.due_date
+           )::text AS recovered_30d_count
          FROM tenant_billing tb`,
       ),
       pool.query<{
@@ -352,16 +385,49 @@ export async function getSuperadminDashboardSnapshot(): Promise<SuperadminDashbo
   const [totalPlansR, byPlanR, mrrR, cancelledTenantsR] = planAgg;
   const [newTenants30dR, newUsers30dR, tenantsByDayR, usersByDayR] = growthAgg;
 
+  const overdueCents = safeInt(financialAgg.rows[0]?.overdue_cents);
+  const mrrSnap = await getDashboardMrrSnapshot(overdueCents).catch(async () => {
+    // Fail-open: mantém catálogo legado se módulo MRR falhar
+    const catalog = safeInt(mrrR.rows[0]?.mrr_cents);
+    return {
+      mrr_cents: catalog,
+      mrr_catalog_cents: catalog,
+      mrr_contracted_cents: catalog,
+      arr_cents: catalog * 12,
+      mrr_source: 'catalog' as const,
+      saas_active_count: 0,
+      saas_past_due_count: 0,
+      renewals_due_30d_count: 0,
+      renewals_due_30d_cents: 0,
+      value_at_risk_cents: overdueCents,
+      definitions: {},
+    };
+  });
+
   const financial = {
-    mrr_cents: safeInt(mrrR.rows[0]?.mrr_cents),
+    mrr_cents: mrrSnap.mrr_cents,
+    mrr_catalog_cents: mrrSnap.mrr_catalog_cents,
+    mrr_contracted_cents: mrrSnap.mrr_contracted_cents,
+    mrr_source: mrrSnap.mrr_source,
+    arr_cents: mrrSnap.arr_cents,
     received_this_month_cents: safeInt(financialAgg.rows[0]?.received_this_month_cents),
     pending_cents: safeInt(financialAgg.rows[0]?.pending_cents),
-    overdue_cents: safeInt(financialAgg.rows[0]?.overdue_cents),
+    overdue_cents: overdueCents,
     failed_cents: safeInt(financialAgg.rows[0]?.failed_cents),
     refunded_cents: safeInt(financialAgg.rows[0]?.refunded_cents),
     open_billing_count: safeInt(financialAgg.rows[0]?.open_billing_count),
     overdue_billing_count: safeInt(financialAgg.rows[0]?.overdue_billing_count),
     paid_this_month_count: safeInt(financialAgg.rows[0]?.paid_this_month_count),
+    value_at_risk_cents: mrrSnap.value_at_risk_cents,
+    renewals_due_30d_count: mrrSnap.renewals_due_30d_count,
+    renewals_due_30d_cents: mrrSnap.renewals_due_30d_cents,
+    recovered_30d_cents: safeInt(financialAgg.rows[0]?.recovered_30d_cents),
+    recovered_30d_count: safeInt(financialAgg.rows[0]?.recovered_30d_count),
+    definitions: {
+      ...mrrSnap.definitions,
+      recovered_30d:
+        'Receita recuperada (proxy 30d) = soma de faturas paid com paid_at nos últimos 30 dias e paid_at > due_date. Não exige dunning_enabled; aproximação do funil PRD §12.',
+    },
   };
 
   const subscriptions = {
@@ -372,6 +438,8 @@ export async function getSuperadminDashboardSnapshot(): Promise<SuperadminDashbo
     total_tenants: safeInt(tenantStatusAgg.rows[0]?.total_tenants),
     trials_expiring_soon: safeInt(tenantStatusAgg.rows[0]?.trials_expiring_soon),
     trial_expired: safeInt(tenantStatusAgg.rows[0]?.trial_expired),
+    saas_active_count: mrrSnap.saas_active_count,
+    saas_past_due_count: mrrSnap.saas_past_due_count,
   };
 
   const growth = {
@@ -392,7 +460,7 @@ export async function getSuperadminDashboardSnapshot(): Promise<SuperadminDashbo
     })),
   };
 
-  const [gatewaysStatus, smtpSettings, whatsappStats] = await Promise.all([
+  const [gatewaysStatus, smtpSettings, whatsappStats, failedJobsR] = await Promise.all([
     getGatewaysStatus('global').catch(() => []),
     getSmtpSuperadminSettings().catch(() => null),
     pool.query<{ total: string; connected: string; disconnected: string }>(
@@ -404,7 +472,14 @@ export async function getSuperadminDashboardSnapshot(): Promise<SuperadminDashbo
        INNER JOIN users u ON u.id = ci.user_id
        WHERE u.is_super_admin = true`,
     ),
+    pool
+      .query<{ c: string }>(
+        `SELECT COUNT(*)::text AS c FROM billing_recurring_jobs WHERE status = 'failed'`
+      )
+      .catch(() => ({ rows: [{ c: '0' }] })),
   ]);
+
+  const failedJobsCount = safeInt(failedJobsR.rows[0]?.c);
 
   const operational = {
     gateways: gatewaysStatus.map((g) => ({
@@ -425,6 +500,7 @@ export async function getSuperadminDashboardSnapshot(): Promise<SuperadminDashbo
       ),
       enabled: Boolean(smtpSettings?.smtp_enabled),
     },
+    failed_jobs_count: failedJobsCount,
   };
 
   const recent = {
@@ -463,6 +539,24 @@ export async function getSuperadminDashboardSnapshot(): Promise<SuperadminDashbo
       title: 'Cobranças vencidas em aberto',
       description: `Há ${financial.overdue_billing_count} cobranças vencidas.`,
       count: financial.overdue_billing_count,
+    });
+  }
+  if (failedJobsCount > 0) {
+    alerts.push({
+      type: 'billing_jobs_failed',
+      severity: failedJobsCount >= 10 ? 'critical' : 'warning',
+      title: 'Jobs de renovação com falha',
+      description: `${failedJobsCount} job(s) em billing_recurring_jobs com status failed.`,
+      count: failedJobsCount,
+    });
+  }
+  if (subscriptions.saas_past_due_count > 0) {
+    alerts.push({
+      type: 'saas_past_due',
+      severity: 'warning',
+      title: 'Assinaturas past_due',
+      description: `${subscriptions.saas_past_due_count} contrato(s) SaaS em past_due (não confundir com fatura overdue).`,
+      count: subscriptions.saas_past_due_count,
     });
   }
   if (subscriptions.trials_expiring_soon > 0) {

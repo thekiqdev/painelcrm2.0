@@ -11,27 +11,39 @@ import {
 } from '../services/customerBillingService.js';
 import { getMyTenantAndPrimary } from './myTenantPlanController.js';
 
-const payWithCardBodySchema = z.object({
-  inline_pay_token: z.string().uuid().optional(),
-  idempotency_key: z.string().min(8).max(160),
-  credit_card: z.object({
-    holder_name: z.string().min(2).max(120),
-    number: z.string().min(13).max(22),
-    expiry_month: z.string().regex(/^\d{1,2}$/),
-    expiry_year: z.string().regex(/^\d{4}$/),
-    cvv: z.string().min(3).max(4),
-  }),
-  cardholder: z.object({
-    name: z.string().min(2).max(120),
-    email: z.string().email().max(200),
-    cpf_cnpj: z.string().min(11).max(18),
-    postal_code: z.string().min(5).max(12),
-    address_number: z.string().min(1).max(20),
-    phone: z.string().min(8).max(20),
-    address_complement: z.string().max(80).optional().nullable(),
-    mobile_phone: z.string().max(20).optional().nullable(),
-  }),
-});
+const payWithCardBodySchema = z
+  .object({
+    inline_pay_token: z.string().uuid().optional(),
+    idempotency_key: z.string().min(8).max(160),
+    use_saved_card: z.boolean().optional(),
+    credit_card: z
+      .object({
+        holder_name: z.string().min(2).max(120),
+        number: z.string().min(13).max(22),
+        expiry_month: z.string().regex(/^\d{1,2}$/),
+        expiry_year: z.string().regex(/^\d{4}$/),
+        cvv: z.string().min(3).max(4),
+      })
+      .optional(),
+    cardholder: z
+      .object({
+        name: z.string().min(2).max(120),
+        email: z.string().email().max(200),
+        cpf_cnpj: z.string().min(11).max(18),
+        postal_code: z.string().min(5).max(12),
+        address_number: z.string().min(1).max(20),
+        phone: z.string().min(8).max(20),
+        address_complement: z.string().max(80).optional().nullable(),
+        mobile_phone: z.string().max(20).optional().nullable(),
+      })
+      .optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.use_saved_card === true) return;
+    if (!data.credit_card || !data.cardholder) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'cartão obrigatório', path: ['credit_card'] });
+    }
+  });
 
 export async function postTenantBillingPayWithCard(req: AuthRequest, res: Response): Promise<void> {
   const billingId = req.params.billingId;

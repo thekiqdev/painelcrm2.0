@@ -1,9 +1,14 @@
 /**
  * Exclusão segura de cobrança no gateway (ex.: DELETE no Asaas) para ciclo de vida de tentativas.
  * Não altera webhook; falhas são logadas e não travam o fluxo principal.
+ *
+ * Sprint B — `cancelOpenTenantBillingCycleChargesAfterPaid`: no paid, cancela cobranças
+ * abertas **deste ciclo** (instrução Pix Auto na linha principal + attempts irmãos).
+ * **Não** cancela autorização Pix Automático (auth fica na assinatura).
  */
 import { buildGateway } from '../modules/payments/gatewayRegistry.js';
 import { getConfigForTest } from './paymentGatewayConfigService.js';
+import { getActiveGateway } from '../modules/payments/gatewayProvider.js';
 import { billingLog } from './billingLogger.js';
 import { normalizeGatewayStatus } from '../modules/payments/webhook/statusNormalizer.js';
 import type { PaymentGateway } from '../modules/payments/paymentGatewayTypes.js';
@@ -40,12 +45,13 @@ export interface DeleteGatewayChargeContext {
   invoice_id?: string;
   billing_id?: string;
   attempt_id?: string;
-  reason: 'superseded_by_paid' | 'switch_cleanup' | 'manual';
+  reason: 'superseded_by_paid' | 'switch_cleanup' | 'manual' | 'cycle_paid_cleanup';
 }
 
 /**
  * Remove cobrança no gateway quando seguro (Asaas: DELETE /payments/:id via cancelPayment).
  * Erros são engolidos após log (não quebra fluxo).
+ * `billingType: 'saas'` usa config global SaaS (tenant_billing); default CRM = config tenant.
  */
 export async function deleteGatewayChargeIfSafe(params: {
   tenantId: string;
@@ -53,8 +59,10 @@ export async function deleteGatewayChargeIfSafe(params: {
   gatewayReferenceId: string;
   gatewayStatusRaw: string | null;
   ctx: DeleteGatewayChargeContext;
+  billingType?: 'saas' | 'crm';
 }): Promise<{ deleted: boolean; skipped: boolean; error?: string }> {
   const { tenantId, gatewayKey, gatewayReferenceId, gatewayStatusRaw, ctx } = params;
+  const billingType = params.billingType ?? 'crm';
   if (!gatewayReferenceId?.trim()) {
     billingLog('invoice', 'gateway_charge_delete_skipped', {
       ...ctx,
@@ -74,22 +82,34 @@ export async function deleteGatewayChargeIfSafe(params: {
     return { deleted: false, skipped: true };
   }
 
-  const cfg = await getConfigForTest('tenant', tenantId, gatewayKey);
-  if (!cfg) {
-    billingLog('invoice', 'gateway_charge_delete_failed', {
-      ...ctx,
-      gateway_reference_id: gatewayReferenceId,
-      error: 'config_not_found',
-    });
-    return { deleted: false, skipped: false, error: 'config_not_found' };
+  let gateway: PaymentGateway | null = null;
+  if (billingType === 'saas') {
+    gateway = await getActiveGateway({ billingType: 'saas', tenantId });
+    if (!gateway) {
+      billingLog('invoice', 'gateway_charge_delete_failed', {
+        ...ctx,
+        gateway_reference_id: gatewayReferenceId,
+        error: 'saas_gateway_not_found',
+      });
+      return { deleted: false, skipped: false, error: 'saas_gateway_not_found' };
+    }
+  } else {
+    const cfg = await getConfigForTest('tenant', tenantId, gatewayKey);
+    if (!cfg) {
+      billingLog('invoice', 'gateway_charge_delete_failed', {
+        ...ctx,
+        gateway_reference_id: gatewayReferenceId,
+        error: 'config_not_found',
+      });
+      return { deleted: false, skipped: false, error: 'config_not_found' };
+    }
+    gateway = buildGateway(cfg.gateway_key, {
+      credentials: (cfg.credentials as Record<string, unknown>) ?? {},
+      options: (cfg.options as Record<string, unknown>) ?? {},
+    }) as PaymentGateway;
   }
 
-  const gateway = buildGateway(cfg.gateway_key, {
-    credentials: (cfg.credentials as Record<string, unknown>) ?? {},
-    options: (cfg.options as Record<string, unknown>) ?? {},
-  }) as PaymentGateway;
-
-  if (!gateway.cancelPayment) {
+  if (!gateway?.cancelPayment) {
     billingLog('invoice', 'gateway_charge_delete_skipped', {
       ...ctx,
       gateway_reference_id: gatewayReferenceId,
@@ -155,6 +175,7 @@ async function cleanupSupersedeTenantBillingAttemptRows(
       gatewayKey: row.gateway,
       gatewayReferenceId: row.gateway_reference_id ?? '',
       gatewayStatusRaw: row.gateway_status,
+      billingType: 'saas',
       ctx: {
         billing_id: billingId,
         attempt_id: row.id,
@@ -222,6 +243,138 @@ export async function supersedeOtherPendingTenantBillingAttemptsAfterPaid(
 }
 
 /**
+ * Sprint B — após `paid` em tenant_billing: cancela no gateway todas as cobranças **abertas deste ciclo**
+ * (attempts irmãos + ref principal da fatura se for outra, ex. instrução Pix Automático),
+ * **exceto** o payment que liquidou.
+ *
+ * Não toca em `pix_automatic_authorization_*` / auth Asaas — só payments do ciclo.
+ */
+export async function cancelOpenTenantBillingCycleChargesAfterPaid(opts: {
+  billingId: string;
+  tenantId: string;
+  /** Payment id que liquidou a fatura — nunca cancelar. */
+  keepGatewayReferenceId: string | null;
+  paidAttemptId?: string | null;
+  /**
+   * Refs extras do ciclo (ex.: `tenant_billing.gateway_reference_id` **antes** de sobrescrever
+   * com a tentativa vencedora — típico Pix Auto na linha principal).
+   */
+  extraCancelReferenceIds?: string[];
+  gatewayKeyFallback?: string | null;
+  gatewayStatusRawForExtras?: string | null;
+}): Promise<{ cancelledRefs: string[]; skippedRefs: string[] }> {
+  const keep = (opts.keepGatewayReferenceId ?? '').trim();
+  const cancelledRefs: string[] = [];
+  const skippedRefs: string[] = [];
+  const seen = new Set<string>();
+
+  const shouldSkipRef = (ref: string) => {
+    const t = ref.trim();
+    if (!t) return true;
+    if (keep && t === keep) return true;
+    if (seen.has(t)) return true;
+    return false;
+  };
+
+  billingLog('invoice', 'cycle_paid_cleanup_started', {
+    billing_id: opts.billingId,
+    gateway_reference_id: keep || undefined,
+    attempt_id: opts.paidAttemptId ?? undefined,
+  });
+
+  try {
+    const { listPendingTenantBillingAttemptsExcept, listTenantBillingAttemptsOpenForGatewaySync } =
+      await import('./tenantBillingPaymentAttemptsService.js');
+    const { markTenantBillingAttemptCancelledSuperseded } = await import(
+      './tenantBillingPaymentAttemptsService.js'
+    );
+
+    let attemptRows: TenantBillingPaymentAttemptRow[] = [];
+    if (opts.paidAttemptId) {
+      attemptRows = await listPendingTenantBillingAttemptsExcept(opts.billingId, opts.paidAttemptId);
+    } else {
+      const open = await listTenantBillingAttemptsOpenForGatewaySync(opts.billingId);
+      attemptRows = open.filter((r) => {
+        const ref = (r.gateway_reference_id ?? '').trim();
+        return ref && (!keep || ref !== keep);
+      });
+    }
+
+    for (const row of attemptRows) {
+      const ref = (row.gateway_reference_id ?? '').trim();
+      if (shouldSkipRef(ref)) continue;
+      seen.add(ref);
+      const del = await deleteGatewayChargeIfSafe({
+        tenantId: opts.tenantId,
+        gatewayKey: row.gateway || opts.gatewayKeyFallback || 'asaas',
+        gatewayReferenceId: ref,
+        gatewayStatusRaw: row.gateway_status,
+        billingType: 'saas',
+        ctx: {
+          billing_id: opts.billingId,
+          attempt_id: row.id,
+          reason: 'cycle_paid_cleanup',
+        },
+      });
+      if (del.deleted) cancelledRefs.push(ref);
+      else skippedRefs.push(ref);
+      try {
+        await markTenantBillingAttemptCancelledSuperseded(row.id, {
+          reason: 'superseded_by_other_attempt_paid',
+          superseded_by: 'paid_other',
+        });
+      } catch {
+        /* histórico best-effort */
+      }
+    }
+
+    const extras = [
+      ...(opts.extraCancelReferenceIds ?? []),
+    ];
+    // Se ainda há ref na fatura diferente do keep (paid direto sem overwrite prévio).
+    try {
+      const { getInvoiceById } = await import('./invoiceService.js');
+      const inv = await getInvoiceById(opts.billingId);
+      if (inv?.gateway_reference_id?.trim()) {
+        extras.push(inv.gateway_reference_id.trim());
+      }
+      for (const raw of extras) {
+        const ref = raw.trim();
+        if (shouldSkipRef(ref)) continue;
+        seen.add(ref);
+        const del = await deleteGatewayChargeIfSafe({
+          tenantId: opts.tenantId,
+          gatewayKey: inv?.gateway || opts.gatewayKeyFallback || 'asaas',
+          gatewayReferenceId: ref,
+          gatewayStatusRaw: opts.gatewayStatusRawForExtras ?? inv?.gateway_status ?? null,
+          billingType: 'saas',
+          ctx: {
+            billing_id: opts.billingId,
+            reason: 'cycle_paid_cleanup',
+          },
+        });
+        if (del.deleted) cancelledRefs.push(ref);
+        else skippedRefs.push(ref);
+      }
+    } catch (e) {
+      console.warn(
+        '[cancelOpenTenantBillingCycleChargesAfterPaid] extras',
+        e instanceof Error ? e.message : e
+      );
+    }
+  } finally {
+    billingLog('invoice', 'cycle_paid_cleanup_completed', {
+      billing_id: opts.billingId,
+      gateway_reference_id: keep || undefined,
+      cancelled_count: cancelledRefs.length,
+      skipped_count: skippedRefs.length,
+    });
+  }
+
+  return { cancelledRefs, skippedRefs };
+}
+
+/**
  * Consolida tentativa vencedora na linha `tenant_billing`, ativa o plano e aplica o mesmo cleanup das faturas
  * (polling do checkout, quando o pagamento não veio só pela tentativa “ativa” na UI).
  */
@@ -250,6 +403,7 @@ export async function runPostPaidCleanupForTenantBilling(params: {
   const { getInvoiceById } = await import('./invoiceService.js');
   const rowBefore = await getInvoiceById(params.billingId);
   const wasAlreadyPaid = rowBefore?.status === 'paid';
+  const prevGatewayReferenceId = rowBefore?.gateway_reference_id?.trim() || null;
 
   if (!(await hasTenantBillingPaymentAttemptsTable())) {
     const pm = (params.paymentMethodFallback || 'PIX').toUpperCase().trim() || 'PIX';
@@ -261,6 +415,17 @@ export async function runPostPaidCleanupForTenantBilling(params: {
       );
       schedulePublishPlatformBillingPaymentConfirmed(params.billingId);
     }
+    const extras =
+      prevGatewayReferenceId && prevGatewayReferenceId !== ref ? [prevGatewayReferenceId] : [];
+    await cancelOpenTenantBillingCycleChargesAfterPaid({
+      billingId: params.billingId,
+      tenantId: params.tenantId,
+      keepGatewayReferenceId: ref,
+      extraCancelReferenceIds: extras,
+      gatewayStatusRawForExtras: params.gatewayStatusRaw,
+    }).catch((err) =>
+      console.error('[runPostPaidCleanupForTenantBilling] cycle_paid_cleanup (no attempts table):', err)
+    );
     return;
   }
 
@@ -304,7 +469,17 @@ export async function runPostPaidCleanupForTenantBilling(params: {
     const pm = (att?.payment_method ?? params.paymentMethodFallback ?? 'PIX').toString().toUpperCase().trim() || 'PIX';
     await updateInvoiceStatus(params.billingId, 'paid', params.paidAt, pm, params.gatewayStatusRaw);
     await activatePlanFromBilling(params.billingId);
-    await supersedeOtherPendingTenantBillingAttemptsAfterPaid(params.billingId, paidAttemptId, params.tenantId);
+    const extras =
+      prevGatewayReferenceId && prevGatewayReferenceId !== ref ? [prevGatewayReferenceId] : [];
+    await cancelOpenTenantBillingCycleChargesAfterPaid({
+      billingId: params.billingId,
+      tenantId: params.tenantId,
+      keepGatewayReferenceId: ref,
+      paidAttemptId,
+      extraCancelReferenceIds: extras,
+      gatewayKeyFallback: att?.gateway ?? null,
+      gatewayStatusRawForExtras: params.gatewayStatusRaw,
+    });
     if (!wasAlreadyPaid) {
       const { schedulePublishPlatformBillingPaymentConfirmed } = await import(
         './platformNotifications/platformBusinessNotifications.js'
@@ -315,6 +490,15 @@ export async function runPostPaidCleanupForTenantBilling(params: {
     const pm = (params.paymentMethodFallback || 'PIX').toUpperCase().trim() || 'PIX';
     await updateInvoiceStatus(params.billingId, 'paid', params.paidAt, pm, params.gatewayStatusRaw);
     await activatePlanFromBilling(params.billingId);
+    const extras =
+      prevGatewayReferenceId && prevGatewayReferenceId !== ref ? [prevGatewayReferenceId] : [];
+    await cancelOpenTenantBillingCycleChargesAfterPaid({
+      billingId: params.billingId,
+      tenantId: params.tenantId,
+      keepGatewayReferenceId: ref,
+      extraCancelReferenceIds: extras,
+      gatewayStatusRawForExtras: params.gatewayStatusRaw,
+    });
     if (!wasAlreadyPaid) {
       const { schedulePublishPlatformBillingPaymentConfirmed } = await import(
         './platformNotifications/platformBusinessNotifications.js'

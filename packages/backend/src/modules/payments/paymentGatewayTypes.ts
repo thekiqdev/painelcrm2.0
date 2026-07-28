@@ -35,6 +35,8 @@ export interface CreateChargeInput {
   idempotencyKey?: string;
   /** Identificador externo (ex.: tenant_id) para resolver tenant no webhook. */
   externalReference?: string;
+  /** Sprint 10 — Pix Automático: débito autorizado (Asaas pixAutomaticAuthorizationId). */
+  pixAutomaticAuthorizationId?: string;
 }
 
 export interface CreateChargeResult {
@@ -73,14 +75,16 @@ export interface PaymentResult {
 /** Desenho A: captura em cobrança já criada (ex.: Asaas payWithCreditCard). Outros gateways: opcional. */
 export interface PayWithCreditCardInput {
   paymentId: string;
-  creditCard: {
+  /** Token gateway (S9). Quando presente, substitui PAN + holder. */
+  creditCardToken?: string;
+  creditCard?: {
     holderName: string;
     number: string;
     expiryMonth: string;
     expiryYear: string;
     ccv: string;
   };
-  creditCardHolderInfo: {
+  creditCardHolderInfo?: {
     name: string;
     email: string;
     cpfCnpj: string;
@@ -96,6 +100,10 @@ export interface PayWithCreditCardResult {
   paymentId: string;
   status: string;
   paidAt?: string | null;
+  /** Token retornado pelo gateway após captura com PAN (persistir; nunca logar completo). */
+  creditCardToken?: string | null;
+  cardBrand?: string | null;
+  cardLast4?: string | null;
 }
 
 /**
@@ -136,12 +144,17 @@ export interface GatewayWebhookParser {
   parsePayload(payload: unknown): ParsedWebhookPayload;
 }
 
+/** Sprint 11 — capabilities declaradas pelo adapter (opcional; catálogo é fonte canônica). */
+export type { GatewayCapabilities } from './gatewayCapabilities.js';
+
 /**
  * Interface que todo gateway de pagamento deve implementar.
  * Permite trocar Asaas por Stripe/PagarMe sem alterar serviços que chamam getActiveGateway().
  * ensureCustomer: criar ou reutilizar cliente (ex.: por tenant); getCharge alias de getPayment.
  */
 export interface PaymentGateway {
+  /** Sprint 11 — espelho opcional do catálogo de capabilities. */
+  capabilities?: import('./gatewayCapabilities.js').GatewayCapabilities;
   createCustomer(input: CreateCustomerInput): Promise<CreateCustomerResult>;
   /** Criar ou reutilizar cliente (ex.: por tenant_id); retorna gateway_customer_id. */
   ensureCustomer?(tenantId: string): Promise<string>;

@@ -50,6 +50,8 @@ export interface AsaasPaymentRequest {
   externalReference?: string;
   /** Desativa envio de notificações (e-mail/SMS) para esta cobrança. */
   notificationEnabled?: boolean;
+  /** Sprint 10 — cobrança vinculada a autorização Pix Automático ativa. */
+  pixAutomaticAuthorizationId?: string;
 }
 
 /** PATCH/PUT parcial em cobrança existente (Asaas v3). */

@@ -17,6 +17,7 @@ import {
   superadminBillingOpsService,
   type BillingHealthScore,
   type BillingHealthSnapshot,
+  type L2Divergence,
 } from '@/services/superadminBillingOps';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -121,10 +122,17 @@ function IssueTable({
   );
 }
 
+function formatCents(cents: number) {
+  return (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
 export default function SuperAdminBillingOperations() {
   const [health, setHealth] = useState<BillingHealthSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  const [l2Loading, setL2Loading] = useState(false);
+  const [l2Divergences, setL2Divergences] = useState<L2Divergence[]>([]);
+  const [l2Note, setL2Note] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -135,6 +143,19 @@ export default function SuperAdminBillingOperations() {
       toast.error(e instanceof Error ? e.message : 'Erro ao carregar saúde do billing');
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  const loadL2 = useCallback(async () => {
+    try {
+      setL2Loading(true);
+      const r = await superadminBillingOpsService.listL2Divergences(50);
+      setL2Divergences(r.divergences);
+      setL2Note(`${r.count} divergência(s) · getPayment amostral`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Erro ao listar L2');
+    } finally {
+      setL2Loading(false);
     }
   }, []);
 
@@ -154,6 +175,46 @@ export default function SuperAdminBillingOperations() {
       await load();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Erro no recovery');
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const runL2 = async (dryRun: boolean) => {
+    try {
+      setRunning(true);
+      const r = await superadminBillingOpsService.runL2(dryRun, 50);
+      if (r.skipped) {
+        toast.message(`L2 skipped: ${r.reason ?? 'flag off'}`);
+      } else {
+        toast.success(
+          dryRun
+            ? `L2 dry-run: ${r.divergences} divergência(s)`
+            : `L2 apply: ${r.applied} aplicadas · ${r.failed} falhas`
+        );
+        if (r.samples?.length) setL2Divergences(r.samples);
+      }
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Erro no L2');
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const runDunning = async (dryRun: boolean) => {
+    try {
+      setRunning(true);
+      const r = await superadminBillingOpsService.runDunning(dryRun, 50);
+      if (r.skipped) {
+        toast.message(`Dunning skipped: ${r.reason ?? 'flag off'}`);
+      } else {
+        toast.success(
+          `${dryRun ? 'Dry-run' : 'Emit'}: overdue ${r.overdue_events} · grace ${r.grace_events} · cancel ${r.cancel_events} · retry ${r.retry_events}`
+        );
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Erro no dunning');
     } finally {
       setRunning(false);
     }
@@ -352,13 +413,102 @@ export default function SuperAdminBillingOperations() {
             </CardContent>
           </Card>
 
+          <Card className="border shadow-sm">
+            <CardHeader className="pb-2">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <CardTitle className="text-sm font-medium">Reconciliação L2 (getPayment)</CardTitle>
+                  <CardDescription className="mt-1">
+                    Open com <code className="text-[10px]">gateway_reference_id</code>. Apply exige flag{' '}
+                    <code className="text-[10px]">billing2.reconciliation_l2_enabled</code>.
+                    {l2Note ? ` · ${l2Note}` : ''}
+                  </CardDescription>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" disabled={l2Loading || running} onClick={() => void loadL2()}>
+                    <RefreshCw className={cn('h-4 w-4 mr-1', l2Loading && 'animate-spin')} />
+                    Listar
+                  </Button>
+                  <Button variant="outline" size="sm" disabled={running} onClick={() => void runL2(true)}>
+                    Dry-run L2
+                  </Button>
+                  <Button size="sm" disabled={running} onClick={() => void runL2(false)}>
+                    Apply L2
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {l2Divergences.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-4 text-center border rounded-md bg-muted/20">
+                  Nenhuma divergência carregada. Use Listar ou Dry-run L2.
+                </p>
+              ) : (
+                <div className="rounded-md border overflow-x-auto max-h-64 overflow-y-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="hover:bg-transparent">
+                        <TableHead className="text-xs">Tenant</TableHead>
+                        <TableHead className="text-xs">Local</TableHead>
+                        <TableHead className="text-xs">Remote</TableHead>
+                        <TableHead className="text-xs">Tipo</TableHead>
+                        <TableHead className="text-xs">Valor</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {l2Divergences.map((d) => (
+                        <TableRow key={d.billing_id}>
+                          <TableCell className="text-xs max-w-[140px] truncate">
+                            {d.tenant_name ?? d.tenant_id}
+                          </TableCell>
+                          <TableCell className="font-mono text-[10px]">{d.local_status}</TableCell>
+                          <TableCell className="font-mono text-[10px]">
+                            {d.normalized_remote ?? d.gateway_status_remote ?? '—'}
+                          </TableCell>
+                          <TableCell className="text-[10px]">{d.kind}</TableCell>
+                          <TableCell className="text-xs tabular-nums">{formatCents(d.amount_cents)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="border shadow-sm">
+            <CardHeader className="pb-2">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <CardTitle className="text-sm font-medium">Dunning / Recovery cycle</CardTitle>
+                  <CardDescription className="mt-1">
+                    Emite eventos Collection Policy. Apply exige{' '}
+                    <code className="text-[10px]">billing2.dunning_enabled</code>. Suspend/cancel só com
+                    engine + policy + <code className="text-[10px]">auto_*</code>.
+                  </CardDescription>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" disabled={running} onClick={() => void runDunning(true)}>
+                    Dry-run dunning
+                  </Button>
+                  <Button size="sm" disabled={running} onClick={() => void runDunning(false)}>
+                    Emitir dunning
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+          </Card>
+
           <p className="text-xs text-muted-foreground">
             <Link to="/superadmin/subscription-cycles" className="text-primary underline">
               Ciclos de assinatura
             </Link>
             {' · '}
-            Cron sugerido: <code className="text-[10px]">npm run billing:ops-reconciliation</code> (env{' '}
-            <code className="text-[10px]">BILLING_RECOVERY_DRY_RUN</code>).
+            Cron: <code className="text-[10px]">npm run billing:ops-reconciliation</code>
+            {' · '}
+            <code className="text-[10px]">npm run billing:reconciliation-l2</code>
+            {' · '}
+            <code className="text-[10px]">npm run billing:dunning</code>
           </p>
         </>
       ) : null}

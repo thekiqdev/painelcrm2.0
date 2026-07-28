@@ -14,6 +14,12 @@ import {
 import { apiClient } from '@/integrations/api/client';
 import { formatDateYmdOrInstantPtBr } from '@/lib/formatInvoiceDates';
 import { toast } from '@/components/ui/sonner';
+import { PixAutomaticConsentSwitch } from '@/components/billing/PixAutomaticConsentSwitch';
+import {
+  enableMyPixAutomatic,
+  disableMyPixAutomatic,
+  type PixAutomaticPreference,
+} from '@/services/tenantPixAutomatic';
 import {
   Check,
   ArrowRight,
@@ -209,6 +215,8 @@ interface SaasSubscriptionPayload {
   days_until_next_billing: number | null;
   renewal_overdue: boolean;
   will_cancel_at_period_end: boolean;
+  /** Sprint C — SSOT Pix Automático */
+  pix_automatic?: PixAutomaticPreference | null;
 }
 
 interface TenantUsersLimitsPayload {
@@ -1366,6 +1374,50 @@ export default function MeuPlano() {
                   </div>
           )}
 
+          {canManage &&
+            commercialMode === 'active' &&
+            subscription?.pix_automatic?.available ? (
+              <PixAutomaticConsentSwitch
+                state={{
+                  available: true,
+                  switch_on: subscription.pix_automatic.switch_on,
+                  status: subscription.pix_automatic.status,
+                  has_active: subscription.pix_automatic.has_active,
+                }}
+                onToggle={async (nextOn) => {
+                  if (nextOn) {
+                    const billingId =
+                      pendingBilling?.billing_id ??
+                      myPlan?.pending_billing?.billing_id ??
+                      null;
+                    const res = await enableMyPixAutomatic(billingId);
+                    if (res.error) {
+                      if (res.code === 'needs_open_billing') {
+                        toast.message(
+                          'Abra o pagamento da fatura para autorizar o Pix Automático.'
+                        );
+                      } else {
+                        toast.error(res.error);
+                      }
+                      return;
+                    }
+                    toast.success('Pix Automático preparado. Conclua no pagamento da fatura.');
+                    if (res.data?.billing_id) {
+                      navigate(`/saas-billing/${encodeURIComponent(res.data.billing_id)}/pay`);
+                    }
+                    await refreshAfterMutation();
+                  } else {
+                    const res = await disableMyPixAutomatic();
+                    if (res.error) {
+                      toast.error(res.error);
+                      return;
+                    }
+                    toast.success('Pix Automático desligado para as próximas cobranças.');
+                    await refreshAfterMutation();
+                  }
+                }}
+              />
+            ) : null}
           {pendingBilling && (
             <div className="rounded-xl border-2 border-amber-500/40 bg-amber-500/10 p-4 shadow-sm">
               <p className="text-base font-semibold text-amber-950 dark:text-amber-100">Pagamento pendente</p>

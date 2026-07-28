@@ -32,6 +32,9 @@ import {
   GitBranch,
   Sprout,
   MessageCircle,
+  SlidersHorizontal,
+  ListOrdered,
+  Webhook,
 } from "lucide-react";
 
 /** Item da sidebar do Super Admin — `to` deve coincidir com rotas em `App.tsx`. */
@@ -142,6 +145,16 @@ export const superAdminNavGroups: SuperAdminNavGroup[] = [
         icon: Receipt,
       },
       {
+        label: "Assinaturas",
+        to: "/superadmin/billing/subscriptions",
+        icon: ListOrdered,
+      },
+      {
+        label: "Cobrança Automática",
+        to: "/superadmin/billing/collection-policy",
+        icon: SlidersHorizontal,
+      },
+      {
         label: "Gateway de pagamento",
         to: "/superadmin/pagamentos",
         icon: CreditCard,
@@ -150,6 +163,21 @@ export const superAdminNavGroups: SuperAdminNavGroup[] = [
         label: "Ciclos de assinatura",
         to: "/superadmin/subscription-cycles",
         icon: Repeat2,
+      },
+      {
+        label: "Feature Flags Billing 2.0",
+        to: "/superadmin/billing/feature-flags",
+        icon: Flag,
+      },
+      {
+        label: "Webhooks",
+        to: "/superadmin/billing/webhooks",
+        icon: Webhook,
+      },
+      {
+        label: "Logs billing",
+        to: "/superadmin/billing/logs",
+        icon: ScrollText,
       },
       {
         label: "Relatórios",

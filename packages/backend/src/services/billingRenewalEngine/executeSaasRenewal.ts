@@ -29,6 +29,8 @@ import {
   advanceSubscriptionAfterCompletedCycle,
   completeBillingRecurringJob,
 } from '../billingRecurringJobPersistence.js';
+import { scheduleCollectionPolicyExtensionPoint } from '../collectionPolicy/hook.js';
+import { billingRenewalCorrelationId, tenantBillingCorrelationId } from '../billing2/billingCorrelationId.js';
 import type {
   BillingRenewalExecutionMode,
   BillingRenewalJobRef,
@@ -193,35 +195,161 @@ export async function executeSaasRenewal(params: {
       const customerId = await gateway.ensureCustomer?.(subscription.tenant_id);
       if (customerId) {
         const idempotencyKey = `saas_renew_${subscription.id}_${periodStart}`;
-        const renewalPm = resolveAutomaticInvoicePaymentMethod(
-          subscription.default_payment_method as string | null,
-          config
-        );
-        const chargeResult = await gateway.createCharge({
-          customerId,
-          amountCents,
-          dueDate: periodStart,
-          paymentMethod: renewalPm,
-          description: billing.invoice_number ?? `Renovação ${periodStart}`,
-          idempotencyKey,
-          externalReference: subscription.tenant_id,
-        });
-        await updateInvoiceGatewayData(billing.id, {
-          gateway: gatewayKey,
-          payment_method: renewalPm,
-          gateway_reference_id: chargeResult.paymentId,
-          gateway_status: chargeResult.status,
-          idempotency_key: idempotencyKey,
-        });
+        const { isBilling2FlagEnabled } = await import('../billing2/billingFeatureFlags.js');
+        const cardAuto = await isBilling2FlagEnabled('card_auto_renew');
+        const pixAuto = await isBilling2FlagEnabled('pix_automatic');
+        let savedToken: Awaited<
+          ReturnType<
+            typeof import('../billing2/billingCardTokenStore.js').getActiveSaasCardTokenBySubscriptionId
+          >
+        > = null;
+        if (cardAuto) {
+          const { getActiveSaasCardTokenBySubscriptionId } = await import(
+            '../billing2/billingCardTokenStore.js'
+          );
+          savedToken = await getActiveSaasCardTokenBySubscriptionId(subscription.id);
+        }
+
+        // Sprint 10 — com auth ACTIVE + janela, instrução Pix Automático (sem charge avulso).
+        let pixAutoHandled = false;
+        if (pixAuto) {
+          const { shouldCollectionPolicyOwnNotifications } = await import(
+            '../collectionPolicy/hook.js'
+          );
+          const engineOwnsPix = await shouldCollectionPolicyOwnNotifications();
+          if (!engineOwnsPix) {
+            const {
+              createPixAutomaticInstructionForBilling,
+              startPixAutomaticAuthorizationForBilling,
+            } = await import('../billing2/billingPixAutomaticService.js');
+            const { getPixAutomaticAuthBySubscriptionId } = await import(
+              '../billing2/billingPixAutomaticStore.js'
+            );
+            const authRow = await getPixAutomaticAuthBySubscriptionId(subscription.id);
+            if (authRow?.status === 'active' && authRow.authorization_id) {
+              const instr = await createPixAutomaticInstructionForBilling({
+                billingId: billing.id,
+                correlationId: `saas_renew:${subscription.id}:${periodStart}`,
+              });
+              if (instr.ok || instr.detail === 'outside_instruction_window') {
+                pixAutoHandled = instr.ok;
+                if (!instr.ok) {
+                  // Fora da janela: cai no createCharge legado abaixo.
+                  pixAutoHandled = false;
+                }
+              }
+            } else {
+              const started = await startPixAutomaticAuthorizationForBilling({
+                billingId: billing.id,
+                correlationId: `saas_renew:${subscription.id}:${periodStart}`,
+              });
+              if (started.ok) {
+                pixAutoHandled = true;
+              }
+            }
+          }
+        }
+
+        if (!pixAutoHandled) {
+          // Com token + flag ON, força CREDIT_CARD na renovação (captura automática abaixo se engine OFF).
+          let renewalPm = resolveAutomaticInvoicePaymentMethod(
+            subscription.default_payment_method as string | null,
+            config
+          );
+          if (cardAuto && savedToken?.card_token) {
+            renewalPm = 'CREDIT_CARD';
+          }
+
+          const chargeResult = await gateway.createCharge({
+            customerId,
+            amountCents,
+            dueDate: periodStart,
+            paymentMethod: renewalPm,
+            description: billing.invoice_number ?? `Renovação ${periodStart}`,
+            idempotencyKey,
+            externalReference: subscription.tenant_id,
+          });
+          await updateInvoiceGatewayData(billing.id, {
+            gateway: gatewayKey,
+            payment_method: renewalPm,
+            gateway_reference_id: chargeResult.paymentId,
+            gateway_status: chargeResult.status,
+            idempotency_key: idempotencyKey,
+          });
+
+          // Captura com token quando flag ON e engine OFF (engine ON → charge_card na policy).
+          const { shouldCollectionPolicyOwnNotifications } = await import(
+            '../collectionPolicy/hook.js'
+          );
+          const engineOwns = await shouldCollectionPolicyOwnNotifications();
+          if (
+            cardAuto &&
+            savedToken?.card_token &&
+            renewalPm === 'CREDIT_CARD' &&
+            !engineOwns &&
+            typeof gateway.payWithCreditCard === 'function'
+          ) {
+            try {
+              const cap = await gateway.payWithCreditCard({
+                paymentId: chargeResult.paymentId,
+                creditCardToken: savedToken.card_token,
+              });
+              const { normalizeGatewayStatus } = await import(
+                '../../modules/payments/webhook/statusNormalizer.js'
+              );
+              const { applyPaymentEvent } = await import(
+                '../../modules/payments/webhook/paymentDomainService.js'
+              );
+              const normalized = normalizeGatewayStatus(gatewayKey, cap.status);
+              await applyPaymentEvent({
+                entityType: 'tenant_billing',
+                entityId: billing.id,
+                currentStatus: billing.status,
+                internalStatus: normalized,
+                gatewayStatus: cap.status,
+                paidAt: normalized === 'paid' ? (cap.paidAt ? new Date(cap.paidAt) : new Date()) : null,
+              });
+            } catch (capErr) {
+              console.error('[executeSaasRenewal] card token capture failed', {
+                billingId: billing.id,
+                error: capErr instanceof Error ? capErr.message : String(capErr),
+              });
+              const { markSaasCardTokenInvalid } = await import('../billing2/billingCardTokenStore.js');
+              await markSaasCardTokenInvalid(subscription.id, 'renewal_capture_failed').catch(
+                () => undefined
+              );
+            }
+          }
+        }
       }
     } catch (gatewayErr) {
       console.error('[recurringBillingJobService] gateway createCharge error', { billingId: billing.id, err: gatewayErr });
     }
   }
 
-  if (!zeroSettlement) {
+  // Billing 2.0: com engine OFF (default) → notify legado; com engine ON → engine assume notify (idempotente).
+  const { shouldCollectionPolicyOwnNotifications } = await import('../collectionPolicy/hook.js');
+  const engineOwnsNotify = await shouldCollectionPolicyOwnNotifications();
+  if (!zeroSettlement && !engineOwnsNotify) {
     await publishPlatformBillingChargeCreated(billing.id);
   }
+
+  // Billing 2.0 Sprint 3 — extension point (noop enquanto collection_policy_engine_enabled=OFF).
+  scheduleCollectionPolicyExtensionPoint({
+    type: 'renewal.charge_created',
+    occurred_at: new Date().toISOString(),
+    tenant_id: subscription.tenant_id,
+    subscription_id: subscription.id,
+    billing_id: billing.id,
+    job_id: job.id,
+    correlation_id: billingRenewalCorrelationId(subscription.id, periodStart),
+    attempt: 1,
+    metadata: {
+      period_start: periodStart,
+      zero_settlement: zeroSettlement ? true : false,
+      billing_correlation: tenantBillingCorrelationId(billing.id),
+    },
+  });
 
   // lifecycle shadow observation (future — renewal route Sprint I+)
   void import('../../lifecycle/lifecycleBillingObserver.js').then(({ observeFutureBillingLifecycleEvent }) =>

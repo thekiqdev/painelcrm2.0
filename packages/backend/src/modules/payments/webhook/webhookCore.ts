@@ -150,7 +150,44 @@ export async function handleWebhook(
     return { status: 200, body: { received: true } };
   }
 
-  const entity = await findBillingOrCustomerInvoice(gatewayKey, referenceId);
+  let entity = await findBillingOrCustomerInvoice(gatewayKey, referenceId);
+  if (!entity) {
+    const conciliationId =
+      metadata &&
+      typeof metadata === 'object' &&
+      typeof (metadata as { conciliationIdentifier?: string }).conciliationIdentifier === 'string'
+        ? (metadata as { conciliationIdentifier: string }).conciliationIdentifier
+        : null;
+    if (conciliationId) {
+      try {
+        const { findTenantBillingByPixAutomaticConciliation } = await import(
+          '../../../services/billing2/billingPixAutomaticService.js'
+        );
+        const { updateInvoiceGatewayData } = await import('../../../services/invoiceService.js');
+        const byConc = await findTenantBillingByPixAutomaticConciliation(conciliationId);
+        if (byConc) {
+          await updateInvoiceGatewayData(byConc.id, {
+            gateway: byConc.gateway ?? gatewayKey,
+            payment_method: 'PIX',
+            gateway_reference_id: referenceId,
+            gateway_status: externalStatus,
+            gateway_metadata: {
+              pix_automatic_conciliation_id: conciliationId,
+              pix_automatic_journey: 'authorization',
+            },
+          });
+          entity = {
+            entityType: 'tenant_billing',
+            entityId: byConc.id,
+            currentStatus: byConc.status,
+            gateway: byConc.gateway,
+          };
+        }
+      } catch (e) {
+        console.error('[webhookCore] pix automatic conciliation lookup', e);
+      }
+    }
+  }
   if (!entity) {
     await markPaymentEventProcessed({
       gateway: gatewayKey,

@@ -5,6 +5,18 @@ import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth.js';
 import { pool } from '../utils/db.js';
 import { getBillingSettings, updateBillingSettings } from '../services/billingSettingsService.js';
+import { getBilling2FeatureFlagsSnapshot } from '../services/billing2/billingFeatureFlags.js';
+import {
+  assertValidCollectionPolicyShape,
+  deserializeCollectionPolicy,
+  ensureGlobalCollectionPolicySeeded,
+  getActiveCollectionPolicy,
+  getActiveGlobalCollectionPolicyRow,
+  policyFromRow,
+  updateActiveGlobalCollectionPolicy,
+  writeBillingAuditEvent,
+} from '../services/collectionPolicy/index.js';
+import type { CollectionPolicy } from '../services/collectionPolicy/types.js';
 import {
   getSubscriptionCyclesSuperadminSettings,
   updateSubscriptionCyclesSuperadminSettings,
@@ -62,24 +74,62 @@ import { getBillingObservabilityReport } from '../billingObservability/billingOb
 import { getSubscriptionById } from '../services/billingSubscriptionService.js';
 import { z } from 'zod';
 
-/** GET /api/superadmin/billing/subscriptions – assinaturas ativas (saas). */
+/** GET /api/superadmin/billing/subscriptions – lista SaaS (Sprint 5). */
 export async function getBillingSubscriptions(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const r = await pool.query(
-      `SELECT s.id, s.tenant_id, s.plan_id, s.amount_cents, s.billing_interval, s.status, s.next_billing_date,
-              s.current_period_start, s.current_period_end, s.cancel_at_period_end, s.last_job_at, s.created_at,
-              t.company_name AS tenant_name,
-              p.name AS plan_name
-       FROM subscriptions s
-       JOIN tenants t ON t.id = s.tenant_id
-       LEFT JOIN plans p ON p.id = s.plan_id
-       WHERE s.type = 'saas'
-       ORDER BY s.next_billing_date ASC`
-    );
-    res.json({ subscriptions: r.rows });
+    const {
+      listSaasSubscriptionsForSuperadmin,
+    } = await import('../services/collectionPolicy/saasSubscriptionsAdminService.js');
+    const status = typeof req.query.status === 'string' ? req.query.status : null;
+    const q = typeof req.query.q === 'string' ? req.query.q : null;
+    const limit = Math.min(200, Math.max(1, parseInt(String(req.query.limit || 100), 10) || 100));
+    const offset = Math.max(0, parseInt(String(req.query.offset || 0), 10) || 0);
+    const result = await listSaasSubscriptionsForSuperadmin({ status, q, limit, offset });
+    res.json({
+      ...result,
+      labels: {
+        subscription_status: 'Estado do contrato SaaS (subscriptions.status)',
+        tenant_status: 'Estado de acesso do tenant (tenants.status) — não confundir com fatura pending',
+        invoice_status: 'Estado da cobrança (tenant_billing.status)',
+        past_due: 'Contrato em atraso após grace (writer gated por past_due_writer_enabled)',
+      },
+    });
   } catch (e: any) {
     console.error('[getBillingSubscriptions]', e);
     res.status(500).json({ error: e.message || 'Erro ao listar assinaturas' });
+  }
+}
+
+/** GET /api/superadmin/billing/subscriptions/:id — detalhe SaaS (Sprint 5). */
+export async function getBillingSubscriptionById(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const id = String(req.params.id || '').trim();
+    if (!id) {
+      res.status(400).json({ error: 'id obrigatório' });
+      return;
+    }
+    const {
+      getSaasSubscriptionDetailForSuperadmin,
+    } = await import('../services/collectionPolicy/saasSubscriptionsAdminService.js');
+    const detail = await getSaasSubscriptionDetailForSuperadmin(id);
+    if (!detail) {
+      res.status(404).json({ error: 'Assinatura SaaS não encontrada' });
+      return;
+    }
+    res.json({
+      subscription: detail,
+      labels: {
+        subscription_status: 'Estado do contrato SaaS',
+        tenant_status: 'Estado de acesso do tenant (não é fatura)',
+        invoice_status: 'Estado da cobrança tenant_billing',
+      },
+      links: {
+        platform_billings: `/superadmin/platform-billings?tenant_id=${detail.tenant_id}`,
+      },
+    });
+  } catch (e: any) {
+    console.error('[getBillingSubscriptionById]', e);
+    res.status(500).json({ error: e.message || 'Erro ao carregar assinatura' });
   }
 }
 
@@ -89,7 +139,7 @@ export async function getBillingUpcoming(req: AuthRequest, res: Response): Promi
     const days = Math.min(90, Math.max(1, parseInt(String(req.query.days || 30), 10) || 30));
     const r = await pool.query(
       `SELECT s.id, s.tenant_id, s.plan_id, s.amount_cents, s.billing_interval, s.next_billing_date,
-              t.company_name AS tenant_name, p.name AS plan_name
+              t.name AS tenant_name, p.name AS plan_name
        FROM subscriptions s
        JOIN tenants t ON t.id = s.tenant_id
        LEFT JOIN plans p ON p.id = s.plan_id
@@ -112,7 +162,7 @@ export async function getBillingJobsFailed(req: AuthRequest, res: Response): Pro
     const r = await pool.query(
       `SELECT j.id, j.subscription_id, j.tenant_id, j.cycle_key, j.scheduled_at, j.attempts, j.max_attempts,
               j.error_message, j.created_at, j.updated_at,
-              t.company_name AS tenant_name
+              t.name AS tenant_name
        FROM billing_recurring_jobs j
        JOIN tenants t ON t.id = j.tenant_id
        WHERE j.status = 'failed'
@@ -135,6 +185,141 @@ export async function getBillingSettingsHandler(req: AuthRequest, res: Response)
   } catch (e: any) {
     console.error('[getBillingSettings]', e);
     res.status(500).json({ error: e.message || 'Erro ao carregar configurações' });
+  }
+}
+
+/**
+ * GET /api/superadmin/billing/feature-flags — inventário Billing 2.0 (Sprint 0, somente leitura).
+ * Não altera cobrança; flags ainda não são consumidas pelo runtime de renovação/checkout.
+ */
+export async function getBilling2FeatureFlagsHandler(_req: AuthRequest, res: Response): Promise<void> {
+  try {
+    res.json(await getBilling2FeatureFlagsSnapshot());
+  } catch (e: any) {
+    console.error('[getBilling2FeatureFlags]', e);
+    res.status(500).json({ error: e.message || 'Erro ao carregar feature flags Billing 2.0' });
+  }
+}
+
+const collectionFailActionSchema = z.enum([
+  'create_pix',
+  'notify_whatsapp',
+  'notify_email',
+  'charge_card',
+  'create_pix_automatic_instruction',
+]);
+
+const collectionPolicyBodySchema = z.object({
+  schema_version: z.literal(1).optional(),
+  renew_card_auto: z.boolean(),
+  generate_pix_auto: z.boolean(),
+  pix_automatic_enabled: z.boolean(),
+  max_attempts: z.number().int().min(1).max(20),
+  attempt_interval_days: z.number().int().min(1).max(30),
+  suspend_after_days: z.number().int().min(0).max(365),
+  cancel_after_days: z.number().int().min(0).max(730),
+  notify_whatsapp: z.boolean(),
+  notify_email: z.boolean(),
+  generate_pix_after_failure: z.boolean(),
+  reactivate_on_paid: z.boolean(),
+  auto_suspend_enabled: z.boolean(),
+  auto_cancel_enabled: z.boolean(),
+  grace_period_days: z.number().int().min(0).max(90),
+  actions_after_fail: z.array(collectionFailActionSchema).min(1),
+});
+
+/** GET /api/superadmin/billing/collection-policy — Sprint 2+ */
+export async function getCollectionPolicyHandler(_req: AuthRequest, res: Response): Promise<void> {
+  try {
+    try {
+      await ensureGlobalCollectionPolicySeeded('system:api_get');
+    } catch (seedErr: unknown) {
+      const msg = seedErr instanceof Error ? seedErr.message : String(seedErr);
+      if (/migration 298|ausente/i.test(msg)) {
+        const read = await getActiveCollectionPolicy();
+        res.json({
+          ...read,
+          warning: 'Tabela ainda não migrada; retornando memory_default',
+        });
+        return;
+      }
+      throw seedErr;
+    }
+    const read = await getActiveCollectionPolicy();
+    const row = await getActiveGlobalCollectionPolicyRow();
+    res.json({
+      ...read,
+      updated_at: row?.updated_at ?? null,
+      updated_by: row?.updated_by ?? null,
+    });
+  } catch (e: any) {
+    console.error('[getCollectionPolicy]', e);
+    res.status(500).json({ error: e.message || 'Erro ao carregar Collection Policy' });
+  }
+}
+
+/** PUT /api/superadmin/billing/collection-policy — Sprint 4 UI / Sprint 2 persistência */
+export async function putCollectionPolicyHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const parsed = collectionPolicyBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Dados inválidos', details: parsed.error.flatten() });
+      return;
+    }
+    const policy = deserializeCollectionPolicy({
+      schema_version: 1,
+      ...parsed.data,
+    }) as CollectionPolicy;
+    try {
+      assertValidCollectionPolicyShape(policy);
+    } catch (shapeErr: unknown) {
+      res.status(400).json({
+        error: shapeErr instanceof Error ? shapeErr.message : 'Policy inválida',
+      });
+      return;
+    }
+
+    const actor = req.userId ?? 'unknown';
+    const before = await getActiveCollectionPolicy();
+    const row = await updateActiveGlobalCollectionPolicy({
+      policy,
+      updatedBy: `superadmin:${actor}`,
+    });
+
+    const audit = await writeBillingAuditEvent({
+      actor,
+      actor_type: 'superadmin',
+      action: 'collection_policy.updated',
+      entity_type: 'billing_collection_policy',
+      entity_id: row.id,
+      reason: 'Super Admin atualizou Cobrança Automática (policy)',
+      origin: 'api',
+      correlation_id: `collection_policy:${row.id}:v${row.version}`,
+      payload: {
+        before: before.policy,
+        after: policy,
+        version: row.version,
+      },
+    });
+
+    res.json({
+      policy: policyFromRow(row),
+      source: 'database' as const,
+      policy_row_id: row.id,
+      policy_version: row.version,
+      legacy_auto_suspend_setting: before.legacy_auto_suspend_setting,
+      updated_at: row.updated_at,
+      updated_by: row.updated_by,
+      last_audit_id: audit?.id ?? null,
+    });
+  } catch (e: any) {
+    console.error('[putCollectionPolicy]', e);
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/migration 298|ausente/i.test(msg)) {
+      res.status(503).json({ error: msg });
+      return;
+    }
+    res.status(500).json({ error: e.message || 'Erro ao salvar Collection Policy' });
   }
 }
 
@@ -793,5 +978,159 @@ export async function putSubscriptionCyclesFlagsHandler(req: AuthRequest, res: R
   } catch (e: any) {
     console.error('[putSubscriptionCyclesFlags]', e);
     res.status(500).json({ error: e.message || 'Erro ao salvar flags de ciclos' });
+  }
+}
+
+/** GET /api/superadmin/billing/audit-events — Sprint 7 */
+export async function getBillingAuditEventsHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const { listBillingAuditEvents } = await import('../services/billing2/billingAuditQueryService.js');
+    const q = (key: string) => (typeof req.query[key] === 'string' ? String(req.query[key]) : null);
+    const result = await listBillingAuditEvents({
+      tenant_id: q('tenant_id'),
+      billing_id: q('billing_id'),
+      subscription_id: q('subscription_id'),
+      action: q('action'),
+      entity_type: q('entity_type'),
+      from: q('from'),
+      to: q('to'),
+      q: q('q'),
+      limit: Math.min(200, Math.max(1, parseInt(String(req.query.limit || 50), 10) || 50)),
+      offset: Math.max(0, parseInt(String(req.query.offset || 0), 10) || 0),
+    });
+    res.json(result);
+  } catch (e: any) {
+    console.error('[getBillingAuditEvents]', e);
+    res.status(500).json({ error: e.message || 'Erro ao listar audit events' });
+  }
+}
+
+/** GET /api/superadmin/billing/audit-events/export.csv — Sprint 7 */
+export async function getBillingAuditEventsExportHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const { exportBillingAuditEventsCsv } = await import('../services/billing2/billingAuditQueryService.js');
+    const q = (key: string) => (typeof req.query[key] === 'string' ? String(req.query[key]) : null);
+    const from = q('from');
+    const to = q('to');
+    // Default: últimos 90 dias se período omitido
+    const defaultFrom = new Date();
+    defaultFrom.setUTCDate(defaultFrom.getUTCDate() - 90);
+    const csv = await exportBillingAuditEventsCsv({
+      tenant_id: q('tenant_id'),
+      billing_id: q('billing_id'),
+      subscription_id: q('subscription_id'),
+      action: q('action'),
+      entity_type: q('entity_type'),
+      from: from ?? defaultFrom.toISOString().slice(0, 10),
+      to: to,
+      q: q('q'),
+      limit: 5000,
+    });
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="billing-audit-events.csv"');
+    res.status(200).send(csv);
+  } catch (e: any) {
+    console.error('[getBillingAuditEventsExport]', e);
+    res.status(500).json({ error: e.message || 'Erro ao exportar audit events' });
+  }
+}
+
+/** GET /api/superadmin/billing/webhooks/health — Sprint 7 */
+export async function getBillingWebhooksHealthHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const { getBillingWebhookHealth, listBillingWebhookEvents } = await import(
+      '../services/billing2/billingWebhookHealthService.js'
+    );
+    const hours = Math.min(168, Math.max(1, parseInt(String(req.query.window_hours || 24), 10) || 24));
+    const status = typeof req.query.status === 'string' ? req.query.status : null;
+    const [health, events] = await Promise.all([
+      getBillingWebhookHealth(hours),
+      listBillingWebhookEvents({ status, limit: Math.min(100, Math.max(1, parseInt(String(req.query.limit || 50), 10) || 50)) }),
+    ]);
+    res.json({ health, events });
+  } catch (e: any) {
+    console.error('[getBillingWebhooksHealth]', e);
+    res.status(500).json({ error: e.message || 'Erro ao carregar saúde de webhooks' });
+  }
+}
+
+/** POST /api/superadmin/billing/webhooks/:eventId/reprocess — Sprint 7 (só failed + payload) */
+export async function postBillingWebhookReprocessHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const eventId = String(req.params.eventId || '').trim();
+    if (!eventId) {
+      res.status(400).json({ error: 'eventId obrigatório' });
+      return;
+    }
+    const { reprocessFailedAsaasWebhook } = await import(
+      '../services/billing2/billingWebhookHealthService.js'
+    );
+    const result = await reprocessFailedAsaasWebhook({
+      eventId,
+      actor: req.userId ?? 'unknown',
+    });
+    if (!result.ok) {
+      res.status(400).json({ error: result.error, handle_status: result.handle_status });
+      return;
+    }
+    res.json({ ok: true, event_id: eventId, handle_status: result.handle_status });
+  } catch (e: any) {
+    console.error('[postBillingWebhookReprocess]', e);
+    res.status(500).json({ error: e.message || 'Erro ao reprocessar webhook' });
+  }
+}
+
+/** GET /api/superadmin/billing/reconciliation-l2/divergences — Sprint 8 */
+export async function getReconciliationL2DivergencesHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const { listReconciliationL2Divergences } = await import(
+      '../services/billingReconciliationL2Service.js'
+    );
+    const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit || 50), 10) || 50));
+    const divergences = await listReconciliationL2Divergences(limit);
+    res.json({
+      divergences,
+      count: divergences.length,
+      note: 'Lista read-only. Apply exige flag reconciliation_l2_enabled + POST run.',
+    });
+  } catch (e: any) {
+    console.error('[getReconciliationL2Divergences]', e);
+    res.status(500).json({ error: e.message || 'Erro ao listar divergências L2' });
+  }
+}
+
+/** POST /api/superadmin/billing/reconciliation-l2/run — Sprint 8 */
+export async function postReconciliationL2RunHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const { runReconciliationL2 } = await import('../services/billingReconciliationL2Service.js');
+    const dryRun = req.body?.dry_run !== false;
+    const limit = Math.min(200, Math.max(1, parseInt(String(req.body?.limit || 50), 10) || 50));
+    const result = await runReconciliationL2({
+      dryRun,
+      limit,
+      actor: `superadmin:${req.userId ?? 'unknown'}`,
+    });
+    res.json(result);
+  } catch (e: any) {
+    console.error('[postReconciliationL2Run]', e);
+    res.status(500).json({ error: e.message || 'Erro ao executar L2' });
+  }
+}
+
+/** POST /api/superadmin/billing/dunning/run — Sprint 8 */
+export async function postBillingDunningRunHandler(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const { runBillingDunningCycle } = await import('../services/billingDunningJobService.js');
+    const dryRun = req.body?.dry_run !== false;
+    const limit = Math.min(200, Math.max(1, parseInt(String(req.body?.limit || 50), 10) || 50));
+    const result = await runBillingDunningCycle({
+      dryRun,
+      limit,
+      actor: `superadmin:${req.userId ?? 'unknown'}`,
+    });
+    res.json(result);
+  } catch (e: any) {
+    console.error('[postBillingDunningRun]', e);
+    res.status(500).json({ error: e.message || 'Erro ao executar dunning' });
   }
 }
