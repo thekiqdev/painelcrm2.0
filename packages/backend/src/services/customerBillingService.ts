@@ -12,6 +12,7 @@ import {
   updateCustomerInvoiceClientId,
   updateCustomerInvoiceStatus,
   getByPaymentToken,
+  getCustomerInvoiceById,
   type CustomerInvoiceRow,
   type CreateManualCustomerInvoiceInput,
   type CreateManualCustomerInvoiceItemInput,
@@ -170,6 +171,8 @@ export interface CreateManualInvoiceResult {
   invoice: CustomerInvoiceRow;
   paymentUrls?: PaymentUrls;
   subscription_id?: string; // quando recurring = true (Fase 7)
+  /** CRM2 — resultado do start Pix Automático (null se não pedido). */
+  pix_automatic?: import('./crm/crmPixAutomaticService.js').CrmPixAutomaticCreateResult | null;
 }
 
 /** Filtros para listagem de faturas (sempre filtrado por tenant_id na aplicação). */
@@ -298,6 +301,8 @@ export async function createManualInvoice(
      * Conversão de proposta usa waiting_payment = fatura já tratada como emitida ao cliente.
      */
     initial_invoice_status?: 'pending' | 'waiting_payment';
+    /** CRM2 — operador pediu Pix Automático na criação. */
+    pix_automatic?: boolean;
   }
 ): Promise<CreateManualInvoiceResult> {
   const hasItems = body.items && body.items.length > 0;
@@ -552,7 +557,34 @@ export async function createManualInvoice(
     pixCopyPaste: chargeResult.pixCopyPaste,
   };
 
-  return { invoice, paymentUrls };
+  let pix_automatic: CreateManualInvoiceResult['pix_automatic'] = null;
+  if (body.pix_automatic === true) {
+    try {
+      const { finalizePixAutomaticOnCustomerInvoiceCreate } = await import(
+        './crm/crmPixAutomaticService.js'
+      );
+      pix_automatic = await finalizePixAutomaticOnCustomerInvoiceCreate({
+        tenantId,
+        invoiceId: invoice.id,
+        pixAutomaticRequested: true,
+        allowedPaymentMethods: effectiveAllowed,
+      });
+      const refreshed = await getCustomerInvoiceById(invoice.id);
+      if (refreshed) {
+        return { invoice: refreshed, paymentUrls, pix_automatic };
+      }
+    } catch (e) {
+      console.warn('[createManualInvoice] pix_automatic finalize', e);
+      pix_automatic = {
+        requested: true,
+        started: false,
+        detail: e instanceof Error ? e.message : 'pix_automatic_finalize_failed',
+        warning: true,
+      };
+    }
+  }
+
+  return { invoice, paymentUrls, pix_automatic };
 }
 
 /**
@@ -576,6 +608,8 @@ export async function createRecurringManualInvoice(
     project_id?: string | null;
     cycles_unlimited?: boolean;
     max_cycles?: number | null;
+    /** CRM2 — operador pediu Pix Automático na criação. */
+    pix_automatic?: boolean;
   }
 ): Promise<CreateManualInvoiceResult> {
   const hasItems = body.items && body.items.length > 0;
@@ -636,6 +670,8 @@ export async function createRecurringManualInvoice(
     items: body.items,
     gateway_key: body.gateway_key ?? null,
     project_id: body.project_id ?? null,
+    // Start após o link subscription_id (abaixo).
+    pix_automatic: false,
   });
 
   await updateCustomerInvoiceSubscriptionLink(
@@ -645,7 +681,39 @@ export async function createRecurringManualInvoice(
     periodEnd
   );
 
-  return { ...result, subscription_id: subscription.id };
+  let pix_automatic: CreateManualInvoiceResult['pix_automatic'] = null;
+  if (body.pix_automatic === true) {
+    try {
+      const { finalizePixAutomaticOnCustomerInvoiceCreate } = await import(
+        './crm/crmPixAutomaticService.js'
+      );
+      pix_automatic = await finalizePixAutomaticOnCustomerInvoiceCreate({
+        tenantId,
+        invoiceId: result.invoice.id,
+        pixAutomaticRequested: true,
+        allowedPaymentMethods: body.allowed_payment_methods ?? null,
+      });
+      const refreshed = await getCustomerInvoiceById(result.invoice.id);
+      if (refreshed) {
+        return {
+          invoice: refreshed,
+          paymentUrls: result.paymentUrls,
+          subscription_id: subscription.id,
+          pix_automatic,
+        };
+      }
+    } catch (e) {
+      console.warn('[createRecurringManualInvoice] pix_automatic finalize', e);
+      pix_automatic = {
+        requested: true,
+        started: false,
+        detail: e instanceof Error ? e.message : 'pix_automatic_finalize_failed',
+        warning: true,
+      };
+    }
+  }
+
+  return { ...result, subscription_id: subscription.id, pix_automatic };
 }
 
 /** CPF/CNPJ: só dígitos; 11 ou 14 caracteres. */

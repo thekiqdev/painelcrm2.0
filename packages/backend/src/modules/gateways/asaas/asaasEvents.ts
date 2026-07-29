@@ -20,7 +20,7 @@ export const ASAAS_EVENT = {
   PAYMENT_CHECKOUT_VIEWED: 'PAYMENT_CHECKOUT_VIEWED',
 } as const;
 
-/** Sprint 10 — Pix Automático (não passam pelo path payment_id). */
+/** Sprint 10 / CRM0 — Pix Automático (não passam pelo path payment_id). */
 export const ASAAS_PIX_AUTOMATIC_EVENT = {
   AUTHORIZATION_CREATED: 'PIX_AUTOMATIC_RECURRING_AUTHORIZATION_CREATED',
   AUTHORIZATION_ACTIVATED: 'PIX_AUTOMATIC_RECURRING_AUTHORIZATION_ACTIVATED',
@@ -31,7 +31,14 @@ export const ASAAS_PIX_AUTOMATIC_EVENT = {
   INSTRUCTION_SCHEDULED: 'PIX_AUTOMATIC_RECURRING_PAYMENT_INSTRUCTION_SCHEDULED',
   INSTRUCTION_REFUSED: 'PIX_AUTOMATIC_RECURRING_PAYMENT_INSTRUCTION_REFUSED',
   INSTRUCTION_CANCELLED: 'PIX_AUTOMATIC_RECURRING_PAYMENT_INSTRUCTION_CANCELLED',
+  /** Conta Asaas (subconta/tenant) mudou elegibilidade do produto. */
+  ELIGIBILITY_UPDATED: 'PIX_AUTOMATIC_RECURRING_ELIGIBILITY_UPDATED',
 } as const;
+
+/** Eventos a provisionar no webhook Asaas (tenant + plataforma). */
+export const ASAAS_PIX_AUTOMATIC_WEBHOOK_EVENT_NAMES = Object.values(
+  ASAAS_PIX_AUTOMATIC_EVENT
+) as readonly string[];
 
 export type AsaasEventType = (typeof ASAAS_EVENT)[keyof typeof ASAAS_EVENT];
 export type AsaasPixAutomaticEventType =

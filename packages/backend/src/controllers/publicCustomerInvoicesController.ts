@@ -256,8 +256,14 @@ export async function getPayByToken(req: Request, res: Response): Promise<void> 
         typeof activeMetadata.bankSlipDigitableLine === 'string'
           ? activeMetadata.bankSlipDigitableLine
           : undefined,
-      pixQrCode: typeof activeMetadata.pixQrCode === 'string' ? activeMetadata.pixQrCode : undefined,
-      pixCopyPaste: typeof activeMetadata.pixCopyPaste === 'string' ? activeMetadata.pixCopyPaste : undefined,
+      pixQrCode:
+        (typeof activeMetadata.pix_qr_code === 'string' && activeMetadata.pix_qr_code) ||
+        (typeof activeMetadata.pixQrCode === 'string' && activeMetadata.pixQrCode) ||
+        undefined,
+      pixCopyPaste:
+        (typeof activeMetadata.pix_copy_paste === 'string' && activeMetadata.pix_copy_paste) ||
+        (typeof activeMetadata.pixCopyPaste === 'string' && activeMetadata.pixCopyPaste) ||
+        undefined,
       ...(mercado_pago_init_point
         ? { mercado_pago_init_point: mercado_pago_init_point as string }
         : {}),
@@ -318,6 +324,77 @@ export async function getPayByToken(req: Request, res: Response): Promise<void> 
     const paidByMercadoPagoMeta = activeMetadata.paid_by_gateway === 'mercado_pago';
 
     const switchMethodEnabled = isPublicPaySwitchMethodEnabledForTenant(freshData.tenant_id);
+
+    let pix_automatic: Record<string, unknown> | null = null;
+    try {
+      const { canOfferCrmPixAutomatic } = await import('../services/crm/crmPixAutomaticFlags.js');
+      const { getCrmPixAutomaticPreferenceForSubscription } = await import(
+        '../services/crm/crmPixAutomaticService.js'
+      );
+      const offer = await canOfferCrmPixAutomatic({ gatewayKey: crmCfg?.gateway_key ?? invoice.gateway });
+      const requested =
+        activeMetadata.pix_automatic_requested === true ||
+        activeMetadata.pix_automatic_journey === 'authorization' ||
+        typeof activeMetadata.pix_automatic_authorization_id === 'string';
+      const subId = invoice.subscription_id;
+      const pref = subId
+        ? await getCrmPixAutomaticPreferenceForSubscription({ subscriptionId: subId })
+        : null;
+      const hasAuthState = Boolean(
+        pref && (pref.status || pref.has_active || pref.authorization_id)
+      );
+      const available = offer.available || hasAuthState || requested;
+      const clientHasCpf = Boolean(
+        clientProfile?.cpf_cnpj && String(clientProfile.cpf_cnpj).trim()
+      );
+      if (available) {
+        const status = pref?.status ?? null;
+        const has_active = pref?.has_active ?? false;
+        const user_opted_off = pref?.user_opted_off ?? false;
+        const switch_on =
+          !user_opted_off &&
+          (has_active ||
+            status === 'pending' ||
+            (requested && (status == null || status === '') && !user_opted_off));
+        pix_automatic = {
+          available: offer.available || hasAuthState,
+          status,
+          has_active,
+          switch_on,
+          user_opted_off,
+          authorization_id: pref?.authorization_id ?? null,
+          qr_payload:
+            status === 'pending'
+              ? pref?.qr_payload ??
+                (typeof activeMetadata.pix_copy_paste === 'string'
+                  ? activeMetadata.pix_copy_paste
+                  : null)
+              : null,
+          qr_image:
+            status === 'pending'
+              ? pref?.qr_image ??
+                (typeof activeMetadata.pix_qr_code === 'string' ? activeMetadata.pix_qr_code : null)
+              : null,
+          requested,
+          client_has_cpf: clientHasCpf,
+          subscription_id: subId,
+        };
+      }
+    } catch (e) {
+      console.warn('[getPayByToken] pix_automatic enrich', e);
+    }
+
+    // Preferir QR composto na área de PIX quando a jornada de autorização está ativa.
+    if (
+      pix_automatic &&
+      (pix_automatic.status === 'pending' ||
+        activeMetadata.pix_automatic_journey === 'authorization')
+    ) {
+      const qrP = pix_automatic.qr_payload;
+      const qrI = pix_automatic.qr_image;
+      if (typeof qrP === 'string' && qrP.trim()) payment_urls.pixCopyPaste = qrP;
+      if (typeof qrI === 'string' && qrI.trim()) payment_urls.pixQrCode = qrI;
+    }
 
     if (isPublicPayTelemetryEnabled()) {
       billingLog('invoice', 'public_pay_get', {
@@ -380,6 +457,7 @@ export async function getPayByToken(req: Request, res: Response): Promise<void> 
         payment_status: mercadoPagoPaymentStatus,
         paid_by_mercado_pago: paidByMercadoPagoMeta,
       },
+      pix_automatic,
       ...payloadMeta,
     });
   } catch (error) {
@@ -534,6 +612,26 @@ export async function postCompletePayByToken(req: Request, res: Response): Promi
       cpf_cnpj: body.cpf_cnpj || null,
       company: body.company || null,
     });
+    // CRM3 — se a fatura pediu Pix Auto (criação por link), tenta start após cliente+CPF.
+    try {
+      const again = await getByPaymentToken(token);
+      const meta = (again?.invoice.gateway_metadata as Record<string, unknown> | null) ?? {};
+      if (again && meta.pix_automatic_requested === true && meta.pix_automatic_journey !== 'authorization') {
+        const { finalizePixAutomaticOnCustomerInvoiceCreate } = await import(
+          '../services/crm/crmPixAutomaticService.js'
+        );
+        await finalizePixAutomaticOnCustomerInvoiceCreate({
+          tenantId: again.tenant_id,
+          invoiceId: again.invoice_id,
+          pixAutomaticRequested: true,
+          allowedPaymentMethods: Array.isArray(meta.allowed_payment_methods)
+            ? (meta.allowed_payment_methods as string[])
+            : null,
+        });
+      }
+    } catch (pixErr) {
+      console.warn('[postCompletePayByToken] pix_automatic after complete', pixErr);
+    }
     const payloadMeta = buildPublicPayPayloadMeta(result.payment_urls);
     if (isPublicPayTelemetryEnabled()) {
       billingLog('invoice', 'public_pay_complete', {
@@ -560,5 +658,101 @@ export async function postCompletePayByToken(req: Request, res: Response): Promi
     }
     console.error('postCompletePayByToken:', err);
     res.status(500).json({ error: msg });
+  }
+}
+
+/** CRM3 — inicia jornada Pix Automático (QR composto) na fatura pública do tenant. */
+export async function postPublicCustomerInvoiceStartPixAutomatic(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const token = req.params.token;
+  if (!token) {
+    res.status(400).json({ ok: false, error: 'Token inválido', code: 'invalid_token' });
+    return;
+  }
+  try {
+    const data = await getByPaymentToken(token);
+    if (!data) {
+      res.status(404).json({ ok: false, error: 'Fatura não encontrada', code: 'not_found' });
+      return;
+    }
+    const openStatuses = new Set(['pending', 'waiting_payment', 'processing', 'overdue']);
+    if (!openStatuses.has(data.invoice.status)) {
+      res.status(400).json({ ok: false, error: 'Cobrança não está aberta', code: 'not_payable' });
+      return;
+    }
+    const { startPixAutomaticAuthorizationForCustomerInvoice } = await import(
+      '../services/crm/crmPixAutomaticService.js'
+    );
+    const result = await startPixAutomaticAuthorizationForCustomerInvoice({
+      invoiceId: data.invoice_id,
+      tenantId: data.tenant_id,
+      correlationId: `crm_pay_pix_auto:${data.invoice_id}`,
+    });
+    if (!result.ok) {
+      const status =
+        result.detail === 'flag_crm_pix_automatic_off' || result.detail.startsWith('gate_')
+          ? 403
+          : result.detail === 'auth_already_active'
+            ? 409
+            : 400;
+      res.status(status).json({ ok: false, error: result.detail, code: result.detail });
+      return;
+    }
+    res.status(200).json({
+      ok: true,
+      authorization_id: result.authorization_id,
+      status: result.status,
+      pix_copy_paste: result.qr_payload,
+      pix_qr_code: result.qr_image,
+      subscription_id: result.subscription_id,
+    });
+  } catch (e) {
+    console.error('[publicCustomerInvoice startPixAutomatic]', e);
+    res.status(500).json({ ok: false, error: 'Erro ao iniciar Pix Automático', code: 'server_error' });
+  }
+}
+
+/** CRM3 — switch OFF: cancela auth e restaura PIX avulso na fatura. */
+export async function postPublicCustomerInvoiceCancelPixAutomatic(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const token = req.params.token;
+  if (!token) {
+    res.status(400).json({ ok: false, error: 'Token inválido', code: 'invalid_token' });
+    return;
+  }
+  try {
+    const data = await getByPaymentToken(token);
+    if (!data) {
+      res.status(404).json({ ok: false, error: 'Fatura não encontrada', code: 'not_found' });
+      return;
+    }
+    const { cancelPixAutomaticAuthorizationForCustomerInvoice } = await import(
+      '../services/crm/crmPixAutomaticService.js'
+    );
+    const result = await cancelPixAutomaticAuthorizationForCustomerInvoice({
+      tenantId: data.tenant_id,
+      invoiceId: data.invoice_id,
+      subscriptionId: data.invoice.subscription_id,
+      correlationId: `crm_pay_pix_auto_off:${data.invoice_id}`,
+    });
+    if (!result.ok) {
+      res.status(400).json({ ok: false, error: result.detail, code: result.detail });
+      return;
+    }
+    res.status(200).json({
+      ok: true,
+      detail: result.detail,
+      pix_copy_paste: result.pix_copy_paste,
+      pix_qr_code: result.pix_qr_code,
+    });
+  } catch (e) {
+    console.error('[publicCustomerInvoice cancelPixAutomatic]', e);
+    res
+      .status(500)
+      .json({ ok: false, error: 'Erro ao desativar Pix Automático', code: 'server_error' });
   }
 }

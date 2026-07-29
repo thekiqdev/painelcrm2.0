@@ -438,6 +438,25 @@ export async function handlePixAutomaticWebhookEvent(opts: {
     (opts.payload.paymentInstruction as Record<string, unknown> | undefined) ??
     null;
 
+  // CRM0 / CRM5: elegibilidade de conta — ack sem liquidar fatura (handler completo em CRM5).
+  if (opts.eventType === ASAAS_PIX_AUTOMATIC_EVENT.ELIGIBILITY_UPDATED) {
+    await writeBillingAuditEvent({
+      actor: 'asaas_webhook',
+      actor_type: 'system',
+      action: 'pix_automatic.eligibility_updated',
+      entity_type: 'subscription',
+      entity_id: null,
+      reason: opts.eventType,
+      origin: 'webhook',
+      correlation_id: `pix_auto_evt:${opts.eventId}`,
+      payload: {
+        eligibility: opts.payload.eligibility ?? null,
+        account: opts.payload.account ?? null,
+      },
+    });
+    return { handled: true, detail: 'eligibility_updated_ack' };
+  }
+
   if (
     opts.eventType === ASAAS_PIX_AUTOMATIC_EVENT.INSTRUCTION_REFUSED ||
     opts.eventType === ASAAS_PIX_AUTOMATIC_EVENT.INSTRUCTION_CANCELLED
@@ -564,6 +583,32 @@ export async function handlePixAutomaticWebhookEvent(opts: {
             console.error('[pixAutomatic] settle on AUTHORIZATION_ACTIVATED failed', e);
           }
         }
+      }
+
+      // CRM5 / R1B — mesma regra para customer_invoices (auth type=customer).
+      try {
+        const {
+          updateCrmPixAutomaticAuthStatus,
+          getCrmSubscriptionByPixAuthorizationId,
+        } = await import('../crm/crmPixAutomaticStore.js');
+        const { settleCustomerInvoiceOnPixAutomaticActivated } = await import(
+          '../crm/crmPixAutomaticService.js'
+        );
+
+        await updateCrmPixAutomaticAuthStatus({
+          authorizationId,
+          status: 'active',
+        });
+        const crmAuth = await getCrmSubscriptionByPixAuthorizationId(authorizationId);
+        await settleCustomerInvoiceOnPixAutomaticActivated({
+          authorizationId,
+          subscriptionId: crmAuth?.subscription_id ?? updated?.subscription_id ?? null,
+          paymentId,
+          paymentStatus,
+          eventId: opts.eventId,
+        });
+      } catch (e: unknown) {
+        console.error('[pixAutomatic] CRM settle on AUTHORIZATION_ACTIVATED failed', e);
       }
     }
 

@@ -382,6 +382,18 @@ export async function createManualCustomerInvoice(
 }
 
 /**
+ * Busca customer_invoice por id (sem filtro de tenant — caller valida tenant_id).
+ */
+export async function getCustomerInvoiceById(invoiceId: string): Promise<CustomerInvoiceRow | null> {
+  const schema = await getCustomerInvoiceSchema();
+  const r = await pool.query<CustomerInvoiceRow>(
+    `SELECT ${schema.selectListBare} FROM customer_invoices WHERE id = $1 LIMIT 1`,
+    [invoiceId]
+  );
+  return r.rows[0] ?? null;
+}
+
+/**
  * Retorna itens da fatura (customer_invoice_items) ordenados por sort_order.
  *
  * Defesa em profundidade: `tenantId` deve ser o tenant da fatura. `customer_invoice_items`
@@ -547,7 +559,18 @@ export async function findCustomerInvoiceBySubscriptionAndPeriod(
 }
 
 export interface GetByPaymentTokenResult {
-  invoice: Pick<CustomerInvoiceRow, 'invoice_number' | 'description' | 'amount_cents' | 'due_date' | 'status' | 'payment_method' | 'gateway_metadata'>;
+  invoice: Pick<
+    CustomerInvoiceRow,
+    | 'invoice_number'
+    | 'description'
+    | 'amount_cents'
+    | 'due_date'
+    | 'status'
+    | 'payment_method'
+    | 'gateway_metadata'
+    | 'subscription_id'
+    | 'gateway'
+  >;
   items: CustomerInvoiceItemRow[];
   client_name: string | null;
   tenant_branding: {
@@ -602,6 +625,13 @@ export async function getByPaymentToken(token: string): Promise<GetByPaymentToke
     [row.tenant_id]
   );
   const tenant = tenantResult.rows[0] ?? null;
+  const extras = await pool.query<{ subscription_id: string | null; gateway: string | null }>(
+    `SELECT subscription_id, gateway
+     FROM customer_invoices
+     WHERE id = $1
+     LIMIT 1`,
+    [row.invoice_id]
+  );
   const items = await withTenantRlsContext(row.tenant_id, () =>
     getCustomerInvoiceItems(row.invoice_id, row.tenant_id)
   );
@@ -614,6 +644,8 @@ export async function getByPaymentToken(token: string): Promise<GetByPaymentToke
       status: row.status,
       payment_method: row.payment_method,
       gateway_metadata: row.gateway_metadata,
+      subscription_id: extras.rows[0]?.subscription_id ?? null,
+      gateway: extras.rows[0]?.gateway ?? null,
     },
     items,
     client_name: row.client_name,

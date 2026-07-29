@@ -1,6 +1,6 @@
 /**
- * Sprint C — switch Pix Automático (SSOT na assinatura).
- * Usado em Meu plano, checkout e /saas-pay.
+ * Switch de consentimento — débito automático via PIX (SSOT na assinatura).
+ * Usado em Meu plano, checkout, /saas-pay e /pay (CRM).
  */
 import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
@@ -23,17 +23,22 @@ type Props = {
   onToggle: (nextOn: boolean) => Promise<void> | void;
   /** Texto curto opcional sob o switch (linguagem de produto, sem jargão). */
   hint?: string | null;
+  /** Rótulo amigável (CRM6). Default: "Débito automático via PIX". */
+  label?: string | null;
 };
+
+/** Rótulo padrão de produto (evita jargão "Pix Automático" na UI). */
+export const PIX_AUTOMATIC_SWITCH_LABEL_PT = 'Débito automático via PIX';
 
 function statusLabelFor(state: PixAutomaticSwitchState): string {
   if (state.status === 'pending') {
-    return 'Quase lá — autorize no app do banco ao pagar o PIX';
+    return 'Quase lá — autorize no app do banco ao pagar este PIX';
   }
   if (state.has_active || state.status === 'active') {
     return 'Ativo — próximas cobranças podem ser debitadas automaticamente';
   }
   if (state.switch_on) {
-    return 'As próximas faturas do plano poderão ser cobradas automaticamente após esta autorização.';
+    return 'As próximas faturas poderão ser cobradas automaticamente após esta autorização.';
   }
   return 'Desligado — você paga cada fatura manualmente';
 }
@@ -44,12 +49,14 @@ export function PixAutomaticConsentSwitch({
   className,
   onToggle,
   hint,
+  label,
 }: Props) {
   const [busy, setBusy] = useState(false);
 
   if (!state?.available) return null;
 
   const checked = !!state.switch_on;
+  const title = (label ?? PIX_AUTOMATIC_SWITCH_LABEL_PT).trim() || PIX_AUTOMATIC_SWITCH_LABEL_PT;
 
   return (
     <div className={cn('flex flex-col gap-2', className)}>
@@ -57,7 +64,7 @@ export function PixAutomaticConsentSwitch({
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0 space-y-0.5">
             <Label htmlFor="pix-automatic-switch" className="text-sm font-medium">
-              Pix Automático
+              {title}
             </Label>
             <p className="text-xs text-muted-foreground leading-snug">{statusLabelFor(state)}</p>
           </div>

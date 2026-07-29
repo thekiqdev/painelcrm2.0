@@ -42,6 +42,28 @@ export async function getActiveAsaasConfigForSaas(): Promise<{ api_key: string; 
 }
 
 /**
+ * Retorna a config Asaas da conta do tenant (CRM / faturas de clientes).
+ */
+export async function getActiveAsaasConfigForCrm(
+  tenantId: string
+): Promise<{ api_key: string; env?: 'sandbox' | 'production' } | null> {
+  try {
+    const config = await getActiveConfig('crm', tenantId);
+    if (
+      config &&
+      config.gateway_key === 'asaas' &&
+      typeof config.credentials?.api_key === 'string' &&
+      config.credentials.api_key
+    ) {
+      return credentialsToAsaasConfig(config.credentials);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Invalida o cache (ex.: após salvar nova config).
  */
 export function invalidateGatewayCache(): void {

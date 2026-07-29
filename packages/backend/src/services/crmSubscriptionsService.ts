@@ -484,6 +484,24 @@ export async function cancelCrmCustomerSubscription(params: {
     );
   }
 
+  // CRM5 — cancela auth Pix Automático (fail-open); não bloqueia cancel da assinatura.
+  try {
+    const { cancelPixAutomaticAuthorizationForCrmSubscription } = await import(
+      './crm/crmPixAutomaticService.js'
+    );
+    await cancelPixAutomaticAuthorizationForCrmSubscription({
+      tenantId: params.tenantId,
+      subscriptionId: params.subscriptionId,
+      correlationId: `crm_cancel_sub:${params.subscriptionId}`,
+      reason:
+        params.mode === 'immediate'
+          ? 'subscription_cancelled_immediate'
+          : 'subscription_cancel_at_period_end',
+    });
+  } catch (e) {
+    console.warn('[cancelCrmCustomerSubscription] pix automatic cancel skipped', e);
+  }
+
   const updated = await getSubscriptionById(params.subscriptionId);
   return { ok: true, subscription: updated ?? undefined };
 }

@@ -151,6 +151,13 @@ export async function handleWebhook(
   }
 
   let entity = await findBillingOrCustomerInvoice(gatewayKey, referenceId);
+  /** CRM5 — ref avulsa antiga a cancelar após liquidar por conciliation (não cancela auth). */
+  let crmStandaloneRefToCancel: {
+    tenantId: string;
+    gatewayKey: string;
+    gatewayReferenceId: string;
+  } | null = null;
+
   if (!entity) {
     const meta =
       metadata && typeof metadata === 'object'
@@ -191,7 +198,48 @@ export async function handleWebhook(
           break;
         }
       } catch (e) {
-        console.error('[webhookCore] pix automatic conciliation lookup', e);
+        console.error('[webhookCore] pix automatic conciliation lookup (saas)', e);
+      }
+
+      // CRM5 / R1A — customer_invoices por conciliation / pixQrCodeId (subscription ou metadata).
+      try {
+        const { findCustomerInvoiceByPixAutomaticConciliation } = await import(
+          '../../../services/crm/crmPixAutomaticService.js'
+        );
+        const { getCustomerInvoiceById, updateCustomerInvoiceGatewayData } = await import(
+          '../../../services/customerInvoiceService.js'
+        );
+        const byConcCrm = await findCustomerInvoiceByPixAutomaticConciliation(conciliationId);
+        if (byConcCrm) {
+          const full = await getCustomerInvoiceById(byConcCrm.id);
+          const prevRef = (full?.gateway_reference_id ?? '').trim();
+          if (prevRef && prevRef !== referenceId) {
+            crmStandaloneRefToCancel = {
+              tenantId: byConcCrm.tenant_id,
+              gatewayKey: byConcCrm.gateway ?? gatewayKey,
+              gatewayReferenceId: prevRef,
+            };
+          }
+          await updateCustomerInvoiceGatewayData(byConcCrm.id, {
+            gateway: byConcCrm.gateway ?? gatewayKey,
+            payment_method: 'PIX',
+            gateway_reference_id: referenceId,
+            gateway_status: externalStatus,
+            gateway_metadata: {
+              pix_automatic_conciliation_id: conciliationId,
+              pix_automatic_journey: 'authorization',
+            },
+          });
+          entity = {
+            entityType: 'customer_invoice',
+            entityId: byConcCrm.id,
+            currentStatus: byConcCrm.status,
+            gateway: byConcCrm.gateway,
+          };
+          break;
+        }
+      } catch (e) {
+        console.error('[webhookCore] pix automatic conciliation lookup (crm)', e);
       }
     }
   }
@@ -218,6 +266,34 @@ export async function handleWebhook(
     paidAt: internalStatus === 'paid' ? new Date() : undefined,
     paymentMethod: paymentMethod ?? undefined,
   });
+
+  if (
+    internalStatus === 'paid' &&
+    entity.entityType === 'customer_invoice' &&
+    crmStandaloneRefToCancel
+  ) {
+    try {
+      const { deleteGatewayChargeIfSafe } = await import(
+        '../../../services/billingGatewayChargeService.js'
+      );
+      await deleteGatewayChargeIfSafe({
+        tenantId: crmStandaloneRefToCancel.tenantId,
+        gatewayKey: crmStandaloneRefToCancel.gatewayKey,
+        gatewayReferenceId: crmStandaloneRefToCancel.gatewayReferenceId,
+        gatewayStatusRaw: null,
+        billingType: 'crm',
+        ctx: {
+          invoice_id: entity.entityId,
+          reason: 'cycle_paid_cleanup',
+        },
+      });
+    } catch (e) {
+      console.warn(
+        '[webhookCore] cancel CRM standalone after pix auto paid',
+        e instanceof Error ? e.message : e
+      );
+    }
+  }
 
   await markPaymentEventProcessed({
     gateway: gatewayKey,

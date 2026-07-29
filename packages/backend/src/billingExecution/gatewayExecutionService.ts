@@ -87,6 +87,56 @@ export async function executeGatewayChargeForInvoice(
       return { status: null, paymentId: null, failed: false };
     }
 
+    // CRM4 — auth ACTIVE + janela 2–10 → instrução Pix Automático (sem charge avulso).
+    try {
+      const { isCrmPixAutomaticEnabled } = await import('../services/crm/crmPixAutomaticFlags.js');
+      if (await isCrmPixAutomaticEnabled()) {
+        const { getCrmPixAutomaticAuthBySubscriptionId } = await import(
+          '../services/crm/crmPixAutomaticStore.js'
+        );
+        const { createPixAutomaticInstructionForCustomerInvoice } = await import(
+          '../services/crm/crmPixAutomaticService.js'
+        );
+        const authRow = await getCrmPixAutomaticAuthBySubscriptionId(subscription.id);
+        if (authRow?.status === 'active' && authRow.authorization_id) {
+          const instr = await createPixAutomaticInstructionForCustomerInvoice({
+            invoiceId,
+            tenantId: subscription.tenant_id,
+            customerId,
+            correlationId: `crm_renew:${subscription.id}:${periodStartYmd}`,
+          });
+          if (instr.ok) {
+            logExecutionOrchestrator('GATEWAY_EXECUTION', 'complete', {
+              subscription_id: subscription.id,
+              invoice_id: invoiceId,
+              gateway_status: 'pix_automatic_instruction',
+              payment_id: instr.payment_id,
+            });
+            return {
+              status: 'PENDING',
+              paymentId: instr.payment_id,
+              failed: false,
+            };
+          }
+          // outside_instruction_window / auth issues / Asaas error → path avulso abaixo
+          if (instr.detail !== 'outside_instruction_window') {
+            logExecutionOrchestrator('GATEWAY_EXECUTION', 'pix_auto_instruction_fallback', {
+              subscription_id: subscription.id,
+              invoice_id: invoiceId,
+              detail: instr.detail,
+            });
+          }
+        }
+      }
+    } catch (pixErr) {
+      const msg = pixErr instanceof Error ? pixErr.message : String(pixErr);
+      billingLog('job', 'crm_pix_automatic_instruction_probe_error', {
+        invoice_id: invoiceId,
+        subscription_id: subscription.id,
+        error: msg.slice(0, 500),
+      });
+    }
+
     const chargeCustomerId = customerId;
     const renewalPm = resolveAutomaticInvoicePaymentMethod(
       subscription.default_payment_method as string | null,

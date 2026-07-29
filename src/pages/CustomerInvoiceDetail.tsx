@@ -30,6 +30,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import { customerInvoicesService } from "@/services/customerInvoices";
 import { apiClient } from "@/integrations/api/client";
 import type {
@@ -542,7 +543,37 @@ const CustomerInvoiceDetail = () => {
               <ArrowLeft className="mr-2 h-4 w-4" />
               Voltar
             </Button>
-            <CustomerInvoiceStatusBadge status={invoice.status} />
+            <div className="flex flex-wrap items-center gap-2">
+              <CustomerInvoiceStatusBadge status={invoice.status} />
+              {invoice.pix_automatic &&
+              (invoice.pix_automatic.requested ||
+                invoice.pix_automatic.status ||
+                invoice.pix_automatic.has_active) ? (
+                <Badge
+                  variant="outline"
+                  className={
+                    invoice.pix_automatic.has_active || invoice.pix_automatic.status === "active"
+                      ? "border-emerald-500/40 text-emerald-700 dark:text-emerald-400"
+                      : invoice.pix_automatic.status === "pending"
+                        ? "border-amber-500/40 text-amber-700 dark:text-amber-400"
+                        : invoice.pix_automatic.user_opted_off
+                          ? "text-muted-foreground"
+                          : "text-muted-foreground"
+                  }
+                >
+                  Pix Auto:{" "}
+                  {invoice.pix_automatic.has_active || invoice.pix_automatic.status === "active"
+                    ? "ativo"
+                    : invoice.pix_automatic.status === "pending"
+                      ? "aguardando autorização"
+                      : invoice.pix_automatic.user_opted_off
+                        ? "desligado"
+                        : invoice.pix_automatic.requested
+                          ? "solicitado"
+                          : invoice.pix_automatic.status ?? "—"}
+                </Badge>
+              ) : null}
+            </div>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
             <div className="space-y-1">

@@ -86,6 +86,8 @@ const createBodySchema = z.object({
   billing_mode: z.enum(['link', 'client']).optional(),
   cycles_unlimited: z.boolean().optional(),
   max_cycles: z.number().int().positive().nullable().optional(),
+  /** CRM2 — Pix Automático na criação (default false). */
+  pix_automatic: z.boolean().optional(),
 })
   .refine((data) => (data.items?.length ?? 0) > 0 || (data.amount_cents != null && data.amount_cents >= 1), {
     message: 'Informe amount_cents ou pelo menos um item',
@@ -119,10 +121,16 @@ export async function getCustomerInvoicesGatewayStatus(req: AuthRequest, res: Re
     const gatewayConfigured = await isCrmGatewayActiveForTenant(tenantId);
     const cfg = await getActiveConfig('crm', tenantId);
     const pm = paymentMethodSlugsFromConfigRow(cfg);
+    const { canOfferCrmPixAutomatic } = await import('../services/crm/crmPixAutomaticFlags.js');
+    const pixGate = await canOfferCrmPixAutomatic({
+      gatewayKey: cfg?.gateway_key ?? null,
+    });
     res.json({
       gatewayConfigured,
       enabled_payment_methods: pm.enabled_payment_methods,
       default_payment_method: pm.default_payment_method,
+      pix_automatic_available: pixGate.available,
+      pix_automatic_reason: pixGate.reason,
     });
   } catch (err) {
     console.error('[customerInvoicesController] getCustomerInvoicesGatewayStatus error:', err);
@@ -250,7 +258,45 @@ export async function getCustomerInvoiceById(req: AuthRequest, res: Response): P
       return;
     }
     const items = await getCustomerInvoiceItems(id, tenantId);
-    res.json({ ...invoice, items });
+    let pix_automatic: unknown = null;
+    const meta = invoice.gateway_metadata as Record<string, unknown> | null | undefined;
+    const requested =
+      meta?.pix_automatic_requested === true ||
+      meta?.pix_automatic_journey === 'authorization' ||
+      typeof meta?.pix_automatic_authorization_id === 'string';
+    if (invoice.subscription_id || requested) {
+      try {
+        const { getCrmPixAutomaticPreferenceForSubscription } = await import(
+          '../services/crm/crmPixAutomaticService.js'
+        );
+        const { isCrmPixAutomaticEnabled } = await import('../services/crm/crmPixAutomaticFlags.js');
+        const available = await isCrmPixAutomaticEnabled();
+        if (invoice.subscription_id) {
+          pix_automatic = {
+            ...(await getCrmPixAutomaticPreferenceForSubscription({
+              subscriptionId: invoice.subscription_id,
+            })),
+            requested: requested || undefined,
+          };
+        } else {
+          pix_automatic = {
+            available,
+            status: null,
+            has_active: false,
+            switch_on: false,
+            user_opted_off: false,
+            authorization_id: null,
+            qr_payload: null,
+            qr_image: null,
+            subscription_id: null,
+            requested: true,
+          };
+        }
+      } catch (e) {
+        console.warn('[customerInvoicesController] pix_automatic enrich', e);
+      }
+    }
+    res.json({ ...invoice, items, pix_automatic });
   } catch (err) {
     console.error('[customerInvoicesController] getCustomerInvoiceById error:', err);
     res.status(500).json({ error: 'Erro ao buscar fatura' });
@@ -335,6 +381,7 @@ export async function createCustomerInvoice(req: AuthRequest, res: Response): Pr
           project_id: parsed.data.project_id ?? null,
           cycles_unlimited: parsed.data.cycles_unlimited,
           max_cycles: parsed.data.max_cycles ?? null,
+          pix_automatic: parsed.data.pix_automatic === true,
         })
       : await createManualInvoice(tenantId, {
           client_id: parsed.data.client_id,
@@ -347,12 +394,14 @@ export async function createCustomerInvoice(req: AuthRequest, res: Response): Pr
           gateway_key: parsed.data.gateway_key ?? null,
           charge_id: parsed.data.charge_id ?? null,
           project_id: parsed.data.project_id ?? null,
+          pix_automatic: parsed.data.pix_automatic === true,
         });
 
     res.status(201).json({
       invoice: result.invoice,
       paymentUrls: result.paymentUrls ?? undefined,
       subscription_id: result.subscription_id ?? undefined,
+      pix_automatic: result.pix_automatic ?? undefined,
     });
   } catch (err) {
     if (

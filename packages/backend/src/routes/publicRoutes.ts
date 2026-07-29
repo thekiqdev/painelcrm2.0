@@ -8,6 +8,8 @@ import {
   postCompletePayByToken,
   postSwitchPaymentMethodByToken,
   postPayWithCardByToken,
+  postPublicCustomerInvoiceStartPixAutomatic,
+  postPublicCustomerInvoiceCancelPixAutomatic,
 } from '../controllers/publicCustomerInvoicesController.js';
 import {
   getPublicContractView,
@@ -186,6 +188,14 @@ router.post(
   '/customer-invoices/pay/:token/pay-with-card',
   payWithCardLimiter,
   postPayWithCardByToken
+);
+router.post(
+  '/customer-invoices/pay/:token/start-pix-automatic',
+  postPublicCustomerInvoiceStartPixAutomatic
+);
+router.post(
+  '/customer-invoices/pay/:token/cancel-pix-automatic',
+  postPublicCustomerInvoiceCancelPixAutomatic
 );
 
 const saasPublicReadLimiter = rateLimit({

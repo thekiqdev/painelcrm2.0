@@ -35,6 +35,11 @@ import { PublicTenantBrandMark } from "@/components/tenant/PublicTenantBrand";
 import { hasTenantLogoForTheme } from "@/utils/tenantBranding";
 import { useTheme } from "next-themes";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { PixAutomaticConsentSwitch } from "@/components/billing/PixAutomaticConsentSwitch";
+import {
+  resolvePixAutomaticSwitchOn,
+  usePixAutomaticAutoEnable,
+} from "@/lib/pixAutomaticCheckoutUx";
 
 export interface PayInvoiceResponse {
   invoice_number: string | null;
@@ -103,6 +108,20 @@ export interface PayInvoiceResponse {
     payment_status: string | null;
     paid_by_mercado_pago: boolean;
   };
+  /** CRM3 — Pix Automático (assinatura customer). */
+  pix_automatic?: {
+    available: boolean;
+    status: string | null;
+    has_active: boolean;
+    switch_on?: boolean;
+    user_opted_off?: boolean;
+    authorization_id?: string | null;
+    qr_payload?: string | null;
+    qr_image?: string | null;
+    requested?: boolean;
+    client_has_cpf?: boolean;
+    subscription_id?: string | null;
+  } | null;
 }
 
 const fetchPayData = (t: string) =>
@@ -256,6 +275,8 @@ const CustomerInvoicePay = () => {
   /** Mantém aviso pós-redirect do Checkout Pro (`?mp_return=…`), mesmo após limpar a URL. */
   const [mercadoPagoReturnHint, setMercadoPagoReturnHint] = useState(false);
   const mpReturnHandledRef = useRef(false);
+  const [startingPixAuto, setStartingPixAuto] = useState(false);
+  const [pixAutoUserOptedOff, setPixAutoUserOptedOff] = useState(false);
 
   useEffect(() => {
     const raw = searchParams.get("mp_return");
@@ -299,6 +320,7 @@ const CustomerInvoicePay = () => {
       setLoading(false);
       return;
     }
+    setPixAutoUserOptedOff(false);
     load(token);
   }, [token]);
 
@@ -467,7 +489,17 @@ const CustomerInvoicePay = () => {
         }
       );
       if (res.error) throw new Error(res.error);
-      if (res.data?.payment_urls) {
+      // Recarrega GET completo (CRM3: pix_automatic após finalize no complete).
+      const fresh = await fetchPayData(token);
+      if (fresh.data) {
+        mergePayData({
+          ...fresh.data,
+          needs_customer: false,
+          needs_customer_reason: null,
+          client_name: fresh.data.client_name || resolvedName,
+        });
+        toast.success("Dados salvos. Você já pode pagar.");
+      } else if (res.data?.payment_urls) {
         const urls = res.data.payment_urls;
         setData((prev) =>
           prev
@@ -593,6 +625,143 @@ const CustomerInvoicePay = () => {
       return preferredDefaultMethod;
     });
   }, [data, data?.active_attempt?.id, data?.active_attempt?.payment_method, data?.payment_method, switchingMethod]);
+
+  const applyPixUrlsFromResponse = useCallback(
+    (urls: { pix_copy_paste?: string | null; pix_qr_code?: string | null }) => {
+      if (!urls.pix_copy_paste && !urls.pix_qr_code) return;
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              payment_urls: {
+                ...prev.payment_urls,
+                ...(urls.pix_copy_paste
+                  ? { pixCopyPaste: urls.pix_copy_paste }
+                  : {}),
+                ...(urls.pix_qr_code ? { pixQrCode: urls.pix_qr_code } : {}),
+              },
+              has_payment_payload: true,
+            }
+          : prev
+      );
+      setSelectedMethod("PIX");
+    },
+    []
+  );
+
+  const handlePixAutomaticToggle = useCallback(
+    async (nextOn: boolean) => {
+      if (!token || startingPixAuto) return;
+      setStartingPixAuto(true);
+      try {
+        if (nextOn) {
+          setPixAutoUserOptedOff(false);
+          const res = await apiClient.post<{
+            ok?: boolean;
+            pix_copy_paste?: string | null;
+            pix_qr_code?: string | null;
+            status?: string;
+            error?: string;
+          }>(`/api/public/customer-invoices/pay/${encodeURIComponent(token)}/start-pix-automatic`, {});
+          if (res.error) {
+            toast.error(
+              res.error.includes("404") || res.error.includes("gate_")
+                ? "Não foi possível ativar o débito automático via PIX agora. Você pode pagar esta fatura normalmente."
+                : res.error
+            );
+            return;
+          }
+          toast.success("Débito automático preparado — pague o PIX para autorizar.");
+          const fresh = await fetchPayData(token);
+          if (fresh.data) mergePayData(fresh.data);
+          applyPixUrlsFromResponse({
+            pix_copy_paste: res.data?.pix_copy_paste,
+            pix_qr_code: res.data?.pix_qr_code,
+          });
+        } else {
+          setPixAutoUserOptedOff(true);
+          const res = await apiClient.post<{
+            ok?: boolean;
+            pix_copy_paste?: string | null;
+            pix_qr_code?: string | null;
+            error?: string;
+          }>(`/api/public/customer-invoices/pay/${encodeURIComponent(token)}/cancel-pix-automatic`, {});
+          if (res.error) {
+            toast.error(res.error);
+            return;
+          }
+          toast.success("Débito automático desligado — use o PIX avulso abaixo.");
+          const fresh = await fetchPayData(token);
+          if (fresh.data) mergePayData(fresh.data);
+          applyPixUrlsFromResponse({
+            pix_copy_paste: res.data?.pix_copy_paste,
+            pix_qr_code: res.data?.pix_qr_code,
+          });
+        }
+      } finally {
+        setStartingPixAuto(false);
+      }
+    },
+    [token, startingPixAuto, mergePayData, applyPixUrlsFromResponse]
+  );
+
+  const enablePixAutoOnce = useCallback(async (): Promise<boolean> => {
+    if (!token || data?.needs_customer) return false;
+    if (!data?.pix_automatic?.client_has_cpf) return false;
+    const res = await apiClient.post<{
+      ok?: boolean;
+      pix_copy_paste?: string | null;
+      pix_qr_code?: string | null;
+    }>(`/api/public/customer-invoices/pay/${encodeURIComponent(token)}/start-pix-automatic`, {});
+    if (res.error) {
+      console.warn("[CustomerInvoicePay] auto-enable Pix Automático", res.error);
+      return false;
+    }
+    const fresh = await fetchPayData(token);
+    if (fresh.data) mergePayData(fresh.data);
+    applyPixUrlsFromResponse({
+      pix_copy_paste: res.data?.pix_copy_paste,
+      pix_qr_code: res.data?.pix_qr_code,
+    });
+    return true;
+  }, [
+    token,
+    data?.needs_customer,
+    data?.pix_automatic?.client_has_cpf,
+    mergePayData,
+    applyPixUrlsFromResponse,
+  ]);
+
+  const pixAutoPref = data?.pix_automatic
+    ? {
+        available: data.pix_automatic.available,
+        switch_on:
+          data.pix_automatic.switch_on ??
+          (data.pix_automatic.has_active || data.pix_automatic.status === "pending"),
+        status: data.pix_automatic.status,
+        has_active: data.pix_automatic.has_active,
+        user_opted_off: data.pix_automatic.user_opted_off === true,
+      }
+    : null;
+  const pixAutoDefaultOn = Boolean(data?.pix_automatic?.requested);
+  const pixSwitchOn = resolvePixAutomaticSwitchOn({
+    pref: pixAutoPref,
+    userOptedOff: pixAutoUserOptedOff,
+    defaultOn: pixAutoDefaultOn,
+  });
+
+  const { enabling: pixAutoEnabling } = usePixAutomaticAutoEnable({
+    enabled: Boolean(
+      data &&
+        pixAutoDefaultOn &&
+        !data.needs_customer &&
+        ["pending", "waiting_payment", "overdue", "processing"].includes(data.status)
+    ),
+    pref: pixAutoPref,
+    userOptedOff: pixAutoUserOptedOff,
+    canEnable: Boolean(data?.pix_automatic?.available && data.pix_automatic.client_has_cpf),
+    enableFn: enablePixAutoOnce,
+  });
 
   if (loading) {
     return (
@@ -1066,6 +1235,31 @@ const CustomerInvoicePay = () => {
                     Escolha a forma de pagamento e use o código, QR ou link abaixo.
                   </p>
                 </div>
+
+                {data.pix_automatic?.available ? (
+                  <PixAutomaticConsentSwitch
+                    state={{
+                      available: true,
+                      switch_on: pixSwitchOn,
+                      status: data.pix_automatic.status,
+                      has_active: data.pix_automatic.has_active,
+                    }}
+                    disabled={
+                      startingPixAuto ||
+                      pixAutoEnabling ||
+                      !!switchingMethod ||
+                      !data.pix_automatic.client_has_cpf
+                    }
+                    onToggle={handlePixAutomaticToggle}
+                    hint={
+                      !data.pix_automatic.client_has_cpf
+                        ? "Informe o CPF/CNPJ do cliente para autorizar o débito automático via PIX."
+                        : pixSwitchOn
+                          ? "Ao pagar este PIX você autoriza cobranças futuras desta assinatura."
+                          : null
+                    }
+                  />
+                ) : null}
 
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                   {normalizedAllowedMethods.map((method) => {

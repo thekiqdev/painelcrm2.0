@@ -39,6 +39,8 @@ export interface CustomerInvoice {
   items?: CustomerInvoiceItem[];
   gateway_metadata?: Record<string, unknown> | null;
   gateway_status?: string | null;
+  /** CRM2 — preferência/auth Pix Automático (quando enriquecido no GET :id). */
+  pix_automatic?: CustomerInvoicePixAutomatic | null;
 }
 
 /** Item de linha para criação (opcional). Se enviado, amount_cents é calculado no backend. */
@@ -78,6 +80,8 @@ export interface CreateCustomerInvoiceBody {
   project_id?: string | null;
   /** Modo explícito para faturas públicas sem cliente. */
   billing_mode?: 'link' | 'client';
+  /** CRM2 — pedir Pix Automático na criação. */
+  pix_automatic?: boolean;
 }
 
 /** Item retornado no GET :id (customer_invoice_items). */
@@ -290,6 +294,24 @@ export interface CreateCustomerInvoiceResult {
     pixCopyPaste?: string;
   };
   subscription_id?: string;
+  pix_automatic?: {
+    requested: boolean;
+    started: boolean;
+    detail: string;
+    warning?: boolean;
+    authorization_id?: string | null;
+    status?: string | null;
+  };
+}
+
+export interface CustomerInvoicePixAutomatic {
+  available: boolean;
+  status: string | null;
+  has_active: boolean;
+  switch_on: boolean;
+  user_opted_off?: boolean;
+  authorization_id?: string | null;
+  requested?: boolean;
 }
 
 export interface ConfirmCustomerInvoiceManualPaymentResult {
@@ -346,6 +368,9 @@ export interface CustomerInvoicesGatewayStatus {
   gatewayConfigured: boolean;
   enabled_payment_methods: Array<'pix' | 'boleto' | 'credit_card'>;
   default_payment_method: 'pix' | 'boleto' | 'credit_card' | null;
+  /** CRM2 — flag crm.pix_automatic + capability Asaas. */
+  pix_automatic_available?: boolean;
+  pix_automatic_reason?: string;
 }
 
 /** Resposta do GET /api/customer-invoices/preconditions (Fase 3). */
@@ -428,6 +453,8 @@ export const customerInvoicesService = {
       gatewayConfigured: Boolean(r.gatewayConfigured ?? r.gateway_configured),
       enabled_payment_methods: enabledNorm.length > 0 ? (enabledNorm as CustomerInvoicesGatewayStatus['enabled_payment_methods']) : fallback,
       default_payment_method,
+      pix_automatic_available: r.pix_automatic_available === true,
+      pix_automatic_reason: typeof r.pix_automatic_reason === 'string' ? r.pix_automatic_reason : undefined,
     };
   },
 

@@ -462,5 +462,9 @@ export const MIGRATION_ORDER = [
   '301_billing2_pix_automatic_authorization.sql',
   /** Billing 2.0 S11 — multi_gateway flag + Stripe skeleton catalog */
   '302_billing2_multi_gateway.sql',
+  /** CRM0 — Pix Automático clientes do tenant (flag crm.pix_automatic default OFF) */
+  '303_crm_pix_automatic_platform_flag.sql',
+  /** CRM1 — índice pix auto em subscriptions type=customer */
+  '304_crm_pix_automatic_customer_index.sql',
   'create-admin-user.sql',
 ];

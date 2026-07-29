@@ -340,6 +340,8 @@ const CustomerInvoiceNew = ({
     "BOLETO",
     "CREDIT_CARD",
   ]);
+  const [pixAutomaticAvailable, setPixAutomaticAvailable] = useState(false);
+  const [pixAutomaticOn, setPixAutomaticOn] = useState(false);
   const [editReady, setEditReady] = useState(() => !isEditMode);
   /** null até carregar; invoice = cobrança atual; renewal = só próxima data (fatura paga). */
   const [editFlow, setEditFlow] = useState<"invoice" | "renewal" | null>(null);
@@ -476,12 +478,20 @@ const CustomerInvoiceNew = ({
         setCrmGatewayActive(s.gatewayConfigured);
         setGatewayEnabledMethods(invoiceMethodsFromGatewaySlugs(s.enabled_payment_methods));
         setGatewayMethodsLoaded(true);
+        setPixAutomaticAvailable(s.pix_automatic_available === true);
       })
       .catch(() => {
         setCrmGatewayActive(null);
         setGatewayMethodsLoaded(true);
+        setPixAutomaticAvailable(false);
       });
   }, []);
+
+  useEffect(() => {
+    if (!pixAutomaticAvailable || !allowedPaymentMethods.includes("PIX")) {
+      setPixAutomaticOn(false);
+    }
+  }, [pixAutomaticAvailable, allowedPaymentMethods]);
 
   /** Mantém “permitidos no link” alinhados ao gateway (e às alterações após carregar edição). */
   useEffect(() => {
@@ -962,6 +972,14 @@ const CustomerInvoiceNew = ({
         }
       }
       if (form.charge_id) body.charge_id = form.charge_id;
+      if (
+        !isEditMode &&
+        pixAutomaticOn &&
+        pixAutomaticAvailable &&
+        allowedPaymentMethods.includes("PIX")
+      ) {
+        body.pix_automatic = true;
+      }
       const result = await customerInvoicesService.create(body);
       if (queryProjectId) {
         await Promise.all([
@@ -969,15 +987,27 @@ const CustomerInvoiceNew = ({
           queryClient.invalidateQueries({ queryKey: ["project-financial-invoices", queryProjectId] }),
         ]);
       }
-      toast.success(
-        result.subscription_id
-          ? isInvoiceByLink
-            ? "Assinatura criada por link com a primeira fatura. Compartilhe o link para o cliente concluir os dados e pagar."
-            : "Assinatura criada com a primeira fatura. As próximas cobranças serão geradas automaticamente."
-          : isInvoiceByLink
-            ? "Fatura por link criada. Compartilhe o link de pagamento para o cliente preencher os dados e pagar."
-            : "Fatura criada com sucesso"
-      );
+      if (result.pix_automatic?.requested && result.pix_automatic.warning) {
+        toast.warning(
+          "Fatura criada. Pix Automático não pôde ser iniciado — o cliente pode pagar o PIX avulso."
+        );
+      } else if (result.pix_automatic?.started) {
+        toast.success(
+          result.subscription_id
+            ? "Assinatura criada com Pix Automático. O cliente autoriza ao pagar o primeiro PIX."
+            : "Fatura criada com Pix Automático. O cliente autoriza ao pagar o PIX."
+        );
+      } else {
+        toast.success(
+          result.subscription_id
+            ? isInvoiceByLink
+              ? "Assinatura criada por link com a primeira fatura. Compartilhe o link para o cliente concluir os dados e pagar."
+              : "Assinatura criada com a primeira fatura. As próximas cobranças serão geradas automaticamente."
+            : isInvoiceByLink
+              ? "Fatura por link criada. Compartilhe o link de pagamento para o cliente preencher os dados e pagar."
+              : "Fatura criada com sucesso"
+        );
+      }
       if (result.invoice?.id) {
         if (embedded) {
           onCreated?.(result.invoice.id);
@@ -2785,6 +2815,27 @@ const CustomerInvoiceNew = ({
                       </p>
                     )}
                   </div>
+                  {!isEditMode &&
+                    pixAutomaticAvailable &&
+                    allowedPaymentMethods.includes("PIX") && (
+                      <div className="mt-4 flex items-start justify-between gap-3 rounded-md border bg-muted/30 px-3 py-2.5">
+                        <div className="min-w-0 space-y-0.5">
+                          <Label htmlFor="crm_pix_automatic" className="text-sm font-medium">
+                            Débito automático via PIX
+                          </Label>
+                          <p className="text-xs text-muted-foreground leading-snug">
+                            Na criação, gera o QR de autorização. O cliente autoriza ao pagar o
+                            primeiro PIX; cobranças seguintes podem ser debitadas automaticamente.
+                          </p>
+                        </div>
+                        <Switch
+                          id="crm_pix_automatic"
+                          checked={pixAutomaticOn}
+                          onCheckedChange={(v) => setPixAutomaticOn(v === true)}
+                          className="shrink-0"
+                        />
+                      </div>
+                    )}
                   {showGatewaySelect && !isEditMode && (
                     <div className="mt-4">
                       <Label htmlFor="gateway_key">Gateway (opcional)</Label>

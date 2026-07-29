@@ -3,6 +3,9 @@ import { pool } from '../utils/db.js';
 import { saveTenantConfig, getConfigForTest, updateConnectionTestResult } from './paymentGatewayConfigService.js';
 import { testConnection } from '../modules/gateways/asaas/services/asaasService.js';
 import { createWebhook, listWebhooks } from '../modules/gateways/asaas/client/asaasClient.js';
+import {
+  ASAAS_PIX_AUTOMATIC_WEBHOOK_EVENT_NAMES,
+} from '../modules/gateways/asaas/asaasEvents.js';
 
 export type AsaasEnvironment = 'sandbox' | 'production';
 
@@ -22,6 +25,7 @@ export type AsaasIntegrationStatusDto = {
   gateway_status?: string | null;
 };
 
+/** PAYMENT_* + PIX_AUTOMATIC_* (CRM0 / SaaS) — lista única de provisionamento. */
 const ASAAS_WEBHOOK_EVENTS = [
   'PAYMENT_CREATED',
   'PAYMENT_UPDATED',
@@ -35,6 +39,7 @@ const ASAAS_WEBHOOK_EVENTS = [
   'PAYMENT_CHARGEBACK_REQUESTED',
   'PAYMENT_CHARGEBACK_DISPUTE',
   'PAYMENT_AWAITING_CHARGEBACK_REVERSAL',
+  ...ASAAS_PIX_AUTOMATIC_WEBHOOK_EVENT_NAMES,
 ] as const;
 
 function normalizeEnvironment(raw: unknown): AsaasEnvironment {
@@ -342,6 +347,15 @@ export async function connectAsaasIntegration(params: {
           },
           asaasConfig,
         );
+    if (candidate) {
+      // Reuso por URL/nome não atualiza a lista de eventos na Asaas.
+      // Tenants existentes precisam de POST …/asaas/recreate-webhook (CRM0 G2).
+      console.warn('[asaas.connect] webhook reused; recreate-webhook to subscribe PIX_AUTOMATIC_*', {
+        tenant_id: params.tenantId,
+        webhook_id: candidate.id,
+        expected_events: ASAAS_WEBHOOK_EVENTS.length,
+      });
+    }
     await updateWebhookFields(params.tenantId, {
       webhookId: typeof created.id === 'string' ? created.id : null,
       webhookAuthToken:
