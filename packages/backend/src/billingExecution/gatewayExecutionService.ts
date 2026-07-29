@@ -126,6 +126,29 @@ export async function executeGatewayChargeForInvoice(
               detail: instr.detail,
             });
           }
+        } else if (authRow?.status === 'pending' && authRow.authorization_id) {
+          // Assinatura já com Pix Auto ligado (pending): próxima fatura herda metadata/QR.
+          const { startPixAutomaticAuthorizationForCustomerInvoice } = await import(
+            '../services/crm/crmPixAutomaticService.js'
+          );
+          const started = await startPixAutomaticAuthorizationForCustomerInvoice({
+            invoiceId,
+            tenantId: subscription.tenant_id,
+            correlationId: `crm_renew_pending:${subscription.id}:${periodStartYmd}`,
+          });
+          if (started.ok) {
+            logExecutionOrchestrator('GATEWAY_EXECUTION', 'complete', {
+              subscription_id: subscription.id,
+              invoice_id: invoiceId,
+              gateway_status: 'pix_automatic_pending_propagated',
+              authorization_id: started.authorization_id,
+            });
+            return {
+              status: 'PENDING',
+              paymentId: null,
+              failed: false,
+            };
+          }
         }
       }
     } catch (pixErr) {

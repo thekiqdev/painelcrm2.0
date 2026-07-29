@@ -598,3 +598,87 @@ export async function postCrmSubscriptionManualReprocessHandler(req: AuthRequest
     res.status(500).json({ error: 'Erro no reprocessamento manual' });
   }
 }
+
+const pixAutomaticEnableBody = z.object({
+  invoice_id: z.string().uuid().optional().nullable(),
+});
+
+/** CRM7 — liga débito automático via PIX na assinatura (precisa fatura aberta). */
+export async function postCrmSubscriptionPixAutomaticEnable(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Empresa não identificada' });
+      return;
+    }
+    if (!(await requirePermKey(req, 'billing.edit_subscription', res))) return;
+    const { id } = req.params;
+    const parsed = pixAutomaticEnableBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Dados inválidos', details: parsed.error.flatten() });
+      return;
+    }
+    const { enablePixAutomaticForCrmSubscription } = await import(
+      '../services/crm/crmPixAutomaticService.js'
+    );
+    const result = await enablePixAutomaticForCrmSubscription({
+      tenantId,
+      subscriptionId: id,
+      invoiceId: parsed.data.invoice_id ?? null,
+      correlationId: `crm_sub_enable:${id}`,
+    });
+    if (!result.ok) {
+      const status =
+        result.detail === 'needs_open_invoice'
+          ? 409
+          : result.detail === 'flag_crm_pix_automatic_off' || result.detail.startsWith('gate_')
+            ? 403
+            : result.detail === 'auth_already_active'
+              ? 409
+              : 400;
+      res.status(status).json({ ok: false, error: result.detail, code: result.detail });
+      return;
+    }
+    res.json({
+      ok: true,
+      authorization_id: result.authorization_id,
+      status: result.status,
+      pix_copy_paste: result.qr_payload,
+      pix_qr_code: result.qr_image,
+      invoice_id: result.invoice_id,
+    });
+  } catch (e) {
+    console.error('[crmSubscriptionsController] pix-automatic enable', e);
+    res.status(500).json({ error: 'Erro ao ativar débito automático via PIX' });
+  }
+}
+
+/** CRM7 — desliga / opt-out Pix Automático na assinatura. */
+export async function postCrmSubscriptionPixAutomaticDisable(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(401).json({ error: 'Empresa não identificada' });
+      return;
+    }
+    if (!(await requirePermKey(req, 'billing.edit_subscription', res))) return;
+    const { id } = req.params;
+    const { cancelPixAutomaticAuthorizationForCrmSubscription } = await import(
+      '../services/crm/crmPixAutomaticService.js'
+    );
+    const result = await cancelPixAutomaticAuthorizationForCrmSubscription({
+      tenantId,
+      subscriptionId: id,
+      correlationId: `crm_sub_disable:${id}`,
+      reason: 'operator_switch_off',
+    });
+    if (!result.ok) {
+      res.status(400).json({ ok: false, error: result.detail, code: result.detail });
+      return;
+    }
+    res.json({ ok: true, detail: result.detail });
+  } catch (e) {
+    console.error('[crmSubscriptionsController] pix-automatic disable', e);
+    res.status(500).json({ error: 'Erro ao desativar débito automático via PIX' });
+  }
+}

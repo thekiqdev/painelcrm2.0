@@ -171,6 +171,22 @@ Dependências: CRM0 → CRM1 → CRM2∥CRM3 → CRM4 → CRM5 → CRM6 (CRM2 e 
 
 ---
 
+## CRM7 — Assinaturas existentes (painel)
+
+**Objetivo:** operador controla débito automático na assinatura já criada (não só na criação da fatura).
+
+| Entrega | Critério |
+|---------|----------|
+| GET detalhe inclui `pix_automatic` (+ badge) | Status na assinatura |
+| `POST …/:id/pix-automatic/enable` / `disable` | Espelho Meu Plano; enable exige fatura aberta |
+| Switch em Configurações da assinatura | ✅ OFF no legado; ON só SSOT `pending`/`active` |
+| Sem fatura aberta | 409 `needs_open_invoice` + toast (gerar/abrir fatura) |
+| Fix divergência default ON cosmético | ✅ removido auto-enable + `default_on: false` |
+
+**Closeout:** [`CRM7_CLOSEOUT.md`](./CRM7_CLOSEOUT.md)
+
+---
+
 ## Ordem sugerida de calendário (indicativa)
 
 | Sprint | Foco | Dependência |
@@ -182,6 +198,7 @@ Dependências: CRM0 → CRM1 → CRM2∥CRM3 → CRM4 → CRM5 → CRM6 (CRM2 e 
 | CRM4 | Worker | CRM1 + auth active path |
 | CRM5 | Webhooks | CRM2/3 |
 | CRM6 | Ops/QA | CRM2–5 |
+| CRM7 | Assinaturas existentes (painel) | CRM1–5 |
 
 ---
 

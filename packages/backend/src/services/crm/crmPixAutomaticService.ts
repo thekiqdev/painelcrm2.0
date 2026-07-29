@@ -419,6 +419,23 @@ export async function startPixAutomaticAuthorizationForCustomerInvoice(opts: {
     return { ok: false, detail: 'auth_already_active' };
   }
   if (existing?.status === 'pending' && existing.qr_payload && existing.authorization_id) {
+    // Propaga SSOT da assinatura para esta fatura (próximo ciclo / enable sem recriar auth).
+    await updateCustomerInvoiceGatewayData(opts.invoiceId, {
+      gateway: invLinked.gateway ?? 'asaas',
+      payment_method: invLinked.payment_method ?? 'PIX',
+      gateway_reference_id: invLinked.gateway_reference_id ?? null,
+      gateway_status: invLinked.gateway_status ?? null,
+      gateway_metadata: {
+        pix_automatic_requested: true,
+        pix_automatic_authorization_id: existing.authorization_id,
+        pix_automatic_conciliation_id: existing.conciliation_id ?? null,
+        pix_automatic_journey: 'authorization',
+        pix_copy_paste: existing.qr_payload,
+        pix_qr_code: existing.qr_image,
+        pixCopyPaste: existing.qr_payload,
+        pixQrCode: existing.qr_image,
+      },
+    });
     return {
       ok: true,
       authorization_id: existing.authorization_id,
@@ -695,34 +712,144 @@ export async function cancelPixAutomaticAuthorizationForCustomerInvoice(opts: {
 
 export async function getCrmPixAutomaticPreferenceForSubscription(opts: {
   subscriptionId: string;
+  tenantId?: string | null;
+  gatewayKey?: string | null;
 }): Promise<{
   available: boolean;
   status: PixAutomaticAuthStatus | null;
   has_active: boolean;
   switch_on: boolean;
   user_opted_off: boolean;
+  /** CRM7 — sempre false; switch ON só com pending/active (SSOT). */
+  default_on: boolean;
   authorization_id: string | null;
   qr_payload: string | null;
   qr_image: string | null;
   subscription_id: string | null;
+  open_invoice_id: string | null;
 }> {
-  const available = await isCrmPixAutomaticEnabled();
   const auth = await getCrmPixAutomaticAuthBySubscriptionId(opts.subscriptionId);
   const pub = toPublicPixAutomaticStatus(auth);
   const status = pub?.status ?? null;
   const has_active = pub?.has_active ?? false;
   const user_opted_off = isPixAutomaticUserOptedOffStatus(status);
   const switch_on = !user_opted_off && (has_active || status === 'pending');
+  const gwKey = opts.gatewayKey ?? auth?.gateway ?? 'asaas';
+  const offer = await canOfferCrmPixAutomatic({ gatewayKey: gwKey });
+  const available = offer.available || Boolean(auth?.authorization_id || status);
+
+  let open_invoice_id: string | null = null;
+  if (opts.tenantId) {
+    const open = await findOpenCustomerInvoiceForSubscription({
+      tenantId: opts.tenantId,
+      subscriptionId: opts.subscriptionId,
+    });
+    open_invoice_id = open?.id ?? null;
+  }
+
   return {
     available,
     status,
     has_active,
     switch_on,
     user_opted_off,
+    // SSOT: nunca default ON cosmético — só pending/active ligam o switch.
+    default_on: false,
     authorization_id: auth?.authorization_id ?? null,
     qr_payload: pub?.qr_payload ?? null,
     qr_image: pub?.qr_image ?? null,
-    subscription_id: auth?.subscription_id ?? null,
+    subscription_id: auth?.subscription_id ?? opts.subscriptionId,
+    open_invoice_id,
+  };
+}
+
+export async function findOpenCustomerInvoiceForSubscription(opts: {
+  tenantId: string;
+  subscriptionId: string;
+}): Promise<{ id: string; status: string } | null> {
+  const r = await pool.query<{ id: string; status: string }>(
+    `SELECT id, status
+     FROM customer_invoices
+     WHERE subscription_id = $1::uuid
+       AND tenant_id = $2::uuid
+       AND status IN ('pending','waiting_payment','processing','overdue')
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [opts.subscriptionId, opts.tenantId]
+  );
+  return r.rows[0] ?? null;
+}
+
+/**
+ * CRM7 — enable a partir da assinatura (espelho Meu Plano / enablePixAutomaticForTenant).
+ * Sem fatura aberta → needs_open_invoice (não cria fatura; não grava ON solto).
+ */
+export async function enablePixAutomaticForCrmSubscription(opts: {
+  tenantId: string;
+  subscriptionId: string;
+  invoiceId?: string | null;
+  correlationId?: string | null;
+}): Promise<
+  | {
+      ok: true;
+      authorization_id: string;
+      status: PixAutomaticAuthStatus;
+      qr_payload: string | null;
+      qr_image: string | null;
+      invoice_id: string;
+    }
+  | { ok: false; detail: string }
+> {
+  if (!(await isCrmPixAutomaticEnabled())) {
+    return { ok: false, detail: 'flag_crm_pix_automatic_off' };
+  }
+
+  const sub = await getCrmPixAutomaticAuthBySubscriptionId(opts.subscriptionId);
+  // Valida subscription existe e é customer via store row ou query leve
+  const subRow = await pool.query<{ id: string; tenant_id: string; type: string; gateway: string | null; status: string }>(
+    `SELECT id::text AS id, tenant_id::text AS tenant_id, type, gateway, status
+     FROM subscriptions
+     WHERE id = $1::uuid
+     LIMIT 1`,
+    [opts.subscriptionId]
+  );
+  const row = subRow.rows[0];
+  if (!row || row.tenant_id !== opts.tenantId || row.type !== 'customer') {
+    return { ok: false, detail: 'subscription_not_found' };
+  }
+  if (row.status !== 'active' && row.status !== 'trialing') {
+    return { ok: false, detail: `subscription_status_${row.status}` };
+  }
+
+  if (sub?.status === 'active' && sub.authorization_id) {
+    return { ok: false, detail: 'auth_already_active' };
+  }
+
+  let invoiceId = opts.invoiceId?.trim() || null;
+  if (!invoiceId) {
+    const open = await findOpenCustomerInvoiceForSubscription({
+      tenantId: opts.tenantId,
+      subscriptionId: opts.subscriptionId,
+    });
+    invoiceId = open?.id ?? null;
+  }
+  if (!invoiceId) {
+    return { ok: false, detail: 'needs_open_invoice' };
+  }
+
+  const started = await startPixAutomaticAuthorizationForCustomerInvoice({
+    invoiceId,
+    tenantId: opts.tenantId,
+    correlationId: opts.correlationId ?? `crm_pix_auto_enable:${opts.subscriptionId}`,
+  });
+  if (!started.ok) return started;
+  return {
+    ok: true,
+    authorization_id: started.authorization_id,
+    status: started.status,
+    qr_payload: started.qr_payload,
+    qr_image: started.qr_image,
+    invoice_id: invoiceId,
   };
 }
 

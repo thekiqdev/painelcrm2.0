@@ -8,6 +8,7 @@ import { isValidEntityId } from '@/lib/entityNavigation';
 import type { CrmSubscriptionDetailPayload } from '@/services/crmSubscriptions';
 import { cn } from '@/lib/utils';
 import { useFinancialEventStore } from './FinancialEventStoreContext';
+import { PIX_AUTOMATIC_SWITCH_LABEL_PT } from '@/components/billing/PixAutomaticConsentSwitch';
 
 type Props = {
   detail: CrmSubscriptionDetailPayload;
@@ -70,11 +71,34 @@ export function FinancialHeader({ detail, className }: Props) {
         </div>
 
         <div className="border-t pt-4 space-y-4">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span aria-hidden>{data.statusEmoji}</span>
             <span className="font-medium" role="status">
               {data.statusLabel}
             </span>
+            {detail.pix_automatic?.available ? (
+              <span
+                className={cn(
+                  "inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium",
+                  detail.pix_automatic.has_active || detail.pix_automatic.status === "active"
+                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200"
+                    : detail.pix_automatic.status === "pending"
+                      ? "border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-100"
+                      : detail.pix_automatic.user_opted_off
+                        ? "border-border bg-muted/40 text-muted-foreground"
+                        : "border-border bg-muted/30 text-muted-foreground"
+                )}
+                title={PIX_AUTOMATIC_SWITCH_LABEL_PT}
+              >
+                {detail.pix_automatic.has_active || detail.pix_automatic.status === "active"
+                  ? "Débito PIX ativo"
+                  : detail.pix_automatic.status === "pending"
+                    ? "Débito PIX pendente"
+                    : detail.pix_automatic.user_opted_off
+                      ? "Débito PIX desligado"
+                      : "Débito PIX disponível"}
+              </span>
+            ) : null}
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">

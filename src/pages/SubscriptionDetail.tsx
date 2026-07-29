@@ -65,6 +65,11 @@ import {
 } from "@/lib/recurringGenerationPreview";
 import { SubscriptionContractHistoryPanel } from "@/components/subscriptions/SubscriptionContractHistoryPanel";
 import { cn } from "@/lib/utils";
+import {
+  PixAutomaticConsentSwitch,
+  PIX_AUTOMATIC_SWITCH_LABEL_PT,
+} from "@/components/billing/PixAutomaticConsentSwitch";
+import { resolvePixAutomaticSwitchOn } from "@/lib/pixAutomaticCheckoutUx";
 
 function generationSummary(tb: CrmSubscriptionDetailPayload["tenant_billing"]): string {
   const t = tb.recurring_generate_time_local?.trim().slice(0, 5);
@@ -135,6 +140,8 @@ const SubscriptionDetail = () => {
   const [generatingBilling, setGeneratingBilling] = useState(false);
   const [generatingRowId, setGeneratingRowId] = useState<string | null>(null);
   const [repairingRowId, setRepairingRowId] = useState<string | null>(null);
+  const [startingPixAuto, setStartingPixAuto] = useState(false);
+  const [pixAutoUserOptedOff, setPixAutoUserOptedOff] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -158,6 +165,10 @@ const SubscriptionDetail = () => {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    setPixAutoUserOptedOff(false);
+  }, [id]);
 
   useEffect(() => {
     if (!detail) return;
@@ -415,6 +426,67 @@ const SubscriptionDetail = () => {
     }
   };
 
+  const pixAutoPref = detail?.pix_automatic
+    ? {
+        available: detail.pix_automatic.available,
+        switch_on:
+          detail.pix_automatic.switch_on ??
+          (detail.pix_automatic.has_active || detail.pix_automatic.status === "pending"),
+        status: detail.pix_automatic.status,
+        has_active: detail.pix_automatic.has_active,
+        user_opted_off: detail.pix_automatic.user_opted_off === true,
+      }
+    : null;
+
+  // SSOT: OFF para legado (status null); ON só pending/active — sem default cosmético.
+  const pixSwitchOn = resolvePixAutomaticSwitchOn({
+    pref: pixAutoPref,
+    userOptedOff: pixAutoUserOptedOff,
+    defaultOn: false,
+  });
+
+  const handlePixAutomaticToggle = useCallback(
+    async (nextOn: boolean) => {
+      if (!id || startingPixAuto) return;
+      setStartingPixAuto(true);
+      try {
+        if (nextOn) {
+          setPixAutoUserOptedOff(false);
+          const res = await crmSubscriptionsService.enablePixAutomatic(id, {
+            invoice_id: detail?.pix_automatic?.open_invoice_id ?? null,
+          });
+          if (res.error) {
+            if (res.code === "needs_open_invoice") {
+              toast.message(
+                "Gere ou abra a fatura do ciclo para autorizar o débito automático via PIX."
+              );
+            } else {
+              toast.error(res.error);
+            }
+            return;
+          }
+          toast.success("Débito automático preparado — o cliente autoriza ao pagar o PIX da fatura.");
+          await load();
+          if (res.data?.invoice_id) {
+            navigate(`/customer-invoices/${encodeURIComponent(res.data.invoice_id)}`);
+          }
+        } else {
+          setPixAutoUserOptedOff(true);
+          const res = await crmSubscriptionsService.disablePixAutomatic(id);
+          if (res.error) {
+            toast.error(res.error);
+            return;
+          }
+          toast.success("Débito automático desligado para as próximas cobranças.");
+          await load();
+        }
+      } finally {
+        setStartingPixAuto(false);
+      }
+    },
+    [id, startingPixAuto, detail?.pix_automatic?.open_invoice_id, load, navigate]
+  );
+
   if (loading || !detail) {
     return <SubscriptionExperienceSkeleton />;
   }
@@ -655,6 +727,39 @@ const SubscriptionDetail = () => {
                       {cyclesSaving ? "A guardar…" : "Guardar ciclos"}
                     </Button>
                   </div>
+
+                  {detail.pix_automatic?.available ? (
+                    <div className="rounded-lg border bg-muted/20 p-4 space-y-3 max-w-xl">
+                      <div>
+                        <p className="text-sm font-medium text-foreground">{PIX_AUTOMATIC_SWITCH_LABEL_PT}</p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Desligado por padrão em assinaturas antigas. Ao ligar (com fatura aberta), a
+                          autorização fica na assinatura e as próximas faturas seguem o mesmo estado.
+                        </p>
+                      </div>
+                      <PixAutomaticConsentSwitch
+                        state={{
+                          available: true,
+                          switch_on: pixSwitchOn,
+                          status: detail.pix_automatic.status,
+                          has_active: detail.pix_automatic.has_active,
+                        }}
+                        disabled={
+                          !canEditSubscription || s.status !== "active" || startingPixAuto
+                        }
+                        onToggle={handlePixAutomaticToggle}
+                        hint={
+                          !detail.pix_automatic.open_invoice_id &&
+                          !detail.pix_automatic.has_active &&
+                          detail.pix_automatic.status !== "pending"
+                            ? "Sem fatura aberta: use «Gerar próxima cobrança» e ligue de novo, ou abra o link de pagamento."
+                            : detail.pix_automatic.status === "pending"
+                              ? "Aguardando o cliente autorizar no app do banco ao pagar o PIX."
+                              : null
+                        }
+                      />
+                    </div>
+                  ) : null}
 
                   {id ? (
                     <SubscriptionContractHistoryPanel subscriptionId={id} refreshKey={contractHistoryRefreshKey} />

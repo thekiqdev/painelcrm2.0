@@ -18,6 +18,8 @@ import {
   postCrmSubscriptionManualRenewHandler,
   postCrmSubscriptionManualReprocessHandler,
   postCrmSubscriptionRepairCycleInvariantsHandler,
+  postCrmSubscriptionPixAutomaticEnable,
+  postCrmSubscriptionPixAutomaticDisable,
 } from '../controllers/crmSubscriptionsController.js';
 
 const router = Router();
@@ -40,5 +42,7 @@ router.post('/:id/reprocess', postCrmSubscriptionReprocessHandler);
 router.post('/:id/manual-renew', postCrmSubscriptionManualRenewHandler);
 router.post('/:id/manual-reprocess', postCrmSubscriptionManualReprocessHandler);
 router.post('/:id/repair-cycle-invariants', postCrmSubscriptionRepairCycleInvariantsHandler);
+router.post('/:id/pix-automatic/enable', postCrmSubscriptionPixAutomaticEnable);
+router.post('/:id/pix-automatic/disable', postCrmSubscriptionPixAutomaticDisable);
 
 export default router;

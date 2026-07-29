@@ -132,6 +132,20 @@ export interface CrmSubscriptionDetail {
   recent_jobs: CrmSubscriptionJobRow[];
   pending_contract: CrmPendingContractMetadata | null;
   runtime_validation: BillingRuntimeValidationResult;
+  /** CRM7 — preferência / status Pix Automático na assinatura. */
+  pix_automatic?: {
+    available: boolean;
+    status: string | null;
+    has_active: boolean;
+    switch_on: boolean;
+    user_opted_off: boolean;
+    default_on: boolean;
+    authorization_id: string | null;
+    qr_payload: string | null;
+    qr_image: string | null;
+    subscription_id: string | null;
+    open_invoice_id: string | null;
+  } | null;
 }
 
 function billingIntervalLabelPt(interval: string): string {
@@ -423,7 +437,7 @@ export async function getCrmSubscriptionDetail(
   });
   const invoices = mapInvoicesWire(invRows, cycles);
 
-  return {
+  const detail: CrmSubscriptionDetail = {
     subscription: sub,
     client_name: clientRow.rows[0]?.name ?? null,
     plan_label: planLabel,
@@ -441,6 +455,22 @@ export async function getCrmSubscriptionDetail(
     pending_contract,
     runtime_validation,
   };
+
+  try {
+    const { getCrmPixAutomaticPreferenceForSubscription } = await import(
+      './crm/crmPixAutomaticService.js'
+    );
+    detail.pix_automatic = await getCrmPixAutomaticPreferenceForSubscription({
+      subscriptionId,
+      tenantId,
+      gatewayKey: sub.gateway,
+    });
+  } catch (e) {
+    console.warn('[getCrmSubscriptionDetail] pix_automatic enrich', e);
+    detail.pix_automatic = null;
+  }
+
+  return detail;
 }
 
 /** Expõe rótulos PT para a UI sem duplicar mapas no front. */
