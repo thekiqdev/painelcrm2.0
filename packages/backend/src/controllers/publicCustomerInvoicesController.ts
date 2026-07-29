@@ -355,7 +355,7 @@ export async function getPayByToken(req: Request, res: Response): Promise<void> 
           !user_opted_off &&
           (has_active ||
             status === 'pending' ||
-            (requested && (status == null || status === '') && !user_opted_off));
+            (requested && status == null && !user_opted_off));
         pix_automatic = {
           available: offer.available || hasAuthState,
           status,

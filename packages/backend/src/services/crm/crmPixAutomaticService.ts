@@ -464,11 +464,13 @@ export async function startPixAutomaticAuthorizationForCustomerInvoice(opts: {
   const client = clientRow.rows[0];
   if (!client) return { ok: false, detail: 'client_not_found' };
   if (!client.cpf_cnpj?.trim()) return { ok: false, detail: 'missing_cpf_cnpj' };
+  const clientId = invLinked.client_id;
+  if (!clientId) return { ok: false, detail: 'missing_client_id' };
 
   const customerId = await ensurePaymentCustomerForCrmClient(
     tenantId,
     gwKey,
-    invLinked.client_id,
+    clientId,
     gateway,
     {
       name: client.name,
@@ -1012,7 +1014,8 @@ export async function createPixAutomaticInstructionForCustomerInvoice(opts: {
 
   let customerId = opts.customerId?.trim() || null;
   if (!customerId) {
-    if (!inv.client_id) return { ok: false, detail: 'missing_client_id' };
+    const invoiceClientId = inv.client_id;
+    if (!invoiceClientId) return { ok: false, detail: 'missing_client_id' };
     const clientRow = await pool.query<{
       name: string;
       email: string | null;
@@ -1023,7 +1026,7 @@ export async function createPixAutomaticInstructionForCustomerInvoice(opts: {
        FROM clients c
        INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $2
        WHERE c.id = $1`,
-      [inv.client_id, inv.tenant_id]
+      [invoiceClientId, inv.tenant_id]
     );
     const client = clientRow.rows[0];
     if (!client) return { ok: false, detail: 'client_not_found' };
@@ -1031,7 +1034,7 @@ export async function createPixAutomaticInstructionForCustomerInvoice(opts: {
     customerId = await ensurePaymentCustomerForCrmClient(
       inv.tenant_id,
       gwKey,
-      inv.client_id,
+      invoiceClientId,
       gateway,
       {
         name: client.name,
