@@ -79,10 +79,12 @@ export async function findTenantBillingByPixAutomaticConciliation(
   conciliationId: string
 ): Promise<{ id: string; status: string; gateway: string | null } | null> {
   const r = await pool.query<{ id: string; status: string; gateway: string | null }>(
-    `SELECT id, status, gateway
-     FROM tenant_billing
-     WHERE gateway_metadata->>'pix_automatic_conciliation_id' = $1
-     ORDER BY created_at DESC
+    `SELECT tb.id, tb.status, tb.gateway
+     FROM tenant_billing tb
+     LEFT JOIN subscriptions s ON s.id = tb.subscription_id
+     WHERE tb.gateway_metadata->>'pix_automatic_conciliation_id' = $1
+        OR s.pix_automatic_conciliation_id = $1
+     ORDER BY tb.created_at DESC
      LIMIT 1`,
     [conciliationId]
   );
@@ -506,35 +508,61 @@ export async function handlePixAutomaticWebhookEvent(opts: {
       payload: { authorization_id: authorizationId, status: nextStatus },
     });
 
-    // Liga payment id à fatura se o payload trouxe payment + conciliation
+    // Jornada 3: AUTHORIZATION_ACTIVATED ⇒ 1º pagamento já liquidou.
+    // O PAYMENT_RECEIVED auto-gerado pelo Asaas costuma vir sem externalReference e
+    // com paymentId novo — não casa com gateway_reference_id antigo. Por isso liquidamos aqui.
     if (nextStatus === 'active') {
       const payment = opts.payload.payment as Record<string, unknown> | undefined;
       const paymentId = payment && typeof payment.id === 'string' ? payment.id : null;
-      if (paymentId) {
-        const billing =
-          (await findTenantBillingByPixAutomaticAuthId(authorizationId)) ??
-          (updated
-            ? (
-                await pool.query<{ id: string }>(
-                  `SELECT id FROM tenant_billing
-                   WHERE subscription_id = $1::uuid
-                     AND status IN ('pending','waiting_payment','processing','overdue')
-                   ORDER BY created_at DESC LIMIT 1`,
-                  [updated.subscription_id]
-                )
-              ).rows[0] ?? null
-            : null);
-        if (billing?.id) {
+      const paymentStatus =
+        payment && typeof payment.status === 'string' ? payment.status : 'RECEIVED';
+
+      const billing =
+        (await findTenantBillingByPixAutomaticAuthId(authorizationId)) ??
+        (updated
+          ? (
+              await pool.query<{ id: string; status: string }>(
+                `SELECT id, status FROM tenant_billing
+                 WHERE subscription_id = $1::uuid
+                   AND status IN ('pending','waiting_payment','processing','overdue')
+                 ORDER BY created_at DESC LIMIT 1`,
+                [updated.subscription_id]
+              )
+            ).rows[0] ?? null
+          : null);
+
+      if (billing?.id) {
+        if (paymentId) {
           await updateInvoiceGatewayData(billing.id, {
             gateway: 'asaas',
             payment_method: 'PIX',
             gateway_reference_id: paymentId,
-            gateway_status: typeof payment?.status === 'string' ? payment.status : 'CONFIRMED',
+            gateway_status: paymentStatus,
             gateway_metadata: {
               pix_automatic_authorization_id: authorizationId,
               pix_automatic_journey: 'authorization',
             },
           });
+        }
+
+        const openStatuses = new Set(['pending', 'waiting_payment', 'processing', 'overdue']);
+        if (openStatuses.has(billing.status)) {
+          try {
+            const { applyPaymentEvent } = await import(
+              '../../modules/payments/webhook/paymentDomainService.js'
+            );
+            await applyPaymentEvent({
+              entityType: 'tenant_billing',
+              entityId: billing.id,
+              currentStatus: billing.status,
+              internalStatus: 'paid',
+              gatewayStatus: paymentStatus,
+              paidAt: new Date(),
+              paymentMethod: 'PIX',
+            });
+          } catch (e: unknown) {
+            console.error('[pixAutomatic] settle on AUTHORIZATION_ACTIVATED failed', e);
+          }
         }
       }
     }
@@ -848,4 +876,84 @@ export async function enablePixAutomaticForTenant(opts: {
     qr_image: started.qr_image,
     billing_id: billingId,
   };
+}
+
+/**
+ * Ops / recuperação: liquida fatura SaaS órfã do 1º pagamento Pix Automático
+ * quando o PAYMENT_RECEIVED veio com paymentId novo e sem externalReference.
+ */
+export async function settleOrphanPixAutomaticFirstPayment(opts: {
+  paymentId: string;
+  pixQrCodeId?: string | null;
+  conciliationId?: string | null;
+  billingId?: string | null;
+  gatewayStatus?: string | null;
+}): Promise<{ ok: true; billing_id: string } | { ok: false; detail: string }> {
+  const paymentId = opts.paymentId.trim();
+  if (!paymentId) return { ok: false, detail: 'payment_id_required' };
+
+  let billing: { id: string; status: string; gateway: string | null } | null = null;
+
+  if (opts.billingId?.trim()) {
+    const inv = await getInvoiceById(opts.billingId.trim());
+    if (inv) billing = { id: inv.id, status: inv.status, gateway: inv.gateway };
+  }
+
+  const candidates = [opts.conciliationId, opts.pixQrCodeId]
+    .map((v) => (typeof v === 'string' ? v.trim() : ''))
+    .filter((v, i, arr) => v.length > 0 && arr.indexOf(v) === i);
+
+  for (const c of candidates) {
+    if (billing) break;
+    billing = await findTenantBillingByPixAutomaticConciliation(c);
+  }
+
+  if (!billing) {
+    return { ok: false, detail: 'billing_not_found' };
+  }
+
+  await updateInvoiceGatewayData(billing.id, {
+    gateway: billing.gateway ?? 'asaas',
+    payment_method: 'PIX',
+    gateway_reference_id: paymentId,
+    gateway_status: opts.gatewayStatus ?? 'RECEIVED',
+    gateway_metadata: {
+      pix_automatic_journey: 'authorization',
+      ...(candidates[0] ? { pix_automatic_conciliation_id: candidates[0] } : {}),
+    },
+  });
+
+  const open = new Set(['pending', 'waiting_payment', 'processing', 'overdue']);
+  if (open.has(billing.status)) {
+    const { applyPaymentEvent } = await import(
+      '../../modules/payments/webhook/paymentDomainService.js'
+    );
+    await applyPaymentEvent({
+      entityType: 'tenant_billing',
+      entityId: billing.id,
+      currentStatus: billing.status,
+      internalStatus: 'paid',
+      gatewayStatus: opts.gatewayStatus ?? 'RECEIVED',
+      paidAt: new Date(),
+      paymentMethod: 'PIX',
+    });
+  }
+
+  await writeBillingAuditEvent({
+    actor: 'billing2_pix_automatic',
+    actor_type: 'system',
+    action: 'pix_automatic.orphan_first_payment_settled',
+    entity_type: 'tenant_billing',
+    entity_id: billing.id,
+    reason: 'ops_reconcile_or_webhook_gap',
+    origin: 'billing2',
+    correlation_id: `pix_auto_orphan:${paymentId}`,
+    payload: {
+      payment_id: paymentId,
+      pix_qr_code_id: opts.pixQrCodeId ?? null,
+      conciliation_id: opts.conciliationId ?? null,
+    },
+  });
+
+  return { ok: true, billing_id: billing.id };
 }

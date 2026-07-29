@@ -152,13 +152,19 @@ export async function handleWebhook(
 
   let entity = await findBillingOrCustomerInvoice(gatewayKey, referenceId);
   if (!entity) {
-    const conciliationId =
-      metadata &&
-      typeof metadata === 'object' &&
-      typeof (metadata as { conciliationIdentifier?: string }).conciliationIdentifier === 'string'
-        ? (metadata as { conciliationIdentifier: string }).conciliationIdentifier
-        : null;
-    if (conciliationId) {
+    const meta =
+      metadata && typeof metadata === 'object'
+        ? (metadata as {
+            conciliationIdentifier?: string;
+            pixQrCodeId?: string;
+          })
+        : {};
+    const conciliationCandidates = [
+      typeof meta.conciliationIdentifier === 'string' ? meta.conciliationIdentifier.trim() : '',
+      typeof meta.pixQrCodeId === 'string' ? meta.pixQrCodeId.trim() : '',
+    ].filter((v, i, arr) => v.length > 0 && arr.indexOf(v) === i);
+
+    for (const conciliationId of conciliationCandidates) {
       try {
         const { findTenantBillingByPixAutomaticConciliation } = await import(
           '../../../services/billing2/billingPixAutomaticService.js'
@@ -182,6 +188,7 @@ export async function handleWebhook(
             currentStatus: byConc.status,
             gateway: byConc.gateway,
           };
+          break;
         }
       } catch (e) {
         console.error('[webhookCore] pix automatic conciliation lookup', e);

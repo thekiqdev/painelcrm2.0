@@ -30,9 +30,18 @@ export function parseAsaasWebhookPayload(payload: unknown): ParsedWebhookPayload
 
   const metadata: Record<string, unknown> = {};
   if (paymentMethod) metadata.paymentMethod = paymentMethod;
-  // Sprint 10 — conciliation do 1º pagamento da jornada Pix Automático
+  // Sprint 10 — conciliation do 1º pagamento da jornada Pix Automático.
+  // Asaas docs: immediateQrCode.conciliationIdentifier reaparece no payment.
+  // Em produção o PAYMENT_RECEIVED auto-gerado ("Cobrança gerada automaticamente…")
+  // frequentemente traz o mesmo valor em `pixQrCodeId` e sem externalReference.
   if (payment && typeof payment.conciliationIdentifier === 'string') {
     metadata.conciliationIdentifier = payment.conciliationIdentifier;
+  }
+  if (payment && typeof payment.pixQrCodeId === 'string') {
+    metadata.pixQrCodeId = payment.pixQrCodeId;
+    if (!metadata.conciliationIdentifier) {
+      metadata.conciliationIdentifier = payment.pixQrCodeId;
+    }
   }
 
   return {
