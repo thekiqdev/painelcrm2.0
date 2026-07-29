@@ -603,7 +603,7 @@ const pixAutomaticEnableBody = z.object({
   invoice_id: z.string().uuid().optional().nullable(),
 });
 
-/** CRM7 — liga débito automático via PIX na assinatura (precisa fatura aberta). */
+/** CRM7/CRM8 — liga débito automático via PIX na assinatura (fatura aberta ou intenção). */
 export async function postCrmSubscriptionPixAutomaticEnable(req: AuthRequest, res: Response): Promise<void> {
   try {
     const tenantId = req.tenantId ?? null;
@@ -646,6 +646,7 @@ export async function postCrmSubscriptionPixAutomaticEnable(req: AuthRequest, re
       pix_copy_paste: result.qr_payload,
       pix_qr_code: result.qr_image,
       invoice_id: result.invoice_id,
+      deferred: result.deferred === true,
     });
   } catch (e) {
     console.error('[crmSubscriptionsController] pix-automatic enable', e);

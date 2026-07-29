@@ -72,7 +72,8 @@ export async function getCrmPixAutomaticAuthByTenantClient(opts: {
      ORDER BY
        CASE WHEN pix_automatic_auth_status = 'active' THEN 0
             WHEN pix_automatic_auth_status = 'pending' THEN 1
-            ELSE 2 END,
+            WHEN pix_automatic_auth_status = 'requested' THEN 2
+            ELSE 3 END,
        updated_at DESC
      LIMIT 1`,
     [opts.tenantId, opts.clientId]
@@ -125,7 +126,7 @@ export async function upsertCrmPixAutomaticAuthorization(opts: {
        END,
        pix_automatic_cancelled_at = CASE
          WHEN $2 IN ('cancelled', 'expired', 'refused', 'cleared') THEN now()
-         WHEN $2 IN ('pending', 'active') THEN NULL
+         WHEN $2 IN ('pending', 'active', 'requested') THEN NULL
          ELSE pix_automatic_cancelled_at
        END,
        updated_at = now()
@@ -144,6 +145,31 @@ export async function upsertCrmPixAutomaticAuthorization(opts: {
   );
 }
 
+/**
+ * CRM8 — intenção de débito automático sem auth Asaas (sem fatura aberta).
+ * Não cria authorization_id; start ocorre quando a fatura do ciclo nascer.
+ */
+export async function markCrmPixAutomaticRequested(opts: {
+  subscriptionId: string;
+  tenantId: string;
+  gateway?: string | null;
+}): Promise<PixAutomaticAuthRow | null> {
+  await pool.query(
+    `UPDATE subscriptions
+     SET
+       pix_automatic_authorization_id = NULL,
+       pix_automatic_auth_status = 'requested',
+       pix_automatic_auth_gateway = COALESCE($3, pix_automatic_auth_gateway, 'asaas'),
+       pix_automatic_qr_payload = NULL,
+       pix_automatic_qr_image = NULL,
+       pix_automatic_cancelled_at = NULL,
+       updated_at = now()
+     WHERE id = $1::uuid AND tenant_id = $2::uuid AND type = 'customer'`,
+    [opts.subscriptionId, opts.tenantId, opts.gateway ?? 'asaas']
+  );
+  return getCrmPixAutomaticAuthBySubscriptionId(opts.subscriptionId);
+}
+
 export async function updateCrmPixAutomaticAuthStatus(opts: {
   authorizationId: string;
   status: PixAutomaticAuthStatus;
@@ -158,7 +184,7 @@ export async function updateCrmPixAutomaticAuthStatus(opts: {
        END,
        pix_automatic_cancelled_at = CASE
          WHEN $2 IN ('cancelled', 'expired', 'refused', 'cleared') THEN now()
-         WHEN $2 IN ('pending', 'active') THEN NULL
+         WHEN $2 IN ('pending', 'active', 'requested') THEN NULL
          ELSE pix_automatic_cancelled_at
        END,
        pix_automatic_qr_payload = CASE WHEN $2 = 'active' THEN NULL ELSE pix_automatic_qr_payload END,

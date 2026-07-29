@@ -84,9 +84,11 @@ export function FinancialHeader({ detail, className }: Props) {
                     ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200"
                     : detail.pix_automatic.status === "pending"
                       ? "border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-100"
-                      : detail.pix_automatic.user_opted_off
-                        ? "border-border bg-muted/40 text-muted-foreground"
-                        : "border-border bg-muted/30 text-muted-foreground"
+                      : detail.pix_automatic.status === "requested"
+                        ? "border-sky-500/40 bg-sky-500/10 text-sky-900 dark:text-sky-100"
+                        : detail.pix_automatic.user_opted_off
+                          ? "border-border bg-muted/40 text-muted-foreground"
+                          : "border-border bg-muted/30 text-muted-foreground"
                 )}
                 title={PIX_AUTOMATIC_SWITCH_LABEL_PT}
               >
@@ -94,9 +96,11 @@ export function FinancialHeader({ detail, className }: Props) {
                   ? "Débito PIX ativo"
                   : detail.pix_automatic.status === "pending"
                     ? "Débito PIX pendente"
-                    : detail.pix_automatic.user_opted_off
-                      ? "Débito PIX desligado"
-                      : "Débito PIX disponível"}
+                    : detail.pix_automatic.status === "requested"
+                      ? "Débito PIX pedido"
+                      : detail.pix_automatic.user_opted_off
+                        ? "Débito PIX desligado"
+                        : "Débito PIX disponível"}
               </span>
             ) : null}
           </div>

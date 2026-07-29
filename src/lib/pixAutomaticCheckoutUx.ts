@@ -36,7 +36,14 @@ export function resolvePixAutomaticSwitchOn(opts: {
   if (opts.userOptedOff) return false;
   if (!opts.pref?.available) return false;
   if (opts.pref.user_opted_off || isPixAutomaticUserOptedOff(opts.pref.status)) return false;
-  if (opts.pref.switch_on || opts.pref.has_active || opts.pref.status === 'pending') return true;
+  if (
+    opts.pref.switch_on ||
+    opts.pref.has_active ||
+    opts.pref.status === 'pending' ||
+    opts.pref.status === 'requested'
+  ) {
+    return true;
+  }
   // 1º acesso: ainda sem status na assinatura
   if (opts.pref.status == null || opts.pref.status === '') return opts.defaultOn;
   return false;
@@ -62,6 +69,7 @@ export function usePixAutomaticAutoEnable(opts: {
     if (!opts.pref?.available) return;
     if (opts.pref.user_opted_off || isPixAutomaticUserOptedOff(opts.pref.status)) return;
     if (opts.pref.switch_on || opts.pref.has_active || opts.pref.status === 'pending') return;
+    if (opts.pref.status === 'requested') return;
     // Só auto-enable no 1º acesso (sem status)
     if (opts.pref.status != null && opts.pref.status !== '') return;
     if (triedRef.current) return;

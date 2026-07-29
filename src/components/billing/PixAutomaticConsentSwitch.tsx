@@ -31,6 +31,9 @@ type Props = {
 export const PIX_AUTOMATIC_SWITCH_LABEL_PT = 'Débito automático via PIX';
 
 function statusLabelFor(state: PixAutomaticSwitchState): string {
+  if (state.status === 'requested') {
+    return 'Pedido — a autorização será preparada na próxima fatura do ciclo';
+  }
   if (state.status === 'pending') {
     return 'Quase lá — autorize no app do banco ao pagar este PIX';
   }

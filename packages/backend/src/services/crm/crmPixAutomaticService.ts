@@ -20,6 +20,7 @@ import {
   getCrmPixAutomaticAuthBySubscriptionId,
   upsertCrmPixAutomaticAuthorization,
   markCrmPixAutomaticUserOptedOut,
+  markCrmPixAutomaticRequested,
   toPublicPixAutomaticStatus,
   type PixAutomaticAuthStatus,
 } from './crmPixAutomaticStore.js';
@@ -722,7 +723,7 @@ export async function getCrmPixAutomaticPreferenceForSubscription(opts: {
   has_active: boolean;
   switch_on: boolean;
   user_opted_off: boolean;
-  /** CRM7 — sempre false; switch ON só com pending/active (SSOT). */
+  /** CRM7/CRM8 — sempre false; switch ON com requested/pending/active (SSOT). */
   default_on: boolean;
   authorization_id: string | null;
   qr_payload: string | null;
@@ -735,7 +736,8 @@ export async function getCrmPixAutomaticPreferenceForSubscription(opts: {
   const status = pub?.status ?? null;
   const has_active = pub?.has_active ?? false;
   const user_opted_off = isPixAutomaticUserOptedOffStatus(status);
-  const switch_on = !user_opted_off && (has_active || status === 'pending');
+  const switch_on =
+    !user_opted_off && (has_active || status === 'pending' || status === 'requested');
   const gwKey = opts.gatewayKey ?? auth?.gateway ?? 'asaas';
   const offer = await canOfferCrmPixAutomatic({ gatewayKey: gwKey });
   const available = offer.available || Boolean(auth?.authorization_id || status);
@@ -755,7 +757,7 @@ export async function getCrmPixAutomaticPreferenceForSubscription(opts: {
     has_active,
     switch_on,
     user_opted_off,
-    // SSOT: nunca default ON cosmético — só pending/active ligam o switch.
+    // SSOT: nunca default ON cosmético — só requested/pending/active ligam o switch.
     default_on: false,
     authorization_id: auth?.authorization_id ?? null,
     qr_payload: pub?.qr_payload ?? null,
@@ -783,8 +785,9 @@ export async function findOpenCustomerInvoiceForSubscription(opts: {
 }
 
 /**
- * CRM7 — enable a partir da assinatura (espelho Meu Plano / enablePixAutomaticForTenant).
- * Sem fatura aberta → needs_open_invoice (não cria fatura; não grava ON solto).
+ * CRM7/CRM8 — enable a partir da assinatura.
+ * Com fatura aberta → start auth Asaas.
+ * Sem fatura → grava intenção `requested` (não cria fatura; não chama Asaas).
  */
 export async function enablePixAutomaticForCrmSubscription(opts: {
   tenantId: string;
@@ -794,11 +797,12 @@ export async function enablePixAutomaticForCrmSubscription(opts: {
 }): Promise<
   | {
       ok: true;
-      authorization_id: string;
+      authorization_id: string | null;
       status: PixAutomaticAuthStatus;
       qr_payload: string | null;
       qr_image: string | null;
-      invoice_id: string;
+      invoice_id: string | null;
+      deferred?: boolean;
     }
   | { ok: false; detail: string }
 > {
@@ -807,8 +811,13 @@ export async function enablePixAutomaticForCrmSubscription(opts: {
   }
 
   const sub = await getCrmPixAutomaticAuthBySubscriptionId(opts.subscriptionId);
-  // Valida subscription existe e é customer via store row ou query leve
-  const subRow = await pool.query<{ id: string; tenant_id: string; type: string; gateway: string | null; status: string }>(
+  const subRow = await pool.query<{
+    id: string;
+    tenant_id: string;
+    type: string;
+    gateway: string | null;
+    status: string;
+  }>(
     `SELECT id::text AS id, tenant_id::text AS tenant_id, type, gateway, status
      FROM subscriptions
      WHERE id = $1::uuid
@@ -827,6 +836,11 @@ export async function enablePixAutomaticForCrmSubscription(opts: {
     return { ok: false, detail: 'auth_already_active' };
   }
 
+  const offer = await canOfferCrmPixAutomatic({ gatewayKey: row.gateway ?? 'asaas' });
+  if (!offer.available) {
+    return { ok: false, detail: `gate_${offer.reason}` };
+  }
+
   let invoiceId = opts.invoiceId?.trim() || null;
   if (!invoiceId) {
     const open = await findOpenCustomerInvoiceForSubscription({
@@ -835,23 +849,79 @@ export async function enablePixAutomaticForCrmSubscription(opts: {
     });
     invoiceId = open?.id ?? null;
   }
-  if (!invoiceId) {
-    return { ok: false, detail: 'needs_open_invoice' };
+
+  if (invoiceId) {
+    const started = await startPixAutomaticAuthorizationForCustomerInvoice({
+      invoiceId,
+      tenantId: opts.tenantId,
+      correlationId: opts.correlationId ?? `crm_pix_auto_enable:${opts.subscriptionId}`,
+    });
+    if (!started.ok) return started;
+    return {
+      ok: true,
+      authorization_id: started.authorization_id,
+      status: started.status,
+      qr_payload: started.qr_payload,
+      qr_image: started.qr_image,
+      invoice_id: invoiceId,
+    };
   }
 
-  const started = await startPixAutomaticAuthorizationForCustomerInvoice({
-    invoiceId,
+  // CRM8 — intenção adiada (sem fatura aberta).
+  if (sub?.status === 'pending' && sub.authorization_id) {
+    return {
+      ok: true,
+      authorization_id: sub.authorization_id,
+      status: 'pending',
+      qr_payload: sub.qr_payload,
+      qr_image: sub.qr_image,
+      invoice_id: null,
+      deferred: true,
+    };
+  }
+  if (sub?.status === 'requested') {
+    return {
+      ok: true,
+      authorization_id: null,
+      status: 'requested',
+      qr_payload: null,
+      qr_image: null,
+      invoice_id: null,
+      deferred: true,
+    };
+  }
+
+  await markCrmPixAutomaticRequested({
+    subscriptionId: opts.subscriptionId,
     tenantId: opts.tenantId,
-    correlationId: opts.correlationId ?? `crm_pix_auto_enable:${opts.subscriptionId}`,
+    gateway: row.gateway ?? 'asaas',
   });
-  if (!started.ok) return started;
+
+  try {
+    const { writeBillingAuditEvent } = await import('../collectionPolicy/billingAuditEventWriter.js');
+    await writeBillingAuditEvent({
+      actor: 'crm_pix_automatic',
+      actor_type: 'system',
+      action: 'pix_automatic.intent_requested',
+      entity_type: 'subscription',
+      entity_id: opts.subscriptionId,
+      reason: 'enable_without_open_invoice',
+      origin: 'crm',
+      correlation_id: opts.correlationId ?? `crm_pix_auto_enable:${opts.subscriptionId}`,
+      payload: {},
+    });
+  } catch (e) {
+    console.warn('[crm.pixAutomatic] audit intent_requested', e);
+  }
+
   return {
     ok: true,
-    authorization_id: started.authorization_id,
-    status: started.status,
-    qr_payload: started.qr_payload,
-    qr_image: started.qr_image,
-    invoice_id: invoiceId,
+    authorization_id: null,
+    status: 'requested',
+    qr_payload: null,
+    qr_image: null,
+    invoice_id: null,
+    deferred: true,
   };
 }
 

@@ -613,29 +613,31 @@ export const crmSubscriptionsService = {
     return res.data;
   },
 
-  /** CRM7 — ativa débito automático via PIX (requer fatura aberta). */
+  /** CRM7/CRM8 — ativa débito automático via PIX (fatura aberta ou intenção adiada). */
   async enablePixAutomatic(
     id: string,
     opts?: { invoice_id?: string | null }
   ): Promise<{
     data?: {
       ok: true;
-      authorization_id: string;
+      authorization_id: string | null;
       status: string;
       pix_copy_paste: string | null;
       pix_qr_code: string | null;
-      invoice_id: string;
+      invoice_id: string | null;
+      deferred?: boolean;
     };
     error?: string;
     code?: string;
   }> {
     const res = await apiClient.post<{
       ok: boolean;
-      authorization_id?: string;
+      authorization_id?: string | null;
       status?: string;
       pix_copy_paste?: string | null;
       pix_qr_code?: string | null;
-      invoice_id?: string;
+      invoice_id?: string | null;
+      deferred?: boolean;
       error?: string;
       code?: string;
     }>(`/api/crm-subscriptions/${encodeURIComponent(id)}/pix-automatic/enable`, {
@@ -650,11 +652,12 @@ export const crmSubscriptionsService = {
     return {
       data: {
         ok: true,
-        authorization_id: res.data.authorization_id!,
+        authorization_id: res.data.authorization_id ?? null,
         status: res.data.status!,
         pix_copy_paste: res.data.pix_copy_paste ?? null,
         pix_qr_code: res.data.pix_qr_code ?? null,
-        invoice_id: res.data.invoice_id!,
+        invoice_id: res.data.invoice_id ?? null,
+        deferred: res.data.deferred === true,
       },
     };
   },

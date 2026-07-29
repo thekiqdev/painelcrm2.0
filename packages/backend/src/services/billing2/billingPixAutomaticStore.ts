@@ -4,6 +4,7 @@
 import { pool } from '../../utils/db.js';
 
 export type PixAutomaticAuthStatus =
+  | 'requested' // CRM8 — intenção sem auth Asaas (sem fatura aberta)
   | 'pending'
   | 'active'
   | 'cancelled'

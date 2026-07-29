@@ -149,6 +149,36 @@ export async function executeGatewayChargeForInvoice(
               failed: false,
             };
           }
+        } else if (authRow?.status === 'requested') {
+          // CRM8 — intenção na assinatura: start auth na fatura do ciclo (ou metadata se sem cliente).
+          const { finalizePixAutomaticOnCustomerInvoiceCreate } = await import(
+            '../services/crm/crmPixAutomaticService.js'
+          );
+          const fin = await finalizePixAutomaticOnCustomerInvoiceCreate({
+            tenantId: subscription.tenant_id,
+            invoiceId,
+            pixAutomaticRequested: true,
+          });
+          if (fin?.started) {
+            logExecutionOrchestrator('GATEWAY_EXECUTION', 'complete', {
+              subscription_id: subscription.id,
+              invoice_id: invoiceId,
+              gateway_status: 'pix_automatic_intent_started',
+              authorization_id: fin.authorization_id ?? null,
+            });
+            return {
+              status: 'PENDING',
+              paymentId: null,
+              failed: false,
+            };
+          }
+          if (fin && !fin.started) {
+            logExecutionOrchestrator('GATEWAY_EXECUTION', 'pix_auto_intent_deferred_or_fallback', {
+              subscription_id: subscription.id,
+              invoice_id: invoiceId,
+              detail: fin.detail,
+            });
+          }
         }
       }
     } catch (pixErr) {

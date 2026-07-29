@@ -80,6 +80,20 @@ describe('pixAutomaticCheckoutUx', () => {
     ).toBe(true);
   });
 
+  it('ON quando requested (CRM8 intenção)', () => {
+    expect(
+      resolvePixAutomaticSwitchOn({
+        pref: {
+          available: true,
+          switch_on: true,
+          status: 'requested',
+          has_active: false,
+        },
+        defaultOn: false,
+      })
+    ).toBe(true);
+  });
+
   it('isPixAutomaticUserOptedOff cobre terminais', () => {
     expect(isPixAutomaticUserOptedOff('cleared')).toBe(true);
     expect(isPixAutomaticUserOptedOff('cancelled')).toBe(true);

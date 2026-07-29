@@ -4,7 +4,7 @@
 |-------|-------|
 | **Flag** | `crm.pix_automatic` (plataforma) — default **OFF** |
 | **Independente** | Não confundir com `billing2.pix_automatic` (SaaS) |
-| **Closeouts** | CRM0–CRM6 em `docs/architecture/commercial/crm-pix-automatic/` |
+| **Closeouts** | CRM0–CRM8 em `docs/architecture/commercial/crm-pix-automatic/` |
 | **Lição 1º pagamento** | [`LESSONS_SAAS_FIRST_PAYMENT_ORPHAN.md`](./LESSONS_SAAS_FIRST_PAYMENT_ORPHAN.md) |
 
 ---
@@ -29,6 +29,7 @@ Flag OFF = cobranças CRM idênticas ao legado (PIX avulso); colunas `pix_automa
    - Asaas: RECEIVED + auth ACTIVE.
    - Painel: **`customer_invoices.status = paid`**.
    - Se auth ACTIVE e fatura ≠ paid → **NO-GO** / usar script órfão abaixo.
+5. Smoke CRM8 (opcional): na assinatura **sem** fatura aberta, ligar o switch → badge **«Débito PIX pedido»**; gerar próxima cobrança → status passa a **pendente**/QR.
 
 ---
 

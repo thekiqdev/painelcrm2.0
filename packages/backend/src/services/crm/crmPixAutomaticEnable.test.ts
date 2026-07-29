@@ -24,6 +24,11 @@ vi.mock('./crmPixAutomaticStore.js', () => ({
   getCrmPixAutomaticAuthBySubscriptionId: vi.fn(),
   upsertCrmPixAutomaticAuthorization: vi.fn(),
   markCrmPixAutomaticUserOptedOut: vi.fn(),
+  markCrmPixAutomaticRequested: vi.fn(async () => ({
+    subscription_id: 'sub-1',
+    status: 'requested',
+    authorization_id: null,
+  })),
   toPublicPixAutomaticStatus: vi.fn((auth: { status?: string } | null) =>
     auth
       ? {
@@ -68,21 +73,30 @@ vi.mock('../collectionPolicy/billingAuditEventWriter.js', () => ({
 }));
 
 import { pool } from '../../utils/db.js';
-import { isCrmPixAutomaticEnabled } from './crmPixAutomaticFlags.js';
-import { getCrmPixAutomaticAuthBySubscriptionId } from './crmPixAutomaticStore.js';
+import { isCrmPixAutomaticEnabled, canOfferCrmPixAutomatic } from './crmPixAutomaticFlags.js';
+import {
+  getCrmPixAutomaticAuthBySubscriptionId,
+  markCrmPixAutomaticRequested,
+} from './crmPixAutomaticStore.js';
 import {
   enablePixAutomaticForCrmSubscription,
   getCrmPixAutomaticPreferenceForSubscription,
 } from './crmPixAutomaticService.js';
 
-describe('CRM7 — enable Pix Automático na assinatura', () => {
+describe('CRM7/CRM8 — enable Pix Automático na assinatura', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(isCrmPixAutomaticEnabled).mockResolvedValue(true);
     vi.mocked(getCrmPixAutomaticAuthBySubscriptionId).mockResolvedValue(null);
+    vi.mocked(canOfferCrmPixAutomatic).mockResolvedValue({
+      available: true,
+      flag_enabled: true,
+      gateway_supports: true,
+      reason: 'ok',
+    });
   });
 
-  it('needs_open_invoice sem fatura aberta', async () => {
+  it('CRM8 — sem fatura aberta grava intenção requested', async () => {
     vi.mocked(pool.query)
       .mockResolvedValueOnce({
         rows: [
@@ -101,7 +115,48 @@ describe('CRM7 — enable Pix Automático na assinatura', () => {
       tenantId: 'ten-1',
       subscriptionId: 'sub-1',
     });
-    expect(r).toEqual({ ok: false, detail: 'needs_open_invoice' });
+    expect(r).toEqual({
+      ok: true,
+      authorization_id: null,
+      status: 'requested',
+      qr_payload: null,
+      qr_image: null,
+      invoice_id: null,
+      deferred: true,
+    });
+    expect(markCrmPixAutomaticRequested).toHaveBeenCalledWith({
+      subscriptionId: 'sub-1',
+      tenantId: 'ten-1',
+      gateway: 'asaas',
+    });
+  });
+
+  it('CRM8 — idempotente se já requested', async () => {
+    vi.mocked(getCrmPixAutomaticAuthBySubscriptionId).mockResolvedValue({
+      subscription_id: 'sub-1',
+      status: 'requested',
+      authorization_id: null,
+    } as never);
+    vi.mocked(pool.query)
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'sub-1',
+            tenant_id: 'ten-1',
+            type: 'customer',
+            gateway: 'asaas',
+            status: 'active',
+          },
+        ],
+      } as never)
+      .mockResolvedValueOnce({ rows: [] } as never);
+
+    const r = await enablePixAutomaticForCrmSubscription({
+      tenantId: 'ten-1',
+      subscriptionId: 'sub-1',
+    });
+    expect(r).toMatchObject({ ok: true, status: 'requested', deferred: true });
+    expect(markCrmPixAutomaticRequested).not.toHaveBeenCalled();
   });
 
   it('flag OFF', async () => {
@@ -125,7 +180,7 @@ describe('CRM7 — enable Pix Automático na assinatura', () => {
     expect(pref.user_opted_off).toBe(false);
   });
 
-  it('preference switch_on true só com pending/active', async () => {
+  it('preference switch_on true com pending/active', async () => {
     vi.mocked(getCrmPixAutomaticAuthBySubscriptionId).mockResolvedValue({
       subscription_id: 'sub-1',
       status: 'pending',
@@ -138,6 +193,22 @@ describe('CRM7 — enable Pix Automático na assinatura', () => {
     });
     expect(pref.default_on).toBe(false);
     expect(pref.switch_on).toBe(true);
+  });
+
+  it('preference switch_on true com requested (CRM8)', async () => {
+    vi.mocked(getCrmPixAutomaticAuthBySubscriptionId).mockResolvedValue({
+      subscription_id: 'sub-1',
+      status: 'requested',
+      authorization_id: null,
+    } as never);
+    vi.mocked(pool.query).mockResolvedValue({ rows: [] } as never);
+    const pref = await getCrmPixAutomaticPreferenceForSubscription({
+      subscriptionId: 'sub-1',
+      tenantId: 'ten-1',
+    });
+    expect(pref.switch_on).toBe(true);
+    expect(pref.status).toBe('requested');
+    expect(pref.has_active).toBe(false);
   });
 
   it('preference default_on false e switch_on false quando cleared', async () => {

@@ -431,7 +431,9 @@ const SubscriptionDetail = () => {
         available: detail.pix_automatic.available,
         switch_on:
           detail.pix_automatic.switch_on ??
-          (detail.pix_automatic.has_active || detail.pix_automatic.status === "pending"),
+          (detail.pix_automatic.has_active ||
+            detail.pix_automatic.status === "pending" ||
+            detail.pix_automatic.status === "requested"),
         status: detail.pix_automatic.status,
         has_active: detail.pix_automatic.has_active,
         user_opted_off: detail.pix_automatic.user_opted_off === true,
@@ -463,6 +465,13 @@ const SubscriptionDetail = () => {
             } else {
               toast.error(res.error);
             }
+            return;
+          }
+          if (res.data?.deferred || res.data?.status === "requested") {
+            toast.success(
+              "Pedido guardado — quando a fatura do ciclo for gerada, o cliente autoriza no PIX."
+            );
+            await load();
             return;
           }
           toast.success("Débito automático preparado — o cliente autoriza ao pagar o PIX da fatura.");
@@ -733,8 +742,9 @@ const SubscriptionDetail = () => {
                       <div>
                         <p className="text-sm font-medium text-foreground">{PIX_AUTOMATIC_SWITCH_LABEL_PT}</p>
                         <p className="text-xs text-muted-foreground mt-1">
-                          Desligado por padrão em assinaturas antigas. Ao ligar (com fatura aberta), a
-                          autorização fica na assinatura e as próximas faturas seguem o mesmo estado.
+                          Desligado por padrão em assinaturas antigas. Ao ligar, a intenção fica na
+                          assinatura; com fatura aberta inicia a autorização, sem fatura aguarda o
+                          próximo ciclo.
                         </p>
                       </div>
                       <PixAutomaticConsentSwitch
@@ -749,13 +759,16 @@ const SubscriptionDetail = () => {
                         }
                         onToggle={handlePixAutomaticToggle}
                         hint={
-                          !detail.pix_automatic.open_invoice_id &&
-                          !detail.pix_automatic.has_active &&
-                          detail.pix_automatic.status !== "pending"
-                            ? "Sem fatura aberta: use «Gerar próxima cobrança» e ligue de novo, ou abra o link de pagamento."
+                          detail.pix_automatic.status === "requested"
+                            ? "Pedido registado. A autorização Asaas será preparada quando a fatura do ciclo for gerada (automática ou «Gerar próxima cobrança»)."
                             : detail.pix_automatic.status === "pending"
                               ? "Aguardando o cliente autorizar no app do banco ao pagar o PIX."
-                              : null
+                              : detail.pix_automatic.has_active ||
+                                  detail.pix_automatic.status === "active"
+                                ? null
+                                : !detail.pix_automatic.open_invoice_id
+                                  ? "Sem fatura aberta: ao ligar, o pedido fica guardado até a próxima fatura."
+                                  : null
                         }
                       />
                     </div>

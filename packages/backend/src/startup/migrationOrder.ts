@@ -466,5 +466,7 @@ export const MIGRATION_ORDER = [
   '303_crm_pix_automatic_platform_flag.sql',
   /** CRM1 — índice pix auto em subscriptions type=customer */
   '304_crm_pix_automatic_customer_index.sql',
+  /** CRM8 — status requested (intenção sem fatura / sem auth Asaas) */
+  '305_crm_pix_automatic_requested_status.sql',
   'create-admin-user.sql',
 ];

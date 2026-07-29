@@ -187,6 +187,23 @@ Dependências: CRM0 → CRM1 → CRM2∥CRM3 → CRM4 → CRM5 → CRM6 (CRM2 e 
 
 ---
 
+## CRM8 — Intenção adiada (sem fatura aberta)
+
+**Objetivo:** operador liga débito automático na assinatura **antes** da fatura do ciclo existir; auth Asaas só quando a fatura nascer.
+
+| Entrega | Critério |
+|---------|----------|
+| Status SSOT `requested` (sem `authorization_id`) | Distinto de `pending`/`active` |
+| `POST …/pix-automatic/enable` sem fatura | 200 + `deferred: true` + status `requested` |
+| Com fatura aberta | Start Asaas como CRM7 |
+| Worker / `executeGatewayChargeForInvoice` | Se `requested` → `finalize` (start ou metadata se sem cliente) |
+| UI switch/badge | «Pedido» ≠ «Pendente» ≠ «Ativo» |
+| Disable | `cleared` limpa intenção |
+
+**Closeout:** [`CRM8_CLOSEOUT.md`](./CRM8_CLOSEOUT.md)
+
+---
+
 ## Ordem sugerida de calendário (indicativa)
 
 | Sprint | Foco | Dependência |
@@ -199,6 +216,7 @@ Dependências: CRM0 → CRM1 → CRM2∥CRM3 → CRM4 → CRM5 → CRM6 (CRM2 e 
 | CRM5 | Webhooks | CRM2/3 |
 | CRM6 | Ops/QA | CRM2–5 |
 | CRM7 | Assinaturas existentes (painel) | CRM1–5 |
+| CRM8 | Intenção adiada sem fatura | CRM7 |
 
 ---
 
