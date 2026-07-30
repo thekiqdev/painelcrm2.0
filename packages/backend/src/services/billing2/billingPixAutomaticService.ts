@@ -199,7 +199,7 @@ export async function startPixAutomaticAuthorizationForBilling(opts: {
      FROM subscription_cycles
      WHERE subscription_id = $1::uuid AND tenant_id = $2::uuid AND invoice_id IS NOT NULL
        AND invoice_id IS DISTINCT FROM $3::uuid`,
-    [subscriptionId, tenantId, opts.invoiceId]
+    [subscriptionId, tenantId, opts.billingId]
   );
   const { computePixAutomaticFinishDateYmd } = await import(
     '../crm/crmSubscriptionCyclesFinishDate.js'

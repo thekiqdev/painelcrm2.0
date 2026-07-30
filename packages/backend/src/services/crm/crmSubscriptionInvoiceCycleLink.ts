@@ -231,7 +231,7 @@ export async function seedNextPendingCycleIfEligible(opts: {
       cycle_date: nextYmd,
       source,
       consumed,
-      max_cycles: maxCycles,
+      max_cycles: maxCycles ?? undefined,
     });
 
     return { ok: true, seeded: true, cycleDate: nextYmd, detail: 'seeded' };
