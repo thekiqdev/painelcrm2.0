@@ -13,17 +13,22 @@ import {
   type ResolveOperationalCompetencyParams,
 } from './operationalCompetencyResolverCore';
 import { findCycleById } from './subscriptionCyclesSource';
+import { subscriptionAllowsNewChargeGeneration } from './subscriptionCyclesContract';
 
 /** Sprint 5.0-23F — única regra de visibilidade Gerar/Abrir na UI (exceto assinatura cancelada). */
 export function invoiceVisibilityFromCycle(
   invoiceId: string | null | undefined,
-  subscriptionStatus: string
+  subscriptionStatus: string,
+  opts?: { allowNewCharge?: boolean }
 ): { canGenerate: boolean; canOpen: boolean } {
-  if (subscriptionStatus === 'cancelled') {
+  if (subscriptionStatus === 'cancelled' || subscriptionStatus === 'completed') {
     return { canGenerate: false, canOpen: false };
   }
   const inv = invoiceId?.trim() || null;
   if (inv) return { canGenerate: false, canOpen: true };
+  if (opts?.allowNewCharge === false) {
+    return { canGenerate: false, canOpen: false };
+  }
   return { canGenerate: true, canOpen: false };
 }
 
@@ -91,13 +96,16 @@ const INVOICE_ACTION_UI_MODES = new Set<OperationalCompetencyMode>([
 
 function invoiceBasedCycleActions(
   cycle: { invoice_id: string | null; status?: string } | null | undefined,
-  subscriptionStatus: string
+  subscriptionStatus: string,
+  allowNewCharge = true
 ): { canGenerate: boolean; canOpen: boolean; canReprocess: boolean; needsInvariantRepair: boolean } | null {
   if (!cycle) return null;
   if (cycleNeedsInvariantRepair(cycle.status, cycle.invoice_id)) {
     return { canGenerate: false, canOpen: false, canReprocess: false, needsInvariantRepair: true };
   }
-  const vis = invoiceVisibilityFromCycle(cycle.invoice_id, subscriptionStatus);
+  const vis = invoiceVisibilityFromCycle(cycle.invoice_id, subscriptionStatus, {
+    allowNewCharge,
+  });
   return { ...vis, canReprocess: false, needsInvariantRepair: false };
 }
 
@@ -144,12 +152,14 @@ export function buildResolvedCompetencyPresentation(
     isProjected: resolved.resolution === 'PROJECTION_ONLY',
   });
 
+  const allowNewCharge = subscriptionAllowsNewChargeGeneration(detail);
   const invoiceActions =
     INVOICE_ACTION_UI_MODES.has(params.mode) && cycle
-      ? invoiceBasedCycleActions(cycle, detail.subscription.status)
+      ? invoiceBasedCycleActions(cycle, detail.subscription.status, allowNewCharge)
       : null;
 
-  const canGenerate = invoiceActions?.canGenerate ?? resolved.canGenerate;
+  const canGenerateRaw = invoiceActions?.canGenerate ?? resolved.canGenerate;
+  const canGenerate = allowNewCharge ? canGenerateRaw : false;
   const canOpen = invoiceActions?.canOpen ?? resolved.canOpen;
   const canReprocess = invoiceActions?.canReprocess ?? resolved.canReprocess;
   const needsInvariantRepair = invoiceActions?.needsInvariantRepair ?? false;

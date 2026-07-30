@@ -128,6 +128,20 @@
     min-height: 100dvh;
     min-height: 100vh;
   }
+
+  /*
+   * Desktop: overflow-x hidden em html/body/#root força overflow-y ≠ visible
+   * (CSS overflow pairing) e cria containing block — position:sticky deixa de
+   * acompanhar o scroll da página. Em lg+ liberamos o eixo X; páginas com
+   * conteúdo largo devem usar overflow-x-auto localmente.
+   */
+  @media (min-width: 1024px) {
+    html,
+    body,
+    #root {
+      overflow-x: visible;
+    }
+  }
 }
 
 /* iOS/Safari: evita zoom no foco quando < 16px; reforça inputs que ainda usam text-sm */

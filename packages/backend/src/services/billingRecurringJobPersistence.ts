@@ -320,18 +320,20 @@ export async function advanceSubscriptionAfterCompletedCycle(
   }
 ): Promise<void> {
   const subR = await db.query(
-    `SELECT billing_interval::text, next_billing_date::text, billing_cycle_count::int
+    `SELECT billing_interval::text, next_billing_date::text, billing_cycle_count::int, type::text
      FROM subscriptions
      WHERE id = $1::uuid AND tenant_id = $2::uuid
      FOR UPDATE`,
     [params.subscriptionId, params.tenantId]
   );
-  const sub = subR.rows[0] as {
-    billing_interval: string;
-    next_billing_date: string;
-    billing_cycle_count: number;
-  } | undefined;
-  const row = subR.rows[0];
+  const row = subR.rows[0] as
+    | {
+        billing_interval: string;
+        next_billing_date: string;
+        billing_cycle_count: number;
+        type: string;
+      }
+    | undefined;
   if (!row) {
     throw new Error(
       `advanceSubscriptionAfterCompletedCycle: assinatura não encontrada (subscription_id=${params.subscriptionId})`
@@ -404,6 +406,24 @@ export async function advanceSubscriptionAfterCompletedCycle(
     current_period_end: decision.finalNextYmd,
     billing_cycle_count: nextCount,
   });
+
+  if (row.type === 'customer') {
+    try {
+      const { completeCustomerSubscriptionIfCyclesExhausted } = await import(
+        './crm/crmSubscriptionCyclesExhaustion.js'
+      );
+      await completeCustomerSubscriptionIfCyclesExhausted({
+        tenantId: params.tenantId,
+        subscriptionId: params.subscriptionId,
+        correlationId: `advance:${params.jobId}`,
+      });
+    } catch (e) {
+      billingLog('job', 'subscription_cycles_exhaustion_check_failed', {
+        subscription_id: params.subscriptionId,
+        error: e instanceof Error ? e.message.slice(0, 300) : String(e).slice(0, 300),
+      });
+    }
+  }
 }
 
 export function subscriptionSnapshotForTrace(sub: SubscriptionRow): Record<string, unknown> {

@@ -96,5 +96,12 @@ export function calendarSupportsGenerate(
   if (!entry.cycleId) return false;
   const cycle = aggregate.cycles.find((c) => c.id === entry.cycleId);
   if (cycle && cycleNeedsInvariantRepair(cycle.status, cycle.invoiceId)) return false;
-  return invoiceVisibilityFromCycle(cycle?.invoiceId ?? null, aggregate.subscription.status).canGenerate;
+  const status = aggregate.subscription.status;
+  if (status === 'cancelled' || status === 'completed') return false;
+  let allowNewCharge = true;
+  if (aggregate.subscription.cyclesUnlimited === false && aggregate.subscription.maxCycles != null) {
+    const emitted = aggregate.cycles.filter((c) => Boolean(c.invoiceId?.trim())).length;
+    allowNewCharge = emitted < Math.trunc(aggregate.subscription.maxCycles);
+  }
+  return invoiceVisibilityFromCycle(cycle?.invoiceId ?? null, status, { allowNewCharge }).canGenerate;
 }

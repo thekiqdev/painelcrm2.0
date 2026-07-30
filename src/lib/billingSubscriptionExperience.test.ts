@@ -337,6 +337,47 @@ describe('billingSubscriptionExperience', () => {
       const d = detailFixture({ subscription: { ...detailFixture().subscription, status: 'cancelled' } });
       expect(buildFutureCycles(d)).toHaveLength(0);
     });
+    it('respeita max_cycles (Sprint 3)', () => {
+      const d = detailFixture({
+        subscription: {
+          ...detailFixture().subscription,
+          cycles_unlimited: false,
+          max_cycles: 4,
+        },
+        cycles_raw: [
+          {
+            id: 'c1',
+            cycle_date: '2026-05-14',
+            period_start: '2026-05-14',
+            period_end: '2026-06-14',
+            status: 'invoiced',
+            invoice_id: 'inv-a',
+            job_id: null,
+            processed_at: null,
+            skipped_reason: null,
+            error_message: null,
+          },
+          {
+            id: 'c2',
+            cycle_date: '2026-06-14',
+            period_start: '2026-06-14',
+            period_end: '2026-07-14',
+            status: 'invoiced',
+            invoice_id: 'inv-b',
+            job_id: null,
+            processed_at: null,
+            skipped_reason: null,
+            error_message: null,
+          },
+        ],
+      });
+      // max 4, emitted 2 → restantes 2
+      expect(buildFutureCycles(d, 12)).toHaveLength(2);
+    });
+    it('subscriptionHeadlineStatus finalizada', () => {
+      const d = detailFixture({ subscription: { ...detailFixture().subscription, status: 'completed' } });
+      expect(subscriptionHeadlineStatus(d).label).toBe('Finalizada');
+    });
     it('advanceBillingDueYmd weekly', () => {
       expect(advanceBillingDueYmd('2026-07-14', 'weekly')).toBe('2026-07-21');
     });

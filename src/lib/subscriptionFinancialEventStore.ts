@@ -21,6 +21,7 @@ import {
   mergeRealAndProjectionEvents,
 } from './subscriptionFinancialProjection';
 import { invoiceVisibilityFromCycle, resolveCyclePresentation, cycleNeedsInvariantRepair } from './resolvedCompetencyPresentation';
+import { subscriptionAllowsNewChargeGeneration } from './subscriptionCyclesContract';
 import { resolveOperationalCompetency } from './operationalCompetencyResolver';
 import {
   financialEventToHistoryRow,
@@ -254,9 +255,11 @@ export class FinancialEventStore {
         const cycle = ev.cycleId
           ? this.detail.cycles_raw?.find((c) => c.id === ev.cycleId)
           : undefined;
+        const allowNewCharge = subscriptionAllowsNewChargeGeneration(this.detail);
         const vis = invoiceVisibilityFromCycle(
           cycle?.invoice_id ?? ev.invoiceId,
-          this.detail.subscription.status
+          this.detail.subscription.status,
+          { allowNewCharge }
         );
         const needsInvariantRepair = cycle
           ? cycleNeedsInvariantRepair(cycle.status, cycle.invoice_id)

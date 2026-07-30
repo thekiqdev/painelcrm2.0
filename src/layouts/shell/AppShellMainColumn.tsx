@@ -15,7 +15,8 @@ export const AppShellMainColumn = React.memo(function AppShellMainColumn({
     <>
       <main
         className={cn(
-          'flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden px-4 pb-28 md:mx-auto md:w-full md:max-w-7xl md:px-6 md:pb-6',
+          /* Sem overflow-x no main: clip/hidden força containing block e quebra position:sticky no documento. */
+          'flex min-h-0 min-w-0 flex-1 flex-col px-4 pb-28 md:mx-auto md:w-full md:max-w-7xl md:px-6 md:pb-6',
           suppressMobileBottomNav && 'max-md:!pb-4',
           showMobileGlobalHeader
             ? 'pt-4 md:pt-6'

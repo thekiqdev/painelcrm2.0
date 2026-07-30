@@ -2,6 +2,7 @@ import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 import { useEntityNavigation, type EntityOpenMode } from "@/hooks/useEntityNavigation";
 import { cn } from "@/lib/utils";
 import { isValidEntityId } from "@/lib/entityNavigation";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 export type ClientEntityLinkProps = {
   clientId?: string | null;
@@ -15,6 +16,8 @@ export type ClientEntityLinkProps = {
   stopPropagationOnClick?: boolean;
   /** `drawer` abre painel lateral; `route` navega para o perfil. */
   openMode?: EntityOpenMode;
+  /** Quando true (padrão), mostra avatar/iniciais ao lado do nome. */
+  showAvatar?: boolean;
 };
 
 function displayLabel(name: string | null | undefined, disabledFallbackText: string | null | undefined): string {
@@ -23,6 +26,33 @@ function displayLabel(name: string | null | undefined, disabledFallbackText: str
   const f = disabledFallbackText?.trim();
   if (f) return f;
   return "Sem cliente";
+}
+
+function initialsFromLabel(label: string): string {
+  const parts = label.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase();
+  return `${parts[0]![0] ?? ""}${parts[parts.length - 1]![0] ?? ""}`.toUpperCase();
+}
+
+function ClientAvatarChip({
+  label,
+  avatarUrl,
+  size = "sm",
+}: {
+  label: string;
+  avatarUrl?: string | null;
+  size?: "sm" | "md";
+}) {
+  const dim = size === "md" ? "h-8 w-8 text-[11px]" : "h-7 w-7 text-[10px]";
+  return (
+    <Avatar className={cn("shrink-0 border border-border/60", dim)}>
+      {avatarUrl ? <AvatarImage src={avatarUrl} alt="" /> : null}
+      <AvatarFallback className="bg-muted font-semibold text-muted-foreground">
+        {initialsFromLabel(label)}
+      </AvatarFallback>
+    </Avatar>
+  );
 }
 
 export function ClientEntityLink({
@@ -35,6 +65,7 @@ export function ClientEntityLink({
   className,
   stopPropagationOnClick,
   openMode = "drawer",
+  showAvatar = true,
 }: ClientEntityLinkProps) {
   const { canView, loading } = useModulePermissions();
   const { openEntity } = useEntityNavigation();
@@ -47,6 +78,7 @@ export function ClientEntityLink({
   const label = displayLabel(name, disabledFallbackText);
   const idOk = isValidEntityId(resolvedId || undefined);
   const allowLink = Boolean(idOk && resolvedId && !loading && canView("clients"));
+  const withAvatar = showAvatar && (variant === "table" || variant === "card" || variant === "compact" || variant === "inline");
 
   const plainTitle = label;
   const linkTitle =
@@ -59,9 +91,13 @@ export function ClientEntityLink({
     </span>
   ) : null;
 
+  const avatarNode = withAvatar ? (
+    <ClientAvatarChip label={label} avatarUrl={avatarUrl} size={variant === "card" ? "md" : "sm"} />
+  ) : null;
+
   const plainClass = cn(
     "text-inherit",
-    variant === "table" && "block max-w-full truncate align-middle leading-normal",
+    variant === "table" && "truncate align-middle leading-normal",
     variant === "compact" && "truncate",
     className,
   );
@@ -69,8 +105,11 @@ export function ClientEntityLink({
   if (!allowLink) {
     return (
       <span className="inline-flex min-w-0 max-w-full flex-col gap-0.5">
-        <span className={plainClass} title={plainTitle}>
-          {label}
+        <span className={cn("inline-flex min-w-0 max-w-full items-center gap-2", withAvatar && "pr-0.5")}>
+          {avatarNode}
+          <span className={plainClass} title={plainTitle}>
+            {label}
+          </span>
         </span>
         {subtitleNode}
       </span>
@@ -80,9 +119,9 @@ export function ClientEntityLink({
   const linkBase = cn(
     "cursor-pointer underline-offset-2 transition-colors hover:underline",
     variant === "table" &&
-      "block max-w-full truncate align-middle text-sm leading-normal text-muted-foreground decoration-muted-foreground/50 hover:text-foreground hover:decoration-foreground/40",
+      "inline-flex max-w-full items-center gap-2 align-middle text-sm leading-normal text-muted-foreground decoration-muted-foreground/50 hover:text-foreground hover:decoration-foreground/40",
     variant === "inline" &&
-      "text-foreground/90 decoration-foreground/35 hover:text-foreground hover:decoration-foreground/50",
+      "inline-flex max-w-full items-center gap-2 text-foreground/90 decoration-foreground/35 hover:text-foreground hover:decoration-foreground/50",
     variant === "card" &&
       "inline-flex min-w-0 max-w-full items-center gap-2 font-medium text-foreground/90 decoration-foreground/35 hover:text-foreground",
     variant === "compact" &&
@@ -107,9 +146,7 @@ export function ClientEntityLink({
         aria-label={linkTitle}
         onClick={handleClick}
       >
-        {avatarUrl && (variant === "card" || variant === "compact") ? (
-          <img src={avatarUrl} alt="" className="h-6 w-6 shrink-0 rounded-full object-cover" />
-        ) : null}
+        {avatarNode}
         <span className={labelWrap}>{label}</span>
       </button>
       {subtitleNode}

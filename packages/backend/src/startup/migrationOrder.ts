@@ -468,5 +468,7 @@ export const MIGRATION_ORDER = [
   '304_crm_pix_automatic_customer_index.sql',
   /** CRM8 — status requested (intenção sem fatura / sem auth Asaas) */
   '305_crm_pix_automatic_requested_status.sql',
+  /** Sprint 3 ciclos — status completed + ended_reason (fim natural max_cycles) */
+  '306_subscriptions_completed_cycles_exhausted.sql',
   'create-admin-user.sql',
 ];

@@ -393,6 +393,60 @@ export async function getCrmSubscriptionDetail(
 
   const cycles = cyclesRead ? await listSubscriptionCyclesBySubscriptionId(tenantId, subscriptionId, 120) : [];
 
+  // Repair lazy: faturas CRM sem ciclo (criação antiga) → materializa para histórico/calendário.
+  if (cyclesRead && invRows.length > 0) {
+    const linkedInvoiceIds = new Set(cycles.map((c) => c.invoice_id).filter(Boolean));
+    const missing = invRows.some((inv) => !linkedInvoiceIds.has(inv.id));
+    if (missing) {
+      try {
+        const { repairOrphanCustomerInvoicesWithoutCycles } = await import(
+          './crm/crmSubscriptionInvoiceCycleLink.js'
+        );
+        const { repaired } = await repairOrphanCustomerInvoicesWithoutCycles({
+          tenantId,
+          subscriptionId,
+        });
+        if (repaired > 0) {
+          const refreshed = await listSubscriptionCyclesBySubscriptionId(tenantId, subscriptionId, 120);
+          cycles.splice(0, cycles.length, ...refreshed);
+        }
+      } catch (e) {
+        console.warn('[getCrmSubscriptionDetail] orphan invoice cycle repair', e);
+      }
+    }
+  }
+
+  // Sprint 1: seed C+1 se falta pending em next_billing_date (legado / max ainda disponível).
+  if (cyclesRead && (sub.status === 'active' || sub.status === 'paused')) {
+    const nextYmd =
+      (sub.next_billing_date && String(sub.next_billing_date).slice(0, 10)) || null;
+    const hasPendingNext =
+      nextYmd &&
+      cycles.some(
+        (c) =>
+          String(c.cycle_date).slice(0, 10) === nextYmd && !(c.invoice_id && String(c.invoice_id).trim())
+      );
+    const hasAnyInvoiced = cycles.some((c) => c.invoice_id && String(c.invoice_id).trim());
+    if (hasAnyInvoiced && !hasPendingNext) {
+      try {
+        const { seedNextPendingCycleIfEligible } = await import(
+          './crm/crmSubscriptionInvoiceCycleLink.js'
+        );
+        const seed = await seedNextPendingCycleIfEligible({
+          tenantId,
+          subscriptionId,
+          source: 'runtime_repair',
+        });
+        if (seed.seeded) {
+          const refreshed = await listSubscriptionCyclesBySubscriptionId(tenantId, subscriptionId, 120);
+          cycles.splice(0, cycles.length, ...refreshed);
+        }
+      } catch (e) {
+        console.warn('[getCrmSubscriptionDetail] seed next pending cycle', e);
+      }
+    }
+  }
+
   const planLabel =
     invRows.find((i) => i.description && i.description.trim())?.description?.trim() ?? null;
 
@@ -492,8 +546,8 @@ export async function cancelCrmCustomerSubscription(params: {
   if (sub.type !== 'customer') {
     return { ok: false, error: 'Operação disponível apenas para assinaturas de cliente' };
   }
-  if (sub.status !== 'active') {
-    return { ok: false, error: 'Assinatura não está ativa' };
+  if (sub.status !== 'active' && sub.status !== 'paused') {
+    return { ok: false, error: 'Assinatura não está ativa nem pausada' };
   }
 
   if (params.mode === 'immediate') {

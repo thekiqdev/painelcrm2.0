@@ -530,6 +530,7 @@ export async function getSubscriptionById(subscriptionId: string): Promise<Subsc
 
 /**
  * Atualiza configuração de ciclos (assinaturas CRM). Não altera motor de geração.
+ * Sprint 2: não permite reduzir max abaixo do atual nem abaixo dos ciclos emitidos.
  */
 export async function patchSubscriptionCyclesConfig(params: {
   tenantId: string;
@@ -537,11 +538,36 @@ export async function patchSubscriptionCyclesConfig(params: {
   cycles_unlimited: boolean;
   max_cycles: number | null;
 }): Promise<SubscriptionRow | null> {
+  const sub = await getSubscriptionById(params.subscriptionId);
+  if (!sub || sub.tenant_id !== params.tenantId || sub.type !== 'customer') {
+    return null;
+  }
+
   const unlimited = params.cycles_unlimited;
   const maxCycles = unlimited ? null : params.max_cycles;
   if (!unlimited && (maxCycles == null || maxCycles < 1)) {
     throw new Error('max_cycles obrigatório e maior que zero quando cycles_unlimited é false');
   }
+
+  const consumedR = await pool.query<{ n: number }>(
+    `SELECT COUNT(*)::int AS n
+     FROM subscription_cycles
+     WHERE tenant_id = $1::uuid
+       AND subscription_id = $2::uuid
+       AND invoice_id IS NOT NULL`,
+    [params.tenantId, params.subscriptionId]
+  );
+  const consumed = consumedR.rows[0]?.n ?? 0;
+
+  const { assertCyclesConfigPatchAllowed } = await import('./crm/crmSubscriptionCyclesConfigRules.js');
+  assertCyclesConfigPatchAllowed({
+    cycles_unlimited: unlimited,
+    max_cycles: maxCycles,
+    current_unlimited: sub.cycles_unlimited !== false,
+    current_max_cycles: sub.max_cycles ?? null,
+    consumed,
+  });
+
   const r = await pool.query<SubscriptionRowDb>(
     `UPDATE subscriptions
      SET cycles_unlimited = $1, max_cycles = $2, updated_at = now()

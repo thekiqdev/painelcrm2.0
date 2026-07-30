@@ -45,6 +45,7 @@ import { clientsService } from "@/services/clients";
 import type { CustomerInvoice } from "@/services/customerInvoices";
 import type { Client } from "@/services/clients";
 import { toast } from "@/components/ui/sonner";
+import { chatAvatarUrlForImgSrc } from "@/lib/chatAvatarUrl";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
@@ -183,6 +184,14 @@ const CustomerInvoices = () => {
     return m;
   }, [clients]);
 
+  const clientAvatarById = React.useMemo(() => {
+    const m: Record<string, string | null> = {};
+    clients.forEach((c) => {
+      m[c.id] = chatAvatarUrlForImgSrc(c.whatsapp_avatar_url ?? null);
+    });
+    return m;
+  }, [clients]);
+
   const listRows = React.useMemo(() => buildInvoiceListRows(invoices), [invoices]);
   const filteredRows = React.useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -287,10 +296,10 @@ const CustomerInvoices = () => {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem asChild>
-                    <Link to="/customer-invoices/new?by_link=1&kind=subscription">Assinatura por link</Link>
+                    <Link to="/customer-invoices/new?by_link=1&billing=subscription">Assinatura por link</Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
-                    <Link to="/customer-invoices/new?by_link=1&kind=one_off">Fatura por link</Link>
+                    <Link to="/customer-invoices/new?by_link=1&billing=one_off">Fatura por link</Link>
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -318,10 +327,10 @@ const CustomerInvoices = () => {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem asChild>
-                  <Link to="/customer-invoices/new?by_link=1&kind=subscription">Assinatura por link</Link>
+                  <Link to="/customer-invoices/new?by_link=1&billing=subscription">Assinatura por link</Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem asChild>
-                  <Link to="/customer-invoices/new?by_link=1&kind=one_off">Fatura por link</Link>
+                  <Link to="/customer-invoices/new?by_link=1&billing=one_off">Fatura por link</Link>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -606,6 +615,7 @@ const CustomerInvoices = () => {
                       <ClientEntityLink
                         clientId={inv.client_id}
                         name={inv.client_id ? clientMap[inv.client_id] ?? inv.client_id.slice(0, 8) : null}
+                        avatarUrl={inv.client_id ? clientAvatarById[inv.client_id] ?? null : null}
                         disabledFallbackText="Sem cliente"
                         variant="table"
                         stopPropagationOnClick
@@ -780,6 +790,7 @@ const CustomerInvoices = () => {
                       <ClientEntityLink
                         clientId={inv.client_id}
                         name={inv.client_id ? clientMap[inv.client_id] ?? "Cliente" : null}
+                        avatarUrl={inv.client_id ? clientAvatarById[inv.client_id] ?? null : null}
                         disabledFallbackText="Sem cliente"
                         variant="compact"
                         className="font-semibold"

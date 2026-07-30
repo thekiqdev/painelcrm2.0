@@ -30,7 +30,21 @@ export function cycleSupportsManualGenerateFromAggregate(
   if (!cycleId?.trim()) return false;
   const cycle = cycles.find((c) => c.id === cycleId.trim());
   if (!cycle) return false;
-  return invoiceVisibilityFromCycle(cycle.invoiceId, subscription.status).canGenerate;
+  const allowNewCharge = aggregateSubscriptionAllowsNewCharge(subscription, cycles);
+  return invoiceVisibilityFromCycle(cycle.invoiceId, subscription.status, { allowNewCharge })
+    .canGenerate;
+}
+
+function aggregateSubscriptionAllowsNewCharge(
+  subscription: BillingSubscriptionSnapshot,
+  cycles: BillingCycleSnapshot[]
+): boolean {
+  if (subscription.status === 'cancelled' || subscription.status === 'completed') return false;
+  if (subscription.cyclesUnlimited !== false) return true;
+  const max = subscription.maxCycles;
+  if (max == null || max < 1) return true;
+  const emitted = cycles.filter((c) => Boolean(c.invoiceId?.trim())).length;
+  return emitted < Math.trunc(max);
 }
 
 /**
@@ -47,9 +61,14 @@ export function buildCapabilitiesFromAggregate(
   const paymentEventCount = real.filter((e) => e.eventType === 'payment').length;
   const eventsWithInvoiceCount = real.filter((e) => Boolean(e.metadata.invoiceId)).length;
 
+  const allowNewCharge = aggregateSubscriptionAllowsNewCharge(subscription, cycles);
   const canGenerate =
+    allowNewCharge &&
     status !== 'cancelled' &&
-    cycles.some((c) => invoiceVisibilityFromCycle(c.invoiceId, status).canGenerate);
+    status !== 'completed' &&
+    cycles.some((c) =>
+      invoiceVisibilityFromCycle(c.invoiceId, status, { allowNewCharge }).canGenerate
+    );
 
   const hasInvoice =
     eventsWithInvoiceCount > 0 || Boolean(nextInvoice?.metadata.invoiceId);

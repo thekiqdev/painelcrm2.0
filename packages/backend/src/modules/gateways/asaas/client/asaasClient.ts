@@ -348,10 +348,15 @@ export async function createPixAutomaticAuthorization(
     immediateDescription?: string;
     /** Validade do QR imediato em segundos (Asaas exige; default 3600). */
     immediateExpirationSeconds?: number;
+    /**
+     * Sprint 3 — fim da vigência (YYYY-MM-DD). Omitir = indeterminado (ciclos ilimitados).
+     * Asaas: finishDate opcional na criação; não há update público documentado nesta onda.
+     */
+    finishDate?: string | null;
   },
   config?: AsaasConfig | null
 ): Promise<Record<string, unknown>> {
-  const payload = {
+  const payload: Record<string, unknown> = {
     customerId: body.customerId,
     frequency: body.frequency,
     contractId: body.contractId.slice(0, 35),
@@ -370,6 +375,10 @@ export async function createPixAutomaticAuthorization(
       expirationSeconds: body.immediateExpirationSeconds ?? 3600,
     },
   };
+  const finish = body.finishDate?.trim().slice(0, 10);
+  if (finish && /^\d{4}-\d{2}-\d{2}$/.test(finish)) {
+    payload.finishDate = finish;
+  }
   return request<Record<string, unknown>>(
     'POST',
     '/pix/automatic/authorizations',

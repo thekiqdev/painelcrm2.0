@@ -150,6 +150,8 @@ export interface CrmSubscriptionDetailPayload {
     updated_at: string;
     cycles_unlimited?: boolean;
     max_cycles?: number | null;
+    /** Sprint 3 — cycles_exhausted etc. */
+    ended_reason?: string | null;
   };
   client_name: string | null;
   plan_label: string | null;

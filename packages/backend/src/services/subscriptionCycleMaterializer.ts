@@ -24,7 +24,8 @@ export type SubscriptionCycleMaterializeSource =
   | 'patch_next_billing'
   | 'resume'
   | 'runtime_repair'
-  | 'worker_lifecycle';
+  | 'worker_lifecycle'
+  | 'crm_first_invoice';
 
 export type EnsureSubscriptionCycleParams = {
   tenantId: string;

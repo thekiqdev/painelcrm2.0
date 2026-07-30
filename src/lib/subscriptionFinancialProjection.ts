@@ -41,7 +41,7 @@ export function buildProjectionEvents(
   _todayYmd: string,
   count = PROJECTION_MAX_COUNT
 ): FinancialEvent[] {
-  if (detail.subscription.status === 'cancelled') return [];
+  if (detail.subscription.status === 'cancelled' || detail.subscription.status === 'completed') return [];
   const occupied = occupiedDueDatesFromDetail(detail);
   const raw = buildFutureCycles(detail, count + occupied.size);
   const events: FinancialEvent[] = [];

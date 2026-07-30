@@ -16,9 +16,16 @@ export function buildProjectionEventsFromAggregate(
   cycles: BillingCycleSnapshot[],
   count = PROJECTION_MAX_COUNT
 ): BillingFinancialEventSnapshot[] {
-  if (subscription.status === 'cancelled') return [];
+  if (subscription.status === 'cancelled' || subscription.status === 'completed') return [];
   let due = subscription.nextBillingDate;
   if (!due || !/^\d{4}-\d{2}-\d{2}$/.test(due)) return [];
+
+  let effectiveCount = count;
+  if (subscription.cyclesUnlimited === false && subscription.maxCycles != null && subscription.maxCycles >= 1) {
+    const emitted = cycles.filter((c) => Boolean(c.invoiceId?.trim())).length;
+    effectiveCount = Math.min(count, Math.max(0, Math.trunc(subscription.maxCycles) - emitted));
+  }
+  if (effectiveCount <= 0) return [];
 
   const occupied = new Set(
     cycles.map((c) => c.cycleDate).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
@@ -28,7 +35,7 @@ export function buildProjectionEventsFromAggregate(
   const seen = new Set<string>();
   let guard = 0;
 
-  while (events.length < count && guard < count + occupied.size + 2) {
+  while (events.length < effectiveCount && guard < effectiveCount + occupied.size + 2) {
     guard += 1;
     if (!occupied.has(due) && !seen.has(due)) {
       seen.add(due);

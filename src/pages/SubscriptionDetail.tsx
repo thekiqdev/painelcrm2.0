@@ -28,6 +28,7 @@ import { crmSubscriptionsService, type CrmSubscriptionBillingInterval, type CrmS
 import { toast } from "@/components/ui/sonner";
 import { formatYmdBrSafe } from "@/lib/billingSafeDate";
 import { executeDeterministicGenerateRenewal, resolveGenerateBillingCycleId, type GenerateBillingTarget } from "@/lib/subscriptionBillingGeneration";
+import { buildCyclesContractSummary, countEmittedSubscriptionCycles, subscriptionAllowsNewChargeGeneration } from "@/lib/subscriptionCyclesContract";
 import { ArrowLeft, ChevronDown } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { SubscriptionContractEditDialog, type SubscriptionContractModalPreset } from "@/components/subscriptions/SubscriptionContractEditDialog";
@@ -115,7 +116,8 @@ const SubscriptionDetail = () => {
   const [cancelOpen, setCancelOpen] = useState<"immediate" | "end_of_period" | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [cyclesUnlimitedEdit, setCyclesUnlimitedEdit] = useState(true);
-  const [maxCyclesEdit, setMaxCyclesEdit] = useState("12");
+  /** Alvo do max finito (≥ piso: emitidos ou max atual). */
+  const [cyclesTargetMax, setCyclesTargetMax] = useState(1);
   const [cyclesSaving, setCyclesSaving] = useState(false);
   const [contractOpen, setContractOpen] = useState(false);
   const [contractPreset, setContractPreset] = useState<SubscriptionContractModalPreset>("edit");
@@ -174,8 +176,19 @@ const SubscriptionDetail = () => {
     if (!detail) return;
     const u = detail.subscription.cycles_unlimited !== false;
     setCyclesUnlimitedEdit(u);
-    setMaxCyclesEdit(detail.subscription.max_cycles != null ? String(detail.subscription.max_cycles) : "12");
-  }, [detail?.subscription.id, detail?.subscription.cycles_unlimited, detail?.subscription.max_cycles]);
+    const emitted = countEmittedSubscriptionCycles(detail);
+    const floor = Math.max(emitted, 1);
+    if (!u && detail.subscription.max_cycles != null && detail.subscription.max_cycles >= floor) {
+      setCyclesTargetMax(Math.trunc(detail.subscription.max_cycles));
+    } else {
+      setCyclesTargetMax(floor);
+    }
+  }, [
+    detail?.subscription.id,
+    detail?.subscription.cycles_unlimited,
+    detail?.subscription.max_cycles,
+    detail ? countEmittedSubscriptionCycles(detail) : 0,
+  ]);
 
   const handleGenerateBilling = useCallback(
     async (target?: GenerateBillingTarget | import('@/lib/billingSubscriptionExperience').FinancialHistoryRow) => {
@@ -283,16 +296,27 @@ const SubscriptionDetail = () => {
   };
 
   const saveCyclesConfig = async () => {
-    if (!id) return;
+    if (!id || !detail) return;
     const unlimited = cyclesUnlimitedEdit;
+    const summary = buildCyclesContractSummary(detail);
     let maxCycles: number | null = null;
     if (!unlimited) {
-      const n = Math.trunc(Number(maxCyclesEdit));
-      if (!Number.isFinite(n) || n < 1) {
-        toast.error("Indique a quantidade de ciclos (número inteiro maior que zero)");
+      const wasUnlimited = detail.subscription.cycles_unlimited !== false;
+      const currentMax =
+        !wasUnlimited && detail.subscription.max_cycles != null
+          ? Math.trunc(detail.subscription.max_cycles)
+          : null;
+      const floor = Math.max(summary.emitted, currentMax ?? 0, 1);
+      const target = Math.trunc(cyclesTargetMax);
+      if (!Number.isFinite(target) || target < floor) {
+        toast.error(`O limite não pode ser inferior a ${floor}`);
         return;
       }
-      maxCycles = n;
+      if (currentMax != null && target < currentMax) {
+        toast.error("Só é permitido aumentar a quantidade de ciclos");
+        return;
+      }
+      maxCycles = target;
     }
     try {
       setCyclesSaving(true);
@@ -583,7 +607,7 @@ const SubscriptionDetail = () => {
     canViewInvoices,
     latestInvoiceId: detail.latest_invoice_id,
     editHref,
-    showRenewalGenerate: s.status === "active",
+    showRenewalGenerate: s.status === "active" && subscriptionAllowsNewChargeGeneration(detail),
   };
 
   return (
@@ -699,34 +723,117 @@ const SubscriptionDetail = () => {
                     <div>
                       <p className="text-sm font-medium text-foreground">Configurar ciclos</p>
                       <p className="text-xs text-muted-foreground mt-1">
-                        Ilimitado projeta receita conforme o período do relatório; finito limita o número total de cobranças.
+                        Ilimitado projeta receita conforme o período; finito limita o total de cobranças.
+                        Com limite definido, só é possível adicionar ciclos (+N).
                       </p>
                     </div>
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <Label htmlFor="cycles_unlimited_sub" className="text-sm font-normal cursor-pointer">
-                        Ciclos ilimitados
-                      </Label>
-                      <Switch
-                        id="cycles_unlimited_sub"
-                        checked={cyclesUnlimitedEdit}
-                        onCheckedChange={setCyclesUnlimitedEdit}
-                        disabled={!canEditSubscription || s.status !== "active"}
-                      />
-                    </div>
-                    {!cyclesUnlimitedEdit && (
-                      <div className="max-w-[200px]">
-                        <Label htmlFor="max_cycles_sub">Quantidade de ciclos</Label>
-                        <Input
-                          id="max_cycles_sub"
-                          type="number"
-                          min={1}
-                          className="mt-1"
-                          value={maxCyclesEdit}
-                          onChange={(e) => setMaxCyclesEdit(e.target.value)}
-                          disabled={!canEditSubscription || s.status !== "active"}
-                        />
-                      </div>
-                    )}
+                    {(() => {
+                      const cyclesSummary = buildCyclesContractSummary(detail);
+                      const serverFinite =
+                        detail.subscription.cycles_unlimited === false &&
+                        detail.subscription.max_cycles != null;
+                      const currentMax = serverFinite
+                        ? Math.trunc(detail.subscription.max_cycles!)
+                        : null;
+                      /** Piso: max atual (se finito) ou ciclos já emitidos — nunca abaixo. */
+                      const floor = Math.max(
+                        cyclesSummary.emitted,
+                        currentMax ?? 0,
+                        1
+                      );
+                      const canEditCycles =
+                        canEditSubscription && s.status === "active";
+                      return (
+                        <>
+                          <div className="rounded-md border bg-background/60 px-3 py-2">
+                            <p className="text-xs text-muted-foreground uppercase tracking-wide">
+                              Progresso
+                            </p>
+                            <p className="text-lg font-semibold tabular-nums tracking-tight">
+                              {cyclesSummary.label}
+                            </p>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              {cyclesSummary.emitted} ciclo(s) emitido(s)
+                              {cyclesSummary.unlimited
+                                ? " · ilimitado"
+                                : cyclesSummary.max != null
+                                  ? ` · máximo ${cyclesSummary.max}`
+                                  : ""}
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <Label
+                              htmlFor="cycles_unlimited_sub"
+                              className="text-sm font-normal cursor-pointer"
+                            >
+                              Ciclos ilimitados
+                            </Label>
+                            <Switch
+                              id="cycles_unlimited_sub"
+                              checked={cyclesUnlimitedEdit}
+                              onCheckedChange={(on) => {
+                                setCyclesUnlimitedEdit(on);
+                                if (!on) {
+                                  setCyclesTargetMax(floor);
+                                }
+                              }}
+                              disabled={!canEditCycles}
+                            />
+                          </div>
+                          {!cyclesUnlimitedEdit ? (
+                            <div className="space-y-2">
+                              <Label>Limite total de ciclos</Label>
+                              <div className="flex flex-wrap items-center gap-3">
+                                <div
+                                  className="flex h-10 min-w-[3.5rem] items-center justify-center rounded-md border bg-background px-3 text-xl font-semibold tabular-nums"
+                                  aria-live="polite"
+                                >
+                                  {cyclesTargetMax}
+                                </div>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-10 w-10 p-0 text-lg"
+                                  disabled={!canEditCycles}
+                                  aria-label="Adicionar um ciclo ao limite"
+                                  onClick={() =>
+                                    setCyclesTargetMax((n) => Math.max(floor, n) + 1)
+                                  }
+                                >
+                                  +
+                                </Button>
+                                {cyclesTargetMax > floor ? (
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-10 px-2 text-muted-foreground"
+                                    disabled={!canEditCycles}
+                                    aria-label="Remover um ciclo do limite (até o mínimo)"
+                                    onClick={() =>
+                                      setCyclesTargetMax((n) => Math.max(floor, n - 1))
+                                    }
+                                  >
+                                    −
+                                  </Button>
+                                ) : null}
+                              </div>
+                              <p className="text-xs text-muted-foreground">
+                                {cyclesSummary.emitted} emitido(s)
+                                {currentMax != null ? ` · máximo atual ${currentMax}` : ""}
+                                {" · "}mínimo {floor}
+                                {cyclesTargetMax > floor
+                                  ? ` · ao guardar: ${cyclesTargetMax}`
+                                  : serverFinite
+                                    ? " · use + para aumentar"
+                                    : " · use + para permitir mais ciclos"}
+                              </p>
+                            </div>
+                          ) : null}
+                        </>
+                      );
+                    })()}
                     <Button
                       type="button"
                       size="sm"
@@ -808,7 +915,7 @@ const SubscriptionDetail = () => {
           canEditContract,
           canReschedule,
           canViewInvoices,
-          showRenewalGenerate: s.status === "active",
+          showRenewalGenerate: s.status === "active" && subscriptionAllowsNewChargeGeneration(detail),
         }}
       />
 

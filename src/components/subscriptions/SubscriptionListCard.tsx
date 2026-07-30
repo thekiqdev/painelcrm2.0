@@ -15,11 +15,12 @@ import {
 type Props = {
   row: CrmSubscriptionListItem;
   onOpen: (row: CrmSubscriptionListItem) => void;
+  avatarUrl?: string | null;
 };
 
-export function SubscriptionListCard({ row, onOpen }: Props) {
+export function SubscriptionListCard({ row, onOpen, avatarUrl }: Props) {
   const st = subscriptionStatusUi(row);
-  const plan = row.plan_label?.trim() || `Assinatura · ${intervalLabel(row.billing_interval)}`;
+  const plan = row.plan_label?.trim() || "—";
 
   return (
     <div className="rounded-2xl border border-border/80 bg-card p-4 shadow-sm">
@@ -29,6 +30,7 @@ export function SubscriptionListCard({ row, onOpen }: Props) {
             <ClientEntityLink
               clientId={row.client_id}
               name={row.client_name}
+              avatarUrl={avatarUrl}
               variant="compact"
               stopPropagationOnClick
               disabledFallbackText="Cliente"
@@ -41,6 +43,9 @@ export function SubscriptionListCard({ row, onOpen }: Props) {
             <span className="text-sm text-muted-foreground">Sem cliente vinculado</span>
           )}
           <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{plan}</p>
+          <p className="mt-0.5 text-xs font-medium text-foreground/80">
+            {intervalLabel(row.billing_interval)}
+          </p>
         </div>
         <Badge
           variant={st.variant}

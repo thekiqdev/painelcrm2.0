@@ -1,9 +1,16 @@
 import type { SubscriptionActionsHandlers, SubscriptionActionsFlags } from './SubscriptionActionsPanel';
 import { Button } from '@/components/ui/button';
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
   ArrowDown,
   ArrowUp,
   CalendarClock,
+  ChevronDown,
   Pause,
   Pencil,
   Play,
@@ -23,6 +30,10 @@ export function SubscriptionSettingsActions({ handlers, flags, className }: Prop
   const isActive = flags.status === 'active';
   const isPaused = flags.status === 'paused';
   const isCancelled = flags.status === 'cancelled';
+  const canCancel =
+    (isActive || isPaused) &&
+    flags.canCancelSubscription &&
+    Boolean(handlers.onCancelEndOfPeriod || handlers.onCancelImmediate);
 
   return (
     <div className={cn('space-y-2', className)} role="group" aria-label="Ações da assinatura">
@@ -50,18 +61,6 @@ export function SubscriptionSettingsActions({ handlers, flags, className }: Prop
         >
           <Pause className="h-3.5 w-3.5" />
           Pausar
-        </Button>
-      ) : null}
-      {isActive && flags.canCancelSubscription && handlers.onCancelEndOfPeriod ? (
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          className={cn('w-full justify-start gap-2 text-muted-foreground', focusRingClass())}
-          onClick={handlers.onCancelEndOfPeriod}
-        >
-          <XCircle className="h-3.5 w-3.5" />
-          Cancelar
         </Button>
       ) : null}
       {isActive && handlers.onUpgrade ? (
@@ -128,6 +127,38 @@ export function SubscriptionSettingsActions({ handlers, flags, className }: Prop
           <RotateCcw className="h-3.5 w-3.5" />
           Reativar
         </Button>
+      ) : null}
+
+      {canCancel ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className={cn('w-full justify-start gap-2 text-muted-foreground', focusRingClass())}
+            >
+              <XCircle className="h-3.5 w-3.5" />
+              Cancelar
+              <ChevronDown className="ml-auto h-3.5 w-3.5 opacity-60" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-56">
+            {handlers.onCancelImmediate ? (
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                onSelect={handlers.onCancelImmediate}
+              >
+                Encerrar agora
+              </DropdownMenuItem>
+            ) : null}
+            {handlers.onCancelEndOfPeriod ? (
+              <DropdownMenuItem onSelect={handlers.onCancelEndOfPeriod}>
+                Encerrar no fim do período
+              </DropdownMenuItem>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
       ) : null}
     </div>
   );

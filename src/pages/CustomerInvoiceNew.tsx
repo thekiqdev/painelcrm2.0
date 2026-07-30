@@ -18,7 +18,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { customerInvoicesService } from "@/services/customerInvoices";
-import { customerChargesService } from "@/services/customerCharges";
 import { clientsService } from "@/services/clients";
 import { productsService } from "@/services/products";
 import { projectsService } from "@/services/projects";
@@ -29,12 +28,16 @@ import type {
   RecurrenceNextBillingEnqueueReason,
   UpdateCustomerInvoiceBody,
 } from "@/services/customerInvoices";
-import type { CustomerChargeWithSummary } from "@/services/customerCharges";
 import type { Product } from "@/types/products";
 import { resolvePublicCatalogUnitPrice } from "@/types/products";
 import type { Client } from "@/services/clients";
 import { chatAvatarUrlForImgSrc } from "@/lib/chatAvatarUrl";
 import { toast } from "@/components/ui/sonner";
+import { InvoicePaymentMethodCards } from "@/components/billing/InvoicePaymentMethodCards";
+import {
+  SubscriptionSectionCard,
+  SubscriptionSummaryCard,
+} from "@/components/billing/SubscriptionCreateChrome";
 import {
   ArrowLeft,
   X,
@@ -56,6 +59,7 @@ import {
   Phone,
   Building2,
   IdCard,
+  Sparkles,
 } from "lucide-react";
 import {
   parseBrl,
@@ -121,6 +125,19 @@ const PAYMENT_METHOD_OPTIONS: Array<{ value: InvoicePaymentMethod; label: string
   { value: "BOLETO", label: "Boleto" },
   { value: "CREDIT_CARD", label: "Cartão" },
 ];
+
+const BILLING_INTERVAL_LABELS: Record<
+  "weekly" | "monthly" | "quarterly" | "semi_annual" | "yearly",
+  string
+> = {
+  weekly: "Semanal",
+  monthly: "Mensal",
+  quarterly: "Trimestral",
+  semi_annual: "Semestral",
+  yearly: "Anual",
+};
+
+const SUBSCRIPTION_DESCRIPTION_MAX_CHARS = 70;
 
 interface GatewayStatusItemForSelect {
   key: string;
@@ -289,8 +306,21 @@ const CustomerInvoiceNew = ({
   const queryProjectId = searchParams.get("projectId")?.trim() || "";
   const projectInvoiceMode = (searchParams.get("mode") || "").trim().toLowerCase();
   const projectReturnTo = searchParams.get("returnTo")?.trim() || "";
-  /** `one_off` | `subscription` — pré-seleciona o tipo ao entrar com `client_id`. */
-  const billingKindQuery = (searchParams.get("billing") || "").trim().toLowerCase();
+  /** `one_off` | `subscription` — `billing` (canónico) ou `kind` (alias legado). */
+  const billingKindQuery = useMemo((): CreationKind | null => {
+    const raw = (
+      searchParams.get("billing") ||
+      searchParams.get("kind") ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+    if (raw === "subscription") return "subscription";
+    if (raw === "one_off") return "one_off";
+    return null;
+  }, [searchParams]);
+  const byLinkQuery =
+    searchParams.get("by_link") === "1" || searchParams.get("by_link") === "true";
   const returnToConversation = searchParams.get("return_to")?.trim() || "";
   const originChat = searchParams.get("origin") === "chat";
   const listReturnPath = useMemo(
@@ -322,10 +352,8 @@ const CustomerInvoiceNew = ({
   const [billingInterval, setBillingInterval] = useState<"weekly" | "monthly" | "quarterly" | "semi_annual" | "yearly">("monthly");
   const [subscriptionCyclesUnlimited, setSubscriptionCyclesUnlimited] = useState(true);
   const [subscriptionMaxCycles, setSubscriptionMaxCycles] = useState("12");
-  const [invoiceByLink, setInvoiceByLink] = useState(false);
-  const [charges, setCharges] = useState<CustomerChargeWithSummary[]>([]);
-  const [loadingCharges, setLoadingCharges] = useState(false);
-  const [chargeQuery, setChargeQuery] = useState("");
+  const [subscriptionNotes, setSubscriptionNotes] = useState("");
+  const [invoiceByLink, setInvoiceByLink] = useState(() => byLinkQuery);
   const [crmGatewayActive, setCrmGatewayActive] = useState<boolean | null>(null);
   const [gatewaysStatus, setGatewaysStatus] = useState<GatewayStatusItemForSelect[]>([]);
   const [gatewaysLoading, setGatewaysLoading] = useState(false);
@@ -549,25 +577,6 @@ const CustomerInvoiceNew = ({
   }, [step, invoiceByLink]);
 
   useEffect(() => {
-    if (step !== "form") return;
-    const timer = window.setTimeout(() => {
-    setLoadingCharges(true);
-    customerChargesService
-      .list({
-        client_id: form.client_id || undefined,
-        q: chargeQuery.trim() || undefined,
-        limit: 100,
-      })
-      .then((data) => {
-        setCharges(data.filter((c) => c.status === "open" || c.status === "partial"));
-      })
-      .catch(() => setCharges([]))
-      .finally(() => setLoadingCharges(false));
-    }, 280);
-    return () => window.clearTimeout(timer);
-  }, [step, form.client_id, chargeQuery]);
-
-  useEffect(() => {
     if (invoiceByLink) {
       setSelectedClient(null);
       return;
@@ -641,18 +650,17 @@ const CustomerInvoiceNew = ({
     });
     if (embedded) {
       setCreationKind(embeddedBillingPreset === "subscription" ? "subscription" : "one_off");
-    setStep("form");
+      setStep("form");
     } else {
-      const kindFromUrl =
-        billingKindQuery === "subscription"
-          ? "subscription"
-          : billingKindQuery === "one_off"
-            ? "one_off"
-            : null;
-      setCreationKind(kindFromUrl);
-      setStep(kindFromUrl ? "form" : "billing_type");
+      setCreationKind(billingKindQuery);
+      setStep(billingKindQuery ? "form" : "billing_type");
     }
   }, [prefillClientId, isEditMode, embedded, billingKindQuery, embeddedBillingPreset]);
+
+  useEffect(() => {
+    if (isEditMode || embedded) return;
+    if (byLinkQuery) setInvoiceByLink(true);
+  }, [byLinkQuery, isEditMode, embedded]);
 
   useEffect(() => {
     if (embedded && !isEditMode) {
@@ -672,8 +680,10 @@ const CustomerInvoiceNew = ({
   }, [billingInterval, creationKind]);
 
   useEffect(() => {
-    setChargeQuery("");
-  }, [form.client_id]);
+    if (!allowedPaymentMethods.includes("PIX") && pixAutomaticOn) {
+      setPixAutomaticOn(false);
+    }
+  }, [allowedPaymentMethods, pixAutomaticOn]);
 
   useEffect(() => {
     if (step !== "form" || isEditMode) return;
@@ -914,6 +924,17 @@ const CustomerInvoiceNew = ({
       toast.error("Preencha o cliente ou marque “Fatura por link”");
       return;
     }
+    if (wantsSubscription) {
+      const title = (form.description ?? "").trim();
+      if (!title) {
+        toast.error("Informe a descrição da assinatura");
+        return;
+      }
+      if (title.length > SUBSCRIPTION_DESCRIPTION_MAX_CHARS) {
+        toast.error(`A descrição da assinatura deve ter no máximo ${SUBSCRIPTION_DESCRIPTION_MAX_CHARS} caracteres`);
+        return;
+      }
+    }
     const useItems = !useSingleAmount && validLines.length > 0;
     const amountCents = useItems ? totalCentsFromLines : Math.round(parseBrl(form.amount) * 100);
     if (amountCents <= 0) {
@@ -922,9 +943,16 @@ const CustomerInvoiceNew = ({
     }
     try {
       setCreateLoading(true);
+      const subscriptionTitle = (form.description ?? "").trim();
+      const notesTrim = subscriptionNotes.trim();
+      const resolvedDescription = wantsSubscription
+        ? notesTrim
+          ? `${subscriptionTitle}\n\n${notesTrim}`
+          : subscriptionTitle
+        : form.description || null;
       const body: CreateCustomerInvoiceBody = {
         due_date: form.due_date,
-        description: form.description || null,
+        description: resolvedDescription,
         payment_method:
           form.payment_method ??
           (allowedPaymentMethods.includes("PIX")
@@ -1008,23 +1036,33 @@ const CustomerInvoiceNew = ({
               : "Fatura criada com sucesso"
         );
       }
-      if (result.invoice?.id) {
+      if (result.invoice?.id || result.subscription_id) {
         if (embedded) {
-          onCreated?.(result.invoice.id);
+          if (result.invoice?.id) onCreated?.(result.invoice.id);
+          else onBack?.();
         } else if (projectReturnTo) {
           navigate(projectReturnTo);
-        } else if (originChat && returnToConversation) {
+        } else if (result.subscription_id) {
+          navigate(`/crm-subscriptions/${result.subscription_id}`, {
+            state:
+              originChat && returnToConversation
+                ? { chatReturnTo: returnToConversation, fromNewSubscription: true }
+                : { fromNewSubscription: true },
+          });
+        } else if (originChat && returnToConversation && result.invoice?.id) {
           navigate(`/customer-invoices/${result.invoice.id}`, {
             state: { chatReturnTo: returnToConversation },
           });
-        } else {
+        } else if (result.invoice?.id) {
           navigate(`/customer-invoices/${result.invoice.id}`, { state: { fromNewInvoice: true } });
+        } else {
+          navigate("/customer-invoices");
         }
       } else {
         if (embedded) {
           onBack?.();
         } else {
-          navigate("/customer-invoices");
+          navigate(wantsSubscription ? "/crm-subscriptions" : "/customer-invoices");
         }
       }
     } catch (err) {
@@ -1034,11 +1072,29 @@ const CustomerInvoiceNew = ({
     }
   };
 
-  const filteredCharges = charges;
   const activeGatewaysForSelect = gatewaysStatus.filter(
     (g) => g.is_enabled && g.configured && g.status === "active"
   );
   const showGatewaySelect = activeGatewaysForSelect.length > 1;
+  const isSubscriptionCreate = !isEditMode && creationKind === "subscription";
+  /** Resumo lateral/final — oculto no Chat e no float (fluxo `embedded`). */
+  const showSubscriptionSummary = isSubscriptionCreate && !embedded;
+  const summaryClientLabel = invoiceByLink
+    ? "Por link"
+    : selectedClient?.name || selectedClient?.company || form.client_id || "—";
+  const summaryAmountCents = useSingleAmount
+    ? Math.round(parseBrl(form.amount) * 100)
+    : totalCentsFromLines;
+  const summaryAmountLabel =
+    summaryAmountCents > 0
+      ? `R$ ${(summaryAmountCents / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`
+      : "—";
+  const summaryMethodsLabel = allowedPaymentMethods
+    .map((m) => PAYMENT_METHOD_OPTIONS.find((o) => o.value === m)?.label ?? m)
+    .join(", ");
+  const summaryCyclesLabel = subscriptionCyclesUnlimited
+    ? "Ilimitados"
+    : `${subscriptionMaxCycles || "—"} ciclo(s)`;
 
   /** Mesmo shell mobile da rota global: fluxo embutido no Chat usa o mesmo padrão (portal fullscreen). */
   const mobileShell = isMobile;
@@ -1073,10 +1129,17 @@ const CustomerInvoiceNew = ({
     if (embedded) onBack?.();
     else if (returnToConversation) navigate(returnToConversation);
     else if (listReturnPath) navigate(listReturnPath);
+    else if (billingKindQuery === "subscription") navigate("/crm-subscriptions");
     else navigate("/customer-invoices");
   };
 
   const advanceClientStep = () => {
+    // Intenção já na URL (ex.: Assinaturas → billing=subscription) → salta billing_type.
+    if (billingKindQuery) {
+      setCreationKind(billingKindQuery);
+      setStep("form");
+      return;
+    }
     setCreationKind(null);
     setStep("billing_type");
   };
@@ -1101,6 +1164,12 @@ const CustomerInvoiceNew = ({
       (billingKindQuery === "one_off" || billingKindQuery === "subscription");
     if (directFromClientsList) {
       navigate(listReturnPath);
+      return;
+    }
+    // Kind pré-definido na URL: voltar ao cliente sem reabrir fatura vs assinatura.
+    if (billingKindQuery) {
+      setCreationKind(billingKindQuery);
+      setStep("client");
       return;
     }
     setStep("billing_type");
@@ -1164,15 +1233,23 @@ const CustomerInvoiceNew = ({
                   ? editFlow === "renewal"
                     ? "Renovação"
                     : "Editar fatura"
-                  : "Nova fatura"}
+                  : billingKindQuery === "subscription"
+                    ? "Nova assinatura"
+                    : billingKindQuery === "one_off"
+                      ? "Nova fatura"
+                      : "Nova cobrança"}
               </h1>
               {step === "client" && !isEditMode ? (
                 <>
                   <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
-                    Como quer criar esta cobrança?
+                    {billingKindQuery === "subscription"
+                      ? "Escolha o cliente da assinatura"
+                      : billingKindQuery === "one_off"
+                        ? "Escolha o cliente da fatura"
+                        : "Como quer criar esta cobrança?"}
                   </p>
                   <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/85">
-                    Etapa 1 de 3
+                    {billingKindQuery ? "Etapa 1 de 2" : "Etapa 1 de 3"}
                   </p>
                 </>
               ) : step === "billing_type" && !isEditMode ? (
@@ -1193,7 +1270,7 @@ const CustomerInvoiceNew = ({
                     <p className="mt-1 truncate text-[11px] text-muted-foreground">Desde a conversa</p>
                   ) : (
                     <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/85">
-                      Etapa 3 de 3
+                      {billingKindQuery ? "Etapa 2 de 2" : "Etapa 3 de 3"}
                     </p>
                   )}
                 </>
@@ -1767,11 +1844,32 @@ const CustomerInvoiceNew = ({
           </CardContent>
         </Card>
       ) : (
-        <Card className={cn(mobileShell && "border-0 bg-transparent shadow-none")}>
+        <div
+          className={cn(
+            isSubscriptionCreate &&
+              showSubscriptionSummary &&
+              !mobileShell &&
+              /* Sem items-start: a coluna do resumo precisa esticar na altura do formulário
+                 para o position:sticky ter espaço de deslocamento. */
+              "grid gap-8 lg:grid-cols-[minmax(0,1fr)_300px]",
+          )}
+        >
+        <Card className={cn(
+          "min-w-0",
+          mobileShell && "border-0 bg-transparent shadow-none",
+        )}>
           <CardHeader className={cn(mobileShell && "space-y-3 px-0 pt-0")}>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                {!mobileShell && <CardTitle>Dados da cobrança</CardTitle>}
+                {!mobileShell && (
+                  <CardTitle>
+                    {isSubscriptionCreate
+                      ? "Nova assinatura"
+                      : isEditMode
+                        ? "Editar fatura"
+                        : "Dados da cobrança"}
+                  </CardTitle>
+                )}
                 {mobileShell ? (
                   <div className="rounded-2xl border border-border/70 bg-muted/20 p-3 dark:bg-muted/10">
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -1792,7 +1890,9 @@ const CustomerInvoiceNew = ({
                   </div>
                 ) : (
                 <CardDescription>
-                  {invoiceByLink ? (
+                  {isSubscriptionCreate ? (
+                    <>Defina itens, periodicidade e pagamento da assinatura.</>
+                  ) : invoiceByLink ? (
                     <>
                       Cobrança por link — o cliente poderá concluir os dados no link público. Tipo:{" "}
                       <strong>{creationKind === "subscription" ? "Assinatura recorrente" : "Fatura única"}</strong>.
@@ -1845,7 +1945,7 @@ const CustomerInvoiceNew = ({
           </CardHeader>
           <CardContent className={cn(mobileShell && "px-0 pb-0")}>
             <form
-              id={mobileShell ? mobileFormSubmitId : undefined}
+              id={mobileShell ? mobileFormSubmitId : "customer-invoice-create-form"}
               onSubmit={handleCreate}
               className={cn("space-y-6", mobileShell && "space-y-5")}
             >
@@ -1867,166 +1967,71 @@ const CustomerInvoiceNew = ({
                   </AlertDescription>
                 </Alert>
               )}
-              {!isEditMode && (
-              <div
-                className={cn(
-                  mobileShell &&
-                    "rounded-2xl border border-border/60 bg-card/40 p-4 space-y-3 dark:bg-card/25",
-                )}
-              >
-                {mobileShell ? (
-                  <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Vincular cobrança (opcional)
-                  </h2>
-                ) : null}
-                <Label htmlFor="charge_search">
-                  {mobileShell ? "Ligação com cobrança existente" : "Vincular à cobrança (opcional)"}
-                </Label>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  {mobileShell
-                    ? form.client_id
-                      ? "Busca no servidor, só deste cliente."
-                      : "Busca em todas as cobranças abertas da empresa."
-                    : `Busca no servidor por descrição, ID, nome/empresa/e-mail/telefone do cliente${
-                        form.client_id ? " (restrita ao cliente selecionado)" : " (todas as cobranças da empresa)"
-                      }.`}
-                </p>
-                <div className="mt-1 space-y-2">
-                  <Input
-                    id="charge_search"
-                    value={chargeQuery}
-                    onChange={(e) => setChargeQuery(e.target.value)}
-                    placeholder={
-                      mobileShell ? "Filtrar cobranças abertas…" : "Digite para filtrar cobranças abertas ou parciais…"
-                    }
-                    className={cn("h-9", mobileShell && "h-11")}
-                    disabled={loadingCharges}
-                    autoComplete="off"
-                  />
-                </div>
-                <Select
-                  value={form.charge_id ?? "none"}
-                  onValueChange={(v) => setForm((f) => ({ ...f, charge_id: v === "none" ? null : v }))}
-                >
-                  <SelectTrigger id="charge_id" className={cn("mt-1", mobileShell && "h-11")}>
-                    <SelectValue placeholder="Nenhuma" />
-                  </SelectTrigger>
-                  <SelectContent className={radixOverlayAboveMobileShellClassName}>
-                    <SelectItem value="none">Nenhuma</SelectItem>
-                    {loadingCharges ? (
-                      <SelectItem value="__loading_charges__" disabled>
-                        Carregando...
-                      </SelectItem>
-                    ) : filteredCharges.length > 0 ? (
-                      filteredCharges.map((ch) => (
-                        <SelectItem key={ch.id} value={ch.id}>
-                          {ch.description || `Cobrança ${ch.id.slice(0, 8)}`} — {ch.invoice_count} fatura(s) — {ch.status === "open" ? "Aberta" : "Parcial"}
-                        </SelectItem>
-                      ))
-                    ) : (
-                      <SelectItem value="__no_charges__" disabled>
-                        Nenhuma cobrança encontrada
-                      </SelectItem>
-                    )}
-                  </SelectContent>
-                </Select>
-              </div>
-              )}
-              {!isEditMode && creationKind === "subscription" && (
-                <div
-                  className={cn(
-                    "rounded-lg border border-primary/25 bg-primary/[0.04] p-4 space-y-4",
-                    mobileShell && "rounded-2xl",
-                  )}
-                >
-                  <h3 className="text-sm font-semibold text-foreground">
-                    {mobileShell ? "Assinatura" : "Dados da assinatura"}
-                  </h3>
-                  <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                      <Label htmlFor="billing_interval_sub">Periodicidade</Label>
-                      <Select
-                        value={billingInterval}
-                        onValueChange={(v) => setBillingInterval(v as typeof billingInterval)}
-                      >
-                        <SelectTrigger id="billing_interval_sub" className="mt-1 max-w-[240px]">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className={radixOverlayAboveMobileShellClassName}>
-                          <SelectItem value="weekly">Semanal</SelectItem>
-                          <SelectItem value="monthly">Mensal</SelectItem>
-                          <SelectItem value="quarterly">Trimestral</SelectItem>
-                          <SelectItem value="semi_annual">Semestral</SelectItem>
-                          <SelectItem value="yearly">Anual</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="sm:col-span-2 space-y-2 text-sm text-muted-foreground">
-                      <p>
-                        O <strong className="text-foreground">vencimento</strong> abaixo refere-se apenas a esta primeira
-                        cobrança. A <strong className="text-foreground">próxima cobrança automática</strong> é agendada pelo
-                        sistema após o fim do período, conforme a periodicidade — não confunda as duas datas.
+              <div className={cn(isSubscriptionCreate ? "space-y-8" : "space-y-6")}>
+              {isSubscriptionCreate ? (
+                <SubscriptionSectionCard step={1} title="Identificação" description="Cliente e nome da assinatura.">
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-border/60 bg-muted/20 px-4 py-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        Cliente
                       </p>
+                      <p className="mt-1 text-sm font-medium text-foreground">{summaryClientLabel}</p>
                     </div>
-                    <div className="flex items-start gap-2 sm:col-span-2">
-                      <Checkbox id="first_invoice_now" checked disabled />
-                      <Label htmlFor="first_invoice_now" className="text-sm font-normal leading-snug cursor-default">
-                        Gerar a primeira fatura e a cobrança no pagamento agora (sempre ativo neste fluxo).
-                      </Label>
-                    </div>
-                    <div className="sm:col-span-2 flex flex-wrap items-center justify-between gap-3 rounded-md border border-border/60 bg-background/80 px-3 py-2">
-                      <Label htmlFor="sub_cycles_unlimited" className="text-sm font-normal cursor-pointer">
-                        Ciclos ilimitados
-                      </Label>
-                      <Switch
-                        id="sub_cycles_unlimited"
-                        checked={subscriptionCyclesUnlimited}
-                        onCheckedChange={setSubscriptionCyclesUnlimited}
+                    <div>
+                      <div className="flex items-baseline justify-between gap-2">
+                        <Label htmlFor="subscription_description">Descrição da assinatura *</Label>
+                        <span className="text-[11px] tabular-nums text-muted-foreground">
+                          {(form.description ?? "").length}/{SUBSCRIPTION_DESCRIPTION_MAX_CHARS}
+                        </span>
+                      </div>
+                      <Input
+                        id="subscription_description"
+                        value={form.description ?? ""}
+                        onChange={(e) =>
+                          setForm((f) => ({
+                            ...f,
+                            description: e.target.value.slice(0, SUBSCRIPTION_DESCRIPTION_MAX_CHARS) || null,
+                          }))
+                        }
+                        placeholder="Ex.: Plano Premium Mensal"
+                        maxLength={SUBSCRIPTION_DESCRIPTION_MAX_CHARS}
+                        className={cn("mt-1.5 h-11", mobileShell && "h-12")}
+                        required
                       />
                     </div>
-                    {!subscriptionCyclesUnlimited && (
-                      <div className="sm:col-span-2 max-w-[220px]">
-                        <Label htmlFor="sub_max_cycles">Quantidade de ciclos</Label>
-                        <Input
-                          id="sub_max_cycles"
-                          type="number"
-                          min={1}
-                          className="mt-1"
-                          value={subscriptionMaxCycles}
-                          onChange={(e) => setSubscriptionMaxCycles(e.target.value)}
-                        />
-                        <p className="text-xs text-muted-foreground mt-1">
-                          Total de cobranças previstas (inclui a primeira fatura deste passo).
-                        </p>
-                      </div>
-                    )}
-                    <p className="text-xs text-muted-foreground sm:col-span-2">
-                      Geração antecipada: quando existir configuração na empresa, o sistema aplica automaticamente nas
-                      próximas emissões.
-                    </p>
                   </div>
-                </div>
-              )}
-              {!isEditMode && creationKind === "subscription" && (
-                <Alert className="border-border bg-muted/40">
-                  <AlertDescription className="text-sm">
-                    Os itens desta fatura definem a base de valores e descrições para as renovações automáticas, alinhadas
-                    à periodicidade escolhida.
-                  </AlertDescription>
-                </Alert>
-              )}
+                </SubscriptionSectionCard>
+              ) : null}
               <div
                 className={cn(
-                  mobileShell &&
-                    "rounded-2xl border border-border/60 bg-card/40 p-4 space-y-4 dark:bg-card/25",
+                  isSubscriptionCreate
+                    ? "rounded-2xl border border-border/70 bg-card p-5 shadow-sm sm:p-6 space-y-4"
+                    : mobileShell &&
+                        "rounded-2xl border border-border/60 bg-card/40 p-4 space-y-4 dark:bg-card/25",
                 )}
               >
-                {mobileShell ? (
+                {isSubscriptionCreate ? (
+                  <header className="space-y-1">
+                    <div className="flex items-center gap-2.5">
+                      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-muted text-[11px] font-semibold text-muted-foreground">
+                        2
+                      </span>
+                      <h3 className="text-base font-semibold tracking-tight text-foreground">
+                        Itens da assinatura
+                      </h3>
+                    </div>
+                    <p className="pl-[1.875rem] text-sm text-muted-foreground">
+                      Produtos e serviços cobrados a cada ciclo.
+                    </p>
+                  </header>
+                ) : mobileShell ? (
                   <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Itens</h2>
                 ) : null}
+                {!isSubscriptionCreate ? (
                 <Label className={cn("mb-2 block", mobileShell && "text-sm font-semibold text-foreground")}>
                   {mobileShell ? "Linhas da fatura" : "Itens da fatura"}
                 </Label>
+                ) : null}
                 <div
                   className={cn(
                     "mb-3",
@@ -2722,6 +2727,144 @@ const CustomerInvoiceNew = ({
                 </p>
               </div>
 
+              {isSubscriptionCreate ? (
+                <SubscriptionSectionCard
+                  step={3}
+                  title="Configurações da assinatura"
+                  description="Periodicidade, ciclos, vencimento e formas de pagamento."
+                >
+                  <div className="space-y-5">
+                    <div className="grid gap-4 sm:grid-cols-2 sm:gap-5">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="billing_interval_sub">Periodicidade</Label>
+                        <Select
+                          value={billingInterval}
+                          onValueChange={(v) => setBillingInterval(v as typeof billingInterval)}
+                        >
+                          <SelectTrigger
+                            id="billing_interval_sub"
+                            className={cn("h-11", mobileShell && "h-12")}
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className={radixOverlayAboveMobileShellClassName}>
+                            <SelectItem value="weekly">Semanal</SelectItem>
+                            <SelectItem value="monthly">Mensal</SelectItem>
+                            <SelectItem value="quarterly">Trimestral</SelectItem>
+                            <SelectItem value="semi_annual">Semestral</SelectItem>
+                            <SelectItem value="yearly">Anual</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="sub_cycles_limit">Quantidade de ciclos</Label>
+                        <div
+                          className={cn(
+                            "flex h-11 items-center gap-2 rounded-md border border-input bg-background px-3",
+                            mobileShell && "h-12",
+                          )}
+                        >
+                          <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
+                            {subscriptionCyclesUnlimited ? "Ilimitado" : "Limite"}
+                          </span>
+                          {!subscriptionCyclesUnlimited ? (
+                            <Input
+                              id="sub_max_cycles"
+                              type="number"
+                              min={1}
+                              className="h-8 w-[4.5rem] border-0 bg-muted/40 px-2 text-center shadow-none focus-visible:ring-1"
+                              value={subscriptionMaxCycles}
+                              onChange={(e) => setSubscriptionMaxCycles(e.target.value)}
+                              placeholder="12"
+                              aria-label="Número de ciclos"
+                            />
+                          ) : null}
+                          <Switch
+                            id="sub_cycles_limit"
+                            checked={!subscriptionCyclesUnlimited}
+                            onCheckedChange={(on) => setSubscriptionCyclesUnlimited(!on)}
+                            aria-label="Definir limite de ciclos"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5 sm:max-w-xs">
+                      <Label htmlFor="due_date">Vencimento da cobrança *</Label>
+                      <Input
+                        id="due_date"
+                        type="date"
+                        min={todayLocalYmd()}
+                        value={form.due_date}
+                        onChange={(e) => {
+                          setForm((f) => ({ ...f, due_date: e.target.value }));
+                        }}
+                        onBlur={(e) => {
+                          const v = e.currentTarget.value.trim();
+                          const t = todayLocalYmd();
+                          if (!v) {
+                            setForm((f) => ({ ...f, due_date: t }));
+                            return;
+                          }
+                          if (isCompleteYmdString(v) && v < t) {
+                            toast.error("A data de vencimento não pode ser anterior a hoje");
+                            setForm((f) => ({ ...f, due_date: t }));
+                            return;
+                          }
+                          setForm((f) => ({ ...f, due_date: v }));
+                        }}
+                        className={cn("h-11", mobileShell && "h-12")}
+                      />
+                      <p className="text-xs text-muted-foreground">Primeira cobrança desta assinatura.</p>
+                    </div>
+
+                    <div className="space-y-2 border-t border-border/60 pt-5">
+                      <Label className="block">Métodos de pagamento</Label>
+                      <InvoicePaymentMethodCards
+                        gatewayEnabledMethods={gatewayEnabledMethods}
+                        selected={allowedPaymentMethods}
+                        onChange={setAllowedPaymentMethods}
+                        pixAutomatic={
+                          !isEditMode && pixAutomaticAvailable
+                            ? {
+                                available: true,
+                                checked: pixAutomaticOn,
+                                onCheckedChange: setPixAutomaticOn,
+                              }
+                            : null
+                        }
+                      />
+                      {showGatewaySelect ? (
+                        <div className="pt-2">
+                          <Label htmlFor="gateway_key_sub">Gateway (opcional)</Label>
+                          <Select
+                            value={form.gateway_key ?? "__none__"}
+                            onValueChange={(v) =>
+                              setForm((f) => ({
+                                ...f,
+                                gateway_key: v === "__none__" ? null : v,
+                              }))
+                            }
+                            disabled={gatewaysLoading}
+                          >
+                            <SelectTrigger id="gateway_key_sub" className="mt-1.5 max-w-[320px]">
+                              <SelectValue placeholder="Padrão da empresa" />
+                            </SelectTrigger>
+                            <SelectContent className={radixOverlayAboveMobileShellClassName}>
+                              <SelectItem value="__none__">Padrão da empresa</SelectItem>
+                              {activeGatewaysForSelect.map((g) => (
+                                <SelectItem key={g.key} value={g.key}>
+                                  {g.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                </SubscriptionSectionCard>
+              ) : (
               <div
                 className={cn(
                   "grid gap-4 sm:grid-cols-2",
@@ -2735,13 +2878,7 @@ const CustomerInvoiceNew = ({
                 ) : null}
                 <div>
                   <Label htmlFor="due_date">
-                    {mobileShell
-                      ? !isEditMode && creationKind === "subscription"
-                        ? "1.º vencimento *"
-                        : "Vencimento *"
-                      : !isEditMode && creationKind === "subscription"
-                      ? "Vencimento da primeira cobrança *"
-                      : "Data de vencimento *"}
+                    {mobileShell ? "Vencimento *" : "Data de vencimento *"}
                   </Label>
                   <Input
                     id="due_date"
@@ -2772,70 +2909,24 @@ const CustomerInvoiceNew = ({
                 </div>
                 <div>
                   <Label>
-                    {mobileShell ? "Métodos no link" : "Métodos permitidos no link de pagamento"}
+                    {mobileShell ? "Métodos no link" : "Métodos de pagamento"}
                   </Label>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {mobileShell
-                      ? "Só aparecem métodos já ativos no gateway (Configurações → Pagamentos)."
-                      : "Só é possível ativar métodos que estão ligados na configuração do gateway (Configurações → Pagamentos)."}
-                  </p>
-                  <div className="mt-2 space-y-2 rounded-md border p-3">
-                    {PAYMENT_METHOD_OPTIONS.filter((option) => gatewayEnabledMethods.includes(option.value)).map(
-                      (option) => {
-                      const checked = allowedPaymentMethods.includes(option.value);
-                      return (
-                        <div key={option.value} className="flex items-center space-x-2">
-                          <Checkbox
-                            id={`allowed_method_${option.value}`}
-                            checked={checked}
-                            onCheckedChange={(v) => {
-                              const isChecked = v === true;
-                              setAllowedPaymentMethods((prev) => {
-                                if (isChecked) {
-                                  return prev.includes(option.value) ? prev : [...prev, option.value];
-                                }
-                                if (prev.length <= 1) return prev;
-                                return prev.filter((m) => m !== option.value);
-                              });
-                            }}
-                          />
-                          <Label
-                            htmlFor={`allowed_method_${option.value}`}
-                            className="font-normal cursor-pointer"
-                          >
-                            {option.label}
-                          </Label>
-                        </div>
-                      );
-                    }
-                    )}
-                    {gatewayEnabledMethods.length === 0 && (
-                      <p className="text-xs text-amber-700 dark:text-amber-300">
-                        Nenhum método ativo no gateway. Configure em Pagamentos antes de emitir cobrança com link.
-                      </p>
-                    )}
+                  <div className="mt-2">
+                    <InvoicePaymentMethodCards
+                      gatewayEnabledMethods={gatewayEnabledMethods}
+                      selected={allowedPaymentMethods}
+                      onChange={setAllowedPaymentMethods}
+                      pixAutomatic={
+                        !isEditMode && pixAutomaticAvailable
+                          ? {
+                              available: true,
+                              checked: pixAutomaticOn,
+                              onCheckedChange: setPixAutomaticOn,
+                            }
+                          : null
+                      }
+                    />
                   </div>
-                  {!isEditMode &&
-                    pixAutomaticAvailable &&
-                    allowedPaymentMethods.includes("PIX") && (
-                      <div className="mt-4 flex items-start justify-between gap-3 rounded-md border bg-muted/30 px-3 py-2.5">
-                        <div className="min-w-0 space-y-0.5">
-                          <Label htmlFor="crm_pix_automatic" className="text-sm font-medium">
-                            Débito automático via PIX
-                          </Label>
-                          <p className="text-xs text-muted-foreground leading-snug">
-                            Na criação, gera o QR de autorização. O cliente autoriza ao pagar o
-                            primeiro PIX; cobranças seguintes podem ser debitadas automaticamente.
-                          </p>
-                        </div>
-                        <Switch
-                          id="crm_pix_automatic"
-                          checked={pixAutomaticOn}
-                          onCheckedChange={(v) => setPixAutomaticOn(v === true)}
-                          className="shrink-0"
-                        />
-                      </div>
-                    )}
                   {showGatewaySelect && !isEditMode && (
                     <div className="mt-4">
                       <Label htmlFor="gateway_key">Gateway (opcional)</Label>
@@ -2865,6 +2956,19 @@ const CustomerInvoiceNew = ({
                   )}
                 </div>
               </div>
+              )}
+              {isSubscriptionCreate ? (
+                <SubscriptionSectionCard step={4} title="Observações" description="Opcional — aparece junto à descrição da assinatura.">
+                  <Textarea
+                    id="subscription_notes"
+                    placeholder="Ex.: referência interna, NF, instruções…"
+                    value={subscriptionNotes}
+                    onChange={(e) => setSubscriptionNotes(e.target.value)}
+                    rows={mobileShell ? 3 : 2}
+                    className={cn(mobileShell && "min-h-[88px] text-base")}
+                  />
+                </SubscriptionSectionCard>
+              ) : (
               <div
                 className={cn(
                   mobileShell &&
@@ -2886,11 +2990,13 @@ const CustomerInvoiceNew = ({
                   className={cn("mt-1", mobileShell && "min-h-[88px] text-base")}
                 />
               </div>
-              <div className={cn("flex gap-2 pt-2", mobileShell && "hidden")}>
+              )}
+              <div className={cn("flex flex-col gap-3 pt-2 sm:flex-row sm:items-center", mobileShell && "hidden")}>
                 {!isEditMode && (
                   <Button
                     type="button"
                     variant="outline"
+                    className={cn(isSubscriptionCreate && "h-11")}
                     onClick={() => {
                       if (embedded) {
                         onBack?.();
@@ -2903,7 +3009,17 @@ const CustomerInvoiceNew = ({
                     Voltar
                   </Button>
                 )}
-                <Button type="submit" disabled={createLoading}>
+                <Button
+                  type="submit"
+                  disabled={createLoading}
+                  className={cn(
+                    isSubscriptionCreate &&
+                      "h-12 min-w-[240px] gap-2 px-6 text-base font-semibold shadow-md",
+                  )}
+                >
+                  {isSubscriptionCreate && !createLoading ? (
+                    <Sparkles className="h-4 w-4" aria-hidden />
+                  ) : null}
                   {createLoading
                     ? isEditMode
                       ? "Salvando…"
@@ -2911,13 +3027,53 @@ const CustomerInvoiceNew = ({
                     : isEditMode
                       ? "Salvar alterações"
                       : creationKind === "subscription"
-                        ? "Criar assinatura e primeira fatura"
+                        ? "Criar assinatura"
                       : "Criar fatura"}
                 </Button>
+              </div>
+              {showSubscriptionSummary ? (
+                <div className="lg:hidden">
+                  <SubscriptionSummaryCard
+                    clientLabel={summaryClientLabel}
+                    description={(form.description ?? "").trim()}
+                    amountLabel={summaryAmountLabel}
+                    intervalLabel={BILLING_INTERVAL_LABELS[billingInterval]}
+                    dueDateLabel={form.due_date ? formatInvoiceDueDatePtBr(form.due_date) : ""}
+                    methodsLabel={summaryMethodsLabel}
+                    cyclesLabel={summaryCyclesLabel}
+                  />
+                </div>
+              ) : null}
               </div>
             </form>
           </CardContent>
         </Card>
+        {showSubscriptionSummary && !mobileShell ? (
+          <aside className="relative hidden lg:block" aria-label="Resumo da assinatura">
+            {/* Wrapper estica com a linha do grid; o filho sticky desliza dentro dele. */}
+            <div className="sticky top-6 z-20 space-y-3">
+              <SubscriptionSummaryCard
+                clientLabel={summaryClientLabel}
+                description={(form.description ?? "").trim()}
+                amountLabel={summaryAmountLabel}
+                intervalLabel={BILLING_INTERVAL_LABELS[billingInterval]}
+                dueDateLabel={form.due_date ? formatInvoiceDueDatePtBr(form.due_date) : ""}
+                methodsLabel={summaryMethodsLabel}
+                cyclesLabel={summaryCyclesLabel}
+              />
+              <Button
+                type="submit"
+                form="customer-invoice-create-form"
+                disabled={createLoading}
+                className="h-12 w-full gap-2 text-base font-semibold shadow-md"
+              >
+                {!createLoading ? <Sparkles className="h-4 w-4" aria-hidden /> : null}
+                {createLoading ? "Criando..." : "Criar assinatura"}
+              </Button>
+            </div>
+          </aside>
+        ) : null}
+        </div>
       ))}
     </div>
     </MobileCommerceScreenLayout>

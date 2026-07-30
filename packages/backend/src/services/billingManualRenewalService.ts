@@ -645,37 +645,53 @@ async function runSynchronousManualPipeline(params: {
         phase: 'materialize_next_competency',
       });
       const sub = await getSubscriptionById(params.subscriptionId);
-      const nextYmd =
-        sub && sub.tenant_id === params.tenantId
-          ? normalizeBillingCycleKeyYmd(sub.next_billing_date) ||
-            normalizeSubscriptionNextBillingYmd(sub.next_billing_date)
-          : null;
-      if (nextYmd && /^\d{4}-\d{2}-\d{2}$/.test(nextYmd)) {
-        await materializePlannedCycles(pool, {
-          tenantId: params.tenantId,
-          subscriptionId: params.subscriptionId,
-          plans: [{ cycleDateYmd: nextYmd, source: 'manual_generate' }],
-        });
+      if (sub && (sub.status === 'completed' || sub.status === 'cancelled')) {
         traceRenewalPipelineStageEnd(
           'POST_MANUAL_ENQUEUE_NEXT',
           materializeStarted,
-          { ok: true, cycle_date: nextYmd, materialized: true },
-          true
-        );
-        logs.push(`post_manual_materialize_next ok cycle_date=${nextYmd}`);
-        traceBillingJobPhase(
-          'manual_post_materialize_next',
-          { subscription_id: params.subscriptionId, cycle_date: nextYmd },
-          { file: 'billingManualRenewalService.ts', line: 651, function: 'runSynchronousManualPipeline' }
-        );
-      } else {
-        traceRenewalPipelineStageEnd(
-          'POST_MANUAL_ENQUEUE_NEXT',
-          materializeStarted,
-          { ok: false, reason: 'next_billing_unresolvable' },
+          { ok: false, reason: 'subscription_terminal', status: sub.status },
           false
         );
-        logs.push('post_manual_materialize_next skipped reason=next_billing_unresolvable');
+        logs.push(`post_manual_materialize_next skipped reason=subscription_${sub.status}`);
+      } else {
+        const { seedNextPendingCycleIfEligible } = await import(
+          './crm/crmSubscriptionInvoiceCycleLink.js'
+        );
+        const { completeCustomerSubscriptionIfCyclesExhausted } = await import(
+          './crm/crmSubscriptionCyclesExhaustion.js'
+        );
+        await completeCustomerSubscriptionIfCyclesExhausted({
+          tenantId: params.tenantId,
+          subscriptionId: params.subscriptionId,
+          correlationId: params.correlationId ?? `manual_post:${params.jobId}`,
+        });
+        const seed = await seedNextPendingCycleIfEligible({
+          tenantId: params.tenantId,
+          subscriptionId: params.subscriptionId,
+          source: 'manual_generate',
+        });
+        if (seed.seeded) {
+          traceRenewalPipelineStageEnd(
+            'POST_MANUAL_ENQUEUE_NEXT',
+            materializeStarted,
+            { ok: true, cycle_date: seed.cycleDate, materialized: true },
+            true
+          );
+          logs.push(`post_manual_materialize_next ok cycle_date=${seed.cycleDate}`);
+          traceBillingJobPhase(
+            'manual_post_materialize_next',
+            { subscription_id: params.subscriptionId, cycle_date: seed.cycleDate },
+            { file: 'billingManualRenewalService.ts', line: 651, function: 'runSynchronousManualPipeline' }
+          );
+        } else {
+          traceRenewalPipelineStageEnd(
+            'POST_MANUAL_ENQUEUE_NEXT',
+            materializeStarted,
+            { ok: false, reason: seed.detail, cycle_date: seed.cycleDate },
+            false
+          );
+          logs.push(`post_manual_materialize_next skipped reason=${seed.detail}`);
+        }
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -857,6 +873,50 @@ export async function manualGenerateRenewalNow(
           duration_ms: Date.now() - started,
           diagnosis,
           correlation_id: correlationId,
+        });
+      }
+
+      // Sprint patch — não gerar além de max_cycles.
+      try {
+        const {
+          customerSubscriptionHasRemainingChargeSlots,
+          completeCustomerSubscriptionIfCyclesExhausted,
+        } = await import('./crm/crmSubscriptionCyclesExhaustion.js');
+        const slots = await customerSubscriptionHasRemainingChargeSlots({
+          tenantId,
+          subscriptionId,
+        });
+        if (!slots.allowed) {
+          await completeCustomerSubscriptionIfCyclesExhausted({
+            tenantId,
+            subscriptionId,
+            correlationId,
+          });
+          const message =
+            slots.detail === 'max_cycles_exhausted' || slots.detail === 'completed'
+              ? 'Limite de ciclos da assinatura atingido — não é possível gerar nova cobrança.'
+              : `Assinatura não apta a gerar cobrança (${slots.detail}).`;
+          logBillingManual('generate_now', {
+            subscription_id: subscriptionId,
+            tenant_id: tenantId,
+            success: false,
+            actor_user: actor.user_id,
+            correlation_id: correlationId,
+            blockers: slots.detail,
+          });
+          return attachStructuredError({
+            success: false,
+            message,
+            result: 'cycles_exhausted',
+            duration_ms: Date.now() - started,
+            diagnosis,
+            correlation_id: correlationId,
+          });
+        }
+      } catch (e) {
+        billingLog('job', 'manual_generate_max_cycles_precheck_error', {
+          subscription_id: subscriptionId,
+          error: e instanceof Error ? e.message.slice(0, 300) : String(e).slice(0, 300),
         });
       }
 

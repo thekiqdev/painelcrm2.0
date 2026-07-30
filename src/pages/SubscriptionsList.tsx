@@ -70,6 +70,8 @@ import {
   subscriptionStatusUi,
   type SubscriptionStatusFilter,
 } from "@/components/subscriptions/subscriptionsListUtils";
+import { clientsService, type Client } from "@/services/clients";
+import { chatAvatarUrlForImgSrc } from "@/lib/chatAvatarUrl";
 
 function SectionHeader({ title, description }: { title: string; description?: string }) {
   return (
@@ -135,6 +137,19 @@ const SubscriptionsList = () => {
 
   const [sheetRow, setSheetRow] = useState<CrmSubscriptionListItem | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [clients, setClients] = useState<Client[]>([]);
+
+  useEffect(() => {
+    clientsService.getClients().then(setClients).catch(() => setClients([]));
+  }, []);
+
+  const clientAvatarById = useMemo(() => {
+    const m: Record<string, string | null> = {};
+    for (const c of clients) {
+      m[c.id] = chatAvatarUrlForImgSrc(c.whatsapp_avatar_url ?? null);
+    }
+    return m;
+  }, [clients]);
 
   useEffect(() => {
     try {
@@ -380,7 +395,12 @@ const SubscriptionsList = () => {
   ) : (
     <div className="space-y-3">
       {displayedRows.map((row) => (
-        <SubscriptionListCard key={row.id} row={row} onOpen={openMobileSheet} />
+        <SubscriptionListCard
+          key={row.id}
+          row={row}
+          onOpen={openMobileSheet}
+          avatarUrl={row.client_id ? clientAvatarById[row.client_id] ?? null : null}
+        />
       ))}
     </div>
   );
@@ -392,6 +412,7 @@ const SubscriptionsList = () => {
           <TableRow className="hover:bg-transparent bg-muted/40">
             <TableHead>Cliente</TableHead>
             <TableHead>Plano / descrição</TableHead>
+            <TableHead>Período</TableHead>
             <TableHead className="text-right">Valor</TableHead>
             <TableHead>Próxima cobrança</TableHead>
             <TableHead>Status</TableHead>
@@ -401,26 +422,26 @@ const SubscriptionsList = () => {
         <TableBody>
           {loading ? (
             <TableRow>
-              <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
+              <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
                 Carregando…
               </TableCell>
             </TableRow>
           ) : rows.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
+              <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
                 Nenhuma assinatura ainda. Crie uma fatura recorrente para gerar a primeira assinatura.
               </TableCell>
             </TableRow>
           ) : baseRows.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
+              <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
                 <p className="font-medium text-foreground mb-1">Só há assinaturas encerradas</p>
                 <p className="text-sm max-w-md mx-auto">Ative <strong className="text-foreground">Mostrar encerradas</strong> nos filtros acima.</p>
               </TableCell>
             </TableRow>
           ) : displayedRows.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
+              <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
                 <p className="font-medium text-foreground mb-1">Nenhum resultado</p>
                 <p className="text-sm max-w-md mx-auto">
                   Nenhuma assinatura corresponde a &quot;{search.trim()}&quot;.
@@ -441,6 +462,7 @@ const SubscriptionsList = () => {
                       <ClientEntityLink
                         clientId={row.client_id}
                         name={row.client_name}
+                        avatarUrl={clientAvatarById[row.client_id] ?? null}
                         variant="table"
                         stopPropagationOnClick
                         disabledFallbackText="Abrir cliente"
@@ -455,7 +477,12 @@ const SubscriptionsList = () => {
                   </TableCell>
                   <TableCell className="max-w-[280px]">
                     <span className="line-clamp-2 text-sm text-muted-foreground">
-                      {row.plan_label?.trim() || `Assinatura · ${intervalLabel(row.billing_interval)}`}
+                      {row.plan_label?.trim() || "—"}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    <span className="text-sm font-medium tabular-nums">
+                      {intervalLabel(row.billing_interval)}
                     </span>
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{formatAmount(row.amount_cents)}</TableCell>
@@ -504,9 +531,9 @@ const SubscriptionsList = () => {
           primaryAction={
             canCreateInvoice
               ? {
-                  label: "Nova cobrança",
+                  label: "Nova assinatura",
                   icon: <Plus className="h-4 w-4" aria-hidden />,
-                  href: "/customer-invoices/new",
+                  href: "/customer-invoices/new?billing=subscription",
                 }
               : undefined
           }
@@ -526,7 +553,7 @@ const SubscriptionsList = () => {
         </div>
         {canCreateInvoice ? (
           <Button variant="outline" asChild className="shrink-0">
-            <Link to="/customer-invoices/new">Nova fatura ou assinatura</Link>
+            <Link to="/customer-invoices/new?billing=subscription">Nova assinatura</Link>
           </Button>
         ) : null}
       </div>

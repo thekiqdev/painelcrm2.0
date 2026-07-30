@@ -219,6 +219,7 @@ export function subscriptionHeadlineStatus(d: CrmSubscriptionDetailPayload): {
   variant: 'default' | 'secondary' | 'outline';
 } {
   const s = d.subscription;
+  if (s.status === 'completed') return { label: 'Finalizada', variant: 'secondary' };
   if (s.status === 'cancelled') return { label: 'Cancelada', variant: 'secondary' };
   if (s.status === 'paused') return { label: 'Pausada', variant: 'outline' };
   if (s.status !== 'active') return { label: s.status, variant: 'outline' };
@@ -624,14 +625,23 @@ export function advanceBillingDueYmd(ymd: string, interval: string): string {
 
 export function buildFutureCycles(detail: CrmSubscriptionDetailPayload, count = 12): FutureCycleRow[] {
   const { subscription: s } = detail;
-  if (s.status === 'cancelled') return [];
+  if (s.status === 'cancelled' || s.status === 'completed') return [];
   let due = normalizeYmdInput(s.next_billing_date);
   if (!due) return [];
+
+  let effectiveCount = count;
+  if (s.cycles_unlimited === false && s.max_cycles != null && s.max_cycles >= 1) {
+    const emitted = (detail.cycles_raw ?? []).filter((c) => Boolean(c.invoice_id?.trim())).length;
+    const remaining = Math.max(0, Math.trunc(s.max_cycles) - emitted);
+    effectiveCount = Math.min(count, remaining);
+  }
+  if (effectiveCount <= 0) return [];
+
   const rows: FutureCycleRow[] = [];
   const daysBefore = clampRecurringGenerateDaysBeforeDue(detail.tenant_billing.recurring_invoice_generate_days_before_due);
   const statusPt = s.status === 'paused' ? 'Pausada' : 'Previsto';
 
-  for (let i = 0; i < count; i += 1) {
+  for (let i = 0; i < effectiveCount; i += 1) {
     const gen = computeRecurringGenerationDateYmd(due, daysBefore);
     rows.push({
       index: i + 1,

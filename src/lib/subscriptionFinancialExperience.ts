@@ -17,6 +17,9 @@ import {
 import { intervalLabel } from '@/components/subscriptions/subscriptionsListUtils';
 import { createFinancialEventStore } from './subscriptionFinancialEventStore';
 import { isRecoverableCycleFailure } from './subscriptionRenewalRecovery';
+import {
+  buildCyclesContractSummary,
+} from './subscriptionCyclesContract';
 
 export type FinancialCalendarKind =
   | 'paid'
@@ -302,13 +305,20 @@ export function buildFinancialHeaderData(detail: CrmSubscriptionDetailPayload, t
 }
 
 export function computeSubscriptionProgress(detail: CrmSubscriptionDetailPayload): { pct: number; label: string } {
+  const summary = buildCyclesContractSummary(detail);
+  const emitted = summary.emitted;
+  if (!summary.unlimited && summary.max != null) {
+    const pct = Math.min(100, Math.round((emitted / summary.max) * 100));
+    return { pct, label: `${summary.label} ciclos` };
+  }
+  if (emitted <= 0 && detail.stats.charge_count <= 0) {
+    return { pct: 0, label: 'Aguardando primeira cobrança' };
+  }
+  if (emitted > 0) {
+    return { pct: 0, label: `${emitted} / ∞` };
+  }
   const paid = detail.timeline.filter(isPaid).length;
   const total = detail.stats.charge_count;
-  if (detail.subscription.cycles_unlimited === false && detail.subscription.max_cycles) {
-    const max = detail.subscription.max_cycles;
-    const pct = Math.min(100, Math.round((paid / max) * 100));
-    return { pct, label: `${paid} de ${max} ciclos` };
-  }
   if (total <= 0) return { pct: 0, label: 'Aguardando primeira cobrança' };
   const pct = Math.min(100, Math.round((paid / total) * 100));
   return { pct, label: `${paid} cobrança(s) recebida(s)` };

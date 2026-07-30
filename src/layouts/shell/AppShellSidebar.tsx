@@ -372,7 +372,6 @@ export const AppShellSidebar = React.memo(function AppShellSidebar() {
 
         {show(hasInvoices, 'billing') &&
         (hasPermissionKey('billing.view_invoices') ||
-          hasPermissionKey('billing.view_charges') ||
           hasPermissionKey('billing.view_subscriptions')) ? (
           <SidebarGroup className="py-1.5">
             <SidebarGroupLabel className={cn('px-2.5 text-[11px] font-semibold uppercase tracking-wide text-sidebar-foreground/50', collapsed && 'sr-only')}>
@@ -386,13 +385,6 @@ export const AppShellSidebar = React.memo(function AppShellSidebar() {
                   icon={FileText}
                   label="Faturas"
                   preload={() => routePreload.customerInvoices()} collapsed={collapsed} />
-                ) : null}
-                {hasPermissionKey('billing.view_charges') ? (
-                <SidebarNavLinkItem
-                  to="/customer-charges"
-                  icon={CreditCard}
-                  label="Cobranças"
-                  preload={() => routePreload.customerCharges()} collapsed={collapsed} />
                 ) : null}
                 {hasPermissionKey('billing.view_subscriptions') ? (
                 <SidebarNavLinkItem

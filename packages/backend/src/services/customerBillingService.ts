@@ -681,6 +681,37 @@ export async function createRecurringManualInvoice(
     periodEnd
   );
 
+  // SSOT UI (4.2G): 1ª fatura precisa de subscription_cycles para histórico/calendário.
+  // Sprint 1: também seeda C+1 (next_billing_date) como pending → «Gerar próxima».
+  try {
+    const {
+      attachCustomerInvoiceToSubscriptionCycle,
+      seedNextPendingCycleIfEligible,
+    } = await import('./crm/crmSubscriptionInvoiceCycleLink.js');
+    await attachCustomerInvoiceToSubscriptionCycle({
+      tenantId,
+      subscriptionId: subscription.id,
+      invoiceId: result.invoice.id,
+      cycleDateYmd: dueDate,
+      source: 'crm_first_invoice',
+    });
+    await seedNextPendingCycleIfEligible({
+      tenantId,
+      subscriptionId: subscription.id,
+      source: 'crm_first_invoice',
+    });
+    const { completeCustomerSubscriptionIfCyclesExhausted } = await import(
+      './crm/crmSubscriptionCyclesExhaustion.js'
+    );
+    await completeCustomerSubscriptionIfCyclesExhausted({
+      tenantId,
+      subscriptionId: subscription.id,
+      correlationId: `crm_first_invoice:${result.invoice.id}`,
+    });
+  } catch (e) {
+    console.warn('[createRecurringManualInvoice] attach/seed first invoice cycles', e);
+  }
+
   let pix_automatic: CreateManualInvoiceResult['pix_automatic'] = null;
   if (body.pix_automatic === true) {
     try {

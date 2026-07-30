@@ -50,13 +50,26 @@ function cycleInvoiceRowActions(
       needsInvariantRepair: true,
     };
   }
-  const vis = invoiceVisibilityFromCycle(invoiceId, aggregate.subscription.status);
+  const allowNewCharge = aggregateAllowsNewCharge(aggregate);
+  const vis = invoiceVisibilityFromCycle(invoiceId, aggregate.subscription.status, {
+    allowNewCharge,
+  });
   return {
     invoiceId,
     canGenerateNow: vis.canGenerate,
     canOpenNow: vis.canOpen,
     needsInvariantRepair: false,
   };
+}
+
+function aggregateAllowsNewCharge(aggregate: BillingAggregate): boolean {
+  const status = aggregate.subscription.status;
+  if (status === 'cancelled' || status === 'completed') return false;
+  if (aggregate.subscription.cyclesUnlimited !== false) return true;
+  const max = aggregate.subscription.maxCycles;
+  if (max == null || max < 1) return true;
+  const emitted = aggregate.cycles.filter((c) => Boolean(c.invoiceId?.trim())).length;
+  return emitted < Math.trunc(max);
 }
 
 function paidAtYmdFromAggregateEvent(

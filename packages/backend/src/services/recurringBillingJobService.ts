@@ -628,7 +628,9 @@ export type TryEnqueueRenewalReason =
   | 'active_job_exists'
   | 'completed_cycle_guard'
   /** B0.1: CRM sem customer_id reconstruível. */
-  | 'customer_unresolvable';
+  | 'customer_unresolvable'
+  /** Sprint 3: max_cycles atingido. */
+  | 'cycles_exhausted';
 
 export type TryEnqueueRenewalJobForSubscriptionResult =
   | { ok: true; mode: 'inserted' | 'reactivated' }
@@ -657,6 +659,7 @@ export function renewalEnqueueBlockReasonMessagePt(reason: TryEnqueueRenewalReas
     completed_cycle_guard: 'Ciclo já consta como concluído na tabela de jobs — não reabre completed.',
     customer_unresolvable:
       'Assinatura CRM sem cliente vinculado e sem faturas que permitam reconstruir o customer_id.',
+    cycles_exhausted: 'Limite de ciclos da assinatura atingido — assinatura finalizada.',
   };
   return m[reason] ?? reason;
 }
@@ -726,11 +729,40 @@ export async function describeRenewalEnqueueWithDb(
   }
   const canonicalYmd = normalizeBillingCycleKeyYmd(row.next_billing_date) || row.next_billing_date;
 
+  if (row.status === 'completed') {
+    return { ...base, cycle_key: canonicalYmd, block_reason: 'cycles_exhausted' };
+  }
   if (row.status !== 'active') {
     return { ...base, cycle_key: canonicalYmd, block_reason: 'subscription_not_active' };
   }
   if (row.type !== 'customer' && row.type !== 'saas') {
     return { ...base, cycle_key: canonicalYmd, block_reason: 'subscription_type_unsupported' };
+  }
+
+  if (row.type === 'customer') {
+    try {
+      const { completeCustomerSubscriptionIfCyclesExhausted } = await import(
+        './crm/crmSubscriptionCyclesExhaustion.js'
+      );
+      const done = await completeCustomerSubscriptionIfCyclesExhausted({
+        tenantId: row.tenant_id,
+        subscriptionId,
+        correlationId: `describe_enqueue:${subscriptionId}`,
+      });
+      if (done.completed || done.detail === 'already_completed') {
+        return { ...base, cycle_key: canonicalYmd, block_reason: 'cycles_exhausted' };
+      }
+      if (
+        done.detail === 'not_exhausted' &&
+        done.max != null &&
+        done.emitted != null &&
+        done.emitted >= done.max
+      ) {
+        return { ...base, cycle_key: canonicalYmd, block_reason: 'cycles_exhausted' };
+      }
+    } catch {
+      /* fail-open: segue para enqueue */
+    }
   }
 
   if (row.type === 'customer') {
@@ -1079,6 +1111,15 @@ export async function enqueueRenewalJobs(): Promise<{ enqueued: number; skipped:
        LEFT JOIN tenants t ON t.id = s.tenant_id
        WHERE s.status = 'active'
          AND (s.next_billing_date - ${BILLING_EFFECTIVE_GENERATE_DAYS_BEFORE_SQL}) <= CURRENT_DATE
+         AND (
+           COALESCE(s.cycles_unlimited, true) = true
+           OR s.max_cycles IS NULL
+           OR s.type <> 'customer'
+           OR (
+             SELECT COUNT(*)::int FROM subscription_cycles sc
+             WHERE sc.subscription_id = s.id AND sc.invoice_id IS NOT NULL
+           ) < s.max_cycles
+         )
        ORDER BY s.next_billing_date
        LIMIT $1`,
       [SCHEDULER_LIMIT]

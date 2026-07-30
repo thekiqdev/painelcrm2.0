@@ -178,14 +178,39 @@ export async function startPixAutomaticAuthorizationForBilling(opts: {
   if (!customerId) return { ok: false, detail: 'ensure_customer_failed' };
 
   const asaasConfig = await getActiveAsaasConfigForSaas();
-  const subInterval = await pool.query<{ billing_interval: string | null }>(
-    `SELECT billing_interval FROM subscriptions WHERE id = $1::uuid`,
+  const subMeta = await pool.query<{
+    billing_interval: string | null;
+    cycles_unlimited: boolean | null;
+    max_cycles: number | null;
+  }>(
+    `SELECT billing_interval::text AS billing_interval,
+            COALESCE(cycles_unlimited, true) AS cycles_unlimited,
+            max_cycles
+     FROM subscriptions WHERE id = $1::uuid`,
     [subscriptionId]
   );
-  const frequency = mapBillingIntervalToPixFrequency(subInterval.rows[0]?.billing_interval);
+  const frequency = mapBillingIntervalToPixFrequency(subMeta.rows[0]?.billing_interval);
   const due = ymd(invLinked.due_date);
   const value = invLinked.amount_cents / 100;
   const contractId = `saas-${subscriptionId.replace(/-/g, '').slice(0, 28)}`;
+
+  const consumedR = await pool.query<{ n: number }>(
+    `SELECT COUNT(*)::int AS n
+     FROM subscription_cycles
+     WHERE subscription_id = $1::uuid AND tenant_id = $2::uuid AND invoice_id IS NOT NULL
+       AND invoice_id IS DISTINCT FROM $3::uuid`,
+    [subscriptionId, tenantId, opts.invoiceId]
+  );
+  const { computePixAutomaticFinishDateYmd } = await import(
+    '../crm/crmSubscriptionCyclesFinishDate.js'
+  );
+  const finishDate = computePixAutomaticFinishDateYmd({
+    startDateYmd: due,
+    billingInterval: subMeta.rows[0]?.billing_interval || 'monthly',
+    maxCycles: subMeta.rows[0]?.max_cycles ?? null,
+    cyclesUnlimited: subMeta.rows[0]?.cycles_unlimited !== false,
+    consumedBeforeAuth: consumedR.rows[0]?.n ?? 0,
+  });
 
   let raw: Record<string, unknown>;
   try {
@@ -200,6 +225,7 @@ export async function startPixAutomaticAuthorizationForBilling(opts: {
         immediateValue: value,
         immediateDueDate: due,
         immediateDescription: (invLinked.invoice_number ?? '1a cobranca').slice(0, 35),
+        finishDate,
       },
       asaasConfig
     );
