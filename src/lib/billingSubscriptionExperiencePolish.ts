@@ -706,7 +706,7 @@ export function formatAmountPerInterval(cents: number, interval: string): string
 export function resolveGenerationForSidebar(detail: CrmSubscriptionDetailPayload): string | null {
   const due = normalizeYmdInput(detail.subscription.next_billing_date);
   if (!due) return null;
-  return resolveGenerationYmd(due, detail.tenant_billing);
+  return resolveGenerationYmd(due, detail.tenant_billing, detail.subscription.billing_interval);
 }
 
 export function wcagContrastPair(state: HealthState): { fg: string; bg: string } {

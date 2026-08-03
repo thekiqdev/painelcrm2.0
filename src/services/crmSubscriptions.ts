@@ -105,6 +105,8 @@ export interface CrmSubscriptionTenantBillingPrefs {
   invoice_notify_same_as_generation: boolean | null;
   invoice_notify_time_local: string | null;
   recurring_invoice_generate_days_before_due?: number | null;
+  /** NULL = herda o campo geral (Sprint 5.1+). */
+  recurring_invoice_generate_days_before_due_weekly?: number | null;
 }
 
 export interface CrmSubscriptionInvoiceSnapshot {

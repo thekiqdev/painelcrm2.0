@@ -57,6 +57,8 @@ describe('markChatInstanceDisconnectedForInvalidToken', () => {
     const patch = JSON.parse(String(args[0]));
     expect(patch.invalidTokenDetected).toBe(true);
     expect(typeof patch.invalidTokenDetectedAt).toBe('string');
+    expect(patch.invalidTokenReason).toBe('Invalid token.');
+    expect(patch.invalidTokenSource).toBe('dispatch_whatsapp_text');
     expect(args[1]).toBe('11111111-1111-1111-1111-111111111111');
 
     const healthLogs = warnSpy.mock.calls.filter((c) => String(c[0]).includes('[chat_instance_health]'));

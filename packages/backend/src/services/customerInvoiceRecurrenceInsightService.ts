@@ -268,10 +268,12 @@ export async function getCustomerInvoiceRecurrenceInsight(
     ),
     pool.query<{
       recurring_invoice_generate_days_before_due: number;
+      recurring_invoice_generate_days_before_due_weekly: number | null;
       recurring_generate_time_local: string | null;
       timezone: string | null;
     }>(
       `SELECT COALESCE(recurring_invoice_generate_days_before_due, 0)::int AS recurring_invoice_generate_days_before_due,
+              recurring_invoice_generate_days_before_due_weekly,
               recurring_generate_time_local::text,
               timezone::text
        FROM tenants WHERE id = $1 LIMIT 1`,
@@ -282,10 +284,11 @@ export async function getCustomerInvoiceRecurrenceInsight(
   const tenantPrefRow = tenantPrefsR.rows[0] ?? null;
   const cycleDueYmd =
     normalizeBillingCycleKeyYmd(sub.next_billing_date) || String(sub.next_billing_date ?? '').trim().slice(0, 10);
-  const daysBefore = effectiveRecurringGenerateDaysBeforeDue(
-    tenantPrefRow?.recurring_invoice_generate_days_before_due ?? 0,
-    sub.billing_interval || 'monthly'
-  );
+  const daysBefore = effectiveRecurringGenerateDaysBeforeDue({
+    general: tenantPrefRow?.recurring_invoice_generate_days_before_due ?? 0,
+    weekly: tenantPrefRow?.recurring_invoice_generate_days_before_due_weekly ?? null,
+    billingInterval: sub.billing_interval || 'monthly',
+  });
   const genTime =
     tenantPrefRow?.recurring_generate_time_local != null
       ? String(tenantPrefRow.recurring_generate_time_local).trim().slice(0, 5)

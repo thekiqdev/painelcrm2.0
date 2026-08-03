@@ -54,12 +54,12 @@ function nextSubscriptionBillingAfterCycle(periodStartYmd: string, interval: Bil
   return calculateNextBillingDate(periodStartYmd, interval, null);
 }
 import {
-  clampRecurringInvoiceGenerateDaysBeforeDue,
   computeRecurringInvoiceGenerationDateYmd,
 } from '../utils/billingGenerationDate.js';
 import {
   effectiveRecurringGenerateDaysBeforeDue,
-  isGenerateDaysBeforeCappedForInterval,
+  isGenerateDaysBeforeCappedForTenant,
+  resolveTenantGenerateDaysBeforeDueRaw,
 } from '../utils/billingIntervalGenerationCap.js';
 import {
   getBillingStaleProcessingReclaimMinutes,
@@ -191,11 +191,20 @@ export type RenewalEnqueueTenantJoinRow = {
   invoice_notify_time_local: string | null;
   /** Dias antes do vencimento do ciclo para permitir enfileiramento (0 = no dia do vencimento). */
   recurring_invoice_generate_days_before_due: number;
+  /** NULL = herda o geral. */
+  recurring_invoice_generate_days_before_due_weekly: number | null;
 };
 
-/** SQL: dias efetivos de antecipação (tenant limitado pela periodicidade da assinatura). */
+/** SQL: dias efetivos de antecipação (tenant por intervalo + cap pela periodicidade). */
 export const BILLING_EFFECTIVE_GENERATE_DAYS_BEFORE_SQL = `LEAST(
-  COALESCE(t.recurring_invoice_generate_days_before_due, 0),
+  CASE s.billing_interval::text
+    WHEN 'weekly' THEN COALESCE(
+      t.recurring_invoice_generate_days_before_due_weekly,
+      t.recurring_invoice_generate_days_before_due,
+      0
+    )
+    ELSE COALESCE(t.recurring_invoice_generate_days_before_due, 0)
+  END,
   CASE s.billing_interval::text
     WHEN 'weekly' THEN 6
     WHEN 'monthly' THEN 30
@@ -210,22 +219,19 @@ function schedulerCycleSchedulingMeta(
   row: RenewalEnqueueTenantJoinRow,
   cycleYmd: string
 ): Record<string, unknown> {
-  const generate_days_before_due_tenant = clampRecurringInvoiceGenerateDaysBeforeDue(
-    row.recurring_invoice_generate_days_before_due
-  );
-  const generate_days_before_due = effectiveRecurringGenerateDaysBeforeDue(
-    row.recurring_invoice_generate_days_before_due,
-    row.billing_interval
-  );
+  const daysParams = {
+    general: row.recurring_invoice_generate_days_before_due,
+    weekly: row.recurring_invoice_generate_days_before_due_weekly,
+    billingInterval: row.billing_interval,
+  };
+  const { tenantRaw: generate_days_before_due_tenant } = resolveTenantGenerateDaysBeforeDueRaw(daysParams);
+  const generate_days_before_due = effectiveRecurringGenerateDaysBeforeDue(daysParams);
   return {
     cycle_due_date: cycleYmd,
     billing_interval: row.billing_interval,
     generate_days_before_due_tenant,
     generate_days_before_due,
-    generate_days_capped: isGenerateDaysBeforeCappedForInterval(
-      row.recurring_invoice_generate_days_before_due,
-      row.billing_interval
-    ),
+    generate_days_capped: isGenerateDaysBeforeCappedForTenant(daysParams),
     generation_date: computeRecurringInvoiceGenerationDateYmd(cycleYmd, generate_days_before_due),
   };
 }
@@ -234,10 +240,11 @@ function schedulerCycleSchedulingMeta(
 function renewalJobGenerationDateYmd(row: RenewalEnqueueTenantJoinRow, cycleDueYmd: string): string {
   return computeRecurringInvoiceGenerationDateYmd(
     cycleDueYmd,
-    effectiveRecurringGenerateDaysBeforeDue(
-      row.recurring_invoice_generate_days_before_due,
-      row.billing_interval
-    )
+    effectiveRecurringGenerateDaysBeforeDue({
+      general: row.recurring_invoice_generate_days_before_due,
+      weekly: row.recurring_invoice_generate_days_before_due_weekly,
+      billingInterval: row.billing_interval,
+    })
   );
 }
 
@@ -716,7 +723,8 @@ export async function describeRenewalEnqueueWithDb(
             t.recurring_generate_time_local::text,
             t.invoice_notify_same_as_generation,
             t.invoice_notify_time_local::text,
-            COALESCE(t.recurring_invoice_generate_days_before_due, 0)::int AS recurring_invoice_generate_days_before_due
+            COALESCE(t.recurring_invoice_generate_days_before_due, 0)::int AS recurring_invoice_generate_days_before_due,
+            t.recurring_invoice_generate_days_before_due_weekly
      FROM subscriptions s
      LEFT JOIN tenants t ON t.id = s.tenant_id
      WHERE s.id = $1
@@ -807,6 +815,7 @@ export async function describeRenewalEnqueueWithDb(
     invoiceNotifyTimeLocalRaw: row.invoice_notify_time_local ?? null,
     nextBillingDate: canonicalYmd,
     recurringInvoiceGenerateDaysBeforeDue: row.recurring_invoice_generate_days_before_due,
+    recurringInvoiceGenerateDaysBeforeDueWeekly: row.recurring_invoice_generate_days_before_due_weekly,
     billingInterval: row.billing_interval,
   });
 
@@ -820,6 +829,7 @@ export async function describeRenewalEnqueueWithDb(
     invoice_notify_same_as_generation: row.invoice_notify_same_as_generation,
     invoice_notify_time_local: row.invoice_notify_time_local,
     recurring_invoice_generate_days_before_due: row.recurring_invoice_generate_days_before_due,
+    recurring_invoice_generate_days_before_due_weekly: row.recurring_invoice_generate_days_before_due_weekly,
   };
 
   if (!diag.would_be_eligible_by_window) {
@@ -891,7 +901,8 @@ export async function loadRenewalEnqueueJoinRow(
             t.recurring_generate_time_local::text,
             t.invoice_notify_same_as_generation,
             t.invoice_notify_time_local::text,
-            COALESCE(t.recurring_invoice_generate_days_before_due, 0)::int AS recurring_invoice_generate_days_before_due
+            COALESCE(t.recurring_invoice_generate_days_before_due, 0)::int AS recurring_invoice_generate_days_before_due,
+            t.recurring_invoice_generate_days_before_due_weekly
      FROM subscriptions s
      LEFT JOIN tenants t ON t.id = s.tenant_id
      WHERE s.id = $1::uuid
@@ -916,6 +927,10 @@ export async function loadRenewalEnqueueJoinRow(
     invoice_notify_time_local:
       row.invoice_notify_time_local != null ? String(row.invoice_notify_time_local) : null,
     recurring_invoice_generate_days_before_due: Number(row.recurring_invoice_generate_days_before_due ?? 0),
+    recurring_invoice_generate_days_before_due_weekly:
+      row.recurring_invoice_generate_days_before_due_weekly == null
+        ? null
+        : Number(row.recurring_invoice_generate_days_before_due_weekly),
     type: String(row.type ?? ''),
     status: String(row.status ?? ''),
     customer_id: row.customer_id != null ? String(row.customer_id) : null,
@@ -1100,13 +1115,15 @@ export async function enqueueRenewalJobs(): Promise<{ enqueued: number; skipped:
       invoice_notify_same_as_generation: boolean | null;
       invoice_notify_time_local: string | null;
       recurring_invoice_generate_days_before_due: number;
+      recurring_invoice_generate_days_before_due_weekly: number | null;
     }>(
       `SELECT s.id, s.tenant_id, s.type, s.customer_id::text, s.next_billing_date, s.billing_interval::text AS billing_interval,
               t.timezone::text AS tenant_timezone,
               t.recurring_generate_time_local::text,
               t.invoice_notify_same_as_generation,
               t.invoice_notify_time_local::text,
-              COALESCE(t.recurring_invoice_generate_days_before_due, 0)::int AS recurring_invoice_generate_days_before_due
+              COALESCE(t.recurring_invoice_generate_days_before_due, 0)::int AS recurring_invoice_generate_days_before_due,
+              t.recurring_invoice_generate_days_before_due_weekly
        FROM subscriptions s
        LEFT JOIN tenants t ON t.id = s.tenant_id
        WHERE s.status = 'active'
@@ -1144,6 +1161,7 @@ export async function enqueueRenewalJobs(): Promise<{ enqueued: number; skipped:
         invoiceNotifyTimeLocalRaw: row.invoice_notify_time_local ?? null,
         nextBillingDate: cycleKey,
         recurringInvoiceGenerateDaysBeforeDue: row.recurring_invoice_generate_days_before_due,
+        recurringInvoiceGenerateDaysBeforeDueWeekly: row.recurring_invoice_generate_days_before_due_weekly,
         billingInterval: row.billing_interval,
       });
       if (diag.would_be_eligible_by_window) diagnosticEligible++;
@@ -1230,6 +1248,7 @@ export async function enqueueRenewalJobs(): Promise<{ enqueued: number; skipped:
         invoice_notify_same_as_generation: row.invoice_notify_same_as_generation,
         invoice_notify_time_local: row.invoice_notify_time_local,
         recurring_invoice_generate_days_before_due: row.recurring_invoice_generate_days_before_due,
+        recurring_invoice_generate_days_before_due_weekly: row.recurring_invoice_generate_days_before_due_weekly,
       };
       await materializePlannedCycles(pool, {
         tenantId: row.tenant_id,
@@ -1666,12 +1685,14 @@ export async function processNextBatch(
           invoice_notify_same_as_generation: boolean | null;
           invoice_notify_time_local: string | null;
           recurring_invoice_generate_days_before_due: number | null;
+          recurring_invoice_generate_days_before_due_weekly: number | null;
         }>(
           `SELECT timezone::text AS timezone,
                   recurring_generate_time_local::text,
                   invoice_notify_same_as_generation,
                   invoice_notify_time_local::text,
-                  recurring_invoice_generate_days_before_due
+                  recurring_invoice_generate_days_before_due,
+                  recurring_invoice_generate_days_before_due_weekly
              FROM tenants WHERE id = $1 LIMIT 1`,
           [job.tenant_id]
         );
@@ -1686,6 +1707,8 @@ export async function processNextBatch(
           invoiceNotifyTimeLocalRaw: tcfg?.invoice_notify_time_local ?? null,
           nextBillingDate: cycleDueYmd,
           recurringInvoiceGenerateDaysBeforeDue: tcfg?.recurring_invoice_generate_days_before_due ?? 0,
+          recurringInvoiceGenerateDaysBeforeDueWeekly:
+            tcfg?.recurring_invoice_generate_days_before_due_weekly ?? null,
           billingInterval: subscription.billing_interval,
         });
         const twVerbose = isBillingTimeWindowVerbose();

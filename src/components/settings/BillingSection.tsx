@@ -46,6 +46,19 @@ function normalizeHhMm(value: string): string {
   return value.trim().slice(0, 5);
 }
 
+/** Input vazio → null (herda geral). Número → 0–60. */
+function parseWeeklyDaysInput(raw: string): number | null | "invalid" {
+  const trimmed = raw.trim();
+  if (trimmed === "") return null;
+  const n = Math.trunc(Number(trimmed));
+  if (!Number.isFinite(n) || n < 0 || n > 60) return "invalid";
+  return n;
+}
+
+function formatWeeklyDaysForInput(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) ? String(Math.trunc(value)) : "";
+}
+
 export const BillingSection: React.FC = () => {
   const { canEdit } = useModulePermissions();
   const canSave = canEdit("settings");
@@ -59,6 +72,8 @@ export const BillingSection: React.FC = () => {
   const [invoiceNotifySameAsGeneration, setInvoiceNotifySameAsGeneration] = useState(true);
   const [invoiceNotifyTimeLocal, setInvoiceNotifyTimeLocal] = useState("09:00");
   const [recurringInvoiceGenerateDaysBeforeDue, setRecurringInvoiceGenerateDaysBeforeDue] = useState(0);
+  /** String no input: vazio = herdar geral (NULL no backend). */
+  const [weeklyDaysInput, setWeeklyDaysInput] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const timezoneOptions = useMemo(() => {
@@ -97,6 +112,7 @@ export const BillingSection: React.FC = () => {
       setInvoiceNotifySameAsGeneration(resolvedSame);
       setInvoiceNotifyTimeLocal(normalizeHhMm(resolvedNotify));
       setRecurringInvoiceGenerateDaysBeforeDue(Math.min(60, Math.max(0, Math.trunc(resolvedDays))));
+      setWeeklyDaysInput(formatWeeklyDaysForInput(data.recurring_invoice_generate_days_before_due_weekly));
       setFieldErrors({});
     } finally {
       setLoading(false);
@@ -125,6 +141,10 @@ export const BillingSection: React.FC = () => {
     if (!Number.isFinite(days) || days < 0 || days > 60) {
       nextErrors.recurring_invoice_generate_days_before_due = "Informe um número inteiro entre 0 e 60.";
     }
+    if (parseWeeklyDaysInput(weeklyDaysInput) === "invalid") {
+      nextErrors.recurring_invoice_generate_days_before_due_weekly =
+        "Deixe vazio para usar o valor geral, ou informe um inteiro entre 0 e 60.";
+    }
 
     setFieldErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
@@ -138,6 +158,9 @@ export const BillingSection: React.FC = () => {
     }
     if (!validate()) return;
 
+    const weeklyParsed = parseWeeklyDaysInput(weeklyDaysInput);
+    if (weeklyParsed === "invalid") return;
+
     setSaving(true);
     try {
       const payload = {
@@ -145,7 +168,11 @@ export const BillingSection: React.FC = () => {
         recurring_generate_time_local: normalizeHhMm(recurringGenerateTimeLocal),
         invoice_notify_same_as_generation: invoiceNotifySameAsGeneration,
         invoice_notify_time_local: invoiceNotifySameAsGeneration ? null : normalizeHhMm(invoiceNotifyTimeLocal),
-        recurring_invoice_generate_days_before_due: Math.min(60, Math.max(0, Math.trunc(Number(recurringInvoiceGenerateDaysBeforeDue)))),
+        recurring_invoice_generate_days_before_due: Math.min(
+          60,
+          Math.max(0, Math.trunc(Number(recurringInvoiceGenerateDaysBeforeDue)))
+        ),
+        recurring_invoice_generate_days_before_due_weekly: weeklyParsed,
       };
       const res = await putMyTenantBillingPreferences(payload);
       if (res.error || !res.data) {
@@ -167,6 +194,7 @@ export const BillingSection: React.FC = () => {
           ? saved.recurring_invoice_generate_days_before_due
           : (saved.effective?.recurring_invoice_generate_days_before_due ?? payload.recurring_invoice_generate_days_before_due);
       setRecurringInvoiceGenerateDaysBeforeDue(Math.min(60, Math.max(0, Math.trunc(savedDays))));
+      setWeeklyDaysInput(formatWeeklyDaysForInput(saved.recurring_invoice_generate_days_before_due_weekly));
       setFieldErrors({});
       toast.success("Preferências de recorrência salvas.");
     } finally {
@@ -188,9 +216,9 @@ export const BillingSection: React.FC = () => {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Faturas recorrentes por empresa</CardTitle>
+        <CardTitle>Geração de faturas recorrentes</CardTitle>
         <CardDescription>
-          Configure o fuso e horários usados na recorrência de faturas da sua empresa.
+          Fuso horário, horário de geração (H) e antecipação usados para enfileirar faturas recorrentes da empresa.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -250,34 +278,68 @@ export const BillingSection: React.FC = () => {
             {fieldErrors.recurring_generate_time_local ? (
               <p className="text-sm text-destructive">{fieldErrors.recurring_generate_time_local}</p>
             ) : (
-              <p className="text-xs text-muted-foreground">Formato 24h (HH:mm).</p>
+              <p className="text-xs text-muted-foreground">Formato 24h (HH:mm). No primeiro dia elegível, a geração só corre a partir deste horário.</p>
             )}
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="recurring-generate-days-before">Geração antecipada de faturas recorrentes</Label>
-            <p className="text-xs text-muted-foreground">
-              Gerar faturas recorrentes antecipadamente: defina quantos dias antes do vencimento a fatura será
-              enfileirada. O vencimento da fatura continua sendo a data normal da cobrança (o dia do ciclo).
-            </p>
-            <Input
-              id="recurring-generate-days-before"
-              type="number"
-              inputMode="numeric"
-              min={0}
-              max={60}
-              step={1}
-              value={recurringInvoiceGenerateDaysBeforeDue}
-              onChange={(e) => setRecurringInvoiceGenerateDaysBeforeDue(Number(e.target.value))}
-              disabled={!canSave}
-            />
-            <p className="text-xs text-muted-foreground">
-              Número de dias antes do vencimento (0 a 60). Exemplo: vencimento dia 25 com 5 dias — geração a partir do
-              dia 20 (respeitando o horário acima no primeiro dia elegível), vencimento da fatura continua dia 25.
-            </p>
-            {fieldErrors.recurring_invoice_generate_days_before_due ? (
-              <p className="text-sm text-destructive">{fieldErrors.recurring_invoice_generate_days_before_due}</p>
-            ) : null}
+          <div className="space-y-4 rounded-md border border-border p-4">
+            <div className="space-y-1">
+              <p className="text-sm font-medium">Antecipação da geração</p>
+              <p className="text-xs text-muted-foreground">
+                Quantos dias antes do vencimento a fatura é enfileirada. O vencimento da fatura continua sendo a data
+                do ciclo. Ex.: semanal com 2 dias e mensal com 7 dias no mesmo tenant.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="recurring-generate-days-before">
+                Antecipação (mensal e demais periodicidades)
+              </Label>
+              <Input
+                id="recurring-generate-days-before"
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={60}
+                step={1}
+                value={recurringInvoiceGenerateDaysBeforeDue}
+                onChange={(e) => setRecurringInvoiceGenerateDaysBeforeDue(Number(e.target.value))}
+                disabled={!canSave}
+              />
+              <p className="text-xs text-muted-foreground">
+                Dias antes do vencimento (0 a 60). Usado em mensal, trimestral, semestral, anual e como fallback.
+              </p>
+              {fieldErrors.recurring_invoice_generate_days_before_due ? (
+                <p className="text-sm text-destructive">{fieldErrors.recurring_invoice_generate_days_before_due}</p>
+              ) : null}
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="recurring-generate-days-before-weekly">
+                Antecipação (assinaturas semanais)
+              </Label>
+              <Input
+                id="recurring-generate-days-before-weekly"
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={60}
+                step={1}
+                value={weeklyDaysInput}
+                placeholder={`Igual ao geral (${recurringInvoiceGenerateDaysBeforeDue})`}
+                onChange={(e) => setWeeklyDaysInput(e.target.value)}
+                disabled={!canSave}
+              />
+              <p className="text-xs text-muted-foreground">
+                Vazio = mesma antecipação do campo geral. Valor efetivo limitado a no máximo 6 dias (duração do ciclo
+                semanal − 1). Digite 0 para gerar no dia do vencimento.
+              </p>
+              {fieldErrors.recurring_invoice_generate_days_before_due_weekly ? (
+                <p className="text-sm text-destructive">
+                  {fieldErrors.recurring_invoice_generate_days_before_due_weekly}
+                </p>
+              ) : null}
+            </div>
           </div>
 
           <div className="rounded-md border border-border p-4">

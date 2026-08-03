@@ -8,7 +8,7 @@ import { formatYmdBrSafe, formatDateTimeBrSafe } from '@/lib/billingSafeDate';
 import type { CrmSubscriptionDetailPayload } from '@/services/crmSubscriptions';
 import { Clock } from 'lucide-react';
 import {
-  clampRecurringGenerateDaysBeforeDue,
+  effectiveDaysBeforeFromTenantBilling,
   computeRecurringGenerationDateYmd,
 } from '@/lib/recurringGenerationPreview';
 
@@ -48,12 +48,14 @@ export function SubscriptionOperationalHealthCard({ detail, className }: Props) 
         lastJobAt: detail.subscription.last_job_at,
         tenantBilling: detail.tenant_billing,
         recentJobs: detail.recent_jobs,
+        billingInterval: detail.subscription.billing_interval,
       })
     : null;
   const summary = detail.automation_summary;
   const nextYmd = detail.subscription.next_billing_date?.slice(0, 10);
-  const daysBefore = clampRecurringGenerateDaysBeforeDue(
-    detail.tenant_billing.recurring_invoice_generate_days_before_due
+  const daysBefore = effectiveDaysBeforeFromTenantBilling(
+    detail.tenant_billing,
+    detail.subscription.billing_interval
   );
   const nextGen =
     summary?.next_generation_ymd ??

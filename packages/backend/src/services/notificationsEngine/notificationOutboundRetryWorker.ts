@@ -42,6 +42,7 @@ async function redispatchOne(p: Pool, deliveryId: string): Promise<void> {
     neLogWarn('outbound_worker_skip_not_yet_due', {
       delivery_id: deliveryId,
       tenant_id: row.tenant_id,
+      event_key: row.event_key,
       dispatch_not_before: row.dispatch_not_before.toISOString(),
     });
     return;
@@ -179,13 +180,33 @@ async function redispatchOne(p: Pool, deliveryId: string): Promise<void> {
   const maxAttempts = getNotificationsEngineWhatsAppMaxSendAttempts();
   const failedAttemptNumber = await getNextDeliveryAttemptNumber(p, deliveryId);
 
+  if (send.chatInstanceId) {
+    await setDispatchChatInstanceIfNull(p, deliveryId, send.chatInstanceId);
+  }
+
   await insertDeliveryAttempt(p, {
     deliveryId,
     attemptNumber: failedAttemptNumber,
     status: errClass === 'transient' ? 'failed_transient' : 'failed',
     errorMessage: send.error,
-    providerResponse: { class: errClass, via: 'retry_worker' },
+    providerResponse: {
+      class: errClass,
+      via: 'retry_worker',
+      ...(send.chatInstanceId ? { chat_instance_id: send.chatInstanceId } : {}),
+    },
     durationMs,
+  });
+
+  neLogWarn('whatsapp_dispatch_failed', {
+    delivery_id: deliveryId,
+    tenant_id: row.tenant_id,
+    event_key: row.event_key,
+    chat_instance_id: send.chatInstanceId ?? chatInstanceId ?? null,
+    error: send.error.slice(0, 240),
+    class: errClass,
+    attempt: failedAttemptNumber,
+    max_attempts: maxAttempts,
+    via: 'retry_worker',
   });
 
   if (errClass === 'transient' && failedAttemptNumber < maxAttempts) {
@@ -198,8 +219,13 @@ async function redispatchOne(p: Pool, deliveryId: string): Promise<void> {
     });
     neLogWarn('retry_worker_transient_rescheduled', {
       delivery_id: deliveryId,
+      tenant_id: row.tenant_id,
+      event_key: row.event_key,
+      chat_instance_id: send.chatInstanceId ?? chatInstanceId ?? null,
       attempt: failedAttemptNumber,
+      max_attempts: maxAttempts,
       next_retry_at: nextAt.toISOString(),
+      error_class: errClass,
     });
     return;
   }

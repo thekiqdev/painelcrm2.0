@@ -193,7 +193,8 @@ describe('billingSubscriptionExperience', () => {
       const events = buildCalendarEventFromTimelineRow(
         timelineRow(),
         detailFixture().tenant_billing,
-        0
+        0,
+        'weekly'
       );
       expect(events.some((e) => e.kind === 'generation')).toBe(true);
       expect(events.some((e) => e.kind === 'due')).toBe(true);
@@ -413,8 +414,27 @@ describe('billingSubscriptionExperience', () => {
   });
 
   describe('técnico e geração', () => {
-    it('resolveGenerationYmd com antecipação', () => {
-      expect(resolveGenerationYmd('2026-07-14', detailFixture().tenant_billing)).toBe('2026-07-07');
+    it('resolveGenerationYmd com antecipação (weekly herda geral + cap 6)', () => {
+      // fixture: weekly + geral=7 + weekly null → efetivo 6 → 2026-07-14 − 6 = 2026-07-08
+      expect(resolveGenerationYmd('2026-07-14', detailFixture().tenant_billing, 'weekly')).toBe(
+        '2026-07-08'
+      );
+    });
+    it('resolveGenerationYmd weekly explícito =2', () => {
+      const tb = {
+        ...detailFixture().tenant_billing,
+        recurring_invoice_generate_days_before_due: 7,
+        recurring_invoice_generate_days_before_due_weekly: 2,
+      };
+      expect(resolveGenerationYmd('2026-07-14', tb, 'weekly')).toBe('2026-07-12');
+    });
+    it('resolveGenerationYmd monthly ignora weekly', () => {
+      const tb = {
+        ...detailFixture().tenant_billing,
+        recurring_invoice_generate_days_before_due: 7,
+        recurring_invoice_generate_days_before_due_weekly: 2,
+      };
+      expect(resolveGenerationYmd('2026-07-14', tb, 'monthly')).toBe('2026-07-07');
     });
     it('buildTechnicalDiagnostics', () => {
       const d = detailFixture({

@@ -14,4 +14,14 @@ describe('classifyWhatsAppDispatchError', () => {
       'transient',
     );
   });
+  it('Sprint 3: Invalid token / 401 / 403 como transitório (retry até max_attempts)', () => {
+    expect(classifyWhatsAppDispatchError('Invalid token.')).toBe('transient');
+    expect(classifyWhatsAppDispatchError('Invalid token')).toBe('transient');
+    expect(classifyWhatsAppDispatchError('Token inválido detectado')).toBe('transient');
+    expect(classifyWhatsAppDispatchError('UazAPI 401')).toBe('transient');
+    expect(classifyWhatsAppDispatchError('forbidden 403')).toBe('transient');
+  });
+  it('mantém bad request de número como definitivo', () => {
+    expect(classifyWhatsAppDispatchError('400 Bad Request número inválido')).toBe('definitive');
+  });
 });

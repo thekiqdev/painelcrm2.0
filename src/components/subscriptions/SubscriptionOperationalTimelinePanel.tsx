@@ -141,7 +141,12 @@ function CycleTimelineCard({
   row: CrmSubscriptionTimelineRow;
   detail: CrmSubscriptionDetailPayload;
 }) {
-  const display = resolveTimelineRecurringDisplay(row, detail.recent_jobs, detail.tenant_billing);
+  const display = resolveTimelineRecurringDisplay(
+    row,
+    detail.recent_jobs,
+    detail.tenant_billing,
+    detail.subscription.billing_interval
+  );
   return (
     <div className="rounded-lg border bg-card p-4 shadow-sm space-y-2">
       <div className="flex flex-wrap items-start justify-between gap-2">

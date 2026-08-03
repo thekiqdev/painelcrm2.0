@@ -120,7 +120,7 @@ function emitEventsForCycleRow(
   if (row.operational_state === 'failed' && !row.invoice_id) {
     if (detail.subscription.status === 'cancelled') return;
     const failYmd =
-      due ?? normalizeYmdInput(resolveGenerationYmd(due, detail.tenant_billing)) ?? today;
+      due ?? normalizeYmdInput(resolveGenerationYmd(due, detail.tenant_billing, detail.subscription.billing_interval)) ?? today;
     if (isRecoverableCycleFailure(row, today)) {
       pushEvent(events, seen, detail, today, {
         id: `sched-${cycleId}-${due ?? failYmd}`,

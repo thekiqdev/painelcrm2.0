@@ -63,6 +63,8 @@ export async function markChatInstanceDisconnectedForInvalidToken(
   const metadataPatch = JSON.stringify({
     invalidTokenDetected: true,
     invalidTokenDetectedAt: detectedAt,
+    invalidTokenReason: params.reason.slice(0, 240),
+    invalidTokenSource: params.source,
   });
 
   await pool.query(

@@ -99,6 +99,8 @@ export interface CrmSubscriptionTenantBillingPrefs {
   invoice_notify_time_local: string | null;
   /** Dias antes de `next_billing_date` para enfileirar geração (0 = no dia do vencimento). */
   recurring_invoice_generate_days_before_due: number | null;
+  /** NULL = herda o geral. Só aplica a `billing_interval = weekly`. */
+  recurring_invoice_generate_days_before_due_weekly: number | null;
 }
 
 export interface CrmSubscriptionDetail {
@@ -385,7 +387,8 @@ export async function getCrmSubscriptionDetail(
     pool.query<CrmSubscriptionTenantBillingPrefs>(
       `SELECT timezone::text, recurring_generate_time_local::text, invoice_notify_same_as_generation,
               invoice_notify_time_local::text,
-              recurring_invoice_generate_days_before_due
+              recurring_invoice_generate_days_before_due,
+              recurring_invoice_generate_days_before_due_weekly
        FROM tenants WHERE id = $1 LIMIT 1`,
       [tenantId]
     ),
@@ -479,6 +482,7 @@ export async function getCrmSubscriptionDetail(
     invoice_notify_same_as_generation: null,
     invoice_notify_time_local: null,
     recurring_invoice_generate_days_before_due: 0,
+    recurring_invoice_generate_days_before_due_weekly: null,
   };
   const automation_summary = buildSubscriptionAutomationSummary({
     subscriptionStatus: sub.status,
@@ -486,6 +490,8 @@ export async function getCrmSubscriptionDetail(
     billingInterval: sub.billing_interval,
     lastJobAt: sub.last_job_at,
     recurringInvoiceGenerateDaysBeforeDue: tenant_billing.recurring_invoice_generate_days_before_due,
+    recurringInvoiceGenerateDaysBeforeDueWeekly:
+      tenant_billing.recurring_invoice_generate_days_before_due_weekly,
     recentJobs: recent_jobs,
     timeline,
   });

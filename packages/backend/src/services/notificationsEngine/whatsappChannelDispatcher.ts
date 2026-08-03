@@ -36,7 +36,7 @@ export function normalizeWhatsAppOutboundPlainText(raw: string): string {
 
 export type WhatsAppDispatchResult =
   | { ok: true; providerMessageId: string; chatInstanceId?: string }
-  | { ok: false; error: string };
+  | { ok: false; error: string; chatInstanceId?: string };
 
 type InstanceRow = {
   id: string;
@@ -170,6 +170,7 @@ export async function dispatchWhatsAppText(params: {
       return {
         ok: false,
         error: `Instância WhatsApp não está conectada (status=${refreshed.status}). Atualize a conexão e tente novamente.`,
+        chatInstanceId: instanceRow.id,
       };
     }
   } catch (refreshErr: unknown) {
@@ -189,13 +190,14 @@ export async function dispatchWhatsAppText(params: {
         const healMsg = healErr instanceof Error ? healErr.message : String(healErr);
         console.error('[chat_instance_health]', JSON.stringify({ action: 'self_heal_failed', error: healMsg }));
       }
-      return { ok: false, error: refreshMsg.slice(0, 500) };
+      return { ok: false, error: refreshMsg.slice(0, 500), chatInstanceId: instanceRow.id };
     }
     // Status check falhou (rede etc.): se DB já era operable, tenta send; senão aborta.
     if (!isChatInstanceStatusOperable(instanceRow.status)) {
       return {
         ok: false,
         error: `Não foi possível verificar o estado da instância WhatsApp: ${refreshMsg.slice(0, 400)}`,
+        chatInstanceId: instanceRow.id,
       };
     }
     console.warn(
@@ -239,7 +241,7 @@ export async function dispatchWhatsAppText(params: {
         const healMsg = healErr instanceof Error ? healErr.message : String(healErr);
         console.error('[chat_instance_health]', JSON.stringify({ action: 'self_heal_failed', error: healMsg }));
       }
-      return { ok: false, error: msg.slice(0, 500) };
+      return { ok: false, error: msg.slice(0, 500), chatInstanceId: instanceRow.id };
     }
 
     if (isUazWhatsAppDisconnectedSignal(msg, httpStatus)) {
@@ -256,19 +258,24 @@ export async function dispatchWhatsAppText(params: {
             return await attemptSend();
           } catch (retryErr: unknown) {
             const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
-            return { ok: false, error: retryMsg.slice(0, 500) };
+            return { ok: false, error: retryMsg.slice(0, 500), chatInstanceId: instanceRow.id };
           }
         }
         return {
           ok: false,
           error: `WhatsApp disconnected (status=${again.status}). Atualize a conexão e tente novamente.`,
+          chatInstanceId: instanceRow.id,
         };
       } catch {
-        return { ok: false, error: msg.slice(0, 500) || 'WhatsApp disconnected' };
+        return {
+          ok: false,
+          error: msg.slice(0, 500) || 'WhatsApp disconnected',
+          chatInstanceId: instanceRow.id,
+        };
       }
     }
 
-    return { ok: false, error: msg.slice(0, 500) };
+    return { ok: false, error: msg.slice(0, 500), chatInstanceId: instanceRow.id };
   }
 }
 

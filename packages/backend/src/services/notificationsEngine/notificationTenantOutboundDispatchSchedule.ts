@@ -1,6 +1,10 @@
 /**
  * Calcula dispatch_not_before para notificações transacionais de fatura,
- * com base nas preferências de faturamento do tenant (Fase 4).
+ * com base nas preferências de faturamento do tenant (Fase 4 / Sprint 2).
+ *
+ * - same_as_generation: envio alinhado a `recurring_generate_time_local` (defesa se a fatura
+ *   nascer antes de H — ex. renovação manual); se já passou H no dia local do evento → imediato.
+ * - notify separado: adia até `invoice_notify_time_local` no timezone efetivo do tenant.
  */
 import {
   getTenantBillingPreferences,
@@ -12,6 +16,25 @@ export const TENANT_SCHEDULED_INVOICE_NOTIFICATION_EVENT_KEYS = new Set<string>(
   'invoice.created',
   'invoice.paid',
 ]);
+
+export type InvoiceDispatchScheduleSource =
+  | 'not_applicable'
+  | 'immediate_same_as_generation'
+  | 'deferred_same_as_generation'
+  | 'deferred_notify_time'
+  | 'immediate_notify_time_past'
+  | 'immediate_missing_notify_time';
+
+export type InvoiceDispatchScheduleResult = {
+  dispatchNotBefore: Date | null;
+  scheduleSource: InvoiceDispatchScheduleSource;
+  timezone_effective: string;
+  generate_time_local_effective: string;
+  notify_time_local_effective: string | null;
+  invoice_notify_same_as_generation: boolean;
+  local_ymd: string;
+  local_hhmm: string;
+};
 
 function localYmdAndHhmmInZone(date: Date, timeZone: string): { ymd: string; hhmm: string } {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -66,33 +89,87 @@ export function utcInstantForLocalWallClock(ymd: string, hhmm: string, timeZone:
   return new Date(Date.UTC(y, mo - 1, d, hh, mm, 0, 0));
 }
 
+function emptyScheduleResult(
+  partial: Partial<InvoiceDispatchScheduleResult> &
+    Pick<InvoiceDispatchScheduleResult, 'scheduleSource'>,
+): InvoiceDispatchScheduleResult {
+  return {
+    dispatchNotBefore: null,
+    timezone_effective: partial.timezone_effective ?? 'America/Sao_Paulo',
+    generate_time_local_effective: partial.generate_time_local_effective ?? '09:00',
+    notify_time_local_effective: partial.notify_time_local_effective ?? null,
+    invoice_notify_same_as_generation: partial.invoice_notify_same_as_generation ?? true,
+    local_ymd: partial.local_ymd ?? '',
+    local_hhmm: partial.local_hhmm ?? '',
+    scheduleSource: partial.scheduleSource,
+  };
+}
+
+/**
+ * Resolve se o envio WhatsApp de fatura deve ser imediato ou adiado ao horário local do tenant.
+ */
+export async function resolveInvoiceTransactionalDispatchSchedule(params: {
+  tenantId: string;
+  eventKey: string;
+  eventOccurredAt: Date | null;
+  now?: Date;
+}): Promise<InvoiceDispatchScheduleResult> {
+  if (!TENANT_SCHEDULED_INVOICE_NOTIFICATION_EVENT_KEYS.has(params.eventKey)) {
+    return emptyScheduleResult({ scheduleSource: 'not_applicable' });
+  }
+
+  const at = params.eventOccurredAt ?? params.now ?? new Date();
+  const nowMs = (params.now ?? new Date()).getTime();
+  const row = await getTenantBillingPreferences(params.tenantId);
+  const resolved = resolveTenantBillingPreferences(row);
+  const local = localYmdAndHhmmInZone(at, resolved.timezone_effective);
+
+  const same = resolved.invoice_notify_same_as_generation_effective;
+  const notifyHhmm = same
+    ? resolved.recurring_generate_time_local_effective
+    : resolved.invoice_notify_time_local_effective;
+
+  const base = {
+    timezone_effective: resolved.timezone_effective,
+    generate_time_local_effective: resolved.recurring_generate_time_local_effective,
+    notify_time_local_effective: resolved.invoice_notify_time_local_effective,
+    invoice_notify_same_as_generation: same,
+    local_ymd: local.ymd,
+    local_hhmm: local.hhmm,
+  };
+
+  if (!notifyHhmm) {
+    return emptyScheduleResult({ ...base, scheduleSource: 'immediate_missing_notify_time' });
+  }
+
+  const targetUtc = utcInstantForLocalWallClock(
+    local.ymd,
+    notifyHhmm,
+    resolved.timezone_effective,
+  );
+
+  if (targetUtc.getTime() <= nowMs) {
+    return {
+      ...base,
+      dispatchNotBefore: null,
+      scheduleSource: same ? 'immediate_same_as_generation' : 'immediate_notify_time_past',
+    };
+  }
+
+  return {
+    ...base,
+    dispatchNotBefore: targetUtc,
+    scheduleSource: same ? 'deferred_same_as_generation' : 'deferred_notify_time',
+  };
+}
+
+/** Compat: só o instante (ou null = imediato). */
 export async function resolveInvoiceTransactionalDispatchNotBefore(params: {
   tenantId: string;
   eventKey: string;
   eventOccurredAt: Date | null;
+  now?: Date;
 }): Promise<Date | null> {
-  if (!TENANT_SCHEDULED_INVOICE_NOTIFICATION_EVENT_KEYS.has(params.eventKey)) {
-    return null;
-  }
-
-  const at = params.eventOccurredAt ?? new Date();
-  const row = await getTenantBillingPreferences(params.tenantId);
-  const resolved = resolveTenantBillingPreferences(row);
-
-  if (resolved.invoice_notify_same_as_generation_effective) {
-    return null;
-  }
-
-  const notifyHhmm = resolved.invoice_notify_time_local_effective;
-  if (!notifyHhmm) {
-    return null;
-  }
-
-  const { ymd } = localYmdAndHhmmInZone(at, resolved.timezone_effective);
-  const targetUtc = utcInstantForLocalWallClock(ymd, notifyHhmm, resolved.timezone_effective);
-  const nowMs = Date.now();
-  if (targetUtc.getTime() <= nowMs) {
-    return new Date(nowMs);
-  }
-  return targetUtc;
+  const r = await resolveInvoiceTransactionalDispatchSchedule(params);
+  return r.dispatchNotBefore;
 }

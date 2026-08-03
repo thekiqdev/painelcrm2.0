@@ -1,6 +1,7 @@
 /**
- * Limita `recurring_invoice_generate_days_before_due` à duração do ciclo da assinatura.
- * Evita que antecipação mensal (ex.: 7 dias) sobreponha ciclos semanais ou dispare geração imediata.
+ * Limita antecipação de geração à duração do ciclo e resolve N por periodicidade (Sprint 5.1).
+ * - geral: tenants.recurring_invoice_generate_days_before_due
+ * - weekly: tenants.recurring_invoice_generate_days_before_due_weekly (NULL = herda geral)
  */
 import type { BillingInterval } from '../services/billingSubscriptionService.js';
 import { clampRecurringInvoiceGenerateDaysBeforeDue } from './billingGenerationDate.js';
@@ -25,15 +26,71 @@ export function maxRecurringGenerateDaysBeforeForInterval(billingInterval: strin
   return Math.max(0, cycleDays - 1);
 }
 
+export type TenantGenerateDaysBeforeSource = 'weekly' | 'general';
+
 /**
- * Valor efetivo usado pelo scheduler/worker: `min(tenant, cap(intervalo))`.
+ * SSOT: N bruto do tenant para o intervalo (ainda sem cap).
+ * weekly + weeklyCol != null → weekly; senão → geral.
+ */
+export function resolveTenantGenerateDaysBeforeDueRaw(params: {
+  general: unknown;
+  weekly?: unknown | null;
+  billingInterval: string;
+}): { tenantRaw: number; source: TenantGenerateDaysBeforeSource } {
+  const interval = (params.billingInterval ?? 'monthly').trim() || 'monthly';
+  const general = clampRecurringInvoiceGenerateDaysBeforeDue(params.general);
+
+  if (interval === 'weekly' && params.weekly != null && params.weekly !== '') {
+    const n = typeof params.weekly === 'number' ? params.weekly : Number(params.weekly);
+    if (Number.isFinite(n)) {
+      return {
+        tenantRaw: clampRecurringInvoiceGenerateDaysBeforeDue(n),
+        source: 'weekly',
+      };
+    }
+  }
+
+  return { tenantRaw: general, source: 'general' };
+}
+
+/**
+ * Valor efetivo usado pelo scheduler/worker: `min(tenant_raw(interval), cap(intervalo))`.
+ * Compat: se só passar o N já escolhido, use a overload de 2 args abaixo.
  */
 export function effectiveRecurringGenerateDaysBeforeDue(
   tenantDaysBefore: unknown,
   billingInterval: string
+): number;
+export function effectiveRecurringGenerateDaysBeforeDue(params: {
+  general: unknown;
+  weekly?: unknown | null;
+  billingInterval: string;
+}): number;
+export function effectiveRecurringGenerateDaysBeforeDue(
+  tenantDaysBeforeOrParams:
+    | unknown
+    | { general: unknown; weekly?: unknown | null; billingInterval: string },
+  billingInterval?: string,
 ): number {
-  const tenant = clampRecurringInvoiceGenerateDaysBeforeDue(tenantDaysBefore);
-  const cap = maxRecurringGenerateDaysBeforeForInterval(billingInterval);
+  if (
+    tenantDaysBeforeOrParams != null &&
+    typeof tenantDaysBeforeOrParams === 'object' &&
+    !Array.isArray(tenantDaysBeforeOrParams) &&
+    'billingInterval' in tenantDaysBeforeOrParams &&
+    'general' in tenantDaysBeforeOrParams
+  ) {
+    const p = tenantDaysBeforeOrParams as {
+      general: unknown;
+      weekly?: unknown | null;
+      billingInterval: string;
+    };
+    const { tenantRaw } = resolveTenantGenerateDaysBeforeDueRaw(p);
+    const cap = maxRecurringGenerateDaysBeforeForInterval(p.billingInterval);
+    return Math.min(tenantRaw, cap);
+  }
+
+  const tenant = clampRecurringInvoiceGenerateDaysBeforeDue(tenantDaysBeforeOrParams);
+  const cap = maxRecurringGenerateDaysBeforeForInterval(billingInterval ?? 'monthly');
   return Math.min(tenant, cap);
 }
 
@@ -43,4 +100,14 @@ export function isGenerateDaysBeforeCappedForInterval(
 ): boolean {
   const tenant = clampRecurringInvoiceGenerateDaysBeforeDue(tenantDaysBefore);
   return tenant > maxRecurringGenerateDaysBeforeForInterval(billingInterval);
+}
+
+/** Cap check após resolver general/weekly. */
+export function isGenerateDaysBeforeCappedForTenant(params: {
+  general: unknown;
+  weekly?: unknown | null;
+  billingInterval: string;
+}): boolean {
+  const { tenantRaw } = resolveTenantGenerateDaysBeforeDueRaw(params);
+  return isGenerateDaysBeforeCappedForInterval(tenantRaw, params.billingInterval);
 }

@@ -569,14 +569,16 @@ export function buildSubscriptionAutomationSummary(params: {
   billingInterval?: string | null;
   lastJobAt: string | null | undefined;
   recurringInvoiceGenerateDaysBeforeDue: number | null | undefined;
+  recurringInvoiceGenerateDaysBeforeDueWeekly?: number | null;
   recentJobs: TimelineJobInput[];
   timeline: CrmSubscriptionTimelineRowUx[];
 }): CrmSubscriptionAutomationSummary {
   const nextCharge = ymdHead(params.nextBillingDate);
-  const daysBefore = effectiveRecurringGenerateDaysBeforeDue(
-    params.recurringInvoiceGenerateDaysBeforeDue,
-    params.billingInterval ?? 'monthly'
-  );
+  const daysBefore = effectiveRecurringGenerateDaysBeforeDue({
+    general: params.recurringInvoiceGenerateDaysBeforeDue,
+    weekly: params.recurringInvoiceGenerateDaysBeforeDueWeekly ?? null,
+    billingInterval: params.billingInterval ?? 'monthly',
+  });
   const nextGeneration =
     nextCharge && nextCharge.length === 10
       ? computeRecurringInvoiceGenerationDateYmd(nextCharge, daysBefore)

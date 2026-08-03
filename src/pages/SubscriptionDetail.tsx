@@ -61,7 +61,7 @@ import type { KpiClickAction } from "@/lib/subscriptionFinancialRefinement";
 import { openInvoiceInNewTab } from "@/lib/invoiceQuickActions";
 import {
   addCalendarDaysToIsoYmd,
-  clampRecurringGenerateDaysBeforeDue,
+  effectiveDaysBeforeFromTenantBilling,
   computeRecurringGenerationDateYmd,
 } from "@/lib/recurringGenerationPreview";
 import { SubscriptionContractHistoryPanel } from "@/components/subscriptions/SubscriptionContractHistoryPanel";
@@ -80,8 +80,11 @@ function generationSummary(tb: CrmSubscriptionDetailPayload["tenant_billing"]): 
   return "Conforme horário configurado na conta (Configurações → Cobranças)";
 }
 
-function daysBeforeDueLabel(tb: CrmSubscriptionDetailPayload["tenant_billing"]): string {
-  const n = clampRecurringGenerateDaysBeforeDue(tb.recurring_invoice_generate_days_before_due);
+function daysBeforeDueLabel(
+  tb: CrmSubscriptionDetailPayload["tenant_billing"],
+  billingInterval: string
+): string {
+  const n = effectiveDaysBeforeFromTenantBilling(tb, billingInterval);
   if (n === 0) return "0 dias (geração a partir do dia do vencimento)";
   return `${n} dia(s) antes do vencimento`;
 }
@@ -152,7 +155,10 @@ const SubscriptionDetail = () => {
       const d = await crmSubscriptionsService.getById(id);
       setDetail(d);
       const due = d.subscription.next_billing_date?.slice(0, 10) ?? "";
-      const days = clampRecurringGenerateDaysBeforeDue(d.tenant_billing.recurring_invoice_generate_days_before_due);
+      const days = effectiveDaysBeforeFromTenantBilling(
+        d.tenant_billing,
+        d.subscription.billing_interval
+      );
       const gen = due.length === 10 ? computeRecurringGenerationDateYmd(due, days) : due;
       setNextDate(gen || due);
     } catch (e) {
@@ -277,8 +283,9 @@ const SubscriptionDetail = () => {
       return;
     }
     if (!detail) return;
-    const daysBefore = clampRecurringGenerateDaysBeforeDue(
-      detail.tenant_billing.recurring_invoice_generate_days_before_due
+    const daysBefore = effectiveDaysBeforeFromTenantBilling(
+      detail.tenant_billing,
+      detail.subscription.billing_interval
     );
     /** O utilizador edita o 1.º dia de geração; a API continua a receber o vencimento do ciclo (`next_billing_date`). */
     const cycleDueYmd = addCalendarDaysToIsoYmd(nextDate, daysBefore);
@@ -526,7 +533,10 @@ const SubscriptionDetail = () => {
 
   const { subscription: s, meta, tenant_billing } = detail;
   const nextYmd = s.next_billing_date?.slice(0, 10);
-  const daysBeforeAcct = clampRecurringGenerateDaysBeforeDue(tenant_billing.recurring_invoice_generate_days_before_due);
+  const daysBeforeAcct = effectiveDaysBeforeFromTenantBilling(
+    tenant_billing,
+    s.billing_interval
+  );
   const latestPaidId = detail.latest_paid_invoice_id;
   const canReschedule = s.status === "active" && Boolean(latestPaidId);
   const canEditContract =
@@ -711,7 +721,7 @@ const SubscriptionDetail = () => {
                     </div>
                     <div>
                       <p className="text-xs text-muted-foreground mb-1">Antecipação na conta</p>
-                      <p className="text-sm">{daysBeforeDueLabel(tenant_billing)}</p>
+                      <p className="text-sm">{daysBeforeDueLabel(tenant_billing, s.billing_interval)}</p>
                     </div>
                     <div>
                       <p className="text-xs text-muted-foreground mb-1">Horário / fuso (conta)</p>

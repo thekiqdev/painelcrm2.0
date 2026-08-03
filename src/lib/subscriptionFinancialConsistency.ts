@@ -271,7 +271,7 @@ export function buildEnrichedHumanizedTimeline(detail: CrmSubscriptionDetailPayl
         subtitle: null,
       });
     } else if (row.operational_state === 'failed' || row.operational_state === 'gateway_failed') {
-      const ymd = due ?? normalizeYmdInput(resolveGenerationYmd(due, detail.tenant_billing)) ?? '';
+      const ymd = due ?? normalizeYmdInput(resolveGenerationYmd(due, detail.tenant_billing, detail.subscription.billing_interval)) ?? '';
       if (!ymd) continue;
       items.push({
         id: `fail-${row.cycle_id ?? row.due_date}`,

@@ -72,6 +72,7 @@ describe('billingManualRenewalExecution B0.2.1', () => {
       current_period_start: '2026-06-01',
       cancel_at_period_end: false,
       recurring_invoice_generate_days_before_due: 0,
+      recurring_invoice_generate_days_before_due_weekly: null,
     } as Awaited<ReturnType<typeof recurringBillingJobService.loadRenewalEnqueueJoinRow>>);
     vi.spyOn(recurringBillingJobService, 'insertOrReactivateRenewalJob').mockResolvedValue('inserted');
     const materializeSpy = vi.spyOn(subscriptionCyclePlanner, 'materializePlannedCycles').mockResolvedValue();
@@ -98,8 +99,11 @@ describe('billingManualRenewalExecution B0.2.1', () => {
 
     const { pool } = await import('../utils/db.js');
     vi.mocked(pool.query).mockImplementation(async (sql: string) => {
-      if (sql.includes('FROM subscriptions WHERE id')) {
-        return { rows: [{ status: 'active' }] };
+      // max_cycles precheck (crmSubscriptionCyclesExhaustion) — SQL multilinha
+      if (sql.includes('FROM subscriptions') && sql.includes('WHERE id')) {
+        return {
+          rows: [{ status: 'active', type: 'customer', cycles_unlimited: true, max_cycles: null }],
+        };
       }
       if (sql.includes('billing_recovery_audit')) {
         return { rows: [] };
@@ -130,12 +134,13 @@ describe('billingManualRenewalExecution B0.2.1', () => {
     expect(result.gateway_status).toBe('pending');
     expect(result.notification_sent).toBe(true);
     expect(result.cycle_key).toBe('2026-07-01');
+    // ensureJobForManualGenerate materializa o ciclo solicitado (cycle_key), não o próximo.
     expect(materializeSpy).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
         tenantId: 't1',
         subscriptionId: 'sub-1',
-        plans: [{ cycleDateYmd: '2026-08-01', source: 'manual_generate' }],
+        plans: [{ cycleDateYmd: '2026-07-01', source: 'manual_generate' }],
       })
     );
   });

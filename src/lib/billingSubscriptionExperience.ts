@@ -1,6 +1,6 @@
 import { formatYmdBrSafe, isValidYmd, safeParseYmd } from '@/lib/billingSafeDate';
 import {
-  clampRecurringGenerateDaysBeforeDue,
+  effectiveDaysBeforeFromTenantBilling,
   computeRecurringGenerationDateYmd,
 } from '@/lib/recurringGenerationPreview';
 import { isRecoverableCycleFailure, mapHistoryFinancialStatus, historyFinancialStatusLabel } from './subscriptionRenewalRecovery';
@@ -229,11 +229,12 @@ export function subscriptionHeadlineStatus(d: CrmSubscriptionDetailPayload): {
 
 export function resolveGenerationYmd(
   dueYmd: string | null | undefined,
-  tenantBilling: CrmSubscriptionDetailPayload['tenant_billing']
+  tenantBilling: CrmSubscriptionDetailPayload['tenant_billing'],
+  billingInterval?: string | null
 ): string | null {
   const due = normalizeYmdInput(dueYmd);
   if (!due) return null;
-  const days = clampRecurringGenerateDaysBeforeDue(tenantBilling.recurring_invoice_generate_days_before_due);
+  const days = effectiveDaysBeforeFromTenantBilling(tenantBilling, billingInterval);
   return computeRecurringGenerationDateYmd(due, days);
 }
 
@@ -282,12 +283,13 @@ function calendarEventLabel(kind: CalendarEventKind, visual: CalendarVisualKind)
 export function buildCalendarEventFromTimelineRow(
   row: CrmSubscriptionTimelineRow,
   tenantBilling: CrmSubscriptionDetailPayload['tenant_billing'],
-  index: number
+  index: number,
+  billingInterval?: string | null
 ): CalendarEvent[] {
   const events: CalendarEvent[] = [];
   const visual = mapOperationalStateToVisual(row.operational_state, row);
   const due = normalizeYmdInput(row.due_date);
-  const gen = due ? resolveGenerationYmd(due, tenantBilling) : null;
+  const gen = due ? resolveGenerationYmd(due, tenantBilling, billingInterval) : null;
   const competence = row.month_ref || row.cycle_label || null;
   const base = {
     competence,
@@ -346,7 +348,12 @@ export function buildCalendarMonths(
   const eventMap = new Map<string, CalendarEvent>();
 
   timeline.forEach((row, idx) => {
-    for (const ev of buildCalendarEventFromTimelineRow(row, detail.tenant_billing, idx)) {
+    for (const ev of buildCalendarEventFromTimelineRow(
+      row,
+      detail.tenant_billing,
+      idx,
+      detail.subscription.billing_interval
+    )) {
       eventMap.set(ev.id, ev);
     }
   });
@@ -440,7 +447,11 @@ export function buildBusinessTimelineEvents(detail: CrmSubscriptionDetailPayload
 
   const invoiceRows = detail.timeline.filter((r) => r.merge_source !== 'lifecycle' && r.invoice_id);
   if (invoiceRows.length === 0 && detail.subscription.status === 'active') {
-    const gen = resolveGenerationYmd(detail.subscription.next_billing_date, detail.tenant_billing);
+    const gen = resolveGenerationYmd(
+      detail.subscription.next_billing_date,
+      detail.tenant_billing,
+      detail.subscription.billing_interval
+    );
     if (gen) {
       events.push({
         id: 'plan-ready',
@@ -565,7 +576,9 @@ export function buildSummaryCards(detail: CrmSubscriptionDetailPayload): Summary
   const nextDue = normalizeYmdInput(detail.subscription.next_billing_date);
   const nextGen =
     detail.automation_summary?.next_generation_ymd ??
-    (nextDue ? resolveGenerationYmd(nextDue, detail.tenant_billing) : null);
+    (nextDue
+      ? resolveGenerationYmd(nextDue, detail.tenant_billing, detail.subscription.billing_interval)
+      : null);
   const openCount = detail.timeline.filter((r) => {
     const inv = (r.invoice_status ?? '').toLowerCase();
     return r.invoice_id && inv !== 'paid' && r.operational_state !== 'paid' && r.operational_state !== 'cancelled';
@@ -638,7 +651,10 @@ export function buildFutureCycles(detail: CrmSubscriptionDetailPayload, count = 
   if (effectiveCount <= 0) return [];
 
   const rows: FutureCycleRow[] = [];
-  const daysBefore = clampRecurringGenerateDaysBeforeDue(detail.tenant_billing.recurring_invoice_generate_days_before_due);
+  const daysBefore = effectiveDaysBeforeFromTenantBilling(
+    detail.tenant_billing,
+    s.billing_interval
+  );
   const statusPt = s.status === 'paused' ? 'Pausada' : 'Previsto';
 
   for (let i = 0; i < effectiveCount; i += 1) {

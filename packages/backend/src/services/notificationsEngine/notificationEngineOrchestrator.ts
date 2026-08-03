@@ -22,7 +22,7 @@ import {
 } from '../../config/notificationsEngineEnv.js';
 import { classifyWhatsAppDispatchError } from './whatsappDispatchErrorClassifier.js';
 import { neLogInfo, neLogWarn } from './notificationEngineLog.js';
-import { resolveInvoiceTransactionalDispatchNotBefore } from './notificationTenantOutboundDispatchSchedule.js';
+import { resolveInvoiceTransactionalDispatchSchedule } from './notificationTenantOutboundDispatchSchedule.js';
 
 const DEFAULT_LOCALE = 'pt-BR';
 
@@ -54,9 +54,12 @@ function computeRetryDelayMs(failedAttemptNumber: number): number {
 async function recordAttemptAndHandleSendFailure(params: {
   pool: Pool;
   deliveryId: string;
+  tenantId: string;
+  entityId: string | null;
   errorMessage: string;
   durationMs: number;
   failedAttemptNumber: number;
+  chatInstanceId?: string | null;
 }): Promise<void> {
   const errClass = classifyWhatsAppDispatchError(params.errorMessage);
   const maxAttempts = getNotificationsEngineWhatsAppMaxSendAttempts();
@@ -66,8 +69,23 @@ async function recordAttemptAndHandleSendFailure(params: {
     attemptNumber: params.failedAttemptNumber,
     status: errClass === 'transient' ? 'failed_transient' : 'failed',
     errorMessage: params.errorMessage,
-    providerResponse: { class: errClass, attempt: params.failedAttemptNumber },
+    providerResponse: {
+      class: errClass,
+      attempt: params.failedAttemptNumber,
+      ...(params.chatInstanceId ? { chat_instance_id: params.chatInstanceId } : {}),
+    },
     durationMs: params.durationMs,
+  });
+
+  neLogWarn('whatsapp_dispatch_failed', {
+    delivery_id: params.deliveryId,
+    tenant_id: params.tenantId,
+    entity_id: params.entityId,
+    chat_instance_id: params.chatInstanceId ?? null,
+    error: params.errorMessage.slice(0, 240),
+    class: errClass,
+    attempt: params.failedAttemptNumber,
+    max_attempts: maxAttempts,
   });
 
   if (errClass === 'transient' && params.failedAttemptNumber < maxAttempts) {
@@ -80,10 +98,14 @@ async function recordAttemptAndHandleSendFailure(params: {
     });
     neLogWarn('send_transient_retry_scheduled', {
       delivery_id: params.deliveryId,
+      tenant_id: params.tenantId,
+      entity_id: params.entityId,
+      chat_instance_id: params.chatInstanceId ?? null,
       attempt: params.failedAttemptNumber,
       max_attempts: maxAttempts,
       next_retry_at: nextAt.toISOString(),
       delay_ms: delay,
+      error_class: errClass,
     });
     return;
   }
@@ -96,6 +118,9 @@ async function recordAttemptAndHandleSendFailure(params: {
   });
   neLogWarn('send_failed_final', {
     delivery_id: params.deliveryId,
+    tenant_id: params.tenantId,
+    entity_id: params.entityId,
+    chat_instance_id: params.chatInstanceId ?? null,
     attempt: params.failedAttemptNumber,
     class: errClass,
     max_attempts: maxAttempts,
@@ -194,16 +219,41 @@ export async function runTransactionalNotification(params: {
     };
   }
 
-  const dispatchNotBefore = await resolveInvoiceTransactionalDispatchNotBefore({
+  const schedule = await resolveInvoiceTransactionalDispatchSchedule({
     tenantId: params.tenantId,
     eventKey: params.eventKey,
     eventOccurredAt: params.eventOccurredAt,
   });
+  const dispatchNotBefore = schedule.dispatchNotBefore;
+
+  if (schedule.scheduleSource !== 'not_applicable') {
+    neLogWarn('outbound_dispatch_schedule', {
+      tenant_id: params.tenantId,
+      event_key: params.eventKey,
+      entity_id: params.entityId,
+      invoice_id: params.entityType === 'customer_invoice' ? params.entityId : null,
+      dispatch_not_before: dispatchNotBefore?.toISOString() ?? null,
+      schedule_source: schedule.scheduleSource,
+      timezone_effective: schedule.timezone_effective,
+      generate_time_local_effective: schedule.generate_time_local_effective,
+      notify_time_local_effective: schedule.notify_time_local_effective,
+      invoice_notify_same_as_generation: schedule.invoice_notify_same_as_generation,
+      local_ymd: schedule.local_ymd,
+      local_hhmm: schedule.local_hhmm,
+    });
+  }
 
   const metadataWithSchedule = {
     ...params.metadata,
     ...(dispatchNotBefore != null
       ? { outbound_dispatch_not_before: dispatchNotBefore.toISOString() }
+      : {}),
+    ...(schedule.scheduleSource !== 'not_applicable'
+      ? {
+          outbound_schedule_source: schedule.scheduleSource,
+          outbound_timezone_effective: schedule.timezone_effective,
+          outbound_generate_time_local_effective: schedule.generate_time_local_effective,
+        }
       : {}),
   };
 
@@ -257,8 +307,14 @@ export async function runTransactionalNotification(params: {
       tenant_id: params.tenantId,
       event_key: params.eventKey,
       delivery_id: deliveryId,
+      entity_id: params.entityId,
       dispatch_not_before: dispatchNotBefore!.toISOString(),
-      schedule_source: 'tenant_invoice_notify_time_local',
+      schedule_source: schedule.scheduleSource,
+      timezone_effective: schedule.timezone_effective,
+      generate_time_local_effective: schedule.generate_time_local_effective,
+      notify_time_local_effective: schedule.notify_time_local_effective,
+      local_ymd: schedule.local_ymd,
+      local_hhmm: schedule.local_hhmm,
     });
     return {
       ok: true,
@@ -354,12 +410,18 @@ export async function runTransactionalNotification(params: {
   }
 
   const failedAttemptNumber = await getNextDeliveryAttemptNumber(params.pool, deliveryId);
+  if (send.chatInstanceId) {
+    await setDispatchChatInstanceIfNull(params.pool, deliveryId, send.chatInstanceId);
+  }
   await recordAttemptAndHandleSendFailure({
     pool: params.pool,
     deliveryId,
+    tenantId: params.tenantId,
+    entityId: params.entityId,
     errorMessage: send.error,
     durationMs,
     failedAttemptNumber,
+    chatInstanceId: send.chatInstanceId ?? params.chatInstanceId ?? null,
   });
 
   const after = await params.pool.query<{ status: string }>(

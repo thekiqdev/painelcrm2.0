@@ -6,7 +6,7 @@ import type {
   SubscriptionTimelineOperationalState,
 } from '@/services/crmSubscriptions';
 import {
-  clampRecurringGenerateDaysBeforeDue,
+  effectiveDaysBeforeFromTenantBilling,
   computeRecurringGenerationDateYmd,
 } from '@/lib/recurringGenerationPreview';
 
@@ -62,10 +62,11 @@ function generationTimeLabel(prefs: CrmSubscriptionTenantBillingPrefs): string {
 
 export function buildScheduledGenerationDetail(
   dueYmd: string | null | undefined,
-  prefs: CrmSubscriptionTenantBillingPrefs
+  prefs: CrmSubscriptionTenantBillingPrefs,
+  billingInterval?: string | null
 ): string | null {
   if (!dueYmd || dueYmd.length < 10) return null;
-  const days = clampRecurringGenerateDaysBeforeDue(prefs.recurring_invoice_generate_days_before_due);
+  const days = effectiveDaysBeforeFromTenantBilling(prefs, billingInterval);
   const genYmd = computeRecurringGenerationDateYmd(dueYmd.slice(0, 10), days);
   const time = prefs.recurring_generate_time_local?.trim().slice(0, 5) ?? '09:00';
   return `A cobrança será processada automaticamente após ${formatYmdBr(genYmd)} às ${time}.`;
@@ -215,11 +216,12 @@ function badgeFromOperationalState(
 export function resolveTimelineRecurringDisplay(
   row: CrmSubscriptionTimelineRow,
   jobs: CrmSubscriptionJobRow[],
-  tenantBilling: CrmSubscriptionTenantBillingPrefs
+  tenantBilling: CrmSubscriptionTenantBillingPrefs,
+  billingInterval?: string | null
 ): RecurringDisplayBadge {
   const job = findJobForRow(row, jobs);
   const dueYmd = row.due_date ?? row.period_start;
-  const scheduledDetail = buildScheduledGenerationDetail(dueYmd, tenantBilling);
+  const scheduledDetail = buildScheduledGenerationDetail(dueYmd, tenantBilling, billingInterval);
   const retryDetail = row.has_auto_retry && row.job_retry_at
     ? `Reprocessamento automático · ${formatDateTimeBr(row.job_retry_at)}`
     : null;
@@ -355,12 +357,13 @@ export function resolveTimelineRecurringDisplay(
 export function resolveTimelineInvoiceColumn(
   row: CrmSubscriptionTimelineRow,
   jobs: CrmSubscriptionJobRow[],
-  tenantBilling: CrmSubscriptionTenantBillingPrefs
+  tenantBilling: CrmSubscriptionTenantBillingPrefs,
+  billingInterval?: string | null
 ): RecurringInvoiceColumnDisplay {
   if (row.invoice_id) {
     return { label: 'Ver fatura' };
   }
-  const display = resolveTimelineRecurringDisplay(row, jobs, tenantBilling);
+  const display = resolveTimelineRecurringDisplay(row, jobs, tenantBilling, billingInterval);
   if (
     display.kind === 'awaiting_auto_generation' ||
     display.kind === 'processing'
@@ -392,6 +395,7 @@ export function resolveSubscriptionProcessingHealth(params: {
   lastJobAt: string | null | undefined;
   tenantBilling: CrmSubscriptionTenantBillingPrefs;
   recentJobs: CrmSubscriptionJobRow[];
+  billingInterval?: string | null;
 }): SubscriptionProcessingHealth {
   const nextKey = normalizeCycleKey(params.nextBillingDate);
   const job =
@@ -441,7 +445,11 @@ export function resolveSubscriptionProcessingHealth(params: {
   }
 
   if (job?.status === 'pending' || !job) {
-    const scheduled = buildScheduledGenerationDetail(params.nextBillingDate, params.tenantBilling);
+    const scheduled = buildScheduledGenerationDetail(
+      params.nextBillingDate,
+      params.tenantBilling,
+      params.billingInterval
+    );
     return {
       statusLabel: 'Aguardando processamento automático',
       statusVariant: 'awaiting',
@@ -472,7 +480,11 @@ export function resolveSubscriptionProcessingHealth(params: {
     lastCheckLabel: 'Última verificação',
     nextAttemptAt: null,
     nextAttemptLabel: null,
-    hint: buildScheduledGenerationDetail(params.nextBillingDate, params.tenantBilling),
+    hint: buildScheduledGenerationDetail(
+      params.nextBillingDate,
+      params.tenantBilling,
+      params.billingInterval
+    ),
   };
 }
 

@@ -24,6 +24,14 @@ const putBodySchema = z
     invoice_notify_time_local: hhMmSchema.nullable().optional(),
     /** Omisso no corpo mantém 0 (compatível com clientes antigos). */
     recurring_invoice_generate_days_before_due: z.coerce.number().int().min(0).max(60).optional().default(0),
+    /**
+     * Omisso = não altera a coluna.
+     * `null` = herdar antecipação geral.
+     * número = valor semanal (0–60).
+     */
+    recurring_invoice_generate_days_before_due_weekly: z
+      .union([z.coerce.number().int().min(0).max(60), z.null()])
+      .optional(),
   })
   .superRefine((d, ctx) => {
     if (d.timezone && !isValidIanaTimezone(d.timezone)) {
@@ -67,12 +75,17 @@ export async function getMyTenantBillingPreferences(req: AuthRequest, res: Respo
         typeof row.recurring_invoice_generate_days_before_due === 'number'
           ? row.recurring_invoice_generate_days_before_due
           : 0,
+      recurring_invoice_generate_days_before_due_weekly:
+        typeof row.recurring_invoice_generate_days_before_due_weekly === 'number'
+          ? row.recurring_invoice_generate_days_before_due_weekly
+          : null,
       defaults: {
         timezone: resolved.timezone_effective,
         recurring_generate_time_local: resolved.recurring_generate_time_local_effective,
         invoice_notify_same_as_generation: resolved.invoice_notify_same_as_generation_effective,
         invoice_notify_time_local: resolved.invoice_notify_time_local_effective,
         recurring_invoice_generate_days_before_due: resolved.recurring_invoice_generate_days_before_due_effective,
+        recurring_invoice_generate_days_before_due_weekly: null,
       },
       sources: {
         timezone: resolved.timezone_source,
@@ -80,6 +93,8 @@ export async function getMyTenantBillingPreferences(req: AuthRequest, res: Respo
         invoice_notify_same_as_generation: resolved.invoice_notify_same_as_generation_source,
         invoice_notify_time_local: resolved.invoice_notify_time_source,
         recurring_invoice_generate_days_before_due: resolved.recurring_invoice_generate_days_before_due_source,
+        recurring_invoice_generate_days_before_due_weekly:
+          resolved.recurring_invoice_generate_days_before_due_weekly_source,
       },
     });
   } catch (error) {
@@ -110,6 +125,12 @@ export async function putMyTenantBillingPreferences(req: AuthRequest, res: Respo
         ? null
         : payload.invoice_notify_time_local ?? null,
       recurring_invoice_generate_days_before_due: payload.recurring_invoice_generate_days_before_due,
+      ...(payload.recurring_invoice_generate_days_before_due_weekly !== undefined
+        ? {
+            recurring_invoice_generate_days_before_due_weekly:
+              payload.recurring_invoice_generate_days_before_due_weekly,
+          }
+        : {}),
     });
     if (!updated) {
       res.status(404).json({ error: 'Empresa não encontrada' });
@@ -125,12 +146,18 @@ export async function putMyTenantBillingPreferences(req: AuthRequest, res: Respo
         typeof updated.recurring_invoice_generate_days_before_due === 'number'
           ? updated.recurring_invoice_generate_days_before_due
           : resolved.recurring_invoice_generate_days_before_due_effective,
+      recurring_invoice_generate_days_before_due_weekly:
+        typeof updated.recurring_invoice_generate_days_before_due_weekly === 'number'
+          ? updated.recurring_invoice_generate_days_before_due_weekly
+          : null,
       effective: {
         timezone: resolved.timezone_effective,
         recurring_generate_time_local: resolved.recurring_generate_time_local_effective,
         invoice_notify_same_as_generation: resolved.invoice_notify_same_as_generation_effective,
         invoice_notify_time_local: resolved.invoice_notify_time_local_effective,
         recurring_invoice_generate_days_before_due: resolved.recurring_invoice_generate_days_before_due_effective,
+        recurring_invoice_generate_days_before_due_weekly:
+          resolved.recurring_invoice_generate_days_before_due_weekly,
       },
       message: 'Preferências de recorrência atualizadas',
     });
@@ -143,4 +170,3 @@ export async function putMyTenantBillingPreferences(req: AuthRequest, res: Respo
     res.status(500).json({ error: 'Erro ao salvar preferências de recorrência' });
   }
 }
-

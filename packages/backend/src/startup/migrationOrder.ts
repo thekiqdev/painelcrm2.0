@@ -470,5 +470,7 @@ export const MIGRATION_ORDER = [
   '305_crm_pix_automatic_requested_status.sql',
   /** Sprint 3 ciclos — status completed + ended_reason (fim natural max_cycles) */
   '306_subscriptions_completed_cycles_exhausted.sql',
+  /** Sprint 5.1 — antecipação de geração separada para assinaturas weekly */
+  '307_tenants_recurring_generate_days_before_weekly.sql',
   'create-admin-user.sql',
 ];

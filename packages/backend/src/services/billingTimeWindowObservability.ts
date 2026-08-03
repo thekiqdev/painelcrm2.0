@@ -4,12 +4,12 @@
  */
 
 import {
-  clampRecurringInvoiceGenerateDaysBeforeDue,
   computeRecurringInvoiceGenerationDateYmd,
 } from '../utils/billingGenerationDate.js';
 import {
   effectiveRecurringGenerateDaysBeforeDue,
-  isGenerateDaysBeforeCappedForInterval,
+  isGenerateDaysBeforeCappedForTenant,
+  resolveTenantGenerateDaysBeforeDueRaw,
 } from '../utils/billingIntervalGenerationCap.js';
 import { resolveTenantBillingPreferences } from './tenantBillingPreferencesService.js';
 
@@ -77,8 +77,10 @@ export function buildBillingWindowDiagnostic(params: {
   invoiceNotifyTimeLocalRaw?: string | null | undefined;
   /** Data de vencimento do ciclo (YYYY-MM-DD), igual a `subscriptions.next_billing_date`. */
   nextBillingDate: string;
-  /** Dias antes do vencimento para permitir enfileiramento (tenant). Default 0. */
+  /** Dias antes do vencimento (geral / não-semanal). Default 0. */
   recurringInvoiceGenerateDaysBeforeDue?: number | null;
+  /** Dias antes para weekly; null/omit = herda o geral. */
+  recurringInvoiceGenerateDaysBeforeDueWeekly?: number | null;
   /** Periodicidade da assinatura — aplica cap de antecipação por ciclo. */
   billingInterval?: string | null;
   now?: Date;
@@ -90,6 +92,7 @@ export function buildBillingWindowDiagnostic(params: {
     invoice_notify_same_as_generation: params.invoiceNotifySameAsGenerationRaw ?? null,
     invoice_notify_time_local: params.invoiceNotifyTimeLocalRaw ?? null,
     recurring_invoice_generate_days_before_due: null,
+    recurring_invoice_generate_days_before_due_weekly: null,
   });
 
   const local = localNowParts(params.now ?? new Date(), resolved.timezone_effective);
@@ -102,29 +105,26 @@ export function buildBillingWindowDiagnostic(params: {
 
   const cycleYmd = params.nextBillingDate.trim().slice(0, 10);
   const billing_interval_effective = (params.billingInterval ?? 'monthly').trim() || 'monthly';
-  const recurring_generate_days_before_due_tenant = clampRecurringInvoiceGenerateDaysBeforeDue(
-    params.recurringInvoiceGenerateDaysBeforeDue
-  );
-  const recurring_generate_days_before_due = effectiveRecurringGenerateDaysBeforeDue(
-    params.recurringInvoiceGenerateDaysBeforeDue,
-    billing_interval_effective
-  );
-  const generate_days_capped_for_interval = isGenerateDaysBeforeCappedForInterval(
-    params.recurringInvoiceGenerateDaysBeforeDue,
-    billing_interval_effective
-  );
+  const daysParams = {
+    general: params.recurringInvoiceGenerateDaysBeforeDue,
+    weekly: params.recurringInvoiceGenerateDaysBeforeDueWeekly ?? null,
+    billingInterval: billing_interval_effective,
+  };
+  const { tenantRaw } = resolveTenantGenerateDaysBeforeDueRaw(daysParams);
+  const recurring_generate_days_before_due_tenant = tenantRaw;
+  const recurring_generate_days_before_due = effectiveRecurringGenerateDaysBeforeDue(daysParams);
+  const generate_days_capped_for_interval = isGenerateDaysBeforeCappedForTenant(daysParams);
   const generation_date_ymd = computeRecurringInvoiceGenerationDateYmd(cycleYmd, recurring_generate_days_before_due);
 
   let would_be_eligible_by_window = false;
   let reason: BillingWindowReason;
 
+  // Sprint 1: exigir H em *todos* os dias com local_ymd >= generation_date
+  // (antes só no dia de geração — catch-up às 00:01 ficava elegível).
   if (local.ymd < generation_date_ymd) {
     reason = 'future_local_date';
     would_be_eligible_by_window = false;
-  } else if (
-    local.ymd === generation_date_ymd &&
-    compareHhMm(local.hhmm, generate_time_local_effective) < 0
-  ) {
+  } else if (compareHhMm(local.hhmm, generate_time_local_effective) < 0) {
     reason = 'too_early_local_time';
     would_be_eligible_by_window = false;
   } else {
