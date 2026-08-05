@@ -178,6 +178,60 @@ export function FlowTestPanel({
                     Nenhuma
                   </Button>
                 </>
+              ) : sim?.pendingHttpKind === 'crm' ? (
+                <>
+                  <Button className="flex-1" size="sm" onClick={() => onHttpResolve(true)}>
+                    {sim.testSubject.kind === 'client'
+                      ? 'Classificar (cliente)'
+                      : sim.testSubject.kind === 'lead'
+                        ? 'Classificar (lead)'
+                        : 'Classificar (sem vínculo)'}
+                  </Button>
+                  <Button
+                    className="flex-1"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => onHttpResolve(false)}
+                  >
+                    Forçar sem vínculo
+                  </Button>
+                </>
+              ) : sim?.pendingHttpKind === 'crm_convert' ? (
+                <>
+                  <Button className="flex-1" size="sm" onClick={() => onHttpResolve(true)}>
+                    Converter (sujeito Testar)
+                  </Button>
+                  <Button
+                    className="flex-1"
+                    size="sm"
+                    variant="destructive"
+                    onClick={() => onHttpResolve(false)}
+                  >
+                    Forçar erro
+                  </Button>
+                </>
+              ) : sim?.pendingHttpKind === 'ticket' ? (
+                <>
+                  <Button className="flex-1" size="sm" onClick={() => onHttpResolve(true)}>
+                    {String(sim.session.variables['ticket._assist_phase'] || '') === 'create'
+                      ? 'Criar ticket (mock)'
+                      : String(sim.session.variables['ticket._assist_phase'] || '') === 'bootstrap'
+                        ? 'Usar categorias do tenant'
+                        : sim.testSubject.clientId
+                          ? 'Usar chamados do cliente'
+                          : 'Achou chamado'}
+                  </Button>
+                  <Button
+                    className="flex-1"
+                    size="sm"
+                    variant="destructive"
+                    onClick={() => onHttpResolve(false)}
+                  >
+                    {String(sim.session.variables['ticket._assist_phase'] || '') === 'bootstrap'
+                      ? 'Sem cliente / vazio'
+                      : 'Nenhum'}
+                  </Button>
+                </>
               ) : (
                 <div className="w-full text-[11px] text-muted-foreground">
                   Aguardando resposta HTTP…

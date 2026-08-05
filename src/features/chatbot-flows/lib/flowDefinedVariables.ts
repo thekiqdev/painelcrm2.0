@@ -48,7 +48,7 @@ export function collectFlowDefinedVariables(nodes: FlowNodeLike[]): FlowDefinedV
     const data = (n.data && typeof n.data === 'object' ? n.data : {}) as Record<string, unknown>;
     const src = nodeTypeLabel(type);
 
-    if (type === 'wait_input' || type === 'select_invoice' || type === 'menu_choice') {
+    if (type === 'wait_input' || type === 'select_invoice' || type === 'select_ticket' || type === 'menu_choice') {
       pushVar(out, data.variable || 'answer', {
         label: String(data.variable || 'answer'),
         source: src,
@@ -106,7 +106,11 @@ export function collectFlowDefinedVariables(nodes: FlowNodeLike[]): FlowDefinedV
       }
     }
 
-    if (type === 'invoice_assist') {
+    if (
+      type === 'invoice_assist' ||
+      type === 'ticket_assist' ||
+      type === 'ticket_lookup_assist'
+    ) {
       pushVar(out, 'answer', {
         label: 'answer',
         source: src,

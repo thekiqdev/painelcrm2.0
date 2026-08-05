@@ -38,6 +38,14 @@ export async function buildFlowSessionVariableBag(opts: {
   put(bag, 'conversation_id', opts.conversationId);
 
   try {
+    const leadCol = await pool.query<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'chat_conversations' AND column_name = 'lead_id'
+       ) AS exists`
+    );
+    const hasLeadCol = Boolean(leadCol.rows[0]?.exists);
+
     const conv = await pool.query<{
       display_name: string | null;
       contact_name: string | null;
@@ -48,10 +56,12 @@ export async function buildFlowSessionVariableBag(opts: {
       assigned_to_user_id: string | null;
       user_id: string;
       client_id: string | null;
+      lead_id: string | null;
     }>(
       // phone_normalized não existe no schema; usar canonical_phone / phone_number
       `SELECT c.display_name, c.contact_name, c.profile_name, c.canonical_phone, c.phone_number,
-              c.assigned_team_id, c.assigned_to_user_id, c.user_id, c.client_id
+              c.assigned_team_id, c.assigned_to_user_id, c.user_id, c.client_id,
+              ${hasLeadCol ? 'c.lead_id' : 'NULL::uuid AS lead_id'}
        FROM chat_conversations c
        INNER JOIN users u ON u.id = c.user_id
        WHERE c.id = $1::uuid AND u.tenant_id = $2::uuid
@@ -77,6 +87,24 @@ export async function buildFlowSessionVariableBag(opts: {
       if (row.client_id) {
         put(bag, 'client.id', row.client_id);
         put(bag, 'client_id', row.client_id);
+      }
+
+      if (row.lead_id) {
+        put(bag, 'lead.id', row.lead_id);
+        put(bag, 'lead_id', row.lead_id);
+        try {
+          const leadRow = await pool.query<{ name: string | null }>(
+            `SELECT name FROM leads WHERE id = $1::uuid LIMIT 1`,
+            [row.lead_id]
+          );
+          const leadName = (leadRow.rows[0]?.name || '').trim();
+          if (leadName) {
+            put(bag, 'lead.name', leadName);
+            put(bag, 'lead_name', leadName);
+          }
+        } catch {
+          /* ignore */
+        }
       }
 
       // Kanban column/board (best-effort)
@@ -180,8 +208,8 @@ export function mergeFlowVariableSeed(
   for (const [k, v] of Object.entries(seed)) {
     if (out[k] == null || out[k] === '') out[k] = v;
   }
-  // S22.1: vínculo mid-flow — client_* sempre acompanha o CRM atual
-  for (const k of ['client.id', 'client_id'] as const) {
+  // S22.1 / S26: vínculo mid-flow — client_* e lead_* acompanham o CRM atual
+  for (const k of ['client.id', 'client_id', 'lead.id', 'lead_id'] as const) {
     if (seed[k]) out[k] = seed[k];
   }
   return out;

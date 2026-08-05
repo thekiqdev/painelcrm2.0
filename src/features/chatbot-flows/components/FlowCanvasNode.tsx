@@ -86,10 +86,22 @@ function FlowNodeInner({ id, data, type, selected }: NodeProps & { data: FlowNod
     type === 'kanban_add_card' ||
     type === 'move_kanban';
   const showDualInvoice =
-    type === 'lookup_invoice' || type === 'select_invoice' || type === 'invoice_assist';
+    type === 'lookup_invoice' ||
+    type === 'select_invoice' ||
+    type === 'invoice_assist' ||
+    type === 'ticket_assist' ||
+    type === 'lookup_ticket' ||
+    type === 'select_ticket' ||
+    type === 'ticket_lookup_assist';
+  const showCrmLink = type === 'crm_link_check';
+  const showCrmConvert = type === 'crm_convert';
+  const crmConvertMode = String((data as Record<string, unknown>).mode || 'to_lead');
+  const showCrmConvertTriple = showCrmConvert && crmConvertMode !== 'to_client';
   const showDefaultSource =
     !showDualHttp &&
     !showDualInvoice &&
+    !showCrmLink &&
+    !showCrmConvert &&
     !showMenu &&
     !showCondition &&
     !showWaitTimeout &&
@@ -103,12 +115,29 @@ function FlowNodeInner({ id, data, type, selected }: NodeProps & { data: FlowNod
       t === 'delay' ||
       t === 'conversation_note');
   const invoiceFailHandle =
-    t === 'select_invoice' ? 'invalid' : t === 'invoice_assist' ? 'invalid' : 'empty';
+    t === 'select_invoice' ||
+    t === 'invoice_assist' ||
+    t === 'ticket_assist' ||
+    t === 'select_ticket' ||
+    t === 'ticket_lookup_assist'
+      ? 'invalid'
+      : 'empty';
   const invoiceOkLabel =
-    t === 'select_invoice' ? 'ok' : t === 'invoice_assist' ? 'ok' : 'achou';
+    t === 'select_invoice' ||
+    t === 'invoice_assist' ||
+    t === 'ticket_assist' ||
+    t === 'select_ticket' ||
+    t === 'ticket_lookup_assist'
+      ? 'ok'
+      : 'achou';
   const invoiceFailLabel =
-    t === 'select_invoice' ? 'inválida' : t === 'invoice_assist' ? 'vazia/inválida' : 'vazia';
-  const showInvoiceTriple = t === 'invoice_assist';
+    t === 'select_invoice' || t === 'select_ticket'
+      ? 'inválida'
+      : t === 'invoice_assist' || t === 'ticket_assist' || t === 'ticket_lookup_assist'
+        ? 'vazia/inválida'
+        : 'vazia';
+  const showInvoiceTriple =
+    t === 'invoice_assist' || t === 'ticket_assist' || t === 'ticket_lookup_assist';
   const canDuplicate = t !== 'start' && t !== 'webhook_in';
 
   const duplicateNode = () => {
@@ -328,6 +357,22 @@ function FlowNodeInner({ id, data, type, selected }: NodeProps & { data: FlowNod
           </div>
         ) : null}
 
+        {showCrmLink ? (
+          <div className="mt-2 flex justify-end gap-3 text-[9px] font-medium uppercase tracking-wide">
+            <span className="text-emerald-600">cliente</span>
+            <span className="text-sky-600">lead</span>
+            <span className="text-amber-700">sem vínculo</span>
+          </div>
+        ) : null}
+
+        {showCrmConvert ? (
+          <div className="mt-2 flex justify-end gap-3 text-[9px] font-medium uppercase tracking-wide">
+            <span className="text-emerald-600">ok</span>
+            {showCrmConvertTriple ? <span className="text-sky-600">já cliente</span> : null}
+            <span className="text-rose-600">erro</span>
+          </div>
+        ) : null}
+
         {showMenu ? (
           <div className="mt-2 space-y-0.5 text-right text-[9px] font-medium tracking-wide">
             {menuOptions.map((o) => (
@@ -442,6 +487,77 @@ function FlowNodeInner({ id, data, type, selected }: NodeProps & { data: FlowNod
             className="chatbot-flow-handle !bg-rose-500"
           />
         </>
+      ) : null}
+
+      {showCrmLink ? (
+        <>
+          <Handle
+            type="source"
+            position={Position.Right}
+            id="client"
+            style={{ top: '32%' }}
+            className="chatbot-flow-handle !bg-emerald-500"
+          />
+          <Handle
+            type="source"
+            position={Position.Right}
+            id="lead"
+            style={{ top: '52%' }}
+            className="chatbot-flow-handle !bg-sky-500"
+          />
+          <Handle
+            type="source"
+            position={Position.Right}
+            id="unlinked"
+            style={{ top: '72%' }}
+            className="chatbot-flow-handle !bg-amber-500"
+          />
+        </>
+      ) : null}
+
+      {showCrmConvert ? (
+        showCrmConvertTriple ? (
+          <>
+            <Handle
+              type="source"
+              position={Position.Right}
+              id="default"
+              style={{ top: '32%' }}
+              className="chatbot-flow-handle !bg-emerald-500"
+            />
+            <Handle
+              type="source"
+              position={Position.Right}
+              id="already_client"
+              style={{ top: '52%' }}
+              className="chatbot-flow-handle !bg-sky-500"
+            />
+            <Handle
+              type="source"
+              position={Position.Right}
+              id="error"
+              style={{ top: '72%' }}
+              className="chatbot-flow-handle !bg-rose-500"
+            />
+          </>
+        ) : (
+          <>
+            <Handle
+              type="source"
+              position={Position.Right}
+              id="default"
+              style={{ top: '38%' }}
+              className="chatbot-flow-handle !bg-emerald-500"
+            />
+            <Handle
+              type="source"
+              position={Position.Right}
+              id="error"
+              style={{ top: '62%' }}
+              className="chatbot-flow-handle !bg-rose-500"
+            />
+          </>
+        )
       ) : null}
 
       {showWaitTimeout ? (

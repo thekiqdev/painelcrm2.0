@@ -13,6 +13,8 @@ import { NODE_LABELS, type EssentialNodeType } from './nodeCatalog';
 import { isEditorOnlyNodeType } from './canvasAnnotations';
 import { buildMockFlowVariableSeed, mergeMockVariableSeed } from './mockVariableSeed';
 import { buildMockInvoiceLookupMapped } from './flowInvoiceVars';
+import { buildMockTicketCreatedMapped, buildMockTicketLookupMapped } from './flowTicketVars';
+import { buildCrmLinkMapped, classifyCrmLinkKind, buildCrmConvertMapped, classifyCrmConvertOutcome } from './flowCrmLinkVars';
 import {
   applyTestSubjectToVariables,
   EMPTY_TEST_SUBJECT,
@@ -48,7 +50,7 @@ export type FlowSimulationState = {
   currentNodeId: string | null;
   /** Aguardando decisão do usuário no HTTP/fatura dry-run. */
   pendingHttp: boolean;
-  pendingHttpKind?: 'http' | 'invoice' | 'kanban' | null;
+  pendingHttpKind?: 'http' | 'invoice' | 'ticket' | 'crm' | 'crm_convert' | 'kanban' | null;
   /** Nó HTTP tem sample do editor (S14) para “Usar última resposta”. */
   pendingHttpHasSample?: boolean;
   /** Opções do menu_choice aguardando clique/texto (S13). */
@@ -124,6 +126,16 @@ function describeAction(a: RuntimeOutboundAction): { detail: string; status: Sim
           a.mode === 'open_menu'
             ? 'Consultar menu de faturas (aguardar achou/vazia)'
             : 'Consultar última fatura (aguardar achou/vazia)',
+        status: 'wait',
+      };
+    case 'resolve_crm_link':
+      return {
+        detail: 'Classificar vínculo CRM (cliente / lead / sem vínculo)',
+        status: 'wait',
+      };
+    case 'crm_convert':
+      return {
+        detail: `Converter CRM → ${a.mode === 'to_client' ? 'cliente' : 'lead'}`,
         status: 'wait',
       };
     case 'send_menu':
@@ -234,9 +246,17 @@ function appendFromResult(
   const pendingHttpKind = pendingHttp
     ? waitingNode?.type === 'lookup_invoice' || waitingNode?.type === 'invoice_assist'
       ? 'invoice'
-      : waitingNode?.type === 'kanban_add_card' || waitingNode?.type === 'move_kanban'
-        ? 'kanban'
-        : 'http'
+      : waitingNode?.type === 'ticket_assist' ||
+          waitingNode?.type === 'lookup_ticket' ||
+          waitingNode?.type === 'ticket_lookup_assist'
+        ? 'ticket'
+        : waitingNode?.type === 'crm_link_check'
+          ? 'crm'
+          : waitingNode?.type === 'crm_convert'
+            ? 'crm_convert'
+            : waitingNode?.type === 'kanban_add_card' || waitingNode?.type === 'move_kanban'
+            ? 'kanban'
+            : 'http'
     : null;
   const pendingHttpHasSample =
     pendingHttp &&
@@ -503,13 +523,157 @@ export function resolveHttpSimulation(
   const node = graph.nodes.find((n) => n.id === state.session.currentNodeId);
   const data = (node?.data || {}) as Record<string, unknown>;
   const isLookup = node?.type === 'lookup_invoice' || node?.type === 'invoice_assist';
+  const isTicketCreate = node?.type === 'ticket_assist';
+  const isTicketLookup =
+    node?.type === 'lookup_ticket' || node?.type === 'ticket_lookup_assist';
+  const isCrmLink = node?.type === 'crm_link_check';
+  const isCrmConvert = node?.type === 'crm_convert';
 
   let mapped: Record<string, string> = {};
   let failHandle: string | undefined;
+  let outHandle: string | undefined;
   let systemText: string;
   let logDetail: string;
 
-  if (isLookup) {
+  if (isCrmLink) {
+    const sub = state.testSubject;
+    const kind = classifyCrmLinkKind({
+      clientId: sub.kind === 'client' ? sub.clientId || sub.id : null,
+      leadId: sub.kind === 'lead' ? sub.id : null,
+    });
+    // Se ok=false no painel, força unlinked para testar o ramo
+    const effective = ok ? kind : 'unlinked';
+    mapped = buildCrmLinkMapped({
+      kind: effective,
+      clientId: effective === 'client' ? sub.clientId || sub.id : null,
+      leadId: effective === 'lead' ? sub.id : null,
+      clientName: effective === 'client' ? sub.name : null,
+      leadName: effective === 'lead' ? sub.name : null,
+    });
+    outHandle = effective;
+    systemText = `Vínculo CRM: ${effective}`;
+    logDetail = `Seguiu saída ${effective}`;
+  } else if (isCrmConvert) {
+    const sub = state.testSubject;
+    const mode = String(data.mode || 'to_lead') === 'to_client' ? 'to_client' : 'to_lead';
+    const clientId = sub.kind === 'client' ? sub.clientId || sub.id : null;
+    const leadId = sub.kind === 'lead' ? sub.id : null;
+    const phone = String(sub.phone || '').replace(/\D/g, '');
+    const hasIdentity = phone.length >= 8 || Boolean(sub.name);
+    if (!ok) {
+      outHandle = 'error';
+      mapped = buildCrmConvertMapped({
+        mode,
+        outHandle: 'error',
+        result: 'error',
+        error: 'forced_error',
+      });
+      systemText = 'Converter CRM: erro (forçado)';
+      logDetail = 'Seguiu saída error';
+    } else {
+      const outcome = classifyCrmConvertOutcome({
+        mode,
+        clientId,
+        leadId,
+        hasIdentity: hasIdentity || Boolean(clientId || leadId),
+      });
+      outHandle = outcome.outHandle;
+      const mockLeadId = leadId || (outcome.result === 'created' && mode === 'to_lead' ? 'sim-lead-1' : null);
+      const mockClientId =
+        clientId || (outcome.result === 'created' && mode === 'to_client' ? 'sim-client-1' : null);
+      mapped = buildCrmConvertMapped({
+        mode,
+        outHandle: outcome.outHandle,
+        result: outcome.result,
+        clientId: outcome.outHandle === 'already_client' || mode === 'to_client' ? mockClientId || clientId : clientId,
+        leadId: mode === 'to_lead' && outcome.outHandle === 'default' ? mockLeadId : null,
+        clientName: sub.kind === 'client' || mode === 'to_client' ? sub.name || 'Cliente sim' : null,
+        leadName: mode === 'to_lead' ? sub.name || 'Lead sim' : null,
+        error: outcome.error,
+      });
+      systemText = `Converter CRM (${mode}): ${outcome.outHandle} / ${outcome.result}`;
+      logDetail = `Seguiu saída ${outcome.outHandle}`;
+    }
+  } else if (isTicketCreate) {
+    failHandle = 'empty';
+    const phase = String(state.session.variables['ticket._assist_phase'] || 'bootstrap');
+    if (ok) {
+      if (phase === 'create') {
+        mapped = buildMockTicketCreatedMapped();
+        systemText = 'Ticket simulado: criado (mock)';
+        logDetail = 'Seguiu saída ok (create mock)';
+      } else {
+        const cats = [
+          { id: 'cat-1', name: 'Desenvolvimento', option_id: 'c1' },
+          { id: 'cat-2', name: 'Financeiro', option_id: 'c2' },
+          { id: 'cat-3', name: 'Suporte', option_id: 'c3' },
+        ];
+        mapped = {
+          'ticket.category_count': '3',
+          ticket_category_count: '3',
+          'ticket._categories': JSON.stringify(cats),
+          'ticket.menu': '1) Desenvolvimento\n2) Financeiro\n3) Suporte',
+          ticket_menu: '1) Desenvolvimento\n2) Financeiro\n3) Suporte',
+        };
+        if (state.testSubject.clientId) {
+          mapped['client.id'] = state.testSubject.clientId;
+          mapped.client_id = state.testSubject.clientId;
+        }
+        systemText = 'Categorias simuladas (mock)';
+        logDetail = 'Bootstrap ticket ok (mock)';
+      }
+    } else {
+      if (phase === 'create') {
+        mapped = {
+          'ticket.category_count': '0',
+          ticket_category_count: '0',
+          'ticket._categories': '[]',
+          'ticket.menu': '',
+          'ticket._bootstrap_reason': 'create_failed',
+        };
+        systemText = 'Falha ao criar ticket (mock)';
+        logDetail = 'Seguiu saída vazia';
+      } else {
+        // Espelha BE: no_client ainda pode ter categorias no tenant
+        const cats = [
+          { id: 'cat-1', name: 'Desenvolvimento', option_id: 'c1' },
+          { id: 'cat-2', name: 'Financeiro', option_id: 'c2' },
+          { id: 'cat-3', name: 'Suporte', option_id: 'c3' },
+        ];
+        mapped = {
+          'ticket.category_count': '3',
+          ticket_category_count: '3',
+          'ticket._categories': JSON.stringify(cats),
+          'ticket.menu': '1) Desenvolvimento\n2) Financeiro\n3) Suporte',
+          ticket_menu: '1) Desenvolvimento\n2) Financeiro\n3) Suporte',
+          'ticket._bootstrap_reason': 'no_client',
+        };
+        systemText = 'Ticket: sem cliente vinculado (mock)';
+        logDetail = 'Seguiu saída vazia (no_client)';
+      }
+    }
+  } else if (isTicketLookup) {
+    failHandle = 'empty';
+    if (ok) {
+      const mode = String(data.mode || 'open_menu') === 'last_open' ? 'last_open' : 'open_menu';
+      mapped = buildMockTicketLookupMapped(mode);
+      if (state.testSubject.clientId) {
+        mapped['client.id'] = state.testSubject.clientId;
+        mapped.client_id = state.testSubject.clientId;
+      }
+      systemText = 'Chamado(s) simulado(s): achou (mock)';
+      logDetail = 'Seguiu saída ok (lookup mock)';
+    } else {
+      mapped = {
+        'ticket.count': '0',
+        ticket_count: '0',
+        'ticket.menu': '',
+        'ticket._items': '[]',
+      };
+      systemText = 'Chamados: vazio (mock)';
+      logDetail = 'Seguiu saída vazia';
+    }
+  } else if (isLookup) {
     failHandle = 'empty';
     if (ok) {
       const mode = String(data.mode || 'last_open') === 'open_menu' ? 'open_menu' : 'last_open';
@@ -557,6 +721,7 @@ export function resolveHttpSimulation(
     ok,
     mapped,
     failHandle,
+    outHandle,
     systemText,
     logDetail,
     nodeType: String(node?.type || 'http'),
@@ -639,6 +804,28 @@ export function resolveHttpWithLastSample(
   });
 }
 
+/** Resume ticket_assist bootstrap / lookup com bag real (API). */
+export function resolveTicketHttpWithMapped(
+  graph: RuntimeGraph,
+  state: FlowSimulationState,
+  opts: {
+    ok: boolean;
+    mapped: Record<string, string>;
+    systemText: string;
+  }
+): FlowSimulationState {
+  if (state.session.status !== 'waiting_http') return state;
+  const node = graph.nodes.find((n) => n.id === state.session.currentNodeId);
+  return resumeWaitingHttp(graph, state, {
+    ok: opts.ok,
+    mapped: opts.mapped,
+    failHandle: 'empty',
+    systemText: opts.systemText,
+    logDetail: opts.ok ? 'Seguiu saída ok (API)' : 'Seguiu saída vazia (API)',
+    nodeType: String(node?.type || 'ticket_assist'),
+  });
+}
+
 /** Resume lookup de fatura com bag já montada (dados reais do cliente — S12). */
 export function resolveInvoiceLookupWithMapped(
   graph: RuntimeGraph,
@@ -668,6 +855,7 @@ function resumeWaitingHttp(
     ok: boolean;
     mapped: Record<string, string>;
     failHandle?: string;
+    outHandle?: string;
     systemText: string;
     logDetail: string;
     nodeType: string;
@@ -705,6 +893,7 @@ function resumeWaitingHttp(
       ok: opts.ok,
       mappedVariables: opts.mapped,
       failHandle: opts.failHandle,
+      outHandle: opts.outHandle,
     },
   });
   next = appendFromResult(next, result, graph);

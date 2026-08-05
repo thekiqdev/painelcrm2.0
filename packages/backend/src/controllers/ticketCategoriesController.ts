@@ -123,33 +123,94 @@ export async function deleteTicketCategory(req: AuthRequest, res: Response): Pro
     const userId = req.userId!;
     const { id } = req.params;
 
-    // Check if category is used by any tickets (tenant-scoped)
-    const ticketsResult = await pool.query(
-      `SELECT COUNT(*) FROM tickets t
-       INNER JOIN users u ON u.id = t.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
-       WHERE t.category_id = $1`,
-      [id, userId]
+    const tenantRes = await pool.query<{ tenant_id: string | null }>(
+      `SELECT tenant_id FROM users WHERE id = $1::uuid LIMIT 1`,
+      [userId]
     );
-
-    if (parseInt(ticketsResult.rows[0].count, 10) > 0) {
-      res.status(409).json({ error: 'Cannot delete category with associated tickets' });
+    const tenantId = tenantRes.rows[0]?.tenant_id;
+    if (!tenantId) {
+      res.status(403).json({ error: 'Tenant não encontrado' });
       return;
     }
 
-    const result = await pool.query(
-      `DELETE FROM ticket_categories WHERE id = $1 AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $2)) RETURNING id`,
-      [id, userId]
-    );
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    if (result.rows.length === 0) {
-      res.status(404).json({ error: 'Ticket category not found' });
-      return;
+      const exists = await client.query(
+        `SELECT tc.id FROM ticket_categories tc
+         INNER JOIN users u ON u.id = tc.user_id AND u.tenant_id = $1::uuid
+         WHERE tc.id = $2::uuid
+         LIMIT 1`,
+        [tenantId, id]
+      );
+      if (exists.rows.length === 0) {
+        await client.query('ROLLBACK');
+        res.status(404).json({ error: 'Categoria não encontrada' });
+        return;
+      }
+
+      // Desvincula tickets do tenant que usam a categoria
+      await client.query(
+        `UPDATE tickets t
+         SET category_id = NULL, updated_at = now()
+         FROM users u
+         WHERE t.user_id = u.id
+           AND u.tenant_id = $1::uuid
+           AND t.category_id = $2::uuid`,
+        [tenantId, id]
+      );
+
+      // Remove da lista do portal público, se estiver marcada
+      await client.query(
+        `UPDATE tenant_support_portal_settings
+         SET allowed_category_ids = (
+           SELECT CASE
+             WHEN allowed_category_ids IS NULL THEN NULL
+             ELSE COALESCE(
+               (SELECT array_agg(x) FROM unnest(allowed_category_ids) AS x WHERE x <> $2::uuid),
+               '{}'::uuid[]
+             )
+           END
+         ),
+         updated_at = now()
+         WHERE tenant_id = $1::uuid
+           AND allowed_category_ids IS NOT NULL
+           AND $2::uuid = ANY(allowed_category_ids)`,
+        [tenantId, id]
+      );
+
+      const result = await client.query(
+        `DELETE FROM ticket_categories tc
+         USING users u
+         WHERE tc.id = $2::uuid
+           AND tc.user_id = u.id
+           AND u.tenant_id = $1::uuid
+         RETURNING tc.id`,
+        [tenantId, id]
+      );
+
+      if (result.rows.length === 0) {
+        await client.query('ROLLBACK');
+        res.status(404).json({ error: 'Categoria não encontrada' });
+        return;
+      }
+
+      await client.query('COMMIT');
+      res.json({ message: 'Categoria excluída' });
+    } catch (e) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        /* ignore */
+      }
+      throw e;
+    } finally {
+      client.release();
     }
-
-    res.json({ message: 'Ticket category deleted successfully' });
   } catch (error) {
     console.error('Error deleting ticket category:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Erro ao excluir categoria' });
   }
 }
 

@@ -259,8 +259,9 @@ Log: `event=chatbot_flows_runtime` · `phase=start_skipped`.
 
 #### Fora de S24
 
-- Gatilho por tag/coluna kanban (pode ser **S25** se necessário)  
-- Opt-out global `parar`/`sair` (candidato S25)  
+- Gatilho por tag/coluna kanban → **S27**
+- Opt-out global `parar`/`sair` → **S27**
+- Classificar/converter cliente·lead → **S26** ([`PLAN_SPRINTS_CHATBOT_FLOWS_S26.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S26.md))
 
 ---
 
@@ -320,4 +321,6 @@ Triggers já previstos no plano base (“manual · keyword · first_message”) 
 ## 10. Próximo passo operacional
 
 1. ~~S22 + S22.1 + S23 + S24~~ entregues.  
-2. Candidatos **S25**: gatilho tag/kanban; opt-out `parar`/`sair`.
+2. ~~Fase tickets S25–S25.2~~ — [`PLAN_SPRINTS_CHATBOT_FLOWS_S25.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S25.md) · [`SUPPORT_TICKET_FLOW.md`](./SUPPORT_TICKET_FLOW.md).  
+3. **S26 vínculo CRM:** [`PLAN_SPRINTS_CHATBOT_FLOWS_S26.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S26.md).  
+4. Candidatos **S27**: gatilho tag/kanban; opt-out `parar`/`sair`.

@@ -37,8 +37,18 @@ export const NODE_PALETTE_CATEGORIES: NodePaletteCategory[] = [
   {
     id: 'crm',
     label: 'CRM',
-    description: 'Tags, atribuição, Kanban, faturas e notas',
-    types: ['add_tag', 'assign_agent', 'move_kanban', 'invoice_assist', 'conversation_note'],
+    description: 'Tags, atribuição, Kanban, faturas, chamados e notas',
+    types: [
+      'add_tag',
+      'assign_agent',
+      'move_kanban',
+      'invoice_assist',
+      'ticket_assist',
+      'ticket_lookup_assist',
+      'crm_link_check',
+      'crm_convert',
+      'conversation_note',
+    ],
   },
   {
     id: 'integrations',

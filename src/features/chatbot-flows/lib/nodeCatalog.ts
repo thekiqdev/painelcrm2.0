@@ -33,6 +33,12 @@ export const FLOW_NODE_TYPES = [
   'lookup_invoice',
   'select_invoice',
   'invoice_assist',
+  'ticket_assist',
+  'lookup_ticket',
+  'select_ticket',
+  'ticket_lookup_assist',
+  'crm_link_check',
+  'crm_convert',
   'menu_choice',
   'conversation_note',
   'resolve_conversation',
@@ -60,6 +66,12 @@ export const NODE_LABELS: Record<EssentialNodeType, string> = {
   lookup_invoice: 'Consultar fatura',
   select_invoice: 'Escolher fatura',
   invoice_assist: 'Faturas',
+  ticket_assist: 'Abrir chamado',
+  lookup_ticket: 'Consultar ticket',
+  select_ticket: 'Escolher ticket',
+  ticket_lookup_assist: 'Consultar chamado',
+  crm_link_check: 'Vínculo CRM',
+  crm_convert: 'Converter CRM',
   menu_choice: 'Menu / IF',
   conversation_note: 'Nota interna',
   resolve_conversation: 'Resolver',
@@ -425,6 +437,107 @@ export const invoiceAssistDataSchema = z.object({
   max_invalid: z.coerce.number().int().min(1).max(10).optional().default(3),
 });
 
+/** S25 — abrir chamado (categoria → assunto → descrição → ticket + link). */
+export const ticketAssistDataSchema = z.object({
+  label: z.string().optional(),
+  require_client: z.boolean().optional().default(true),
+  priority: z.enum(['low', 'normal', 'high', 'urgent']).optional().default('normal'),
+  intro_message: z.string().optional().default(''),
+  category_prompt: z
+    .string()
+    .optional()
+    .default('Escolha a categoria do chamado:\n{{ticket.menu}}\n\nResponda com o número da opção.'),
+  subject_prompt: z.string().optional().default('Qual o assunto do chamado?'),
+  description_prompt: z
+    .string()
+    .optional()
+    .default('Descreva o problema com detalhes:'),
+  success_template: z
+    .string()
+    .optional()
+    .default(
+      'Chamado aberto com sucesso!\nNúmero: {{ticket.number}}\nAssunto: {{ticket.subject}}\nAcompanhe aqui: {{ticket.public_url}}'
+    ),
+  empty_message: z.string().optional().default(''),
+  empty_client_message: z
+    .string()
+    .optional()
+    .default(
+      'Para abrir um chamado, vincule um cliente a esta conversa e tente novamente.'
+    ),
+  empty_categories_message: z
+    .string()
+    .optional()
+    .default(
+      'Não há categorias de chamado cadastradas. Peça ao atendimento para configurar.'
+    ),
+  invalid_message: z
+    .string()
+    .optional()
+    .default('Opção inválida. Escolha uma categoria da lista.'),
+  max_invalid: z.coerce.number().int().min(1).max(10).optional().default(3),
+});
+
+export const lookupTicketDataSchema = z.object({
+  label: z.string().optional(),
+  mode: z.enum(['last_open', 'open_menu']).default('last_open'),
+  limit: z.coerce.number().int().min(1).max(20).optional().default(8),
+  include_closed: z.boolean().optional().default(false),
+});
+
+export const selectTicketDataSchema = z.object({
+  label: z.string().optional(),
+  variable: z
+    .string()
+    .trim()
+    .min(1)
+    .regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/, 'Variável inválida')
+    .default('answer'),
+});
+
+export const ticketLookupAssistDataSchema = z.object({
+  label: z.string().optional(),
+  mode: z.enum(['last_open', 'open_menu']).default('open_menu'),
+  limit: z.coerce.number().int().min(1).max(20).optional().default(8),
+  include_closed: z.boolean().optional().default(false),
+  prompt_template: z
+    .string()
+    .optional()
+    .default(
+      'Seus chamados em aberto:\n{{ticket.menu}}\n\nResponda com o número da opção desejada.'
+    ),
+  link_template: z
+    .string()
+    .optional()
+    .default(
+      'Chamado {{ticket.number}} — {{ticket.subject}}\nAcompanhe: {{ticket.public_url}}'
+    ),
+  empty_message: z
+    .string()
+    .optional()
+    .default('Não encontrei chamados em aberto para este cliente.'),
+  invalid_message: z
+    .string()
+    .optional()
+    .default('Opção inválida. Digite o número de um dos chamados da lista.'),
+  max_invalid: z.coerce.number().int().min(1).max(10).optional().default(3),
+});
+
+export const crmLinkCheckDataSchema = z.object({
+  label: z.string().optional(),
+  /** D26.2 — tenta match telefone→cliente antes de classificar */
+  refresh_client_match: z.boolean().optional().default(true),
+});
+
+export const crmConvertDataSchema = z.object({
+  label: z.string().optional(),
+  mode: z.enum(['to_lead', 'to_client']).optional().default('to_lead'),
+  error_message: z
+    .string()
+    .optional()
+    .default('Não foi possível atualizar o vínculo CRM. Verifique telefone ou e-mail do contato.'),
+});
+
 export const menuChoiceOptionSchema = z.object({
   id: z
     .string()
@@ -506,6 +619,12 @@ export const DATA_SCHEMAS: Record<EssentialNodeType, z.ZodTypeAny> = {
   lookup_invoice: lookupInvoiceDataSchema,
   select_invoice: selectInvoiceDataSchema,
   invoice_assist: invoiceAssistDataSchema,
+  ticket_assist: ticketAssistDataSchema,
+  lookup_ticket: lookupTicketDataSchema,
+  select_ticket: selectTicketDataSchema,
+  ticket_lookup_assist: ticketLookupAssistDataSchema,
+  crm_link_check: crmLinkCheckDataSchema,
+  crm_convert: crmConvertDataSchema,
   menu_choice: menuChoiceDataSchema,
   conversation_note: conversationNoteDataSchema,
   resolve_conversation: resolveConversationDataSchema,
@@ -532,7 +651,13 @@ export const OUT_HANDLES: Record<EssentialNodeType, string[]> = {
   lookup_invoice: ['default', 'empty'],
   select_invoice: ['default', 'invalid'],
   invoice_assist: ['default', 'empty', 'invalid'],
+  ticket_assist: ['default', 'empty', 'invalid'],
+  lookup_ticket: ['default', 'empty'],
+  select_ticket: ['default', 'invalid'],
+  ticket_lookup_assist: ['default', 'empty', 'invalid'],
+  crm_link_check: ['client', 'lead', 'unlinked'],
   /** Dinâmico — use outHandlesForNode() */
+  crm_convert: ['default', 'already_client', 'error'],
   menu_choice: ['fallback'],
 };
 
@@ -550,6 +675,11 @@ export function outHandlesForNode(
   }
   if (type === 'wait_input') {
     return isInputTimeoutEnabled(data) ? ['default', 'timeout'] : ['default'];
+  }
+  if (type === 'crm_convert') {
+    return String(data?.mode || 'to_lead') === 'to_client'
+      ? ['default', 'error']
+      : ['default', 'already_client', 'error'];
   }
   if ((FLOW_NODE_TYPES as readonly string[]).includes(type)) {
     return OUT_HANDLES[type as EssentialNodeType] || [];
@@ -698,6 +828,64 @@ export function defaultDataForType(type: EssentialNodeType): Record<string, unkn
         invalid_message: 'Opção inválida. Digite o número de uma das faturas da lista.',
         max_invalid: 3,
       };
+    case 'ticket_assist':
+      return {
+        label: NODE_LABELS.ticket_assist,
+        require_client: true,
+        priority: 'normal',
+        intro_message: '',
+        category_prompt:
+          'Escolha a categoria do chamado:\n{{ticket.menu}}\n\nResponda com o número da opção.',
+        subject_prompt: 'Qual o assunto do chamado?',
+        description_prompt: 'Descreva o problema com detalhes:',
+        success_template:
+          'Chamado aberto com sucesso!\nNúmero: {{ticket.number}}\nAssunto: {{ticket.subject}}\nAcompanhe aqui: {{ticket.public_url}}',
+        empty_message: '',
+        empty_client_message:
+          'Para abrir um chamado, vincule um cliente a esta conversa e tente novamente.',
+        empty_categories_message:
+          'Não há categorias de chamado cadastradas. Peça ao atendimento para configurar.',
+        invalid_message: 'Opção inválida. Escolha uma categoria da lista.',
+        max_invalid: 3,
+      };
+    case 'lookup_ticket':
+      return {
+        label: NODE_LABELS.lookup_ticket,
+        mode: 'last_open',
+        limit: 8,
+        include_closed: false,
+      };
+    case 'select_ticket':
+      return {
+        label: NODE_LABELS.select_ticket,
+        variable: 'answer',
+      };
+    case 'ticket_lookup_assist':
+      return {
+        label: NODE_LABELS.ticket_lookup_assist,
+        mode: 'open_menu',
+        limit: 8,
+        include_closed: false,
+        prompt_template:
+          'Seus chamados em aberto:\n{{ticket.menu}}\n\nResponda com o número da opção desejada.',
+        link_template:
+          'Chamado {{ticket.number}} — {{ticket.subject}}\nAcompanhe: {{ticket.public_url}}',
+        empty_message: 'Não encontrei chamados em aberto para este cliente.',
+        invalid_message: 'Opção inválida. Digite o número de um dos chamados da lista.',
+        max_invalid: 3,
+      };
+    case 'crm_link_check':
+      return {
+        label: NODE_LABELS.crm_link_check,
+        refresh_client_match: true,
+      };
+    case 'crm_convert':
+      return {
+        label: NODE_LABELS.crm_convert,
+        mode: 'to_lead',
+        error_message:
+          'Não foi possível atualizar o vínculo CRM. Verifique telefone ou e-mail do contato.',
+      };
     case 'menu_choice':
       return {
         label: NODE_LABELS.menu_choice,
@@ -806,6 +994,30 @@ export function nodePreview(type: string, data: Record<string, unknown>): string
     return String(data.mode || 'open_menu') === 'last_open'
       ? 'Última → envia link'
       : 'Menu → espera → link';
+  }
+  if (type === 'ticket_assist') {
+    return 'Categoria → assunto → descrição';
+  }
+  if (type === 'lookup_ticket') {
+    return String(data.mode || 'last_open') === 'open_menu' ? 'Menu de abertos' : 'Último aberto';
+  }
+  if (type === 'select_ticket') {
+    return `opção em {{${String(data.variable || 'answer')}}}`;
+  }
+  if (type === 'ticket_lookup_assist') {
+    return String(data.mode || 'open_menu') === 'last_open'
+      ? 'Último → envia link'
+      : 'Menu → espera → link';
+  }
+  if (type === 'crm_link_check') {
+    return data.refresh_client_match === false
+      ? 'Cliente / lead / sem vínculo'
+      : 'Match telefone + 3 saídas';
+  }
+  if (type === 'crm_convert') {
+    return String(data.mode || 'to_lead') === 'to_client'
+      ? 'Garantir cliente'
+      : 'Garantir lead';
   }
   if (type === 'menu_choice') {
     const n = Array.isArray(data.options) ? data.options.length : 0;

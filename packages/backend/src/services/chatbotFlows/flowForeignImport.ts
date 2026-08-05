@@ -74,6 +74,12 @@ export const FOREIGN_TYPE_ALIAS: Record<string, string> = {
   set_variable: 'set_variable',
   lookup_invoice: 'lookup_invoice',
   invoice_assist: 'invoice_assist',
+  ticket_assist: 'ticket_assist',
+  lookup_ticket: 'lookup_ticket',
+  select_ticket: 'select_ticket',
+  ticket_lookup_assist: 'ticket_lookup_assist',
+  crm_link_check: 'crm_link_check',
+  crm_convert: 'crm_convert',
 };
 
 const SUPPORTED_TYPES = new Set(Object.values(FOREIGN_TYPE_ALIAS));

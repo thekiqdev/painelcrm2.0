@@ -7,6 +7,23 @@ import {
   selectInvoiceFromSessionVars,
 } from './flowInvoiceVars';
 import {
+  TICKET_ASSIST_PHASE_KEY,
+  TICKET_ASSIST_RETRIES_KEY,
+  TICKET_ASSIST_STEP_KEY,
+  TICKET_CATEGORY_BUTTON_LIMIT,
+  TICKET_LOOKUP_ASSIST_RETRIES_KEY,
+  TICKET_LOOKUP_CHOICE_VAR,
+  applySelectedTicketVars,
+  buildCategoryMenuText,
+  buildTicketMenuText,
+  categoriesToMenuOptions,
+  parseTicketCategoriesFromSession,
+  parseTicketItemsFromSession,
+  pickCategoryFromAnswer,
+  selectTicketFromSessionVars,
+  ticketsToMenuOptions,
+} from './flowTicketVars';
+import {
   buildUazMenuChoices,
   matchMenuOption,
   MENU_CHOICE_RETRIES_KEY,
@@ -18,6 +35,7 @@ import { matchStartTrigger, parseStartTrigger } from './flowStartTrigger';
 
 const INVOICE_ASSIST_RETRIES_KEY = 'invoice._assist_retries';
 const INVOICE_ASSIST_CHOICE_VAR = 'answer';
+const TICKET_ASSIST_VAR = 'answer';
 
 function invoiceAssistLinkText(
   data: Record<string, unknown>,
@@ -37,6 +55,51 @@ function invoiceAssistPromptText(
   const tpl = String(
     data.prompt_template ||
       'Estas são suas faturas em aberto:\n{{invoice.menu}}\n\nResponda com o número da opção desejada.'
+  );
+  return interpolateTemplate(tpl, variables).trim();
+}
+
+function ticketAssistSuccessText(
+  data: Record<string, unknown>,
+  variables: Record<string, unknown>
+): string {
+  const tpl = String(
+    data.success_template ||
+      'Chamado aberto com sucesso!\nNúmero: {{ticket.number}}\nAssunto: {{ticket.subject}}\nAcompanhe aqui: {{ticket.public_url}}'
+  );
+  return interpolateTemplate(tpl, variables).trim();
+}
+
+function ticketAssistCategoryPrompt(
+  data: Record<string, unknown>,
+  variables: Record<string, unknown>
+): string {
+  const tpl = String(
+    data.category_prompt ||
+      'Escolha a categoria do chamado:\n{{ticket.menu}}\n\nResponda com o número da opção.'
+  );
+  return interpolateTemplate(tpl, variables).trim();
+}
+
+function ticketLookupLinkText(
+  data: Record<string, unknown>,
+  variables: Record<string, unknown>
+): string {
+  const tpl = String(
+    data.link_template ||
+      data.detail_template ||
+      'Chamado {{ticket.number}} — {{ticket.subject}}\nAcompanhe: {{ticket.public_url}}'
+  );
+  return interpolateTemplate(tpl, variables).trim();
+}
+
+function ticketLookupPromptText(
+  data: Record<string, unknown>,
+  variables: Record<string, unknown>
+): string {
+  const tpl = String(
+    data.prompt_template ||
+      'Seus chamados em aberto:\n{{ticket.menu}}\n\nResponda com o número da opção desejada.'
   );
   return interpolateTemplate(tpl, variables).trim();
 }
@@ -157,6 +220,28 @@ export type RuntimeOutboundAction =
       type: 'lookup_invoice';
       mode: 'last_open' | 'open_menu';
       limit: number;
+    }
+  | {
+      type: 'lookup_ticket';
+      mode: 'last_open' | 'open_menu';
+      limit: number;
+      includeClosed: boolean;
+    }
+  | {
+      type: 'ticket_assist_bootstrap';
+      requireClient: boolean;
+    }
+  | {
+      type: 'create_ticket';
+      priority: string;
+    }
+  | {
+      type: 'resolve_crm_link';
+      refreshClientMatch: boolean;
+    }
+  | {
+      type: 'crm_convert';
+      mode: 'to_lead' | 'to_client';
     }
   | {
       type: 'send_menu';
@@ -302,6 +387,8 @@ export function processInboundStep(opts: {
     ok: boolean;
     mappedVariables?: Record<string, string>;
     failHandle?: string;
+    /** Handle de sucesso explícito (S26: client|lead|unlinked). */
+    outHandle?: string;
   };
   /** Simulador/worker: inatividade em wait_input / menu_choice (S18). */
   resumeFromTimeout?: boolean;
@@ -364,6 +451,8 @@ export function processInboundStep(opts: {
       !waitNode ||
       (waitNode.type !== 'wait_input' &&
         waitNode.type !== 'invoice_assist' &&
+        waitNode.type !== 'ticket_assist' &&
+        waitNode.type !== 'ticket_lookup_assist' &&
         waitNode.type !== 'menu_choice')
     ) {
       session.status = 'error';
@@ -453,6 +542,140 @@ export function processInboundStep(opts: {
           return { session, actions, handled: true };
         }
       }
+    } else if (waitNode.type === 'ticket_lookup_assist') {
+      const data = (waitNode.data || {}) as Record<string, unknown>;
+      const picked = selectTicketFromSessionVars(session.variables, varName);
+      if (picked.ok) {
+        applySelectedTicketVars(session.variables, picked.item);
+        session.variables[TICKET_LOOKUP_ASSIST_RETRIES_KEY] = '0';
+        const linkMsg = ticketLookupLinkText(data, session.variables);
+        if (linkMsg) actions.push({ type: 'send_text', text: linkMsg });
+        const next = outEdge(opts.graph, waitNode.id, 'default');
+        if (!next) {
+          session.status = 'error';
+          actions.push({ type: 'error', message: 'ticket_lookup_assist sem saída default' });
+          return { session, actions, handled: true };
+        }
+        session.currentNodeId = next.target;
+      } else {
+        const maxInvalid = Math.min(10, Math.max(1, Number(data.max_invalid) || 3));
+        const retries = (Number(session.variables[TICKET_LOOKUP_ASSIST_RETRIES_KEY]) || 0) + 1;
+        session.variables[TICKET_LOOKUP_ASSIST_RETRIES_KEY] = String(retries);
+        if (retries >= maxInvalid) {
+          const next = outEdge(opts.graph, waitNode.id, 'invalid');
+          if (!next) {
+            session.status = 'error';
+            actions.push({ type: 'error', message: `ticket_lookup_assist: ${picked.reason}` });
+            return { session, actions, handled: true };
+          }
+          session.currentNodeId = next.target;
+        } else {
+          const invalidMsg = interpolateTemplate(
+            String(
+              data.invalid_message ||
+                'Opção inválida. Digite o número de um dos chamados da lista.'
+            ),
+            session.variables
+          ).trim();
+          if (invalidMsg) actions.push({ type: 'send_text', text: invalidMsg });
+          session.status = 'waiting_input';
+          session.waitingVariable = varName;
+          return { session, actions, handled: true };
+        }
+      }
+    } else if (waitNode.type === 'ticket_assist') {
+      const data = (waitNode.data || {}) as Record<string, unknown>;
+      const step = String(session.variables[TICKET_ASSIST_STEP_KEY] || 'category');
+      const reply = interactiveId || bodyText;
+
+      if (step === 'category') {
+        const cats = parseTicketCategoriesFromSession(session.variables);
+        const picked = pickCategoryFromAnswer(reply, cats);
+        if (picked.ok) {
+          session.variables['ticket.category_id'] = picked.item.id;
+          session.variables['ticket.category_name'] = picked.item.name;
+          session.variables.ticket_category_id = picked.item.id;
+          session.variables.ticket_category_name = picked.item.name;
+          session.variables[TICKET_ASSIST_RETRIES_KEY] = '0';
+          session.variables[TICKET_ASSIST_STEP_KEY] = 'subject';
+          const subjectPrompt = interpolateTemplate(
+            String(data.subject_prompt || 'Qual o assunto do chamado?'),
+            session.variables
+          ).trim();
+          if (subjectPrompt) actions.push({ type: 'send_text', text: subjectPrompt });
+          session.status = 'waiting_input';
+          session.waitingVariable = TICKET_ASSIST_VAR;
+          return { session, actions, handled: true };
+        }
+        const maxInvalid = Math.min(10, Math.max(1, Number(data.max_invalid) || 3));
+        const retries = (Number(session.variables[TICKET_ASSIST_RETRIES_KEY]) || 0) + 1;
+        session.variables[TICKET_ASSIST_RETRIES_KEY] = String(retries);
+        if (retries >= maxInvalid) {
+          const next = outEdge(opts.graph, waitNode.id, 'invalid');
+          if (!next) {
+            session.status = 'error';
+            actions.push({ type: 'error', message: `ticket_assist: ${picked.reason}` });
+            return { session, actions, handled: true };
+          }
+          session.currentNodeId = next.target;
+        } else {
+          const invalidMsg = interpolateTemplate(
+            String(data.invalid_message || 'Opção inválida. Escolha uma categoria da lista.'),
+            session.variables
+          ).trim();
+          if (invalidMsg) actions.push({ type: 'send_text', text: invalidMsg });
+          session.status = 'waiting_input';
+          session.waitingVariable = varName;
+          return { session, actions, handled: true };
+        }
+      } else if (step === 'subject') {
+        const subject = reply.trim();
+        if (!subject) {
+          const invalidMsg = interpolateTemplate(
+            String(data.invalid_message || 'Informe um assunto válido.'),
+            session.variables
+          ).trim();
+          if (invalidMsg) actions.push({ type: 'send_text', text: invalidMsg });
+          session.status = 'waiting_input';
+          session.waitingVariable = varName;
+          return { session, actions, handled: true };
+        }
+        session.variables['ticket._draft_subject'] = subject;
+        session.variables[TICKET_ASSIST_STEP_KEY] = 'description';
+        const descPrompt = interpolateTemplate(
+          String(data.description_prompt || 'Descreva o problema com detalhes:'),
+          session.variables
+        ).trim();
+        if (descPrompt) actions.push({ type: 'send_text', text: descPrompt });
+        session.status = 'waiting_input';
+        session.waitingVariable = TICKET_ASSIST_VAR;
+        return { session, actions, handled: true };
+      } else if (step === 'description') {
+        const description = reply.trim();
+        if (!description) {
+          const invalidMsg = interpolateTemplate(
+            String(data.invalid_message || 'Informe uma descrição válida.'),
+            session.variables
+          ).trim();
+          if (invalidMsg) actions.push({ type: 'send_text', text: invalidMsg });
+          session.status = 'waiting_input';
+          session.waitingVariable = varName;
+          return { session, actions, handled: true };
+        }
+        session.variables['ticket._draft_description'] = description;
+        session.variables[TICKET_ASSIST_PHASE_KEY] = 'create';
+        session.variables[TICKET_ASSIST_STEP_KEY] = 'creating';
+        actions.push({
+          type: 'create_ticket',
+          priority: String(data.priority || 'normal'),
+        });
+        session.status = 'waiting_http';
+        return { session, actions, handled: true };
+      } else {
+        session.status = 'error';
+        actions.push({ type: 'error', message: `ticket_assist step inválido: ${step}` });
+        return { session, actions, handled: true };
+      }
     } else {
       const waitData = (waitNode.data || {}) as Record<string, unknown>;
       maybePushUpdateContactFromWaitInput(
@@ -492,6 +715,11 @@ export function processInboundStep(opts: {
         httpNode.type !== 'webhook_out' &&
         httpNode.type !== 'lookup_invoice' &&
         httpNode.type !== 'invoice_assist' &&
+        httpNode.type !== 'ticket_assist' &&
+        httpNode.type !== 'ticket_lookup_assist' &&
+        httpNode.type !== 'lookup_ticket' &&
+        httpNode.type !== 'crm_link_check' &&
+        httpNode.type !== 'crm_convert' &&
         httpNode.type !== 'kanban_add_card' &&
         httpNode.type !== 'move_kanban')
     ) {
@@ -539,10 +767,211 @@ export function processInboundStep(opts: {
           return { session, actions, handled: true };
         }
       }
+    } else if (httpNode.type === 'ticket_lookup_assist') {
+      const data = (httpNode.data || {}) as Record<string, unknown>;
+      session.status = 'active';
+      if (!opts.resumeFromHttp.ok) {
+        const emptyMsg = interpolateTemplate(
+          String(
+            data.empty_message ||
+              'Não encontrei chamados em aberto para este cliente.'
+          ),
+          session.variables
+        ).trim();
+        if (emptyMsg) actions.push({ type: 'send_text', text: emptyMsg });
+        const next = outEdge(opts.graph, httpNode.id, 'empty');
+        if (!next) {
+          session.status = 'error';
+          actions.push({ type: 'error', message: 'ticket_lookup_assist sem saída empty' });
+          return { session, actions, handled: true };
+        }
+        session.currentNodeId = next.target;
+      } else {
+        const mode = String(data.mode || 'open_menu') === 'last_open' ? 'last_open' : 'open_menu';
+        if (mode === 'last_open') {
+          const linkMsg = ticketLookupLinkText(data, session.variables);
+          if (linkMsg) actions.push({ type: 'send_text', text: linkMsg });
+          const next = outEdge(opts.graph, httpNode.id, 'default');
+          if (!next) {
+            session.status = 'error';
+            actions.push({ type: 'error', message: 'ticket_lookup_assist sem saída default' });
+            return { session, actions, handled: true };
+          }
+          session.currentNodeId = next.target;
+        } else {
+          const items = parseTicketItemsFromSession(session.variables);
+          session.variables['ticket.menu'] =
+            session.variables['ticket.menu'] || buildTicketMenuText(items);
+          session.variables.ticket_menu = session.variables['ticket.menu'];
+          session.variables[TICKET_LOOKUP_ASSIST_RETRIES_KEY] = '0';
+          if (items.length <= TICKET_CATEGORY_BUTTON_LIMIT) {
+            const options = ticketsToMenuOptions(items);
+            const text =
+              interpolateTemplate(
+                String(data.prompt_template || 'Escolha o chamado:'),
+                session.variables
+              ).trim() || 'Escolha o chamado:';
+            actions.push({
+              type: 'send_menu',
+              mode: 'button',
+              text,
+              choices: buildUazMenuChoices('button', options),
+              options,
+            });
+          } else {
+            const prompt = ticketLookupPromptText(data, session.variables);
+            if (prompt) actions.push({ type: 'send_text', text: prompt });
+          }
+          session.status = 'waiting_input';
+          session.waitingVariable = TICKET_LOOKUP_CHOICE_VAR;
+          return { session, actions, handled: true };
+        }
+      }
+    } else if (httpNode.type === 'ticket_assist') {
+      const data = (httpNode.data || {}) as Record<string, unknown>;
+      const phase = String(session.variables[TICKET_ASSIST_PHASE_KEY] || 'bootstrap');
+      session.status = 'active';
+
+      if (phase === 'create') {
+        if (!opts.resumeFromHttp.ok) {
+          const emptyMsg = interpolateTemplate(
+            String(data.empty_message || 'Não foi possível abrir o chamado. Tente novamente mais tarde.'),
+            session.variables
+          ).trim();
+          if (emptyMsg) actions.push({ type: 'send_text', text: emptyMsg });
+          const next = outEdge(opts.graph, httpNode.id, 'empty');
+          if (!next) {
+            session.status = 'error';
+            actions.push({ type: 'error', message: 'ticket_assist sem saída empty' });
+            return { session, actions, handled: true };
+          }
+          session.currentNodeId = next.target;
+        } else {
+          const successMsg = ticketAssistSuccessText(data, session.variables);
+          if (successMsg) actions.push({ type: 'send_text', text: successMsg });
+          session.variables[TICKET_ASSIST_PHASE_KEY] = '';
+          session.variables[TICKET_ASSIST_STEP_KEY] = '';
+          const next = outEdge(opts.graph, httpNode.id, 'default');
+          if (!next) {
+            session.status = 'error';
+            actions.push({ type: 'error', message: 'ticket_assist sem saída default' });
+            return { session, actions, handled: true };
+          }
+          session.currentNodeId = next.target;
+        }
+      } else {
+        // bootstrap: categorias
+        if (!opts.resumeFromHttp.ok) {
+          const reason = String(session.variables['ticket._bootstrap_reason'] || '');
+          const catCount = Number(session.variables['ticket.category_count'] || 0);
+          const hasClient = Boolean(
+            String(session.variables['client.id'] || session.variables.client_id || '').trim()
+          );
+          // Heurística: se há categorias no tenant mas sem cliente, nunca culpar "sem categorias".
+          const treatAsNoClient =
+            reason === 'no_client' ||
+            (reason !== 'no_categories' && reason !== 'conversation_not_found' && !hasClient && catCount > 0);
+          const emptyTpl = treatAsNoClient
+            ? String(
+                data.empty_client_message ||
+                  data.empty_message ||
+                  'Para abrir um chamado, vincule um cliente a esta conversa e tente novamente.'
+              )
+            : String(
+                data.empty_categories_message ||
+                  data.empty_message ||
+                  'Não há categorias de chamado cadastradas. Peça ao atendimento para configurar.'
+              );
+          const emptyMsg = interpolateTemplate(emptyTpl, session.variables).trim();
+          if (emptyMsg) actions.push({ type: 'send_text', text: emptyMsg });
+          const next = outEdge(opts.graph, httpNode.id, 'empty');
+          if (!next) {
+            session.status = 'error';
+            actions.push({ type: 'error', message: 'ticket_assist sem saída empty' });
+            return { session, actions, handled: true };
+          }
+          session.currentNodeId = next.target;
+        } else {
+          const cats = parseTicketCategoriesFromSession(session.variables);
+          session.variables['ticket.menu'] =
+            session.variables['ticket.menu'] || buildCategoryMenuText(cats);
+          session.variables.ticket_menu = session.variables['ticket.menu'];
+          session.variables[TICKET_ASSIST_RETRIES_KEY] = '0';
+          session.variables[TICKET_ASSIST_STEP_KEY] = 'category';
+          session.variables[TICKET_ASSIST_PHASE_KEY] = 'collect';
+
+          const intro = interpolateTemplate(String(data.intro_message || ''), session.variables).trim();
+          if (intro) actions.push({ type: 'send_text', text: intro });
+
+          if (cats.length <= TICKET_CATEGORY_BUTTON_LIMIT) {
+            const options = categoriesToMenuOptions(cats);
+            const text =
+              interpolateTemplate(String(data.category_prompt || 'Escolha a categoria do chamado:'), session.variables).trim() ||
+              'Escolha a categoria do chamado:';
+            actions.push({
+              type: 'send_menu',
+              mode: 'button',
+              text,
+              choices: buildUazMenuChoices('button', options),
+              options,
+            });
+          } else {
+            const prompt = ticketAssistCategoryPrompt(data, session.variables);
+            if (prompt) actions.push({ type: 'send_text', text: prompt });
+          }
+          session.status = 'waiting_input';
+          session.waitingVariable = TICKET_ASSIST_VAR;
+          return { session, actions, handled: true };
+        }
+      }
+    } else if (httpNode.type === 'crm_link_check') {
+      session.status = 'active';
+      const kindRaw = String(
+        opts.resumeFromHttp.outHandle ||
+          session.variables['crm.link_kind'] ||
+          session.variables.crm_link_kind ||
+          'unlinked'
+      );
+      const handle =
+        kindRaw === 'client' || kindRaw === 'lead' || kindRaw === 'unlinked'
+          ? kindRaw
+          : 'unlinked';
+      const next = outEdge(opts.graph, httpNode.id, handle);
+      if (!next) {
+        session.status = 'error';
+        actions.push({ type: 'error', message: `crm_link_check sem saída "${handle}"` });
+        return { session, actions, handled: true };
+      }
+      session.currentNodeId = next.target;
+    } else if (httpNode.type === 'crm_convert') {
+      session.status = 'active';
+      const data = (httpNode.data || {}) as Record<string, unknown>;
+      const mode = String(data.mode || 'to_lead') === 'to_client' ? 'to_client' : 'to_lead';
+      let handle = String(opts.resumeFromHttp.outHandle || (opts.resumeFromHttp.ok ? 'default' : 'error'));
+      if (mode === 'to_lead') {
+        if (handle !== 'default' && handle !== 'already_client' && handle !== 'error') {
+          handle = opts.resumeFromHttp.ok ? 'default' : 'error';
+        }
+      } else if (handle !== 'default' && handle !== 'error') {
+        handle = opts.resumeFromHttp.ok ? 'default' : 'error';
+      }
+      if (handle === 'error') {
+        const errMsg = interpolateTemplate(String(data.error_message || ''), session.variables).trim();
+        if (errMsg) actions.push({ type: 'send_text', text: errMsg });
+      }
+      const next = outEdge(opts.graph, httpNode.id, handle);
+      if (!next) {
+        session.status = 'error';
+        actions.push({ type: 'error', message: `crm_convert sem saída "${handle}"` });
+        return { session, actions, handled: true };
+      }
+      session.currentNodeId = next.target;
     } else {
-      const handle = opts.resumeFromHttp.ok
-        ? 'default'
-        : opts.resumeFromHttp.failHandle || 'error';
+      const handle = opts.resumeFromHttp.outHandle
+        ? opts.resumeFromHttp.outHandle
+        : opts.resumeFromHttp.ok
+          ? 'default'
+          : opts.resumeFromHttp.failHandle || 'error';
       const next = outEdge(opts.graph, httpNode.id, handle);
       if (!next) {
         session.status = 'error';
@@ -829,6 +1258,57 @@ export function processInboundStep(opts: {
         session.status = 'waiting_http';
         return { session, actions, handled: true };
       }
+      case 'lookup_ticket': {
+        const modeRaw = String(data.mode || 'last_open');
+        const mode = modeRaw === 'open_menu' ? 'open_menu' : 'last_open';
+        actions.push({
+          type: 'lookup_ticket',
+          mode,
+          limit: Math.min(20, Math.max(1, Number(data.limit) || 8)),
+          includeClosed: data.include_closed === true,
+        });
+        session.status = 'waiting_http';
+        return { session, actions, handled: true };
+      }
+      case 'ticket_lookup_assist': {
+        const modeRaw = String(data.mode || 'open_menu');
+        const mode = modeRaw === 'last_open' ? 'last_open' : 'open_menu';
+        actions.push({
+          type: 'lookup_ticket',
+          mode,
+          limit: Math.min(20, Math.max(1, Number(data.limit) || 8)),
+          includeClosed: data.include_closed === true,
+        });
+        session.status = 'waiting_http';
+        return { session, actions, handled: true };
+      }
+      case 'ticket_assist': {
+        session.variables[TICKET_ASSIST_PHASE_KEY] = 'bootstrap';
+        session.variables[TICKET_ASSIST_STEP_KEY] = '';
+        session.variables[TICKET_ASSIST_RETRIES_KEY] = '0';
+        actions.push({
+          type: 'ticket_assist_bootstrap',
+          requireClient: data.require_client !== false,
+        });
+        session.status = 'waiting_http';
+        return { session, actions, handled: true };
+      }
+      case 'crm_link_check': {
+        actions.push({
+          type: 'resolve_crm_link',
+          refreshClientMatch: data.refresh_client_match !== false,
+        });
+        session.status = 'waiting_http';
+        return { session, actions, handled: true };
+      }
+      case 'crm_convert': {
+        actions.push({
+          type: 'crm_convert',
+          mode: String(data.mode || 'to_lead') === 'to_client' ? 'to_client' : 'to_lead',
+        });
+        session.status = 'waiting_http';
+        return { session, actions, handled: true };
+      }
       case 'menu_choice': {
         const options = normalizeMenuOptions(data.options);
         if (options.length === 0) {
@@ -871,6 +1351,30 @@ export function processInboundStep(opts: {
           if (!next) {
             session.status = 'error';
             actions.push({ type: 'error', message: `select_invoice: ${picked.reason}` });
+            return { session, actions, handled: true };
+          }
+          session.currentNodeId = next.target;
+          continue;
+        }
+      }
+      case 'select_ticket': {
+        const varNameSel = String(data.variable || 'answer').trim() || 'answer';
+        const pickedTicket = selectTicketFromSessionVars(session.variables, varNameSel);
+        if (pickedTicket.ok) {
+          applySelectedTicketVars(session.variables, pickedTicket.item);
+          const next = outEdge(opts.graph, node.id, 'default');
+          if (!next) {
+            session.status = 'error';
+            actions.push({ type: 'error', message: 'select_ticket sem saída default' });
+            return { session, actions, handled: true };
+          }
+          session.currentNodeId = next.target;
+          continue;
+        } else {
+          const next = outEdge(opts.graph, node.id, 'invalid');
+          if (!next) {
+            session.status = 'error';
+            actions.push({ type: 'error', message: `select_ticket: ${pickedTicket.reason}` });
             return { session, actions, handled: true };
           }
           session.currentNodeId = next.target;

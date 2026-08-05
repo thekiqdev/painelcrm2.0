@@ -18,6 +18,7 @@ import {
   ListOrdered,
   ListTree,
   CircleCheckBig,
+  Ticket,
 } from 'lucide-react';
 import type { EssentialNodeType } from '../lib/nodeCatalog';
 
@@ -111,6 +112,30 @@ export const NODE_VISUALS: Record<EssentialNodeType, NodeVisual> = {
   invoice_assist: {
     headerClass: 'bg-lime-700 text-white',
     Icon: Receipt,
+  },
+  ticket_assist: {
+    headerClass: 'bg-sky-700 text-white',
+    Icon: Ticket,
+  },
+  lookup_ticket: {
+    headerClass: 'bg-sky-800 text-white',
+    Icon: Ticket,
+  },
+  select_ticket: {
+    headerClass: 'bg-sky-900 text-white',
+    Icon: ListOrdered,
+  },
+  ticket_lookup_assist: {
+    headerClass: 'bg-sky-700 text-white',
+    Icon: Ticket,
+  },
+  crm_link_check: {
+    headerClass: 'bg-teal-700 text-white',
+    Icon: Users,
+  },
+  crm_convert: {
+    headerClass: 'bg-teal-800 text-white',
+    Icon: UserPlus,
   },
 };
 

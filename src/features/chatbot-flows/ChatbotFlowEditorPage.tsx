@@ -21,7 +21,7 @@ import {
   type XYPosition,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { AlertTriangle, ArrowLeft, Copy, Download, FileEdit, Rocket, Save, Upload, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Copy, Download, Save, Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from '@/components/ui/sonner';
@@ -45,6 +45,7 @@ import { NodePropertiesPanel } from './components/NodePropertiesPanel';
 import { NodePalettePanel } from './components/NodePalettePanel';
 import { FlowTestPanel } from './components/FlowTestPanel';
 import { FlowVersionBadge } from './components/FlowVersionBadge';
+import { FlowPublishToggle, isFlowPublishToggleOn } from './components/FlowPublishToggle';
 import { ImportFlowDialog } from './components/ImportFlowDialog';
 import {
   defaultDataForType,
@@ -83,6 +84,7 @@ import {
   resolveHttpSimulation,
   resolveHttpWithLiveResult,
   resolveInvoiceLookupWithMapped,
+  resolveTicketHttpWithMapped,
   resolveTimeoutSimulation,
   sessionVariablesForHttpTest,
   startSimulation,
@@ -91,6 +93,10 @@ import {
 import { isInputTimeoutEnabled } from './lib/inputTimeout';
 import { EMPTY_TEST_SUBJECT, type FlowTestSubject } from './lib/flowTestSubject';
 import { loadOpenInvoicesMappedForSim } from './lib/loadSimInvoices';
+import {
+  loadOpenTicketsMappedForSim,
+  loadTicketAssistBootstrapForSim,
+} from './lib/loadSimTickets';
 import {
   testChatbotFlowIntegration,
   type ChatbotFlowIntegrationTestInput,
@@ -117,6 +123,12 @@ const nodeTypes: NodeTypes = {
   lookup_invoice: FlowCanvasNode,
   select_invoice: FlowCanvasNode,
   invoice_assist: FlowCanvasNode,
+  ticket_assist: FlowCanvasNode,
+  lookup_ticket: FlowCanvasNode,
+  select_ticket: FlowCanvasNode,
+  ticket_lookup_assist: FlowCanvasNode,
+  crm_link_check: FlowCanvasNode,
+  crm_convert: FlowCanvasNode,
   menu_choice: FlowCanvasNode,
   conversation_note: FlowCanvasNode,
   resolve_conversation: FlowCanvasNode,
@@ -326,6 +338,9 @@ function ChatbotFlowEditorInner() {
       ) {
         guard += 1;
         const node = graph.nodes.find((n) => n.id === next.session.currentNodeId);
+        if (node?.type !== 'lookup_invoice' && node?.type !== 'invoice_assist') {
+          break;
+        }
         const data = (node?.data || {}) as Record<string, unknown>;
         const mode = String(data.mode || 'last_open') === 'open_menu' ? 'open_menu' : 'last_open';
         const limit = Number(data.limit) || 8;
@@ -345,6 +360,89 @@ function ChatbotFlowEditorInner() {
           });
         } catch (e) {
           toast.error(e instanceof Error ? e.message : 'Erro ao carregar faturas');
+          break;
+        } finally {
+          setResolvingInvoice(false);
+        }
+      }
+      return next;
+    },
+    []
+  );
+
+  const autoResolveTicketIfNeeded = useCallback(
+    async (graph: ReturnType<typeof graphFromEditor>, state: FlowSimulationState) => {
+      let next = state;
+      let guard = 0;
+      while (
+        next.pendingHttpKind === 'ticket' &&
+        next.session.status === 'waiting_http' &&
+        guard < 5
+      ) {
+        guard += 1;
+        const node = graph.nodes.find((n) => n.id === next.session.currentNodeId);
+        const data = (node?.data || {}) as Record<string, unknown>;
+        const phase = String(next.session.variables['ticket._assist_phase'] || 'bootstrap');
+
+        try {
+          setResolvingInvoice(true);
+          if (node?.type === 'ticket_assist') {
+            if (phase === 'create') {
+              // Create continua mock (não cria ticket real no dry-run)
+              next = resolveHttpSimulation(graph, next, true);
+              continue;
+            }
+            const boot = await loadTicketAssistBootstrapForSim({
+              clientId: next.testSubject.clientId,
+              requireClient: data.require_client !== false,
+            });
+            next = resolveTicketHttpWithMapped(graph, next, {
+              ok: boot.ok,
+              mapped: boot.mapped,
+              systemText: boot.ok
+                ? `Categorias do tenant: ${boot.categories.length}`
+                : boot.reason === 'no_client'
+                  ? 'Sem cliente vinculado (categorias do tenant carregadas)'
+                  : 'Sem categorias no tenant',
+            });
+            continue;
+          }
+
+          if (node?.type === 'lookup_ticket' || node?.type === 'ticket_lookup_assist') {
+            const mode =
+              String(data.mode || 'open_menu') === 'last_open' ? 'last_open' : 'open_menu';
+            if (!next.testSubject.clientId) {
+              next = resolveTicketHttpWithMapped(graph, next, {
+                ok: false,
+                mapped: {
+                  'ticket.count': '0',
+                  ticket_count: '0',
+                  'ticket.menu': '',
+                  'ticket._items': '[]',
+                },
+                systemText: 'Lookup ticket: selecione um cliente no Testar',
+              });
+              continue;
+            }
+            const loaded = await loadOpenTicketsMappedForSim({
+              clientId: next.testSubject.clientId,
+              mode,
+              limit: Number(data.limit) || 8,
+              includeClosed: data.include_closed === true,
+            });
+            next = resolveTicketHttpWithMapped(graph, next, {
+              ok: loaded.found,
+              mapped: loaded.mapped,
+              systemText: loaded.found
+                ? `Chamados do cliente: ${loaded.items.length}`
+                : 'Cliente sem chamados no filtro',
+            });
+            continue;
+          }
+
+          next = resolveHttpSimulation(graph, next, Boolean(next.testSubject.clientId));
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : 'Erro ao carregar dados de ticket');
           break;
         } finally {
           setResolvingInvoice(false);
@@ -446,6 +544,18 @@ function ChatbotFlowEditorInner() {
           next = await autoResolveInvoiceIfNeeded(graph, next);
           continue;
         }
+        if (next.pendingHttpKind === 'ticket' && next.session.status === 'waiting_http') {
+          next = await autoResolveTicketIfNeeded(graph, next);
+          continue;
+        }
+        if (next.pendingHttpKind === 'crm' && next.session.status === 'waiting_http') {
+          next = resolveHttpSimulation(graph, next, true);
+          continue;
+        }
+        if (next.pendingHttpKind === 'crm_convert' && next.session.status === 'waiting_http') {
+          next = resolveHttpSimulation(graph, next, true);
+          continue;
+        }
         if (next.pendingHttpKind === 'http' && next.session.status === 'waiting_http') {
           next = await autoResolveHttpIfNeeded(graph, next);
           continue;
@@ -454,7 +564,7 @@ function ChatbotFlowEditorInner() {
       }
       return next;
     },
-    [autoResolveHttpIfNeeded, autoResolveInvoiceIfNeeded]
+    [autoResolveHttpIfNeeded, autoResolveInvoiceIfNeeded, autoResolveTicketIfNeeded]
   );
 
   const handleTestStart = useCallback(async () => {
@@ -530,6 +640,21 @@ function ChatbotFlowEditorInner() {
         }
         return;
       }
+      if (sim.pendingHttpKind === 'ticket') {
+        try {
+          setResolvingInvoice(true);
+          let next = ok
+            ? await autoResolveTicketIfNeeded(g, sim)
+            : resolveHttpSimulation(g, sim, false);
+          next = await autoResolveSideEffects(g, next);
+          setSim(next);
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : 'Erro ao carregar tickets');
+        } finally {
+          setResolvingInvoice(false);
+        }
+        return;
+      }
       // HTTP: preferir chamada real; OK/Erro só como fallback manual (invoice / edge cases)
       if (sim.pendingHttpKind === 'http') {
         let next = await autoResolveHttpIfNeeded(g, sim);
@@ -541,7 +666,7 @@ function ChatbotFlowEditorInner() {
       next = await autoResolveSideEffects(g, next);
       setSim(next);
     },
-    [autoResolveHttpIfNeeded, autoResolveSideEffects, edges, nodes, sim]
+    [autoResolveHttpIfNeeded, autoResolveSideEffects, autoResolveTicketIfNeeded, edges, nodes, sim]
   );
 
   const reload = useCallback(async () => {
@@ -1129,10 +1254,14 @@ function ChatbotFlowEditorInner() {
   const handleRevertDraft = useCallback(async () => {
     if (!id) return;
     try {
+      setPublishing(true);
       const flow = await revertChatbotFlowToDraft(id);
       setMeta(flow);
+      toast.success('Flow em rascunho (desligado no WhatsApp)');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Erro ao voltar ao rascunho');
+    } finally {
+      setPublishing(false);
     }
   }, [id]);
 
@@ -1261,27 +1390,31 @@ function ChatbotFlowEditorInner() {
           >
             <Save className="h-4 w-4" />
           </Button>
-          {meta?.status === 'active' ? (
-            <Button
-              size="icon"
-              variant="outline"
-              className="h-8 w-8"
-              title="Voltar ao rascunho"
-              aria-label="Voltar ao rascunho"
-              onClick={() => void handleRevertDraft()}
-            >
-              <FileEdit className="h-4 w-4" />
-            </Button>
+          {meta && meta.status !== 'archived' ? (
+            <>
+              <FlowPublishToggle
+                id={`editor-pub-${meta.id}`}
+                className="ml-2"
+                checked={isFlowPublishToggleOn(meta)}
+                busy={publishing}
+                onPublish={() => handlePublish()}
+                onUnpublish={() => handleRevertDraft()}
+              />
+              {(meta.publish_state === 'outdated' ||
+                (dirty && isFlowPublishToggleOn(meta))) && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 text-xs"
+                  disabled={publishing}
+                  title="Publicar alterações do rascunho sem desligar"
+                  onClick={() => void handlePublish()}
+                >
+                  Atualizar
+                </Button>
+              )}
+            </>
           ) : null}
-          <Button
-            size="sm"
-            className="ml-1 h-8"
-            disabled={publishing}
-            onClick={() => void handlePublish()}
-          >
-            <Rocket className="mr-1.5 h-4 w-4" />
-            {publishing ? 'Publicando…' : 'Publicar'}
-          </Button>
         </div>
       </div>
 

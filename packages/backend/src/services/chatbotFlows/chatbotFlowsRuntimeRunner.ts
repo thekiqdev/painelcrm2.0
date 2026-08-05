@@ -537,6 +537,7 @@ async function applyRuntimeActions(opts: {
     ok: boolean;
     mappedVariables?: Record<string, string>;
     failHandle?: string;
+    outHandle?: string;
   } | null = null;
 
   for (const action of opts.result.actions) {
@@ -731,6 +732,135 @@ async function applyRuntimeActions(opts: {
         httpResume = {
           ok: lookupRes.found,
           mappedVariables: lookupRes.mapped,
+          failHandle: 'empty',
+        };
+      } else if (action.type === 'lookup_ticket') {
+        const { runtimeLookupTicket } = await import('./flowTicketActions.js');
+        const lookupRes = await runtimeLookupTicket({
+          tenantId: opts.tenantId,
+          conversationId: opts.conversationId,
+          mode: action.mode,
+          limit: action.limit,
+          includeClosed: action.includeClosed,
+        });
+        console.log(
+          JSON.stringify({
+            event: 'chatbot_flows_runtime',
+            phase: 'lookup_ticket',
+            conversationId: opts.conversationId,
+            sessionId: opts.sessionId,
+            client_id: lookupRes.mapped['client.id'] || lookupRes.mapped.client_id || null,
+            found: lookupRes.found,
+            ticket_count: lookupRes.mapped['ticket.count'] || lookupRes.mapped.ticket_count || '0',
+          })
+        );
+        httpResume = {
+          ok: lookupRes.found,
+          mappedVariables: lookupRes.mapped,
+          failHandle: 'empty',
+        };
+      } else if (action.type === 'ticket_assist_bootstrap') {
+        const { runtimeTicketAssistBootstrap } = await import('./flowTicketActions.js');
+        const boot = await runtimeTicketAssistBootstrap({
+          tenantId: opts.tenantId,
+          conversationId: opts.conversationId,
+          requireClient: action.requireClient,
+        });
+        const mapped = {
+          ...boot.mapped,
+          'ticket._bootstrap_reason': boot.reason || '',
+        };
+        console.log(
+          JSON.stringify({
+            event: 'chatbot_flows_runtime',
+            phase: 'ticket_assist_bootstrap',
+            conversationId: opts.conversationId,
+            sessionId: opts.sessionId,
+            ok: boot.ok,
+            reason: boot.reason || null,
+            category_count: boot.categories.length,
+          })
+        );
+        httpResume = {
+          ok: boot.ok,
+          mappedVariables: mapped,
+          failHandle: 'empty',
+        };
+      } else if (action.type === 'resolve_crm_link') {
+        const { runtimeResolveCrmLink } = await import('./flowCrmLinkActions.js');
+        const linkRes = await runtimeResolveCrmLink({
+          tenantId: opts.tenantId,
+          conversationId: opts.conversationId,
+          refreshClientMatch: action.refreshClientMatch,
+        });
+        console.log(
+          JSON.stringify({
+            event: 'chatbot_flows_runtime',
+            phase: 'resolve_crm_link',
+            conversationId: opts.conversationId,
+            sessionId: opts.sessionId,
+            kind: linkRes.kind,
+            linked_client: linkRes.linkedClient,
+          })
+        );
+        httpResume = {
+          ok: true,
+          mappedVariables: linkRes.mapped,
+          outHandle: linkRes.outHandle,
+        };
+      } else if (action.type === 'crm_convert') {
+        const { runtimeCrmConvert } = await import('./flowCrmConvertActions.js');
+        const convRes = await runtimeCrmConvert({
+          tenantId: opts.tenantId,
+          conversationId: opts.conversationId,
+          actorUserId: opts.ownerUserId,
+          mode: action.mode,
+        });
+        console.log(
+          JSON.stringify({
+            event: 'chatbot_flows_runtime',
+            phase: 'crm_convert',
+            conversationId: opts.conversationId,
+            sessionId: opts.sessionId,
+            mode: action.mode,
+            out_handle: convRes.outHandle,
+            convert_result: convRes.mapped['crm.convert_result'] || null,
+            convert_error: convRes.mapped['crm.convert_error'] || null,
+          })
+        );
+        httpResume = {
+          ok: convRes.ok,
+          mappedVariables: convRes.mapped,
+          outHandle: convRes.outHandle,
+          failHandle: 'error',
+        };
+      } else if (action.type === 'create_ticket') {
+        const { runtimeCreateTicketFromAssist } = await import('./flowTicketActions.js');
+        const vars = opts.result.session.variables;
+        const createRes = await runtimeCreateTicketFromAssist({
+          tenantId: opts.tenantId,
+          conversationId: opts.conversationId,
+          sessionId: opts.sessionId,
+          subject: String(vars['ticket._draft_subject'] || ''),
+          description: String(vars['ticket._draft_description'] || ''),
+          categoryId: String(vars['ticket.category_id'] || vars.ticket_category_id || ''),
+          categoryName: String(vars['ticket.category_name'] || vars.ticket_category_name || ''),
+          priority: action.priority,
+        });
+        console.log(
+          JSON.stringify({
+            event: 'chatbot_flows_runtime',
+            phase: 'create_ticket',
+            conversationId: opts.conversationId,
+            sessionId: opts.sessionId,
+            ok: createRes.ok,
+            ticket_number: createRes.mapped['ticket.number'] || null,
+            error: createRes.error || null,
+          })
+        );
+        httpResume = {
+          ok: createRes.ok,
+          mappedVariables: createRes.mapped,
           failHandle: 'empty',
         };
       } else if (action.type === 'send_menu') {

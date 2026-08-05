@@ -21,11 +21,14 @@ import {
   duplicateChatbotFlow,
   exportChatbotFlow,
   listChatbotFlows,
+  publishChatbotFlow,
+  revertChatbotFlowToDraft,
   type ChatbotFlow,
 } from '@/services/chatbotFlows';
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { ImportFlowDialog } from './components/ImportFlowDialog';
+import { FlowPublishToggle, isFlowPublishToggleOn } from './components/FlowPublishToggle';
 import { downloadJsonFile, slugifyFilename } from './lib/flowPortability';
 
 const QK = ['chatbot-flows'] as const;
@@ -51,6 +54,7 @@ export default function ChatbotFlowsListPage() {
   const [creating, setCreating] = useState(false);
   const [archivingId, setArchivingId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [publishBusyId, setPublishBusyId] = useState<string | null>(null);
 
   const { data: flows = [], isLoading, error } = useQuery({
     queryKey: [...QK, { includeArchived }],
@@ -133,6 +137,43 @@ export default function ChatbotFlowsListPage() {
     [navigate, qc]
   );
 
+  const handlePublishOn = useCallback(
+    async (flow: ChatbotFlow) => {
+      try {
+        setPublishBusyId(flow.id);
+        const result = await publishChatbotFlow(flow.id);
+        await qc.invalidateQueries({ queryKey: QK });
+        toast.success(`Publicado v${result.version.version}`);
+        if (result.warnings?.length) {
+          for (const w of result.warnings.slice(0, 2)) toast.message(w, { duration: 8000 });
+        }
+      } catch (e) {
+        const err = e as Error & { issues?: { message?: string }[] };
+        const first = err.issues?.[0]?.message;
+        toast.error(first || err.message || 'Erro ao publicar', { duration: 8000 });
+      } finally {
+        setPublishBusyId(null);
+      }
+    },
+    [qc]
+  );
+
+  const handlePublishOff = useCallback(
+    async (flow: ChatbotFlow) => {
+      try {
+        setPublishBusyId(flow.id);
+        await revertChatbotFlowToDraft(flow.id);
+        await qc.invalidateQueries({ queryKey: QK });
+        toast.success('Flow em rascunho (desligado no WhatsApp)');
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Erro ao despublicar');
+      } finally {
+        setPublishBusyId(null);
+      }
+    },
+    [qc]
+  );
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="border-b px-4 py-4 md:px-6">
@@ -140,7 +181,7 @@ export default function ChatbotFlowsListPage() {
           <div>
             <h1 className="text-xl font-semibold tracking-tight">Chatbot Flows</h1>
             <p className="text-sm text-muted-foreground">
-              Monte fluxos com nós no canvas (rascunho — sem execução no WhatsApp ainda).
+              Monte fluxos no canvas. Liga = publicado no WhatsApp; desliga = rascunho.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -218,7 +259,17 @@ export default function ChatbotFlowsListPage() {
                     })}
                   </p>
                 </Link>
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-2">
+                  {flow.status !== 'archived' ? (
+                    <FlowPublishToggle
+                      id={`flow-pub-${flow.id}`}
+                      checked={isFlowPublishToggleOn(flow)}
+                      busy={publishBusyId === flow.id}
+                      onPublish={() => handlePublishOn(flow)}
+                      onUnpublish={() => handlePublishOff(flow)}
+                    />
+                  ) : null}
+                  <div className="flex items-center gap-1">
                   <Button
                     variant="ghost"
                     size="sm"
@@ -253,6 +304,7 @@ export default function ChatbotFlowsListPage() {
                       </Button>
                     </>
                   ) : null}
+                  </div>
                 </div>
               </li>
             ))}

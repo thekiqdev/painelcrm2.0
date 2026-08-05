@@ -571,6 +571,8 @@ Entrega antecipada de polish visual no editor (independente do hardening):
 ## 14. Próximo passo operacional
 
 1. S15–S21 entregues — ver [`PLAN_SPRINTS_CHATBOT_FLOWS_S15.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S15.md).  
-2. **Fase regras de início:** [`PLAN_SPRINTS_CHATBOT_FLOWS_S22.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S22.md) (**S22 + S22.1 + S23 + S24** no código).  
-3. Manter decisões **D1–D5**; novas em D15.x (S15+) e **D22.x–D24.x** (S22+).  
-4. Candidatos S25: tag/kanban trigger; opt-out global.
+2. **Fase regras de início:** [`PLAN_SPRINTS_CHATBOT_FLOWS_S22.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S22.md) (**S22–S24** no código).  
+3. **Fase tickets:** [`PLAN_SPRINTS_CHATBOT_FLOWS_S25.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S25.md) (**S25–S25.2** no código) · suporte [`SUPPORT_TICKET_FLOW.md`](./SUPPORT_TICKET_FLOW.md).  
+4. **Fase vínculo CRM:** [`PLAN_SPRINTS_CHATBOT_FLOWS_S26.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S26.md) (**S26–S26.1** no código).  
+5. Manter decisões **D1–D5**; D15.x · D22.x–D24.x · **D25.x** · **D26.x**.  
+6. Candidatos **S27**: gatilho tag/kanban; opt-out global `parar`/`sair`.

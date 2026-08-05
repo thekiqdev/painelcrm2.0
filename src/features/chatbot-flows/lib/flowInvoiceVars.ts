@@ -25,11 +25,35 @@ export function formatInvoiceAmountBrl(cents: number): string {
   return (n / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
-function formatDueDate(ymd: string | null | undefined): string {
-  const s = String(ymd || '').slice(0, 10);
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
-  if (!m) return s || '—';
-  return `${m[3]}/${m[2]}/${m[1]}`;
+/**
+ * Formata vencimento para exibição BR (dd/mm/yyyy).
+ * Espelho do BE — Date do driver não deve virar "Wed Aug 05".
+ */
+export function formatDueDate(ymd: string | Date | null | undefined): string {
+  if (ymd == null || ymd === '') return '—';
+
+  if (ymd instanceof Date && !Number.isNaN(ymd.getTime())) {
+    const y = ymd.getUTCFullYear();
+    const mo = String(ymd.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(ymd.getUTCDate()).padStart(2, '0');
+    return `${d}/${mo}/${y}`;
+  }
+
+  const raw = String(ymd).trim();
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(raw)) return raw;
+
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
+  if (iso) return `${iso[3]}/${iso[2]}/${iso[1]}`;
+
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) {
+    const y = parsed.getUTCFullYear();
+    const mo = String(parsed.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(parsed.getUTCDate()).padStart(2, '0');
+    return `${d}/${mo}/${y}`;
+  }
+
+  return raw || '—';
 }
 
 export function buildPayUrlFromToken(paymentToken: string | null | undefined): string {
@@ -46,7 +70,7 @@ export function invoiceRowToBag(row: {
   id: string;
   invoice_number?: string | null;
   amount_cents?: number | null;
-  due_date?: string | null;
+  due_date?: string | Date | null;
   status?: string | null;
   payment_token?: string | null;
 }): FlowInvoiceItemBag {
@@ -104,7 +128,7 @@ export function parseInvoiceItemsFromSession(
           id: String(o.id),
           number: String(o.number || o.id),
           total: String(o.total || ''),
-          due_date: String(o.due_date || ''),
+          due_date: formatDueDate(o.due_date as string | Date | null | undefined),
           status: String(o.status || ''),
           public_link: String(o.public_link || ''),
           amount_cents: Number(o.amount_cents) || 0,

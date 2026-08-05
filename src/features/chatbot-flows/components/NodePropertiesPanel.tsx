@@ -1,5 +1,6 @@
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import {
   Select,
@@ -1049,6 +1050,321 @@ export function NodePropertiesPanel({
           </>
         ) : null}
 
+        {type === 'ticket_assist' ? (
+          <>
+            <p className="text-[11px] text-muted-foreground">
+              Fluxo automático: categoria (botões se ≤3) → assunto → descrição → cria ticket e envia
+              o link público <code className="text-[10px]">/ticket/…</code>. A conversa precisa ter{' '}
+              <strong>cliente vinculado</strong> (quando a opção abaixo estiver ligada).
+            </p>
+            <div className="flex items-center gap-2">
+              <Switch
+                id="ta-require-client"
+                checked={data.require_client !== false}
+                onCheckedChange={(v) => onChange({ require_client: v })}
+              />
+              <Label htmlFor="ta-require-client" className="font-normal text-sm">
+                Exigir cliente vinculado
+              </Label>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Prioridade</Label>
+              <Select
+                value={String(data.priority || 'normal')}
+                onValueChange={(v) => onChange({ priority: v })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="low">Baixa</SelectItem>
+                  <SelectItem value="normal">Normal</SelectItem>
+                  <SelectItem value="high">Alta</SelectItem>
+                  <SelectItem value="urgent">Urgente</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <VariableTextField
+              id="ta-intro"
+              label="Introdução (opcional)"
+              rows={2}
+              value={String(data.intro_message || '')}
+              onChange={(intro_message) => onChange({ intro_message })}
+              flowVariables={flowVariables}
+            />
+            <VariableTextField
+              id="ta-cat"
+              label="Pedido de categoria"
+              rows={4}
+              value={String(
+                data.category_prompt ||
+                  'Escolha a categoria do chamado:\n{{ticket.menu}}\n\nResponda com o número da opção.'
+              )}
+              onChange={(category_prompt) => onChange({ category_prompt })}
+              flowVariables={flowVariables}
+              hint="Use {{ticket.menu}} quando houver mais de 3 categorias (lista numerada)."
+            />
+            <VariableTextField
+              id="ta-subj"
+              label="Pergunta do assunto"
+              rows={2}
+              value={String(data.subject_prompt || 'Qual o assunto do chamado?')}
+              onChange={(subject_prompt) => onChange({ subject_prompt })}
+              flowVariables={flowVariables}
+            />
+            <VariableTextField
+              id="ta-desc"
+              label="Pergunta da descrição"
+              rows={2}
+              value={String(data.description_prompt || 'Descreva o problema com detalhes:')}
+              onChange={(description_prompt) => onChange({ description_prompt })}
+              flowVariables={flowVariables}
+            />
+            <VariableTextField
+              id="ta-ok"
+              label="Mensagem de sucesso"
+              rows={4}
+              value={String(
+                data.success_template ||
+                  'Chamado aberto com sucesso!\nNúmero: {{ticket.number}}\nAssunto: {{ticket.subject}}\nAcompanhe aqui: {{ticket.public_url}}'
+              )}
+              onChange={(success_template) => onChange({ success_template })}
+              flowVariables={flowVariables}
+            />
+            <VariableTextField
+              id="ta-empty-client"
+              label="Sem cliente vinculado"
+              rows={2}
+              value={String(
+                data.empty_client_message ||
+                  'Para abrir um chamado, vincule um cliente a esta conversa e tente novamente.'
+              )}
+              onChange={(empty_client_message) => onChange({ empty_client_message })}
+              flowVariables={flowVariables}
+            />
+            <VariableTextField
+              id="ta-empty-cat"
+              label="Sem categorias"
+              rows={2}
+              value={String(
+                data.empty_categories_message ||
+                  'Não há categorias de chamado cadastradas. Peça ao atendimento para configurar.'
+              )}
+              onChange={(empty_categories_message) => onChange({ empty_categories_message })}
+              flowVariables={flowVariables}
+            />
+            <VariableTextField
+              id="ta-invalid"
+              label="Categoria inválida"
+              rows={2}
+              value={String(
+                data.invalid_message || 'Opção inválida. Escolha uma categoria da lista.'
+              )}
+              onChange={(invalid_message) => onChange({ invalid_message })}
+              flowVariables={flowVariables}
+            />
+            <div className="space-y-1.5">
+              <Label htmlFor="ta-max">Tentativas antes de saída inválida</Label>
+              <Input
+                id="ta-max"
+                type="number"
+                min={1}
+                max={10}
+                value={Number(data.max_invalid) || 3}
+                onChange={(e) => onChange({ max_invalid: Number(e.target.value) || 3 })}
+              />
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Saídas: <span className="text-emerald-600">ok</span> /{' '}
+              <span className="text-amber-600">vazia</span> /{' '}
+              <span className="text-rose-600">inválida</span>
+            </p>
+          </>
+        ) : null}
+
+        {type === 'ticket_lookup_assist' ? (
+          <>
+            <p className="text-[11px] text-muted-foreground">
+              Lista chamados do cliente vinculado, envia o link público{' '}
+              <code className="text-[10px]">/ticket/…</code>.
+            </p>
+            <div className="space-y-1.5">
+              <Label>Modo</Label>
+              <Select
+                value={String(data.mode || 'open_menu')}
+                onValueChange={(v) => onChange({ mode: v })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="last_open">Último aberto → envia link</SelectItem>
+                  <SelectItem value="open_menu">Menu → espera escolha → link</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch
+                id="tla-closed"
+                checked={data.include_closed === true}
+                onCheckedChange={(v) => onChange({ include_closed: v })}
+              />
+              <Label htmlFor="tla-closed" className="font-normal text-sm">
+                Incluir chamados fechados
+              </Label>
+            </div>
+            {String(data.mode || 'open_menu') === 'open_menu' ? (
+              <>
+                <div className="space-y-1.5">
+                  <Label htmlFor="tla-limit">Máximo no menu</Label>
+                  <Input
+                    id="tla-limit"
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={Number(data.limit) || 8}
+                    onChange={(e) => onChange({ limit: Number(e.target.value) || 8 })}
+                  />
+                </div>
+                <VariableTextField
+                  id="tla-prompt"
+                  label="Mensagem com a lista"
+                  rows={5}
+                  value={String(
+                    data.prompt_template ||
+                      'Seus chamados em aberto:\n{{ticket.menu}}\n\nResponda com o número da opção desejada.'
+                  )}
+                  onChange={(prompt_template) => onChange({ prompt_template })}
+                  flowVariables={flowVariables}
+                  hint="Use {{ticket.menu}} para a lista numerada. Com ≤3 itens, o bot envia botões."
+                />
+                <VariableTextField
+                  id="tla-invalid"
+                  label="Se a opção for inválida"
+                  rows={2}
+                  value={String(
+                    data.invalid_message ||
+                      'Opção inválida. Digite o número de um dos chamados da lista.'
+                  )}
+                  onChange={(invalid_message) => onChange({ invalid_message })}
+                  flowVariables={flowVariables}
+                />
+                <div className="space-y-1.5">
+                  <Label htmlFor="tla-max">Tentativas antes de saída inválida</Label>
+                  <Input
+                    id="tla-max"
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={Number(data.max_invalid) || 3}
+                    onChange={(e) => onChange({ max_invalid: Number(e.target.value) || 3 })}
+                  />
+                </div>
+              </>
+            ) : null}
+            <VariableTextField
+              id="tla-link"
+              label="Mensagem com o link"
+              rows={3}
+              value={String(
+                data.link_template ||
+                  'Chamado {{ticket.number}} — {{ticket.subject}}\nAcompanhe: {{ticket.public_url}}'
+              )}
+              onChange={(link_template) => onChange({ link_template })}
+              flowVariables={flowVariables}
+            />
+            <VariableTextField
+              id="tla-empty"
+              label="Mensagem se não houver chamado"
+              rows={2}
+              value={String(
+                data.empty_message || 'Não encontrei chamados em aberto para este cliente.'
+              )}
+              onChange={(empty_message) => onChange({ empty_message })}
+              flowVariables={flowVariables}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Saídas: <span className="text-emerald-600">ok</span> /{' '}
+              <span className="text-amber-600">vazia</span> /{' '}
+              <span className="text-rose-600">inválida</span> (só no modo menu, após tentativas).
+            </p>
+          </>
+        ) : null}
+
+        {type === 'crm_link_check' ? (
+          <>
+            <p className="text-[11px] text-muted-foreground">
+              Classifica o contato da conversa e segue por uma das saídas:{' '}
+              <span className="text-emerald-600">cliente</span>,{' '}
+              <span className="text-sky-600">lead</span> ou{' '}
+              <span className="text-amber-700">sem vínculo</span>. Prioridade: cliente &gt; lead.
+            </p>
+            <div className="flex items-center gap-2">
+              <Switch
+                id="crm-refresh"
+                checked={data.refresh_client_match !== false}
+                onCheckedChange={(v) => onChange({ refresh_client_match: v })}
+              />
+              <Label htmlFor="crm-refresh" className="font-normal text-sm">
+                Tentar vincular cliente pelo telefone antes de classificar
+              </Label>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Preenche <code className="text-[10px]">{'{{crm.link_kind}}'}</code>,{' '}
+              <code className="text-[10px]">{'{{client.id}}'}</code> /{' '}
+              <code className="text-[10px]">{'{{lead.id}}'}</code> quando houver.
+            </p>
+          </>
+        ) : null}
+
+        {type === 'crm_convert' ? (
+          <>
+            <p className="text-[11px] text-muted-foreground">
+              Garante lead ou cliente na conversa (cria ou vincula). Fail-closed na saída{' '}
+              <span className="text-rose-600">erro</span>.
+            </p>
+            <div className="space-y-1.5">
+              <Label>Modo</Label>
+              <Select
+                value={String(data.mode || 'to_lead')}
+                onValueChange={(v) => onChange({ mode: v })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="to_lead">Converter → lead</SelectItem>
+                  <SelectItem value="to_client">Converter → cliente</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Mensagem de erro (opcional)</Label>
+              <Textarea
+                rows={2}
+                value={String(data.error_message || '')}
+                onChange={(e) => onChange({ error_message: e.target.value })}
+              />
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              {String(data.mode || 'to_lead') === 'to_client' ? (
+                <>
+                  Saídas: <span className="text-emerald-600">ok</span> /{' '}
+                  <span className="text-rose-600">erro</span>
+                </>
+              ) : (
+                <>
+                  Saídas: <span className="text-emerald-600">ok</span> /{' '}
+                  <span className="text-sky-600">já cliente</span> /{' '}
+                  <span className="text-rose-600">erro</span>
+                </>
+              )}
+              . Vars: <code className="text-[10px]">{'{{crm.convert_result}}'}</code>,{' '}
+              <code className="text-[10px]">{'{{crm.link_kind}}'}</code>.
+            </p>
+          </>
+        ) : null}
+
         {type === 'lookup_invoice' ? (
           <>
             <div className="space-y-1.5">
@@ -1722,7 +2038,7 @@ function ConditionFields({
         </div>
 
         {cases.map((c, caseIndex) => (
-          <div key={c.id} className="space-y-2 rounded-lg border p-2.5">
+          <div key={`case-${caseIndex}`} className="space-y-2 rounded-lg border p-2.5">
             <div className="flex items-start gap-2">
               <div className="grid flex-1 gap-2">
                 <div className="space-y-1">
@@ -1742,6 +2058,14 @@ function ConditionFields({
                         id: e.target.value.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64),
                       })
                     }
+                    onBlur={() => {
+                      const cleaned = c.id.replace(/^_+|_+$/g, '').slice(0, 64);
+                      if (!cleaned) {
+                        updateCase(caseIndex, { id: newConditionCaseId(cases.filter((_, i) => i !== caseIndex)) });
+                      } else if (cleaned !== c.id) {
+                        updateCase(caseIndex, { id: cleaned });
+                      }
+                    }}
                     className="font-mono text-xs"
                   />
                 </div>
@@ -1976,7 +2300,7 @@ function MenuChoiceFields({
         </div>
 
         {options.map((opt, index) => (
-          <div key={`${opt.id}-${index}`} className="space-y-2 rounded-lg border p-2.5">
+          <div key={`opt-${index}`} className="space-y-2 rounded-lg border p-2.5">
             <div className="flex items-start gap-2">
               <div className="grid flex-1 gap-2">
                 <div className="space-y-1">
@@ -1985,13 +2309,21 @@ function MenuChoiceFields({
                     value={opt.id}
                     onChange={(e) =>
                       updateOption(index, {
-                        id: e.target.value
-                          .trim()
-                          .replace(/[^a-zA-Z0-9_-]/g, '_')
-                          .slice(0, 64),
+                        id: e.target.value.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64),
                       })
                     }
+                    onBlur={() => {
+                      const cleaned = opt.id.replace(/^_+|_+$/g, '').slice(0, 64);
+                      if (!cleaned) {
+                        updateOption(index, {
+                          id: newMenuOptionId(options.filter((_, i) => i !== index)),
+                        });
+                      } else if (cleaned !== opt.id) {
+                        updateOption(index, { id: cleaned });
+                      }
+                    }}
                     placeholder="opt_a"
+                    className="font-mono text-xs"
                   />
                 </div>
                 <div className="space-y-1">
@@ -2058,7 +2390,7 @@ function MenuChoiceFields({
                 </Button>
               </div>
               {(opt.set_variables || []).map((sv, svi) => (
-                <div key={`${opt.id}-sv-${svi}`} className="flex gap-1.5">
+                <div key={`opt-${index}-sv-${svi}`} className="flex gap-1.5">
                   <Input
                     className="h-8"
                     placeholder="nome"

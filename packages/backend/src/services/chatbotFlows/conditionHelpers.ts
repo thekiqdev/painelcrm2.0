@@ -155,7 +155,8 @@ export function readConditionCasesForEditor(raw: unknown): ConditionCase[] {
     const row = raw[i];
     if (!row || typeof row !== 'object') continue;
     const o = row as Record<string, unknown>;
-    const id = String(o.id ?? '').slice(0, 64) || `c${i + 1}`;
+    // Permite id vazio enquanto digita (não forçar fallback — evita “travar” o input)
+    const id = String(o.id ?? '').slice(0, 64);
     const conditionsRaw = Array.isArray(o.conditions) ? o.conditions : [];
     const conditions: ConditionRule[] =
       conditionsRaw.length === 0

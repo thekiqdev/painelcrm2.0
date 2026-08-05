@@ -21,19 +21,19 @@ export function readMenuOptionsForEditor(raw: unknown): MenuChoiceOption[] {
   for (const row of raw) {
     if (!row || typeof row !== 'object') continue;
     const o = row as Record<string, unknown>;
+    // Permite id vazio enquanto digita (não forçar fallback — evita remount/perda de foco)
     const id = String(o.id ?? '').slice(0, 64);
     const setVarsRaw = Array.isArray(o.set_variables) ? o.set_variables : [];
     const set_variables = setVarsRaw
       .map((sv) => {
         if (!sv || typeof sv !== 'object') return null;
         const s = sv as Record<string, unknown>;
-        const name = String(s.name || '');
-        if (!name) return null;
-        return { name, value: String(s.value ?? '') };
+        // Mantém linhas com nome vazio no editor (usuário pode apagar e redigitar)
+        return { name: String(s.name || ''), value: String(s.value ?? '') };
       })
       .filter(Boolean) as Array<{ name: string; value: string }>;
     out.push({
-      id: id || `opt_${out.length + 1}`,
+      id,
       label: String(o.label ?? '').slice(0, 24),
       description: String(o.description ?? '').slice(0, 72),
       section: String(o.section ?? '').slice(0, 24),

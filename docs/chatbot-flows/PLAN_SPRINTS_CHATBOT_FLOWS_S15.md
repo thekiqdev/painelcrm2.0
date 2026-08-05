@@ -414,5 +414,5 @@ Ao concluir cada sprint S15+, marcar checkboxes aqui e acrescentar uma linha de 
 ## 12. Próximo passo imediato
 
 1. Fase S15–S21 **concluída** no código.  
-2. Seguir [`PLAN_SPRINTS_CHATBOT_FLOWS_S22.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S22.md): **S22–S24** no código (candidatos S25: tag/kanban; opt-out).  
-3. Não misturar regras de início com novos nós de catálogo no mesmo PR.
+2. S22–S24 e S25–S25.2 entregues — ver [`PLAN_SPRINTS_CHATBOT_FLOWS_S22.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S22.md) e [`PLAN_SPRINTS_CHATBOT_FLOWS_S25.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S25.md).  
+3. Candidatos **S26**: tag/kanban trigger; opt-out.
