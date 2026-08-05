@@ -259,6 +259,18 @@ export class UazapiService {
     });
   }
 
+  /**
+   * Menu interativo WhatsApp (botões / lista) — OpenAPI `/send/menu`.
+   * choices: button `"texto|id"`; list `"[Seção]"` + `"texto|id|descrição"`.
+   */
+  async sendMenu(instanceToken: string, payload: Record<string, unknown>) {
+    return this.request('/send/menu', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      token: instanceToken,
+    });
+  }
+
   /** Botão PIX nativo WhatsApp (código copia e cola EMV ou chave conforme payload). */
   async sendPixButton(instanceToken: string, payload: Record<string, unknown>) {
     return this.request('/send/pix-button', {

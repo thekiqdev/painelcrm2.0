@@ -365,6 +365,36 @@ export function extractMessageBody(message: any): string {
   return '';
 }
 
+/**
+ * ID da opção em reply de botão/lista UazAPI (S13).
+ * Preferir sobre o texto quando o flow faz match por option.id.
+ */
+export function extractInteractiveReplyId(message: any): string {
+  const m = canonicalMessageForExtraction(message);
+  if (!m || typeof m !== 'object') return '';
+  const candidates = [
+    m.buttonOrListid,
+    m.buttonOrListId,
+    m.selectedId,
+    m.selectedRowId,
+    (m.listResponse as { singleSelectReply?: { selectedRowId?: string } } | undefined)
+      ?.singleSelectReply?.selectedRowId,
+    (m.buttonsResponseMessage as { selectedButtonId?: string } | undefined)?.selectedButtonId,
+    (m.templateButtonReplyMessage as { selectedId?: string } | undefined)?.selectedId,
+  ];
+  for (const c of candidates) {
+    const s = ensurePlainString(c);
+    if (s) return s;
+  }
+  // Também procura no metadata aninhado (saveMessage).
+  const meta = (m as { metadata?: unknown }).metadata;
+  if (meta && typeof meta === 'object') {
+    const nested = extractInteractiveReplyId(meta);
+    if (nested) return nested;
+  }
+  return '';
+}
+
 /** Extrai caption quando é só mídia (para message_contract.caption) */
 export function extractCaption(message: any): string | null {
   if (!message || typeof message !== 'object') return null;
