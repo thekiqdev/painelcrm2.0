@@ -14,6 +14,7 @@ import {
 } from './menuChoiceHelpers';
 import { pickConditionHandle } from './conditionHelpers';
 import { computeInputTimeoutResumeAt } from './inputTimeout';
+import { matchStartTrigger, parseStartTrigger } from './flowStartTrigger';
 
 const INVOICE_ASSIST_RETRIES_KEY = 'invoice._assist_retries';
 const INVOICE_ASSIST_CHOICE_VAR = 'answer';
@@ -260,25 +261,17 @@ export function matchFlowTrigger(opts: {
   graph: RuntimeGraph;
   messageBody: string;
   incomingMessageCount: number;
+  hoursSincePreviousIncoming?: number | null;
 }): 'keyword' | 'first_message' | null {
   const start = findStartNode(opts.graph);
   if (!start) return null;
-  const trigger = (start.data?.trigger && typeof start.data.trigger === 'object'
-    ? start.data.trigger
-    : { type: 'first_message' }) as { type?: string; value?: string };
-
-  const body = opts.messageBody.trim();
-  if (trigger.type === 'keyword') {
-    const kw = String(trigger.value || '')
-      .trim()
-      .toLowerCase();
-    if (!kw) return null;
-    if (body.toLowerCase() === kw || body.toLowerCase().includes(kw)) return 'keyword';
-    return null;
-  }
-  // first_message (default)
-  if (opts.incomingMessageCount <= 1) return 'first_message';
-  return null;
+  const trigger = parseStartTrigger(start.data?.trigger);
+  return matchStartTrigger({
+    trigger,
+    messageBody: opts.messageBody,
+    incomingMessageCount: opts.incomingMessageCount,
+    hoursSincePreviousIncoming: opts.hoursSincePreviousIncoming,
+  });
 }
 
 function evalCondition(

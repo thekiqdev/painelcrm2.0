@@ -570,8 +570,7 @@ Entrega antecipada de polish visual no editor (independente do hardening):
 
 ## 14. Próximo passo operacional
 
-1. Continuação do módulo: seguir [`PLAN_SPRINTS_CHATBOT_FLOWS_S15.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S15.md) (S15 nota/resolver → S16 criar card → …).  
-2. Manter decisões **D1–D5** deste documento; novas decisões estão no plano S15+ (D15.x …).  
-3. Ao implementar, um sprint por vez; não misturar importer externo (S21) com nós P0.
-
-Quando for implementar a fase seguinte, usar o plano S15+ como fonte de verdade de aceite.
+1. S15–S21 entregues — ver [`PLAN_SPRINTS_CHATBOT_FLOWS_S15.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S15.md).  
+2. **Fase regras de início:** [`PLAN_SPRINTS_CHATBOT_FLOWS_S22.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S22.md) (**S22 + S22.1 + S23 + S24** no código).  
+3. Manter decisões **D1–D5**; novas em D15.x (S15+) e **D22.x–D24.x** (S22+).  
+4. Candidatos S25: tag/kanban trigger; opt-out global.

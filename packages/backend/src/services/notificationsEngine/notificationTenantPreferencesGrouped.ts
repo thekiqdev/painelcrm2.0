@@ -1,4 +1,5 @@
 import type { CatalogWithTenantStateRow } from './notificationEngineRepository.js';
+import { scheduleFieldsForEventKey } from './invoiceDigestSchedulePolicy.js';
 
 export type TenantPreferenceEventJson = {
   event_key: string;
@@ -11,6 +12,14 @@ export type TenantPreferenceEventJson = {
   /** Última entrega registada para este evento neste tenant, se existir. */
   last_delivery_status: string | null;
   last_delivery_at: string | null;
+  /** Timing efetivo (defaults aplicados) — só due_soon / overdue. */
+  schedule?: {
+    days_before?: number;
+    days_after?: number;
+    repeat_enabled?: boolean;
+    repeat_every_days?: number;
+    repeat_max_extra?: number;
+  } | null;
 };
 
 export type TenantPreferenceModuleJson = {
@@ -93,6 +102,7 @@ export function groupCatalogRowsForTenantPreferences(
       has_override: row.has_override,
       last_delivery_status: last ? last.status : null,
       last_delivery_at: last ? last.created_at.toISOString() : null,
+      schedule: scheduleFieldsForEventKey(row.event_key, row.pref_recipient_policy),
     };
 
     const list = map.get(bucket) ?? [];

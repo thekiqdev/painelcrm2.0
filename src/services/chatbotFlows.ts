@@ -83,10 +83,11 @@ export async function archiveChatbotFlow(id: string): Promise<ChatbotFlow> {
 
 export async function publishChatbotFlow(
   id: string
-): Promise<{ flow: ChatbotFlow; version: ChatbotFlowVersion }> {
+): Promise<{ flow: ChatbotFlow; version: ChatbotFlowVersion; warnings?: string[] }> {
   const res = await apiClient.post<{
     flow: ChatbotFlow;
     version: ChatbotFlowVersion;
+    warnings?: string[];
   }>(`/api/chatbot-flows/${encodeURIComponent(id)}/publish`, {});
   if (res.error) {
     const err = new Error(res.error) as Error & { issues?: GraphValidationIssue[] };
@@ -253,5 +254,18 @@ export async function previewChatbotFlowImport(document: unknown): Promise<Chatb
   const res = await apiClient.post<ChatbotFlowImportPreview>('/api/chatbot-flows/import/preview', {
     document,
   });
+  return throwIfError(res);
+}
+
+/** S23 — inicia flow publicado na conversa (manual). */
+export async function startChatbotFlowSession(body: {
+  conversation_id: string;
+  flow_id?: string | null;
+  force?: boolean;
+}): Promise<{ ok: true; session_id: string; flow_id: string }> {
+  const res = await apiClient.post<{ ok: true; session_id: string; flow_id: string }>(
+    '/api/chatbot-flows/sessions/start',
+    body
+  );
   return throwIfError(res);
 }

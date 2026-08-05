@@ -8,7 +8,7 @@
 | **Nome** | **Chatbot Flows — Paridade operacional** + recursos avançados |
 | **Escopo** | Multi-tenant (clientes do PainelCRM) |
 | **Princípio** | 1 sprint = 1 tema; nó só entra com runtime WhatsApp; importer externo no fim |
-| **Status** | S15–S21 · **S21** importer entregue · fase S15–S21 concluída no código |
+| **Status** | S15–S21 · **S21** importer entregue · fase S15–S21 concluída · **próximo:** [`PLAN_SPRINTS_CHATBOT_FLOWS_S22.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S22.md) |
 
 ---
 
@@ -413,6 +413,6 @@ Ao concluir cada sprint S15+, marcar checkboxes aqui e acrescentar uma linha de 
 
 ## 12. Próximo passo imediato
 
-1. Aprovar prioridades P0 (S15–S16) e decisões D15/D16.  
-2. Abrir branch/sprint **S15** com issues: `conversation_note`, `resolve_conversation`.  
-3. Não iniciar S21 até S15–S18 terem aceite em staging.
+1. Fase S15–S21 **concluída** no código.  
+2. Seguir [`PLAN_SPRINTS_CHATBOT_FLOWS_S22.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S22.md): **S22–S24** no código (candidatos S25: tag/kanban; opt-out).  
+3. Não misturar regras de início com novos nós de catálogo no mesmo PR.

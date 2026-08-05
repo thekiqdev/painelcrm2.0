@@ -16,6 +16,7 @@ import {
   deleteChatbotFlowVersionHandler,
   revertChatbotFlowToDraftHandler,
   testChatbotFlowIntegrationHandler,
+  startChatbotFlowSessionHandler,
 } from '../controllers/chatbotFlowsController.js';
 
 const router = Router();
@@ -26,6 +27,7 @@ router.post('/', createChatbotFlowHandler);
 router.post('/import', importChatbotFlowHandler);
 router.post('/import/preview', previewImportChatbotFlowHandler);
 router.post('/test-integration', testChatbotFlowIntegrationHandler);
+router.post('/sessions/start', startChatbotFlowSessionHandler);
 router.get('/:id', getChatbotFlowHandler);
 router.patch('/:id', patchChatbotFlowHandler);
 router.post('/:id/archive', archiveChatbotFlowHandler);

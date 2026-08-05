@@ -24,6 +24,7 @@ export type SystemTemplateRow = {
 export type TenantPreferenceRow = {
   enabled: boolean;
   primary_channel: string | null;
+  recipient_policy: unknown;
 };
 
 export type TenantOverrideRow = {
@@ -153,7 +154,7 @@ export async function getTenantPreference(
   eventKey: string,
 ): Promise<TenantPreferenceRow | null> {
   const r = await client.query<TenantPreferenceRow>(
-    `SELECT enabled, primary_channel
+    `SELECT enabled, primary_channel, COALESCE(recipient_policy, '{}'::jsonb) AS recipient_policy
      FROM tenant_notification_preferences
      WHERE tenant_id = $1 AND event_key = $2
      LIMIT 1`,
@@ -425,6 +426,39 @@ export async function listDeliveriesForCustomerInvoice(
      ORDER BY created_at DESC
      LIMIT 50`,
     [tenantId, invoiceId, eventKey],
+  );
+  return r.rows;
+}
+
+export type OverdueDigestSendStateRow = {
+  entity_id: string;
+  idempotency_key: string;
+  created_at: Date;
+  status: string;
+};
+
+/**
+ * Deliveries de invoice.overdue para calcular seq / último envio no digest (Sprint 2).
+ */
+export async function listOverdueDigestDeliveriesForInvoices(
+  client: Pool | PoolClient,
+  tenantId: string,
+  invoiceIds: string[],
+): Promise<OverdueDigestSendStateRow[]> {
+  if (invoiceIds.length === 0) return [];
+  const r = await client.query<OverdueDigestSendStateRow>(
+    `SELECT entity_id::text AS entity_id,
+            idempotency_key,
+            created_at,
+            status
+     FROM notification_outbound_deliveries
+     WHERE tenant_id = $1::uuid
+       AND event_key = 'invoice.overdue'
+       AND entity_type = 'customer_invoice'
+       AND entity_id = ANY($2::uuid[])
+       AND status IN ('queued', 'processing', 'sent', 'failed')
+     ORDER BY created_at ASC`,
+    [tenantId, invoiceIds],
   );
   return r.rows;
 }
@@ -739,6 +773,7 @@ export type CatalogWithTenantStateRow = {
   merge_fields: unknown;
   pref_enabled: boolean | null;
   pref_primary_channel: string | null;
+  pref_recipient_policy: unknown;
   has_override: boolean;
   has_system_template: boolean;
 };
@@ -756,6 +791,7 @@ export async function listCatalogWithTenantState(
             c.merge_fields,
             p.enabled AS pref_enabled,
             p.primary_channel AS pref_primary_channel,
+            COALESCE(p.recipient_policy, '{}'::jsonb) AS pref_recipient_policy,
             (o.id IS NOT NULL) AS has_override,
             (ts.id IS NOT NULL) AS has_system_template
      FROM notification_event_catalog c
@@ -787,18 +823,25 @@ export async function upsertTenantNotificationPreference(
     enabled: boolean;
     /** Se omitido, mantém primary_channel existente no UPDATE. */
     primaryChannel?: string | null;
+    /** Se definido, substitui recipient_policy (já mergeado pelo caller). */
+    recipientPolicy?: Record<string, unknown> | null;
   },
 ): Promise<void> {
   const updateChannel = params.primaryChannel !== undefined;
+  const updatePolicy = params.recipientPolicy !== undefined && params.recipientPolicy !== null;
   await client.query(
     `INSERT INTO tenant_notification_preferences (tenant_id, event_key, enabled, primary_channel, recipient_policy)
-     VALUES ($1::uuid, $2, $3, $4, '{}'::jsonb)
+     VALUES ($1::uuid, $2, $3, $4, COALESCE($6::jsonb, '{}'::jsonb))
      ON CONFLICT (tenant_id, event_key)
      DO UPDATE SET
        enabled = EXCLUDED.enabled,
        primary_channel = CASE
          WHEN $5::boolean THEN COALESCE(EXCLUDED.primary_channel, tenant_notification_preferences.primary_channel)
          ELSE tenant_notification_preferences.primary_channel
+       END,
+       recipient_policy = CASE
+         WHEN $7::boolean THEN EXCLUDED.recipient_policy
+         ELSE tenant_notification_preferences.recipient_policy
        END,
        updated_at = now()`,
     [
@@ -807,6 +850,8 @@ export async function upsertTenantNotificationPreference(
       params.enabled,
       params.primaryChannel ?? null,
       updateChannel,
+      updatePolicy ? JSON.stringify(params.recipientPolicy) : null,
+      updatePolicy,
     ],
   );
 }

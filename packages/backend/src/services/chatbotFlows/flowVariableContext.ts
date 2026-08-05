@@ -176,5 +176,9 @@ export function mergeFlowVariableSeed(
   for (const [k, v] of Object.entries(seed)) {
     if (out[k] == null || out[k] === '') out[k] = v;
   }
+  // S22.1: vínculo mid-flow — client_* sempre acompanha o CRM atual
+  for (const k of ['client.id', 'client_id'] as const) {
+    if (seed[k]) out[k] = seed[k];
+  }
   return out;
 }

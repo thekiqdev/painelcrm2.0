@@ -32,6 +32,7 @@ import {
 } from '../services/notificationsEngine/notificationEngineOrchestrator.js';
 import { renderStrictTemplates } from '../services/notificationsEngine/strictMergeRenderer.js';
 import { buildSampleMergeContext } from '../services/notificationsEngine/notificationTenantUiSamples.js';
+import { mergeRecipientPolicyPatch } from '../services/notificationsEngine/invoiceDigestSchedulePolicy.js';
 
 const simulateSchema = z.object({
   event_key: z.string().min(1),
@@ -49,6 +50,15 @@ const DEFAULT_LOCALE = 'pt-BR';
 const tenantPrefBodySchema = z.object({
   enabled: z.boolean(),
   channel: z.enum(['whatsapp', 'email', 'sms']).optional(),
+  recipient_policy: z
+    .object({
+      days_before: z.number().int().min(0).max(60).optional(),
+      days_after: z.number().int().min(0).max(90).optional(),
+      repeat_enabled: z.boolean().optional(),
+      repeat_every_days: z.number().int().min(1).max(90).optional(),
+      repeat_max_extra: z.number().int().min(0).max(30).optional(),
+    })
+    .optional(),
 });
 
 const tenantOverrideBodySchema = z.object({
@@ -519,11 +529,46 @@ export async function putTenantNotificationPreference(req: AuthRequest, res: Res
       res.status(404).json({ ok: false, error: 'Evento não encontrado ou inativo.' });
       return;
     }
+
+    let recipientPolicy: Record<string, unknown> | undefined;
+    if (parsed.data.recipient_policy) {
+      const rp = parsed.data.recipient_policy;
+      const hasDays = rp.days_before !== undefined || rp.days_after !== undefined;
+      const hasRepeat =
+        rp.repeat_enabled !== undefined ||
+        rp.repeat_every_days !== undefined ||
+        rp.repeat_max_extra !== undefined;
+      if ((hasDays || hasRepeat) && eventKey !== 'invoice.due_soon' && eventKey !== 'invoice.overdue') {
+        res.status(400).json({
+          ok: false,
+          error: 'recipient_policy de dias/repetição só se aplica a invoice.due_soon / invoice.overdue.',
+        });
+        return;
+      }
+      if (eventKey === 'invoice.due_soon' && (rp.days_after !== undefined || hasRepeat)) {
+        res.status(400).json({
+          ok: false,
+          error: 'invoice.due_soon só aceita days_before.',
+        });
+        return;
+      }
+      if (eventKey === 'invoice.overdue' && rp.days_before !== undefined) {
+        res.status(400).json({
+          ok: false,
+          error: 'invoice.overdue usa days_after / repetição, não days_before.',
+        });
+        return;
+      }
+      const existing = await getTenantPreference(pool, tenantId, eventKey);
+      recipientPolicy = mergeRecipientPolicyPatch(existing?.recipient_policy, rp);
+    }
+
     await upsertTenantNotificationPreference(pool, {
       tenantId,
       eventKey,
       enabled: parsed.data.enabled,
       primaryChannel: parsed.data.channel,
+      ...(recipientPolicy ? { recipientPolicy } : {}),
     });
     res.json({ ok: true });
   } catch (e: unknown) {

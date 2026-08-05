@@ -109,9 +109,13 @@ export function isBusinessNotificationPilotTenantAllowed(tenantId: string): bool
   return allowed.has(tenantId.toLowerCase());
 }
 
-/** Liga worker de digest invoice.due_soon / invoice.overdue (opt-in; default off). */
+/**
+ * Digest invoice.due_soon / invoice.overdue.
+ * Default ON (painel do tenant controla por evento). Env só como kill switch explícito OFF.
+ */
 export function isNotificationsEngineInvoiceDigestEnabled(): boolean {
-  return isEnvTruthy(process.env.NOTIFICATIONS_ENGINE_INVOICE_DIGEST_ENABLED);
+  if (envExplicitlyOff(process.env.NOTIFICATIONS_ENGINE_INVOICE_DIGEST_ENABLED)) return false;
+  return true;
 }
 
 export function getNotificationsEngineInvoiceDigestPollMs(): number {

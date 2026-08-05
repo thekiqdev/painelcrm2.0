@@ -163,15 +163,32 @@ export const triggerSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('keyword'),
     value: z.string().trim().min(1, 'Palavra-chave obrigatória'),
+    match: z.enum(['equals', 'contains']).optional().default('contains'),
+    keywords: z.array(z.string()).optional(),
   }),
   z.object({
     type: z.literal('first_message'),
+    idle_after_hours: z.coerce.number().min(0).max(8760).nullable().optional(),
   }),
 ]);
 
 export const startDataSchema = z.object({
   label: z.string().optional(),
   trigger: triggerSchema.default({ type: 'first_message' }),
+  /** S22: true = só chats 1:1. Ausente/false = compat (grupos permitidos). */
+  dm_only: z.boolean().optional().default(false),
+  /** S23: política com sessão viva. */
+  session_policy: z
+    .enum(['ignore_if_session_alive', 'restart_on_keyword'])
+    .optional()
+    .default('ignore_if_session_alive'),
+  /** S24 */
+  cooldown_minutes: z.coerce.number().int().min(0).max(10080).optional().default(0),
+  schedule_enabled: z.boolean().optional().default(false),
+  schedule_start: z.string().optional().default('09:00'),
+  schedule_end: z.string().optional().default('18:00'),
+  instance_ids: z.array(z.string().uuid()).optional().default([]),
+  priority: z.coerce.number().int().min(-999).max(9999).optional().default(0),
 });
 
 export const sendMessageDataSchema = z
@@ -572,7 +589,11 @@ export type GraphValidationIssue = {
 export function defaultDataForType(type: EssentialNodeType): Record<string, unknown> {
   switch (type) {
     case 'start':
-      return { label: NODE_LABELS.start, trigger: { type: 'first_message' } };
+      return {
+        label: NODE_LABELS.start,
+        trigger: { type: 'first_message' },
+        dm_only: true,
+      };
     case 'send_message':
       return {
         label: NODE_LABELS.send_message,
@@ -736,9 +757,12 @@ export function nodePreview(type: string, data: Record<string, unknown>): string
     );
   }
   if (type === 'start') {
-    const t = data.trigger as { type?: string; value?: string } | undefined;
-    if (t?.type === 'keyword') return `Keyword: ${t.value || '…'}`;
-    return '1ª mensagem';
+    const t = data.trigger as { type?: string; value?: string; idle_after_hours?: number } | undefined;
+    const dm = data.dm_only === true ? ' · só 1:1' : '';
+    if (t?.type === 'keyword') return `Keyword: ${t.value || '…'}${dm}`;
+    const idle = Number(t?.idle_after_hours);
+    if (Number.isFinite(idle) && idle > 0) return `1ª msg / idle ${idle}h${dm}`;
+    return `1ª mensagem${dm}`;
   }
   if (type === 'transfer_human') {
     if (data.assignee_label) return String(data.assignee_label).slice(0, 40);

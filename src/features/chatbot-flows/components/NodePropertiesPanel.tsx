@@ -188,10 +188,23 @@ export function NodePropertiesPanel({
                         value: String(
                           (data.trigger as { value?: string } | undefined)?.value || ''
                         ),
+                        match:
+                          (data.trigger as { match?: string } | undefined)?.match === 'equals'
+                            ? 'equals'
+                            : 'contains',
                       },
                     });
                   } else {
-                    onChange({ trigger: { type: 'first_message' } });
+                    const idle = (data.trigger as { idle_after_hours?: number } | undefined)
+                      ?.idle_after_hours;
+                    onChange({
+                      trigger: {
+                        type: 'first_message',
+                        ...(idle != null && Number(idle) > 0
+                          ? { idle_after_hours: Number(idle) }
+                          : {}),
+                      },
+                    });
                   }
                 }}
               >
@@ -199,24 +212,237 @@ export function NodePropertiesPanel({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="first_message">Primeira mensagem</SelectItem>
+                  <SelectItem value="first_message">Primeira mensagem / idle</SelectItem>
                   <SelectItem value="keyword">Palavra-chave</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             {(data.trigger as { type?: string } | undefined)?.type === 'keyword' ? (
+              <>
+                <div className="space-y-1.5">
+                  <Label htmlFor="kw">Palavra-chave</Label>
+                  <Input
+                    id="kw"
+                    value={String((data.trigger as { value?: string })?.value || '')}
+                    onChange={(e) =>
+                      onChange({
+                        trigger: {
+                          type: 'keyword',
+                          value: e.target.value,
+                          match:
+                            (data.trigger as { match?: string })?.match === 'equals'
+                              ? 'equals'
+                              : 'contains',
+                        },
+                      })
+                    }
+                    placeholder="oi | olá | menu"
+                  />
+                  <p className="text-[10px] text-muted-foreground">
+                    Separe várias com <code>|</code> (ex.: oi|olá|menu).
+                  </p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Modo de match</Label>
+                  <Select
+                    value={
+                      (data.trigger as { match?: string } | undefined)?.match === 'equals'
+                        ? 'equals'
+                        : 'contains'
+                    }
+                    onValueChange={(v) =>
+                      onChange({
+                        trigger: {
+                          type: 'keyword',
+                          value: String((data.trigger as { value?: string })?.value || ''),
+                          match: v === 'equals' ? 'equals' : 'contains',
+                        },
+                      })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="contains">Contém (padrão)</SelectItem>
+                      <SelectItem value="equals">Igual à mensagem inteira</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </>
+            ) : (
               <div className="space-y-1.5">
-                <Label htmlFor="kw">Palavra-chave</Label>
+                <Label htmlFor="idle">Reativar após idle (horas)</Label>
                 <Input
-                  id="kw"
-                  value={String((data.trigger as { value?: string })?.value || '')}
-                  onChange={(e) =>
-                    onChange({ trigger: { type: 'keyword', value: e.target.value } })
+                  id="idle"
+                  type="number"
+                  min={0}
+                  max={8760}
+                  placeholder="0 = só 1ª mensagem"
+                  value={
+                    (data.trigger as { idle_after_hours?: number | null })?.idle_after_hours !=
+                      null &&
+                    Number((data.trigger as { idle_after_hours?: number }).idle_after_hours) > 0
+                      ? String((data.trigger as { idle_after_hours?: number }).idle_after_hours)
+                      : ''
                   }
-                  placeholder="oi"
+                  onChange={(e) => {
+                    const n = Number(e.target.value);
+                    onChange({
+                      trigger: {
+                        type: 'first_message',
+                        ...(Number.isFinite(n) && n > 0 ? { idle_after_hours: n } : {}),
+                      },
+                    });
+                  }}
                 />
+                <p className="text-[10px] text-muted-foreground">
+                  Além da 1ª mensagem: inicia se o cliente ficou sem enviar por N horas.
+                </p>
+              </div>
+            )}
+            <div className="flex items-center gap-2 pt-1">
+              <input
+                id="dm_only"
+                type="checkbox"
+                className="h-4 w-4 rounded border"
+                checked={data.dm_only === true}
+                onChange={(e) => onChange({ dm_only: e.target.checked })}
+              />
+              <Label htmlFor="dm_only" className="font-normal text-sm">
+                Somente conversas 1:1 (ignorar grupos)
+              </Label>
+            </div>
+            <div className="space-y-1.5 pt-1">
+              <Label>Se já houver sessão ativa</Label>
+              <Select
+                value={
+                  data.session_policy === 'restart_on_keyword'
+                    ? 'restart_on_keyword'
+                    : 'ignore_if_session_alive'
+                }
+                onValueChange={(v) =>
+                  onChange({
+                    session_policy:
+                      v === 'restart_on_keyword'
+                        ? 'restart_on_keyword'
+                        : 'ignore_if_session_alive',
+                  })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ignore_if_session_alive">
+                    Ignorar (não reinicia)
+                  </SelectItem>
+                  <SelectItem value="restart_on_keyword">
+                    Reiniciar se palavra-chave
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[10px] text-muted-foreground">
+                Com “Reiniciar”, a keyword encerra a sessão viva e começa o flow do zero.
+              </p>
+            </div>
+            <div className="space-y-1.5 pt-2 border-t">
+              <Label htmlFor="priority">Prioridade (S24)</Label>
+              <Input
+                id="priority"
+                type="number"
+                min={-999}
+                max={9999}
+                value={data.priority != null ? String(data.priority) : '0'}
+                onChange={(e) => {
+                  const n = Number(e.target.value);
+                  onChange({ priority: Number.isFinite(n) ? n : 0 });
+                }}
+              />
+              <p className="text-[10px] text-muted-foreground">
+                Maior número vence quando dois flows casam o mesmo trigger.
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="cooldown">Cooldown (minutos)</Label>
+              <Input
+                id="cooldown"
+                type="number"
+                min={0}
+                max={10080}
+                placeholder="0 = off · sugestão 30"
+                value={
+                  data.cooldown_minutes != null && Number(data.cooldown_minutes) > 0
+                    ? String(data.cooldown_minutes)
+                    : ''
+                }
+                onChange={(e) => {
+                  const n = Number(e.target.value);
+                  onChange({
+                    cooldown_minutes: Number.isFinite(n) && n > 0 ? n : 0,
+                  });
+                }}
+              />
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <input
+                id="schedule_enabled"
+                type="checkbox"
+                className="h-4 w-4 rounded border"
+                checked={data.schedule_enabled === true}
+                onChange={(e) => onChange({ schedule_enabled: e.target.checked })}
+              />
+              <Label htmlFor="schedule_enabled" className="font-normal text-sm">
+                Só dentro do horário
+              </Label>
+            </div>
+            {data.schedule_enabled === true ? (
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label htmlFor="sch_start">Início</Label>
+                  <Input
+                    id="sch_start"
+                    type="time"
+                    value={String(data.schedule_start || '09:00')}
+                    onChange={(e) => onChange({ schedule_start: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="sch_end">Fim</Label>
+                  <Input
+                    id="sch_end"
+                    type="time"
+                    value={String(data.schedule_end || '18:00')}
+                    onChange={(e) => onChange({ schedule_end: e.target.value })}
+                  />
+                </div>
+                <p className="col-span-2 text-[10px] text-muted-foreground">
+                  Usa o timezone da empresa (tenant). Sessão já em pergunta continua respondendo.
+                </p>
               </div>
             ) : null}
+            <div className="space-y-1.5">
+              <Label htmlFor="instance_ids">Instâncias (UUIDs, vírgula)</Label>
+              <Input
+                id="instance_ids"
+                placeholder="vazio = todas"
+                value={
+                  Array.isArray(data.instance_ids)
+                    ? (data.instance_ids as string[]).join(', ')
+                    : ''
+                }
+                onChange={(e) => {
+                  const ids = e.target.value
+                    .split(/[,;\s]+/)
+                    .map((s) => s.trim())
+                    .filter(Boolean);
+                  onChange({ instance_ids: ids });
+                }}
+              />
+              <p className="text-[10px] text-muted-foreground">
+                Limita o flow a instâncias WhatsApp específicas.
+              </p>
+            </div>
           </>
         ) : null}
 

@@ -486,3 +486,49 @@ export async function testChatbotFlowIntegrationHandler(req: AuthRequest, res: R
     return res.status(400).json({ error: message });
   }
 }
+
+const manualStartSchema = z.object({
+  conversation_id: z.string().uuid(),
+  flow_id: z.string().uuid().optional().nullable(),
+  force: z.boolean().optional().default(false),
+});
+
+/** S23 — iniciar flow publicado na conversa (manual). */
+export async function startChatbotFlowSessionHandler(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ error: 'Não autenticado' });
+    await assertModulePermission(userId, MODULE, 'view', undefined, req);
+    const tenantId = tenantIdOrThrow(req);
+    const body = manualStartSchema.parse(req.body);
+
+    const { isTenantAdmin } = await import('../utils/tenant.js');
+    const { runChatbotFlowsRuntimeManualStart } = await import(
+      '../services/chatbotFlows/chatbotFlowsRuntimeRunner.js'
+    );
+    const result = await runChatbotFlowsRuntimeManualStart({
+      tenantId,
+      actorUserId: userId,
+      conversationId: body.conversation_id,
+      flowId: body.flow_id,
+      force: body.force === true,
+      isTenantAdmin: (await isTenantAdmin(userId)) || req.user?.is_super_admin === true,
+    });
+
+    if (!result.ok) {
+      return res.status(result.status).json({ error: result.error });
+    }
+    return res.status(201).json({
+      ok: true,
+      session_id: result.sessionId,
+      flow_id: result.flowId,
+    });
+  } catch (e) {
+    if (respondPerm(res, e)) return;
+    if (e instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Dados inválidos', details: e.errors });
+    }
+    const message = e instanceof Error ? e.message : 'Erro ao iniciar flow';
+    return res.status(500).json({ error: message });
+  }
+}

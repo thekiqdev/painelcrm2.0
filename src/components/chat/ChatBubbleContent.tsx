@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Download, ExternalLink, FileText } from 'lucide-react';
 import { coerceChatPlainText, groupMessageSenderPrefix, type ChatMessage } from '@/services/chat';
 import { chatMediaDebugLog } from '@/lib/chatMediaDebug';
+import { openChatImageLightbox } from '@/components/chat/ChatImageLightbox';
 
 /** Texto da bolha: preserva quebras do remetente; quebra só por palavras / overflow normal (evita “uma letra por linha”). */
 const CHAT_MSG_TEXT =
@@ -67,11 +68,24 @@ function ChatMessageImage({
   const [failed, setFailed] = useState(false);
   const displaySrc = resolveDocumentHref(rawUrl) || rawUrl;
 
+  const openPreview = (e?: React.MouseEvent | React.KeyboardEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
+    openChatImageLightbox({ src: displaySrc, caption });
+  };
+
   if (failed) {
     return (
       <div className="rounded-md border border-dashed border-border bg-muted/40 px-2 py-3 text-center">
         <p className="text-xs text-muted-foreground">Imagem indisponível</p>
         {caption ? <p className={`mt-2 text-xs opacity-90 ${CHAT_MSG_TEXT}`}>{caption}</p> : null}
+        <button
+          type="button"
+          className="mt-2 text-xs underline underline-offset-2"
+          onClick={openPreview}
+        >
+          Tentar visualizar
+        </button>
       </div>
     );
   }
@@ -80,15 +94,30 @@ function ChatMessageImage({
     <div className="space-y-1">
       <button
         type="button"
-        className="block w-full overflow-hidden rounded-md text-left outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-        onClick={() => window.open(displaySrc, '_blank', 'noopener,noreferrer')}
+        data-chat-image-preview=""
+        className="block w-full cursor-zoom-in overflow-hidden rounded-md text-left outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+        onClick={openPreview}
+        onAuxClick={openPreview}
+        onDragStart={(e) => {
+          // Impede o Chrome de “soltar” a URL da imagem numa nova aba (drag nativo / ancestral draggable).
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+        onMouseDown={(e) => {
+          if (e.button === 1 || e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }}
+        aria-label="Ampliar imagem"
       >
         <img
           src={displaySrc}
           alt=""
-          className="max-h-64 max-w-full object-contain"
+          className="pointer-events-none max-h-64 max-w-full select-none object-contain [-webkit-user-drag:none]"
           loading="lazy"
           referrerPolicy="no-referrer"
+          draggable={false}
           onError={() => {
             chatMediaDebugLog('chat_media_render_failed', { url: displaySrc });
             setFailed(true);
@@ -187,14 +216,31 @@ export const ChatBubbleContent: React.FC<{
     );
   }
 
+  const mediaType =
+    c?.media?.[0]?.type ||
+    (Array.isArray(message.media) ? message.media[0]?.type : null) ||
+    null;
+
   const looksLikeImageUrl =
     !!url &&
     (mime.startsWith('image/') ||
+      mediaType === 'image' ||
+      mediaType === 'sticker' ||
       /\.(png|jpe?g|gif|webp)(\?|$)/i.test(url) ||
-      /^data:image\//i.test(url));
+      /^data:image\//i.test(url) ||
+      // URLs assinadas `/media/...` sem extensão: só se não parecer PDF/documento.
+      (/\/media\//i.test(url) &&
+        !/\.pdf(\?|$)/i.test(url) &&
+        !mime.includes('pdf') &&
+        kind !== 'document' &&
+        mediaType !== 'document'));
 
   const isDocumentKind =
-    kind === 'document' || (!!mime && typeof mime === 'string' && mime.includes('pdf'));
+    (kind === 'document' || (!!mime && typeof mime === 'string' && mime.includes('pdf'))) &&
+    !mime.startsWith('image/') &&
+    mediaType !== 'image' &&
+    mediaType !== 'sticker' &&
+    !looksLikeImageUrl;
 
   if (isDocumentKind) {
     const typeLabel = detectDocumentTypeLabel(mime, docName);
@@ -275,7 +321,9 @@ export const ChatBubbleContent: React.FC<{
     kind !== 'text' &&
     kind !== 'image' &&
     kind !== 'sticker' &&
-    !(kind === 'unknown' && looksLikeImageUrl)
+    !(kind === 'unknown' && looksLikeImageUrl) &&
+    !(kind === 'document' && looksLikeImageUrl) &&
+    !looksLikeImageUrl
   ) {
     const label =
       kind === 'video' ? 'Vídeo' : kind === 'audio' ? 'Áudio' : kind === 'document' ? 'Documento' : 'Mídia';
@@ -287,11 +335,15 @@ export const ChatBubbleContent: React.FC<{
   }
 
   const showImage =
-    url &&
+    !!url &&
     (kind === 'image' ||
       kind === 'sticker' ||
+      mediaType === 'image' ||
+      mediaType === 'sticker' ||
       (kind === 'unknown' && looksLikeImageUrl) ||
-      (!kind && looksLikeImageUrl));
+      (kind === 'document' && looksLikeImageUrl) ||
+      (!kind && looksLikeImageUrl) ||
+      looksLikeImageUrl);
 
   if (showImage && url && rawMediaUrl) {
     const captionFromContract =
@@ -299,7 +351,7 @@ export const ChatBubbleContent: React.FC<{
     const captionFromBody =
       !captionFromContract &&
       displayText &&
-      (kind === 'image' || kind === 'sticker' || kind === 'unknown' || !kind)
+      (kind === 'image' || kind === 'sticker' || kind === 'unknown' || kind === 'document' || !kind)
         ? displayText
         : '';
     const cap = captionFromContract || captionFromBody;
@@ -327,17 +379,23 @@ export const ChatBubbleContent: React.FC<{
     return <p className={CHAT_MSG_TEXT}>{displayText}</p>;
   }
 
+  if (url && rawMediaUrl && (looksLikeImageUrl || kind === 'image' || kind === 'sticker')) {
+    return <ChatMessageImage rawUrl={rawMediaUrl} />;
+  }
+
   if (url) {
+    if (looksLikeImageUrl && rawMediaUrl) {
+      return <ChatMessageImage rawUrl={rawMediaUrl} caption={displayText || undefined} />;
+    }
     return (
       <p className={`text-xs opacity-80 ${CHAT_MSG_TEXT}`}>
-        <a
-          href={url}
-          target="_blank"
-          rel="noreferrer"
-          className="underline break-words [overflow-wrap:break-word] [word-break:normal]"
+        <button
+          type="button"
+          className="underline break-words"
+          onClick={() => window.open(url, '_blank', 'noopener,noreferrer')}
         >
           Abrir mídia
-        </a>
+        </button>
       </p>
     );
   }

@@ -124,15 +124,35 @@ export const triggerSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('keyword'),
     value: z.string().trim().min(1, 'Palavra-chave obrigatória'),
+    match: z.enum(['equals', 'contains']).optional().default('contains'),
+    keywords: z.array(z.string()).optional(),
   }),
   z.object({
     type: z.literal('first_message'),
+    idle_after_hours: z.coerce.number().min(0).max(8760).nullable().optional(),
   }),
 ]);
 
 export const startDataSchema = z.object({
   label: z.string().optional(),
   trigger: triggerSchema.default({ type: 'first_message' }),
+  /** S22: true = só chats 1:1. Ausente/false = compat (grupos permitidos). */
+  dm_only: z.boolean().optional().default(false),
+  /** S23: política com sessão viva. */
+  session_policy: z
+    .enum(['ignore_if_session_alive', 'restart_on_keyword'])
+    .optional()
+    .default('ignore_if_session_alive'),
+  /** S24: minutos sem reiniciar após ended/error (0 = off). */
+  cooldown_minutes: z.coerce.number().int().min(0).max(10080).optional().default(0),
+  /** S24: janela horária (timezone do tenant se não houver override). */
+  schedule_enabled: z.boolean().optional().default(false),
+  schedule_start: z.string().optional().default('09:00'),
+  schedule_end: z.string().optional().default('18:00'),
+  /** S24: vazia = todas as instâncias; senão só estes UUIDs. */
+  instance_ids: z.array(z.string().uuid()).optional().default([]),
+  /** S24: maior vence em overlap de trigger. */
+  priority: z.coerce.number().int().min(-999).max(9999).optional().default(0),
 });
 
 export const sendMessageDataSchema = z

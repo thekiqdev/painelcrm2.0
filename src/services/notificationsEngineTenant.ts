@@ -34,6 +34,14 @@ export type NePreferenceEvent = {
   has_override: boolean;
   last_delivery_status: string | null;
   last_delivery_at: string | null;
+  /** Timing efetivo (defaults no backend) — due_soon / overdue. */
+  schedule?: {
+    days_before?: number;
+    days_after?: number;
+    repeat_enabled?: boolean;
+    repeat_every_days?: number;
+    repeat_max_extra?: number;
+  } | null;
 };
 
 export type NePreferenceModule = {
@@ -144,14 +152,34 @@ export async function fetchNeTemplateBundle(eventKey: string, locale = 'pt-BR', 
 
 export async function putNeTenantPreference(
   eventKey: string,
-  body: { enabled: boolean; channel?: 'whatsapp' | 'email' | 'sms' },
+  body: {
+    enabled: boolean;
+    channel?: 'whatsapp' | 'email' | 'sms';
+    recipient_policy?: {
+      days_before?: number;
+      days_after?: number;
+      repeat_enabled?: boolean;
+      repeat_every_days?: number;
+      repeat_max_extra?: number;
+    };
+  },
 ) {
   return apiClient.put<{ ok: boolean }>(`${BASE}/tenant/preferences/${encodeURIComponent(eventKey)}`, body);
 }
 
 export async function patchNeTenantPreference(
   eventKey: string,
-  body: { enabled: boolean; channel?: 'whatsapp' | 'email' | 'sms' },
+  body: {
+    enabled: boolean;
+    channel?: 'whatsapp' | 'email' | 'sms';
+    recipient_policy?: {
+      days_before?: number;
+      days_after?: number;
+      repeat_enabled?: boolean;
+      repeat_every_days?: number;
+      repeat_max_extra?: number;
+    };
+  },
 ) {
   return apiClient.patch<{ ok: boolean }>(`${BASE}/tenant/preferences/${encodeURIComponent(eventKey)}`, body);
 }

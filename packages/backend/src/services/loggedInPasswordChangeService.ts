@@ -1,21 +1,28 @@
-/**
+﻿/**
  * Alteração de senha com utilizador autenticado: código por WhatsApp (instância do utilizador ou plataforma).
  * Confirmação separada (purpose profile_edit) para desbloquear edição de dados pessoais / foto.
+ * S2: path plataforma via motor (Meta allowlist ou UazAPI legado); sem fallback UazAPI no path oficial.
  */
 import { randomInt } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { hashPassword, comparePassword } from '../utils/bcrypt.js';
 import {
-  dispatchPlatformWhatsAppText,
   dispatchWhatsAppText,
   normalizeWhatsAppOutboundPlainText,
 } from './notificationsEngine/whatsappChannelDispatcher.js';
-import { resolvePlatformWhatsAppOutboundReady } from './platformNotifications/platformNotificationDispatchContext.js';
+import { isPlatformOfficialWhatsAppEvent } from '../config/platformNotificationsOfficialWhatsAppEnv.js';
+import { isPlatformNotificationsEnabled } from '../config/platformNotificationsEnv.js';
+import { runPlatformTransactionalNotification } from './platformNotifications/platformNotificationEngineOrchestrator.js';
+import { loadPlatformNotificationsGlobalFlagsFromDb } from './platformNotifications/platformNotificationsGlobalSettingsService.js';
+import { buildPlatformSupportLink } from '../utils/platformPublicUrls.js';
 import { toBrazilWhatsappDialDigits } from '../utils/userIdentity.js';
 
 const CODE_TTL_MINUTES = 10;
 const MAX_VERIFY_ATTEMPTS = 5;
 const MAX_NEW_CODES_PER_HOUR = 5;
+
+const EVENT_PASSWORD = 'platform.auth.password_change_code_issued';
+const EVENT_PROFILE_EDIT = 'platform.auth.profile_edit_code_issued';
 
 export type CodePurpose = 'password' | 'profile_edit';
 
@@ -58,6 +65,14 @@ function generateSixDigitCode(): string {
   return String(randomInt(100000, 1000000));
 }
 
+function platformPublicName(): string {
+  return (process.env.APP_PUBLIC_NAME || 'PainelCRM').trim() || 'PainelCRM';
+}
+
+function eventKeyForPurpose(purpose: CodePurpose): string {
+  return purpose === 'profile_edit' ? EVENT_PROFILE_EDIT : EVENT_PASSWORD;
+}
+
 function buildPasswordMessage(code: string): string {
   return normalizeWhatsAppOutboundPlainText(
     `Seu código para alterar a senha é: ${code}. Ele expira em ${CODE_TTL_MINUTES} minutos. Se não foi você, ignore esta mensagem.`,
@@ -88,19 +103,89 @@ async function supersedePendingCodes(client: PoolClient, userId: string, purpose
   );
 }
 
+async function resolveTargetTenantIdForNotification(pool: Pool, tenantId: string | null): Promise<string | null> {
+  if (tenantId && tenantId.trim()) return tenantId.trim();
+  const flags = await loadPlatformNotificationsGlobalFlagsFromDb(pool);
+  const d = flags.dispatchTenantId?.trim();
+  return d && d.length > 0 ? d : null;
+}
+
+async function displayNameForUser(pool: Pool, userId: string): Promise<string> {
+  const r = await pool.query<{ first_name: string | null; last_name: string | null; email: string }>(
+    `SELECT p.first_name, p.last_name, u.email
+     FROM users u
+     LEFT JOIN profiles p ON p.id = u.id
+     WHERE u.id = $1::uuid
+     LIMIT 1`,
+    [userId],
+  );
+  const row = r.rows[0];
+  if (!row) return 'Utilizador';
+  const j = [row.first_name, row.last_name].filter(Boolean).join(' ').trim();
+  return j || row.email.trim() || 'Utilizador';
+}
+
+async function sendCodeViaPlatformMotor(params: {
+  pool: Pool;
+  eventKey: string;
+  targetTenantId: string;
+  userId: string;
+  codeRowId: string;
+  recipientDigits: string;
+  plainCode: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!isPlatformNotificationsEnabled()) {
+    return { ok: false, error: 'Motor de notificações da plataforma desligado.' };
+  }
+  const displayName = await displayNameForUser(params.pool, params.userId);
+  const mergeContext: Record<string, string> = {
+    'platform.name': platformPublicName(),
+    'platform.support_link': buildPlatformSupportLink(),
+    'user.name': displayName,
+    'auth.change_code': params.plainCode,
+    'auth.code_expires_in_minutes': String(CODE_TTL_MINUTES),
+  };
+  const res = await runPlatformTransactionalNotification({
+    pool: params.pool,
+    targetTenantId: params.targetTenantId,
+    eventKey: params.eventKey,
+    entityType: 'user_password_change_code',
+    entityId: params.codeRowId,
+    idempotencyKey: `platform:pwd_change:${params.eventKey}:user:${params.userId}:row:${params.codeRowId}`,
+    recipientPhone: params.recipientDigits,
+    recipientType: 'password_change',
+    mergeContext,
+    eventOccurredAt: new Date(),
+    actor: { type: 'system', source: 'logged_in_password_change' },
+    metadata: {
+      engine: 'platform_notifications',
+      user_password_change_code_id: params.codeRowId,
+      user_id: params.userId,
+    },
+  });
+  if (!res.ok) return { ok: false, error: res.error };
+  return { ok: true };
+}
+
 async function sendCodeToWhatsapp(params: {
   pool: Pool;
   tenantId: string | null;
   userId: string;
   phoneDigits: string;
   text: string;
+  eventKey: string;
+  codeRowId: string;
+  plainCode: string;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   const dial = toBrazilWhatsappDialDigits(params.phoneDigits);
   if (!dial || dial.replace(/\D/g, '').length < 10) {
     return { ok: false, error: 'Número de WhatsApp inválido.' };
   }
 
-  if (params.tenantId) {
+  const official = isPlatformOfficialWhatsAppEvent(params.eventKey);
+
+  // Path oficial Meta: só motor (sem texto UazAPI da instância do tenant).
+  if (!official && params.tenantId) {
     const own = await dispatchWhatsAppText({
       pool: params.pool,
       tenantId: params.tenantId,
@@ -111,23 +196,25 @@ async function sendCodeToWhatsapp(params: {
     if (own.ok) return { ok: true };
   }
 
-  const outbound = await resolvePlatformWhatsAppOutboundReady(params.pool);
-  if (!outbound) {
+  const targetTenantId = await resolveTargetTenantIdForNotification(params.pool, params.tenantId);
+  if (!targetTenantId) {
     return {
       ok: false,
-      error:
-        'Não foi possível enviar o código: configure o WhatsApp (instância ligada à sua conta) ou a instância da plataforma em notificações.',
+      error: official
+        ? 'Não foi possível enviar o código pela API oficial (tenant de dispatch em falta).'
+        : 'Não foi possível enviar o código: configure o WhatsApp (instância ligada à sua conta) ou a instância da plataforma em notificações.',
     };
   }
-  const plat = await dispatchPlatformWhatsAppText({
-    instanceToken: outbound.instanceToken,
-    phone: dial,
-    text: params.text,
+
+  return sendCodeViaPlatformMotor({
+    pool: params.pool,
+    eventKey: params.eventKey,
+    targetTenantId,
+    userId: params.userId,
+    codeRowId: params.codeRowId,
+    recipientDigits: dial,
+    plainCode: params.plainCode,
   });
-  if (!plat.ok) {
-    return { ok: false, error: plat.error || 'Falha ao enviar WhatsApp.' };
-  }
-  return { ok: true };
 }
 
 async function getRegisteredWhatsappDigits(pool: Pool, userId: string): Promise<string> {
@@ -167,6 +254,7 @@ async function requestWhatsappSixDigitCode(
   const plainCode = generateSixDigitCode();
   const codeHash = await hashPassword(plainCode);
   const expiresAt = new Date(Date.now() + CODE_TTL_MINUTES * 60 * 1000);
+  const eventKey = eventKeyForPurpose(purpose);
 
   const client = await pool.connect();
   let rowId: string | null = null;
@@ -203,6 +291,9 @@ async function requestWhatsappSixDigitCode(
     userId,
     phoneDigits: digits,
     text: messageForPlainCode(plainCode),
+    eventKey,
+    codeRowId: rowId,
+    plainCode,
   });
 
   if (!send.ok && rowId) {

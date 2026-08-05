@@ -2,6 +2,7 @@
  * Chatbot Flows — CRUD + publish (S0/S1).
  */
 import { pool } from '../../utils/db.js';
+import type { PoolClient } from 'pg';
 import {
   validateGraphForPublish,
   type ChatbotFlowGraph,
@@ -16,6 +17,8 @@ import {
   type ChatbotFlowExportDocument,
 } from './flowPortability.js';
 import { extractWebhookInFromGraph } from './flowWebhookIn.js';
+import { resolveKeywordList, type StartTriggerKeyword } from './flowStartTrigger.js';
+import { parseStartGuardConfig } from './flowStartGuards.js';
 
 export type { ChatbotFlowGraph, GraphValidationIssue, ChatbotFlowExportDocument };
 
@@ -56,6 +59,7 @@ const DEFAULT_STUB_GRAPH: ChatbotFlowGraph = {
       data: {
         label: 'Início',
         trigger: { type: 'first_message' },
+        dm_only: true,
       },
     },
   ],
@@ -234,11 +238,79 @@ export class PublishValidationError extends Error {
   }
 }
 
+function keywordsFromGraph(graph: ChatbotFlowGraph): string[] {
+  const start = (graph.nodes || []).find(
+    (n) => n && typeof n === 'object' && (n as { type?: string }).type === 'start'
+  ) as { data?: Record<string, unknown> } | undefined;
+  const trigger = start?.data?.trigger;
+  if (!trigger || typeof trigger !== 'object') return [];
+  const t = trigger as StartTriggerKeyword;
+  if (t.type !== 'keyword') return [];
+  return resolveKeywordList(t);
+}
+
+/** S24 D24.1 — aviso (não bloqueia) se keyword overlap com outro flow publicado. */
+async function collectKeywordOverlapWarnings(opts: {
+  client: PoolClient;
+  tenantId: string;
+  flowId: string;
+  draft: ChatbotFlowGraph;
+}): Promise<string[]> {
+  const mine = keywordsFromGraph(opts.draft);
+  if (mine.length === 0) return [];
+  const others = await opts.client.query<{
+    id: string;
+    name: string;
+    graph_json: unknown;
+  }>(
+    `SELECT f.id, f.name, v.graph_json
+     FROM chatbot_flows f
+     INNER JOIN chatbot_flow_versions v ON v.id = f.published_version_id
+     WHERE f.tenant_id = $1::uuid
+       AND f.status = 'active'
+       AND f.published_version_id IS NOT NULL
+       AND f.id <> $2::uuid`,
+    [opts.tenantId, opts.flowId]
+  );
+  const warnings: string[] = [];
+  const mySet = new Set(mine);
+  const myPriority = parseStartGuardConfig(
+    (
+      (opts.draft.nodes || []).find(
+        (n) => n && typeof n === 'object' && (n as { type?: string }).type === 'start'
+      ) as { data?: Record<string, unknown> } | undefined
+    )?.data
+  ).priority;
+
+  for (const row of others.rows) {
+    const g = normalizeGraph(row.graph_json);
+    const theirs = keywordsFromGraph(g);
+    const overlap = theirs.filter((k) => mySet.has(k));
+    if (overlap.length === 0) continue;
+    const otherPriority = parseStartGuardConfig(
+      (
+        (g.nodes || []).find(
+          (n) => n && typeof n === 'object' && (n as { type?: string }).type === 'start'
+        ) as { data?: Record<string, unknown> } | undefined
+      )?.data
+    ).priority;
+    warnings.push(
+      `Keyword(s) em comum com "${row.name}" (${overlap.join(', ')}). ` +
+        `Prioridade deste flow=${myPriority}, outro=${otherPriority} — o maior vence no runtime.`
+    );
+  }
+  return warnings;
+}
+
 export async function publishChatbotFlow(opts: {
   tenantId: string;
   id: string;
   publishedBy: string | null;
-}): Promise<{ flow: ChatbotFlowRow; version: ChatbotFlowVersionRow }> {
+}): Promise<{
+  flow: ChatbotFlowRow;
+  version: ChatbotFlowVersionRow;
+  warnings: string[];
+}> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -265,6 +337,13 @@ export async function publishChatbotFlow(opts: {
       await client.query('ROLLBACK');
       throw new PublishValidationError(validation.issues);
     }
+
+    const warnings = await collectKeywordOverlapWarnings({
+      client,
+      tenantId: opts.tenantId,
+      flowId: opts.id,
+      draft,
+    });
 
     const verRes = await client.query(
       `SELECT COALESCE(MAX(version), 0)::int AS max_version
@@ -314,6 +393,7 @@ export async function publishChatbotFlow(opts: {
         published_by: v.published_by != null ? String(v.published_by) : null,
         published_at: String(v.published_at),
       },
+      warnings,
     };
   } catch (e) {
     try {

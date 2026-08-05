@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
+import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
@@ -340,6 +341,63 @@ export const NotificationsSection: React.FC<SettingsSectionProps> = () => {
     void loadSummary();
   };
 
+  const onSaveSchedulePatch = async (
+    ev: NePreferenceEvent,
+    recipient_policy: {
+      days_before?: number;
+      days_after?: number;
+      repeat_enabled?: boolean;
+      repeat_every_days?: number;
+      repeat_max_extra?: number;
+    },
+  ) => {
+    const channel =
+      ev.channel === "whatsapp" || ev.channel === "email" || ev.channel === "sms"
+        ? ev.channel
+        : undefined;
+    const res = await patchNeTenantPreference(ev.event_key, {
+      enabled: ev.enabled,
+      ...(channel ? { channel } : {}),
+      recipient_policy,
+    });
+    if (res.error) {
+      toast.error(res.error);
+      return;
+    }
+    toast.success("Configuração de envio atualizada.");
+    setAutoModules((prev) =>
+      prev.map((m) => ({
+        ...m,
+        events: m.events.map((e) =>
+          e.event_key === ev.event_key
+            ? {
+                ...e,
+                schedule: {
+                  ...(e.schedule ?? {}),
+                  ...recipient_policy,
+                },
+              }
+            : e,
+        ),
+      })),
+    );
+  };
+
+  const onSaveScheduleDays = async (ev: NePreferenceEvent, rawDays: string) => {
+    const n = Number.parseInt(rawDays, 10);
+    if (!Number.isFinite(n)) {
+      toast.error("Informe um número de dias válido.");
+      return;
+    }
+    if (ev.event_key === "invoice.due_soon") {
+      await onSaveSchedulePatch(ev, { days_before: Math.min(60, Math.max(0, n)) });
+      return;
+    }
+    if (ev.event_key === "invoice.overdue") {
+      await onSaveSchedulePatch(ev, { days_after: Math.min(90, Math.max(0, n)) });
+    }
+  };
+
   const openDeliveryDetail = async (d: NeDeliveryRow) => {
     setDetailDelivery(d);
     setDetailAttempts([]);
@@ -513,6 +571,154 @@ export const NotificationsSection: React.FC<SettingsSectionProps> = () => {
                             <p className="text-xs text-muted-foreground">
                               Canal: <strong>{channelLabel(ev.channel)}</strong>
                             </p>
+                            {(ev.event_key === "invoice.due_soon" ||
+                              ev.event_key === "invoice.overdue") && (
+                              <div className="space-y-3 pt-1">
+                                <div className="flex flex-wrap items-end gap-2">
+                                  <div className="space-y-1">
+                                    <Label className="text-xs text-muted-foreground">
+                                      {ev.event_key === "invoice.due_soon"
+                                        ? "Dias antes do vencimento"
+                                        : "Dias após o vencimento (1.º aviso)"}
+                                    </Label>
+                                    <div className="flex items-center gap-2">
+                                      <Input
+                                        type="number"
+                                        min={0}
+                                        max={ev.event_key === "invoice.due_soon" ? 60 : 90}
+                                        className="h-8 w-20"
+                                        disabled={
+                                          !bootstrap?.engine_enabled || !canEditSettings || permLoading
+                                        }
+                                        defaultValue={
+                                          ev.event_key === "invoice.due_soon"
+                                            ? (ev.schedule?.days_before ?? 3)
+                                            : (ev.schedule?.days_after ?? 1)
+                                        }
+                                        key={`${ev.event_key}-days-${ev.schedule?.days_before ?? ""}-${ev.schedule?.days_after ?? ""}`}
+                                        onBlur={(e) => {
+                                          const raw = e.target.value.trim();
+                                          const current =
+                                            ev.event_key === "invoice.due_soon"
+                                              ? (ev.schedule?.days_before ?? 3)
+                                              : (ev.schedule?.days_after ?? 1);
+                                          if (raw === String(current)) return;
+                                          void onSaveScheduleDays(ev, raw);
+                                        }}
+                                        onKeyDown={(e) => {
+                                          if (e.key === "Enter") {
+                                            e.currentTarget.blur();
+                                          }
+                                        }}
+                                      />
+                                      <span className="text-xs text-muted-foreground">
+                                        {ev.event_key === "invoice.due_soon"
+                                          ? "(0 = no dia)"
+                                          : "(0 = no dia do vencimento)"}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                                {ev.event_key === "invoice.overdue" ? (
+                                  <div className="space-y-2 rounded-md border border-border/60 bg-muted/20 p-3">
+                                    <div className="flex items-center justify-between gap-3">
+                                      <div className="min-w-0">
+                                        <p className="text-sm font-medium">Repetir notificação de atraso?</p>
+                                        <p className="text-xs text-muted-foreground">
+                                          Após o 1.º aviso, envia de novo até o limite configurado.
+                                        </p>
+                                      </div>
+                                      <Switch
+                                        checked={ev.schedule?.repeat_enabled === true}
+                                        disabled={
+                                          !bootstrap?.engine_enabled || !canEditSettings || permLoading
+                                        }
+                                        onCheckedChange={(v) =>
+                                          void onSaveSchedulePatch(ev, {
+                                            repeat_enabled: v,
+                                            ...(v
+                                              ? {
+                                                  repeat_every_days: ev.schedule?.repeat_every_days ?? 3,
+                                                  repeat_max_extra: ev.schedule?.repeat_max_extra ?? 2,
+                                                }
+                                              : {}),
+                                          })
+                                        }
+                                      />
+                                    </div>
+                                    {ev.schedule?.repeat_enabled ? (
+                                      <div className="flex flex-wrap gap-3 pt-1">
+                                        <div className="space-y-1">
+                                          <Label className="text-xs text-muted-foreground">
+                                            A cada quantos dias
+                                          </Label>
+                                          <Input
+                                            type="number"
+                                            min={1}
+                                            max={90}
+                                            className="h-8 w-20"
+                                            disabled={
+                                              !bootstrap?.engine_enabled ||
+                                              !canEditSettings ||
+                                              permLoading
+                                            }
+                                            defaultValue={ev.schedule?.repeat_every_days ?? 3}
+                                            key={`${ev.event_key}-every-${ev.schedule?.repeat_every_days ?? 3}`}
+                                            onBlur={(e) => {
+                                              const n = Number.parseInt(e.target.value.trim(), 10);
+                                              const current = ev.schedule?.repeat_every_days ?? 3;
+                                              if (!Number.isFinite(n) || n === current) return;
+                                              void onSaveSchedulePatch(ev, {
+                                                repeat_every_days: Math.min(90, Math.max(1, n)),
+                                              });
+                                            }}
+                                            onKeyDown={(e) => {
+                                              if (e.key === "Enter") e.currentTarget.blur();
+                                            }}
+                                          />
+                                        </div>
+                                        <div className="space-y-1">
+                                          <Label className="text-xs text-muted-foreground">
+                                            Quantas repetições (além da 1.ª)
+                                          </Label>
+                                          <Input
+                                            type="number"
+                                            min={0}
+                                            max={30}
+                                            className="h-8 w-20"
+                                            disabled={
+                                              !bootstrap?.engine_enabled ||
+                                              !canEditSettings ||
+                                              permLoading
+                                            }
+                                            defaultValue={ev.schedule?.repeat_max_extra ?? 2}
+                                            key={`${ev.event_key}-max-${ev.schedule?.repeat_max_extra ?? 2}`}
+                                            onBlur={(e) => {
+                                              const n = Number.parseInt(e.target.value.trim(), 10);
+                                              const current = ev.schedule?.repeat_max_extra ?? 2;
+                                              if (!Number.isFinite(n) || n === current) return;
+                                              void onSaveSchedulePatch(ev, {
+                                                repeat_max_extra: Math.min(30, Math.max(0, n)),
+                                              });
+                                            }}
+                                            onKeyDown={(e) => {
+                                              if (e.key === "Enter") e.currentTarget.blur();
+                                            }}
+                                          />
+                                        </div>
+                                        <p className="w-full text-xs text-muted-foreground">
+                                          Total máximo de avisos:{" "}
+                                          <strong>
+                                            1 + {ev.schedule?.repeat_max_extra ?? 2} ={" "}
+                                            {1 + (ev.schedule?.repeat_max_extra ?? 2)}
+                                          </strong>
+                                        </p>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                ) : null}
+                              </div>
+                            )}
                             {ev.last_delivery_at ? (
                               <p className="text-xs text-muted-foreground">
                                 Último envio:{" "}

@@ -329,6 +329,7 @@ import {
   type ChatTicketDraft,
 } from '@/components/chat/ChatCreateTicketDialog';
 import { ChatComposerDropZone } from '@/components/chat/ChatComposerDropZone';
+import { ChatStartFlowButton } from '@/components/chat/ChatStartFlowButton';
 import {
   ChatScheduledMessagesStrip,
   chatScheduledMessagesQueryKey,
@@ -6596,6 +6597,16 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                                     >
                                       {selectedConversation?.wa_archived ? 'Desarquivar' : 'Arquivar'}
                                     </Button>
+                                    <ChatStartFlowButton
+                                      conversationId={selectedConversation.id}
+                                      attendanceInProgress={attendanceIsInProgress(
+                                        selectedConversation.attendance_status
+                                      )}
+                                      iconOnly={Boolean(
+                                        isMobileConversationView || (isMobile && routeConversationId)
+                                      )}
+                                      className="hidden md:inline-flex"
+                                    />
                                     {canTransferAttendance && (
                                       <Button
                                         variant="outline"

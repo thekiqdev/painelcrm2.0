@@ -1060,6 +1060,11 @@ function ChatbotFlowEditorInner() {
       setSelectedDraftVersion(result.version.version);
       writeStoredDraftVersion(id, result.version.version);
       toast.success(`Publicado v${result.version.version}`);
+      if (result.warnings?.length) {
+        for (const w of result.warnings.slice(0, 3)) {
+          toast.message(w, { duration: 10_000 });
+        }
+      }
     } catch (e) {
       const err = e as Error & { issues?: GraphValidationIssue[] };
       if (err.issues?.length) {

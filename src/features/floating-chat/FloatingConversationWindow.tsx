@@ -841,6 +841,17 @@ export function FloatingConversationWindow({
         draggable
         title="Arrastar conversa para o Kanban"
         onDragStart={(e) => {
+          const t = e.target;
+          if (
+            t instanceof Element &&
+            t.closest(
+              '[data-chat-image-preview], button, a, input, textarea, select, audio, video, [contenteditable="true"]',
+            )
+          ) {
+            // Evita drag da conversa (e abertura da URL da imagem numa nova aba no Chrome).
+            e.preventDefault();
+            return;
+          }
           beginConversationDragSession(e.dataTransfer, {
             type: 'conversation',
             conversationId,
@@ -856,7 +867,7 @@ export function FloatingConversationWindow({
         className={cn(
           'floating-chat-window-message-history min-h-0 flex-1 cursor-grab overflow-y-auto overscroll-contain bg-neutral-50 active:cursor-grabbing dark:bg-slate-900',
           '[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
-          'touch-pan-y [&_img]:max-h-[min(200px,38dvh)] [&_img]:w-auto [&_img]:max-w-full [&_img]:rounded-md [&_img]:object-contain',
+          'touch-pan-y [&_img]:max-h-[min(200px,38dvh)] [&_img]:w-auto [&_img]:max-w-full [&_img]:rounded-md [&_img]:object-contain [&_img]:[-webkit-user-drag:none]',
         )}
       >
         <div className="space-y-1.5 px-2 py-1.5">
