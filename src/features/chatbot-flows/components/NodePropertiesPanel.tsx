@@ -9,7 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { NODE_LABELS, generateInboundWebhookToken, buildInboundWebhookPath, type EssentialNodeType } from '../lib/nodeCatalog';
+import { NODE_LABELS, generateInboundWebhookToken, buildInboundWebhookPath, readSetVariableAssignments, type EssentialNodeType } from '../lib/nodeCatalog';
 import {
   ARROW_COLORS,
   EDITOR_ONLY_LABELS,
@@ -743,25 +743,7 @@ export function NodePropertiesPanel({
         ) : null}
 
         {type === 'set_variable' ? (
-          <>
-            <div className="space-y-1.5">
-              <Label htmlFor="svar">Nome da variável</Label>
-              <Input
-                id="svar"
-                value={String(data.variable || '')}
-                onChange={(e) => onChange({ variable: e.target.value })}
-              />
-            </div>
-            <VariableTextField
-              id="sval"
-              label="Valor"
-              multiline={false}
-              value={String(data.value ?? '')}
-              onChange={(value) => onChange({ value })}
-            flowVariables={flowVariables}
-              placeholder="Texto ou {{outra_var}}"
-            />
-          </>
+          <SetVariableFields data={data} onChange={onChange} flowVariables={flowVariables} />
         ) : null}
 
         {type === 'add_tag' ? (
@@ -1662,6 +1644,98 @@ export function NodePropertiesPanel({
         ) : null}
       </div>
     </div>
+  );
+}
+
+function SetVariableFields({
+  data,
+  onChange,
+  flowVariables = [],
+}: {
+  data: Record<string, unknown>;
+  onChange: (patch: Record<string, unknown>) => void;
+  flowVariables?: FlowDefinedVariable[];
+}) {
+  const rows = readSetVariableAssignments(data, { forEditor: true });
+
+  const setRows = (next: Array<{ name: string; value: string }>) => {
+    onChange({
+      assignments: next,
+      variable: undefined,
+      value: undefined,
+      name: undefined,
+    });
+  };
+
+  return (
+    <>
+      <p className="text-[11px] text-muted-foreground">
+        Defina uma ou mais variáveis da sessão. Nomes com ponto são permitidos (ex.:{' '}
+        <code className="text-[10px]">lead.origem</code>). Valores aceitam{' '}
+        <code className="text-[10px]">{'{{outra_var}}'}</code>.
+      </p>
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <Label>Atribuições</Label>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7"
+            disabled={rows.length >= 20}
+            onClick={() => setRows([...rows, { name: '', value: '' }])}
+          >
+            <Plus className="mr-1 h-3.5 w-3.5" />
+            Variável
+          </Button>
+        </div>
+        {rows.map((row, index) => (
+          <div key={`svar-${index}`} className="space-y-1.5 rounded-lg border p-2.5">
+            <div className="flex items-start gap-1.5">
+              <div className="grid min-w-0 flex-1 gap-1.5">
+                <div className="space-y-1">
+                  <Label className="text-[11px]">Nome</Label>
+                  <Input
+                    className="font-mono text-xs"
+                    value={row.name}
+                    placeholder="lead.origem"
+                    onChange={(e) => {
+                      const next = rows.map((r, i) =>
+                        i === index ? { ...r, name: e.target.value } : r
+                      );
+                      setRows(next);
+                    }}
+                  />
+                </div>
+                <VariableTextField
+                  id={`svar-val-${index}`}
+                  label="Valor"
+                  multiline={false}
+                  value={row.value}
+                  onChange={(value) => {
+                    const next = rows.map((r, i) => (i === index ? { ...r, value } : r));
+                    setRows(next);
+                  }}
+                  flowVariables={flowVariables}
+                  placeholder="Texto ou {{outra_var}}"
+                />
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="mt-5 h-8 w-8 shrink-0 text-destructive"
+                disabled={rows.length <= 1}
+                onClick={() => setRows(rows.filter((_, i) => i !== index))}
+                aria-label="Remover variável"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
 

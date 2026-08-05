@@ -601,8 +601,15 @@ function mapNodeData(
 
   if (toType === 'set_variable') {
     out.label = str(cleaned.label || 'Variável') || 'Variável';
-    out.name = str(cleaned.name || cleaned.variable || cleaned.key);
-    out.value = str(cleaned.value);
+    const name = str(cleaned.name || cleaned.variable || cleaned.key);
+    const value = str(cleaned.value);
+    if (Array.isArray(cleaned.assignments) && cleaned.assignments.length) {
+      out.assignments = cleaned.assignments;
+    } else if (name) {
+      out.assignments = [{ name, value }];
+    } else {
+      out.assignments = [{ name: 'var1', value: '' }];
+    }
   }
 
   if (relinkFields.length) {

@@ -4,7 +4,7 @@
 
 import { NODE_LABELS, type EssentialNodeType } from './nodeCatalog';
 
-const VAR_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+const VAR_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$/;
 
 export type FlowDefinedVariable = {
   name: string;
@@ -57,11 +57,20 @@ export function collectFlowDefinedVariables(nodes: FlowNodeLike[]): FlowDefinedV
     }
 
     if (type === 'set_variable') {
-      pushVar(out, data.variable, {
-        label: String(data.variable || ''),
-        source: src,
-        nodeId: n.id,
-      });
+      const rows = Array.isArray(data.assignments)
+        ? data.assignments
+        : data.variable
+          ? [{ name: data.variable, value: data.value }]
+          : [];
+      for (const row of rows) {
+        if (!row || typeof row !== 'object') continue;
+        const r = row as Record<string, unknown>;
+        pushVar(out, r.name, {
+          label: String(r.name || ''),
+          source: src,
+          nodeId: n.id,
+        });
+      }
     }
 
     if (type === 'http_request') {

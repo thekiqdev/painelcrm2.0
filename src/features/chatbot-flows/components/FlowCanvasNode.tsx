@@ -51,6 +51,41 @@ function cloneNodeData(data: FlowNodeData, type: string): Record<string, unknown
   return copy;
 }
 
+/** Texto + handle na mesma linha (evita desalinhamento por %). */
+function FlowExitRow({
+  id: handleId,
+  label,
+  handleClassName,
+  labelClassName,
+}: {
+  id: string;
+  label: string;
+  handleClassName: string;
+  labelClassName: string;
+}) {
+  return (
+    <div className="relative flex min-h-[16px] items-center justify-end pr-1">
+      <span
+        className={cn(
+          'max-w-[90%] truncate text-right text-[9px] font-medium uppercase tracking-wide',
+          labelClassName
+        )}
+      >
+        {label}
+      </span>
+      <Handle
+        type="source"
+        position={Position.Right}
+        id={handleId}
+        className={cn(
+          'chatbot-flow-handle !absolute !right-[-6px] !top-1/2 !-translate-y-1/2',
+          handleClassName
+        )}
+      />
+    </div>
+  );
+}
+
 function FlowNodeInner({ id, data, type, selected }: NodeProps & { data: FlowNodeData }) {
   const { deleteElements, getNode, setNodes, setEdges } = useReactFlow();
   const markDirty = useFlowEditorDirty();
@@ -67,14 +102,12 @@ function FlowNodeInner({ id, data, type, selected }: NodeProps & { data: FlowNod
   const menuOptions = t === 'menu_choice' ? normalizeMenuOptions(data.options) : [];
   const showMenu = t === 'menu_choice';
   const menuHasTimeout = showMenu && isInputTimeoutEnabled(data as Record<string, unknown>);
-  const menuHandleCount = showMenu ? menuOptions.length + 1 + (menuHasTimeout ? 1 : 0) : 0;
 
   const conditionCases =
     t === 'condition'
       ? normalizeConditionCases(migrateLegacyConditionData(data as Record<string, unknown>).cases)
       : [];
   const showCondition = t === 'condition';
-  const conditionHandleCount = showCondition ? conditionCases.length + 1 : 0;
 
   const waitHasTimeout = t === 'wait_input' && isInputTimeoutEnabled(data as Record<string, unknown>);
   const showWaitTimeout = waitHasTimeout;
@@ -325,70 +358,194 @@ function FlowNodeInner({ id, data, type, selected }: NodeProps & { data: FlowNod
         ) : null}
 
         {showCondition ? (
-          <div className="mt-2 space-y-0.5 text-right text-[9px] font-medium tracking-wide">
-            {conditionCases.map((c) => (
-              <div key={c.id} className="truncate text-amber-700">
-                {c.name || c.id}
-              </div>
-            ))}
-            <div className="text-rose-600 uppercase">else</div>
+          <div className="mt-2 space-y-0.5">
+            {conditionCases.map((c, i) => {
+              const handleId = conditionCaseHandle(c.id || `c${i + 1}`);
+              return (
+                <div
+                  key={`cond-row-${i}`}
+                  className="relative flex min-h-[16px] items-center justify-end pr-1"
+                >
+                  <span className="max-w-[90%] truncate text-right text-[9px] font-medium tracking-wide text-amber-700">
+                    {c.name || c.id || `Caso ${i + 1}`}
+                  </span>
+                  <Handle
+                    type="source"
+                    position={Position.Right}
+                    id={handleId}
+                    className="chatbot-flow-handle !absolute !right-[-6px] !top-1/2 !-translate-y-1/2 !bg-amber-500"
+                  />
+                </div>
+              );
+            })}
+            <div className="relative flex min-h-[16px] items-center justify-end pr-1">
+              <span className="text-[9px] font-medium uppercase tracking-wide text-rose-600">
+                else
+              </span>
+              <Handle
+                type="source"
+                position={Position.Right}
+                id="else"
+                className="chatbot-flow-handle !absolute !right-[-6px] !top-1/2 !-translate-y-1/2 !bg-rose-500"
+              />
+            </div>
           </div>
         ) : null}
 
         {showDualHttp ? (
-          <div className="mt-2 flex justify-end gap-4 text-[9px] font-medium uppercase tracking-wide">
-            <span className="text-emerald-600">ok</span>
-            <span className="text-rose-600">erro</span>
+          <div className="mt-2 space-y-0.5">
+            <FlowExitRow
+              id="default"
+              label="ok"
+              labelClassName="text-emerald-600"
+              handleClassName="!bg-emerald-500"
+            />
+            <FlowExitRow
+              id="error"
+              label="erro"
+              labelClassName="text-rose-600"
+              handleClassName="!bg-rose-500"
+            />
           </div>
         ) : null}
 
         {showDualInvoice && !showInvoiceTriple ? (
-          <div className="mt-2 flex justify-end gap-4 text-[9px] font-medium uppercase tracking-wide">
-            <span className="text-emerald-600">{invoiceOkLabel}</span>
-            <span className="text-rose-600">{invoiceFailLabel}</span>
+          <div className="mt-2 space-y-0.5">
+            <FlowExitRow
+              id="default"
+              label={invoiceOkLabel}
+              labelClassName="text-emerald-600"
+              handleClassName="!bg-emerald-500"
+            />
+            <FlowExitRow
+              id={invoiceFailHandle}
+              label={invoiceFailLabel}
+              labelClassName="text-rose-600"
+              handleClassName="!bg-rose-500"
+            />
           </div>
         ) : null}
 
         {showInvoiceTriple ? (
-          <div className="mt-2 flex justify-end gap-3 text-[9px] font-medium uppercase tracking-wide">
-            <span className="text-emerald-600">ok</span>
-            <span className="text-amber-600">vazia</span>
-            <span className="text-rose-600">inválida</span>
+          <div className="mt-2 space-y-0.5">
+            <FlowExitRow
+              id="default"
+              label="ok"
+              labelClassName="text-emerald-600"
+              handleClassName="!bg-emerald-500"
+            />
+            <FlowExitRow
+              id="empty"
+              label="vazia"
+              labelClassName="text-amber-600"
+              handleClassName="!bg-amber-500"
+            />
+            <FlowExitRow
+              id="invalid"
+              label="inválida"
+              labelClassName="text-rose-600"
+              handleClassName="!bg-rose-500"
+            />
           </div>
         ) : null}
 
         {showCrmLink ? (
-          <div className="mt-2 flex justify-end gap-3 text-[9px] font-medium uppercase tracking-wide">
-            <span className="text-emerald-600">cliente</span>
-            <span className="text-sky-600">lead</span>
-            <span className="text-amber-700">sem vínculo</span>
+          <div className="mt-2 space-y-0.5">
+            <FlowExitRow
+              id="client"
+              label="cliente"
+              labelClassName="text-emerald-600"
+              handleClassName="!bg-emerald-500"
+            />
+            <FlowExitRow
+              id="lead"
+              label="lead"
+              labelClassName="text-sky-600"
+              handleClassName="!bg-sky-500"
+            />
+            <FlowExitRow
+              id="unlinked"
+              label="sem vínculo"
+              labelClassName="text-amber-700"
+              handleClassName="!bg-amber-500"
+            />
           </div>
         ) : null}
 
         {showCrmConvert ? (
-          <div className="mt-2 flex justify-end gap-3 text-[9px] font-medium uppercase tracking-wide">
-            <span className="text-emerald-600">ok</span>
-            {showCrmConvertTriple ? <span className="text-sky-600">já cliente</span> : null}
-            <span className="text-rose-600">erro</span>
+          <div className="mt-2 space-y-0.5">
+            <FlowExitRow
+              id="default"
+              label="ok"
+              labelClassName="text-emerald-600"
+              handleClassName="!bg-emerald-500"
+            />
+            {showCrmConvertTriple ? (
+              <FlowExitRow
+                id="already_client"
+                label="já cliente"
+                labelClassName="text-sky-600"
+                handleClassName="!bg-sky-500"
+              />
+            ) : null}
+            <FlowExitRow
+              id="error"
+              label="erro"
+              labelClassName="text-rose-600"
+              handleClassName="!bg-rose-500"
+            />
           </div>
         ) : null}
 
         {showMenu ? (
-          <div className="mt-2 space-y-0.5 text-right text-[9px] font-medium tracking-wide">
-            {menuOptions.map((o) => (
-              <div key={o.id} className="truncate text-violet-700">
-                {o.label}
+          <div className="mt-2 space-y-0.5">
+            {menuOptions.map((o, i) => (
+              <div
+                key={`menu-row-${i}`}
+                className="relative flex min-h-[16px] items-center justify-end pr-1"
+              >
+                <span className="max-w-[90%] truncate text-right text-[9px] font-medium tracking-wide text-violet-700">
+                  {o.label || o.id || `Opção ${i + 1}`}
+                </span>
+                <Handle
+                  type="source"
+                  position={Position.Right}
+                  id={o.id || `opt_${i + 1}`}
+                  className="chatbot-flow-handle !absolute !right-[-6px] !top-1/2 !-translate-y-1/2 !bg-violet-500"
+                />
               </div>
             ))}
-            <div className="text-rose-600 uppercase">fallback</div>
-            {menuHasTimeout ? <div className="text-amber-700 uppercase">timeout</div> : null}
+            <FlowExitRow
+              id="fallback"
+              label="fallback"
+              labelClassName="text-rose-600"
+              handleClassName="!bg-rose-500"
+            />
+            {menuHasTimeout ? (
+              <FlowExitRow
+                id="timeout"
+                label="timeout"
+                labelClassName="text-amber-700"
+                handleClassName="!bg-amber-500"
+              />
+            ) : null}
           </div>
         ) : null}
 
         {showWaitTimeout ? (
-          <div className="mt-2 flex justify-end gap-4 text-[9px] font-medium uppercase tracking-wide">
-            <span className="text-slate-600">ok</span>
-            <span className="text-amber-700">timeout</span>
+          <div className="mt-2 space-y-0.5">
+            <FlowExitRow
+              id="default"
+              label="ok"
+              labelClassName="text-slate-600"
+              handleClassName="!bg-slate-500"
+            />
+            <FlowExitRow
+              id="timeout"
+              label="timeout"
+              labelClassName="text-amber-700"
+              handleClassName="!bg-amber-500"
+            />
           </div>
         ) : null}
       </div>
@@ -401,215 +558,6 @@ function FlowNodeInner({ id, data, type, selected }: NodeProps & { data: FlowNod
           className="chatbot-flow-handle !bg-slate-700"
         />
       ) : null}
-
-      {showCondition
-        ? [...conditionCases.map((c) => conditionCaseHandle(c.id)), 'else'].map((handleId, i) => {
-            const top =
-              conditionHandleCount <= 1
-                ? 50
-                : 28 + (i * (58 / Math.max(1, conditionHandleCount - 1)));
-            const isElse = handleId === 'else';
-            return (
-              <Handle
-                key={handleId}
-                type="source"
-                position={Position.Right}
-                id={handleId}
-                style={{ top: `${top}%` }}
-                className={cn(
-                  'chatbot-flow-handle',
-                  isElse ? '!bg-rose-500' : '!bg-amber-500'
-                )}
-              />
-            );
-          })
-        : null}
-
-      {showDualHttp ? (
-        <>
-          <Handle
-            type="source"
-            position={Position.Right}
-            id="default"
-            style={{ top: '42%' }}
-            className="chatbot-flow-handle !bg-emerald-500"
-          />
-          <Handle
-            type="source"
-            position={Position.Right}
-            id="error"
-            style={{ top: '72%' }}
-            className="chatbot-flow-handle !bg-rose-500"
-          />
-        </>
-      ) : null}
-
-      {showDualInvoice && !showInvoiceTriple ? (
-        <>
-          <Handle
-            type="source"
-            position={Position.Right}
-            id="default"
-            style={{ top: '42%' }}
-            className="chatbot-flow-handle !bg-emerald-500"
-          />
-          <Handle
-            type="source"
-            position={Position.Right}
-            id={invoiceFailHandle}
-            style={{ top: '72%' }}
-            className="chatbot-flow-handle !bg-rose-500"
-          />
-        </>
-      ) : null}
-
-      {showInvoiceTriple ? (
-        <>
-          <Handle
-            type="source"
-            position={Position.Right}
-            id="default"
-            style={{ top: '35%' }}
-            className="chatbot-flow-handle !bg-emerald-500"
-          />
-          <Handle
-            type="source"
-            position={Position.Right}
-            id="empty"
-            style={{ top: '55%' }}
-            className="chatbot-flow-handle !bg-amber-500"
-          />
-          <Handle
-            type="source"
-            position={Position.Right}
-            id="invalid"
-            style={{ top: '75%' }}
-            className="chatbot-flow-handle !bg-rose-500"
-          />
-        </>
-      ) : null}
-
-      {showCrmLink ? (
-        <>
-          <Handle
-            type="source"
-            position={Position.Right}
-            id="client"
-            style={{ top: '32%' }}
-            className="chatbot-flow-handle !bg-emerald-500"
-          />
-          <Handle
-            type="source"
-            position={Position.Right}
-            id="lead"
-            style={{ top: '52%' }}
-            className="chatbot-flow-handle !bg-sky-500"
-          />
-          <Handle
-            type="source"
-            position={Position.Right}
-            id="unlinked"
-            style={{ top: '72%' }}
-            className="chatbot-flow-handle !bg-amber-500"
-          />
-        </>
-      ) : null}
-
-      {showCrmConvert ? (
-        showCrmConvertTriple ? (
-          <>
-            <Handle
-              type="source"
-              position={Position.Right}
-              id="default"
-              style={{ top: '32%' }}
-              className="chatbot-flow-handle !bg-emerald-500"
-            />
-            <Handle
-              type="source"
-              position={Position.Right}
-              id="already_client"
-              style={{ top: '52%' }}
-              className="chatbot-flow-handle !bg-sky-500"
-            />
-            <Handle
-              type="source"
-              position={Position.Right}
-              id="error"
-              style={{ top: '72%' }}
-              className="chatbot-flow-handle !bg-rose-500"
-            />
-          </>
-        ) : (
-          <>
-            <Handle
-              type="source"
-              position={Position.Right}
-              id="default"
-              style={{ top: '38%' }}
-              className="chatbot-flow-handle !bg-emerald-500"
-            />
-            <Handle
-              type="source"
-              position={Position.Right}
-              id="error"
-              style={{ top: '62%' }}
-              className="chatbot-flow-handle !bg-rose-500"
-            />
-          </>
-        )
-      ) : null}
-
-      {showWaitTimeout ? (
-        <>
-          <Handle
-            type="source"
-            position={Position.Right}
-            id="default"
-            style={{ top: '42%' }}
-            className="chatbot-flow-handle !bg-slate-500"
-          />
-          <Handle
-            type="source"
-            position={Position.Right}
-            id="timeout"
-            style={{ top: '72%' }}
-            className="chatbot-flow-handle !bg-amber-500"
-          />
-        </>
-      ) : null}
-
-      {showMenu
-        ? [
-            ...menuOptions.map((o) => o.id),
-            'fallback',
-            ...(menuHasTimeout ? (['timeout'] as const) : []),
-          ].map((handleId, i) => {
-            const top =
-              menuHandleCount <= 1
-                ? 50
-                : 28 + (i * (58 / Math.max(1, menuHandleCount - 1)));
-            const isFallback = handleId === 'fallback';
-            const isTimeout = handleId === 'timeout';
-            return (
-              <Handle
-                key={handleId}
-                type="source"
-                position={Position.Right}
-                id={handleId}
-                style={{ top: `${top}%` }}
-                className={cn(
-                  'chatbot-flow-handle',
-                  isTimeout
-                    ? '!bg-amber-500'
-                    : isFallback
-                      ? '!bg-rose-500'
-                      : '!bg-violet-500'
-                )}
-              />
-            );
-          })
-        : null}
     </div>
   );
 }

@@ -214,6 +214,40 @@ describe('flowRuntimeEngine', () => {
     expect(r.session.status).toBe('ended');
   });
 
+  it('set_variable assignments múltiplos + dotted', () => {
+    const g: RuntimeGraph = {
+      nodes: [
+        { id: 'start', type: 'start', data: { trigger: { type: 'first_message' } } },
+        {
+          id: 'sv',
+          type: 'set_variable',
+          data: {
+            assignments: [
+              { name: 'lead.origem', value: 'whatsapp' },
+              { name: 'etapa', value: '{{lead.origem}}-ok' },
+            ],
+          },
+        },
+        { id: 'm', type: 'send_message', data: { text: '{{etapa}}' } },
+        { id: 'e1', type: 'end', data: {} },
+      ],
+      edges: [
+        { id: 'a', source: 'start', target: 'sv', sourceHandle: 'default' },
+        { id: 'b', source: 'sv', target: 'm', sourceHandle: 'default' },
+        { id: 'c', source: 'm', target: 'e1', sourceHandle: 'default' },
+      ],
+    };
+    const r = processInboundStep({
+      graph: g,
+      session: { status: 'active', currentNodeId: null, variables: {}, waitingVariable: null },
+      messageBody: 'x',
+      justStarted: true,
+    });
+    expect(r.session.variables['lead.origem']).toBe('whatsapp');
+    expect(r.session.variables.etapa).toBe('whatsapp-ok');
+    expect(r.actions.some((a) => a.type === 'send_text' && a.text === 'whatsapp-ok')).toBe(true);
+  });
+
   it('delay pausa e resumeFromDelay avança', () => {
     const g: RuntimeGraph = {
       nodes: [

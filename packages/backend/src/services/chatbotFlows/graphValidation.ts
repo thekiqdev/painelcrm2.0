@@ -53,6 +53,64 @@ const varName = z
   .min(1)
   .regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/, 'Variável inválida');
 
+/** Nome de variável de sessão: `city` ou `lead.origem` (dotted). */
+const sessionVarName = z
+  .string()
+  .trim()
+  .min(1)
+  .max(128)
+  .regex(
+    /^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$/,
+    'Use letras/números/_ e pontos (ex.: lead.origem)'
+  );
+
+export type SetVariableAssignment = { name: string; value: string };
+
+/** Leitura editor/runtime: assignments[] ou legado { variable, value }. */
+export function readSetVariableAssignments(
+  data: Record<string, unknown> | null | undefined,
+  opts?: { forEditor?: boolean }
+): SetVariableAssignment[] {
+  const forEditor = opts?.forEditor !== false;
+  const raw = data || {};
+  if (Array.isArray(raw.assignments)) {
+    const rows = raw.assignments
+      .map((row) => {
+        if (!row || typeof row !== 'object') return null;
+        const r = row as Record<string, unknown>;
+        return { name: String(r.name ?? ''), value: String(r.value ?? '') };
+      })
+      .filter(Boolean) as SetVariableAssignment[];
+    if (forEditor) {
+      return rows.length ? rows : [{ name: '', value: '' }];
+    }
+    return rows.filter((r) => r.name.trim());
+  }
+  const legacyName = String(raw.variable ?? raw.name ?? '');
+  const legacyValue = String(raw.value ?? '');
+  if (legacyName || legacyValue || forEditor) {
+    return [{ name: legacyName, value: legacyValue }];
+  }
+  return [];
+}
+
+function normalizeSetVariableData(raw: unknown): Record<string, unknown> {
+  if (!raw || typeof raw !== 'object') return { assignments: [{ name: 'var1', value: '' }] };
+  const o = { ...(raw as Record<string, unknown>) };
+  let assignments = readSetVariableAssignments(o, { forEditor: false });
+  if (assignments.length === 0) {
+    assignments = [{ name: 'var1', value: '' }];
+  }
+  o.assignments = assignments.map((a) => ({
+    name: a.name.trim(),
+    value: String(a.value ?? ''),
+  }));
+  delete o.variable;
+  delete o.name;
+  delete o.value;
+  return o;
+}
+
 export const httpHeaderSchema = z.object({
   key: z.string().trim().min(1),
   value: z.string(),
@@ -281,15 +339,21 @@ export const resolveConversationDataSchema = z.object({
   close_attendance: z.boolean().optional().default(true),
 });
 
-export const setVariableDataSchema = z.object({
-  label: z.string().optional(),
-  variable: z
-    .string()
-    .trim()
-    .min(1)
-    .regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/, 'Variável inválida'),
-  value: z.string(),
-});
+export const setVariableDataSchema = z.preprocess(
+  normalizeSetVariableData,
+  z.object({
+    label: z.string().optional(),
+    assignments: z
+      .array(
+        z.object({
+          name: sessionVarName,
+          value: z.string(),
+        })
+      )
+      .min(1, 'Inclua ao menos 1 variável')
+      .max(20),
+  })
+);
 
 export const addTagDataSchema = z
   .object({

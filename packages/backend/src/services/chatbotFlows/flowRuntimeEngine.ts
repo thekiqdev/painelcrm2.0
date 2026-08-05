@@ -32,6 +32,7 @@ import {
 import { pickConditionHandle } from './conditionHelpers.js';
 import { computeInputTimeoutResumeAt } from './inputTimeout.js';
 import { matchStartTrigger, parseStartTrigger } from './flowStartTrigger.js';
+import { readSetVariableAssignments } from './graphValidation.js';
 
 const INVOICE_ASSIST_RETRIES_KEY = 'invoice._assist_retries';
 const INVOICE_ASSIST_CHOICE_VAR = 'answer';
@@ -1089,9 +1090,14 @@ export function processInboundStep(opts: {
         return { session, actions, handled: true };
       }
       case 'set_variable': {
-        const name = String(data.variable || '').trim();
-        const value = interpolateTemplate(String(data.value ?? ''), session.variables);
-        if (name) {
+        const rows = readSetVariableAssignments(
+          (node.data || {}) as Record<string, unknown>,
+          { forEditor: false }
+        );
+        for (const row of rows) {
+          const name = row.name.trim();
+          if (!name) continue;
+          const value = interpolateTemplate(String(row.value ?? ''), session.variables);
           session.variables[name] = value;
           actions.push({ type: 'set_variable', name, value });
         }
