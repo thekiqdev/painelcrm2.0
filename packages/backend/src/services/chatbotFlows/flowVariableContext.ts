@@ -42,13 +42,15 @@ export async function buildFlowSessionVariableBag(opts: {
       display_name: string | null;
       contact_name: string | null;
       profile_name: string | null;
-      phone_normalized: string | null;
+      canonical_phone: string | null;
+      phone_number: string | null;
       assigned_team_id: string | null;
       assigned_to_user_id: string | null;
       user_id: string;
       client_id: string | null;
     }>(
-      `SELECT c.display_name, c.contact_name, c.profile_name, c.phone_normalized,
+      // phone_normalized não existe no schema; usar canonical_phone / phone_number
+      `SELECT c.display_name, c.contact_name, c.profile_name, c.canonical_phone, c.phone_number,
               c.assigned_team_id, c.assigned_to_user_id, c.user_id, c.client_id
        FROM chat_conversations c
        INNER JOIN users u ON u.id = c.user_id
@@ -65,7 +67,9 @@ export async function buildFlowSessionVariableBag(opts: {
       put(bag, 'client_name', contact);
       put(bag, 'display_name', contact);
 
-      const phone = (row.phone_normalized || '').trim();
+      const phone = String(row.canonical_phone || row.phone_number || '')
+        .replace(/\D/g, '')
+        .trim();
       put(bag, 'contact.phone', phone);
       put(bag, 'canonical_phone', phone);
       put(bag, 'contact_phone', phone);

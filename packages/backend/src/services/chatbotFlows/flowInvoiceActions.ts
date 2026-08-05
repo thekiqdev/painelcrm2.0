@@ -155,10 +155,11 @@ export async function resolveClientIdForConversation(opts: {
 }): Promise<string | null> {
   const conv = await pool.query<{
     client_id: string | null;
-    phone_normalized: string | null;
+    canonical_phone: string | null;
     phone_number: string | null;
   }>(
-    `SELECT c.client_id, c.phone_normalized, c.phone_number
+    // phone_normalized não existe no schema; usar canonical_phone / phone_number
+    `SELECT c.client_id, c.canonical_phone, c.phone_number
      FROM chat_conversations c
      INNER JOIN users u ON u.id = c.user_id
      WHERE c.id = $1::uuid AND u.tenant_id = $2::uuid
@@ -169,7 +170,7 @@ export async function resolveClientIdForConversation(opts: {
   if (!row) return null;
   if (row.client_id) return String(row.client_id);
 
-  const phone = String(row.phone_normalized || row.phone_number || '').replace(/\D/g, '');
+  const phone = String(row.canonical_phone || row.phone_number || '').replace(/\D/g, '');
   if (phone.length < 8) return null;
 
   const clients = await pool.query<{ id: string }>(
