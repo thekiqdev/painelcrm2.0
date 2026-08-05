@@ -52,6 +52,45 @@ export async function userHasFeature(userId: string, featureKey: string): Promis
 }
 
 /**
+ * Feature efetiva por tenant (webhook/workers sem userId).
+ * Override tenant → plan_features; fail-closed se chave inválida ou plano sem feature.
+ */
+export async function tenantHasFeature(tenantId: string, featureKey: string): Promise<boolean> {
+  if (!isValidFeatureKey(featureKey)) return false;
+  if (!tenantId) return false;
+
+  const tenantRow = await pool.query(
+    'SELECT plan_id, status, trial_ends_at, activated_billing_id FROM tenants WHERE id = $1',
+    [tenantId]
+  );
+  if (tenantRow.rows.length === 0) return false;
+  const tenant = tenantRow.rows[0];
+  if (tenant.status === 'suspended') return false;
+  if (tenant.status === 'active' || tenant.activated_billing_id != null) {
+    /* ok */
+  } else if (
+    tenant.trial_ends_at &&
+    new Date(tenant.trial_ends_at) < new Date() &&
+    (tenant.status === 'trial' || tenant.status === 'payment_pending')
+  ) {
+    return false;
+  }
+
+  const overrideRow = await pool.query(
+    'SELECT enabled FROM tenant_feature_overrides WHERE tenant_id = $1 AND feature_key = $2',
+    [tenantId, featureKey]
+  );
+  if (overrideRow.rows.length > 0) return overrideRow.rows[0].enabled === true;
+
+  const planRow = await pool.query(
+    'SELECT enabled FROM plan_features WHERE plan_id = $1 AND feature_key = $2',
+    [tenant.plan_id, featureKey]
+  );
+  if (planRow.rows.length > 0) return planRow.rows[0].enabled === true;
+  return false;
+}
+
+/**
  * Retorna a lista de feature_key habilitadas para o usuário (para uso em lote no frontend).
  */
 export async function getEnabledFeaturesForUser(userId: string): Promise<string[]> {

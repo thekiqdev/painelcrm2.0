@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, List, Calendar, FileText, FileSearch, Settings, UserPlus,
   ClipboardCheck, MessageSquare, LayoutTemplate, Ticket, CreditCard, LayoutGrid, Store,
   Package, ShoppingCart, CalendarSync, Landmark, Receipt, PieChart, ArrowLeftRight, Tags,
-  ClipboardList, CalendarDays, type LucideIcon,
+  ClipboardList, CalendarDays, Workflow, type LucideIcon,
 } from 'lucide-react';
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel,
@@ -87,6 +87,7 @@ export const AppShellSidebar = React.memo(function AppShellSidebar() {
   const hasAgenda = useFeatureFlag('agenda');
   const hasChat = useFeatureFlag('chat');
   const hasTickets = useFeatureFlag('tickets');
+  const hasChatbotFlows = useFeatureFlag('chatbot_flows');
   const hasProposals = useFeatureFlag('proposals');
   const hasContracts = useFeatureFlag('contracts');
   const hasInvoices = useFeatureFlag('invoices');
@@ -365,6 +366,15 @@ export const AppShellSidebar = React.memo(function AppShellSidebar() {
               )}
               {show(hasTickets, 'tickets') && (
                 <TicketSidebarNavItem />
+              )}
+              {show(hasChatbotFlows, 'chatbot_flows') && (
+                <SidebarNavLinkItem
+                  to="/chatbot-flows"
+                  icon={Workflow}
+                  label="Chatbot Flows"
+                  preload={() => routePreload.chatbotFlows()}
+                  collapsed={collapsed}
+                />
               )}
             </SidebarMenu>
           </SidebarGroupContent>

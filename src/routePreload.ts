@@ -34,5 +34,7 @@ export const routePreload = {
   },
   chatKanban: () => import("./pages/ChatKanbanPage"),
   tickets: () => import("./pages/Tickets"),
+  chatbotFlows: () => import("./pages/ChatbotFlows"),
+  chatbotFlowEditor: () => import("./pages/ChatbotFlowEditor"),
   meuPlano: () => import("./pages/MeuPlano"),
 } as const;

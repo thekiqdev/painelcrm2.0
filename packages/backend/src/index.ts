@@ -54,6 +54,7 @@ import superadminOpsKanbanRoutes from './routes/superadminOpsKanbanRoutes.js';
 import kanbanAttachRoutes from './routes/kanbanAttachRoutes.js';
 import uazapiWebhookRoutes from './routes/uazapiWebhookRoutes.js';
 import asaasWebhookRoutes from './routes/asaasWebhookRoutes.js';
+import chatbotFlowsWebhookRoutes from './routes/chatbotFlowsWebhookRoutes.js';
 import notificationsRoutes from './routes/notificationsRoutes.js';
 import notificationsEngineRoutes from './routes/notificationsEngineRoutes.js';
 import messageTemplatesRoutes from './routes/messageTemplatesRoutes.js';
@@ -75,6 +76,7 @@ import mercadoPagoIntegrationRoutes from './routes/mercadoPagoIntegrationRoutes.
 import * as mercadoPagoIntegrationController from './controllers/mercadoPagoIntegrationController.js';
 import { mercadoPagoFeatureGuard } from './middleware/mercadoPagoFeatureGuard.js';
 import appointmentsRoutes from './routes/appointmentsRoutes.js';
+import chatbotFlowsRoutes from './routes/chatbotFlowsRoutes.js';
 import { getCheckoutContext } from './controllers/checkoutContextController.js';
 import planPurchaseRoutes from './routes/planPurchaseRoutes.js';
 import billingRoutes from './routes/billingRoutes.js';
@@ -483,6 +485,7 @@ app.get('/api/integrations/mercado-pago/callback', mercadoPagoIntegrationControl
 app.post('/api/webhooks/mercado-pago', mercadoPagoFeatureGuard, mercadoPagoIntegrationController.postMercadoPagoWebhook);
 app.use('/api/integrations/mercado-pago', mercadoPagoIntegrationRoutes);
 app.use('/api/appointments', appointmentsRoutes);
+app.use('/api/chatbot-flows', chatbotFlowsRoutes);
 app.use('/api/announcements', authenticateToken, setCurrentTenant, announcementsUpdatesRoutes);
 app.use('/api/superadmin', superadminRoutes);
 app.use('/api/superadmin/plans', plansRoutes);
@@ -493,6 +496,8 @@ app.use('/api/webhooks/uazapi', uazapiWebhookRoutes);
 app.use('/api/webhooks/asaas', asaasWebhookRoutes);
 app.use('/webhooks/uazapi', uazapiWebhookRoutes);
 app.use('/webhooks/asaas', asaasWebhookRoutes);
+app.use('/webhooks/chatbot-flows', chatbotFlowsWebhookRoutes);
+app.use('/api/webhooks/chatbot-flows', chatbotFlowsWebhookRoutes);
 
 // 404 handler
 app.use((req, res) => {

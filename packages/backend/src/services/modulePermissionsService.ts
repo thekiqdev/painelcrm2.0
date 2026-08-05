@@ -30,6 +30,7 @@ export const MODULE_IDS = [
   'settings',
   'meu_plano',
   'agenda',
+  'chatbot_flows',
 ] as const;
 
 export type ModuleId = (typeof MODULE_IDS)[number];
@@ -59,6 +60,7 @@ const MODULE_LABELS: Record<ModuleId, string> = {
   settings: 'Configurações',
   meu_plano: 'Meu Plano',
   agenda: 'Agenda',
+  chatbot_flows: 'Chatbot Flows',
 };
 
 const MODULES_SUPPORT_OWN: Partial<Record<ModuleId, { editOwn: boolean; deleteOwn: boolean }>> = {
@@ -72,6 +74,7 @@ const MODULES_SUPPORT_OWN: Partial<Record<ModuleId, { editOwn: boolean; deleteOw
   proposals: { editOwn: true, deleteOwn: true },
   contracts: { editOwn: true, deleteOwn: true },
   agenda: { editOwn: true, deleteOwn: true },
+  chatbot_flows: { editOwn: true, deleteOwn: false },
 };
 
 /** Retorna o schema de módulos para a UI (lista de módulos com labels e se suportam edit_own/delete_own). */

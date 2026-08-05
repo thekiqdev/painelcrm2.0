@@ -95,6 +95,7 @@ function MobileAppNavigationImpl() {
   const hasAgenda = useFeatureFlag("agenda");
   const hasProjects = useFeatureFlag("projects");
   const hasTickets = useFeatureFlag("tickets");
+  const hasChatbotFlows = useFeatureFlag("chatbot_flows");
   const hasSettings = useFeatureFlag("settings");
   const hasProducts = useFeatureFlag("products");
 
@@ -113,6 +114,7 @@ function MobileAppNavigationImpl() {
         agenda: hasAgenda,
         chat: hasChat,
         tickets: hasTickets,
+        chatbot_flows: hasChatbotFlows,
         proposals: hasProposals,
         contracts: hasContracts,
         invoices: hasInvoices,
@@ -133,6 +135,7 @@ function MobileAppNavigationImpl() {
       hasAgenda,
       hasChat,
       hasTickets,
+      hasChatbotFlows,
       hasProposals,
       hasContracts,
       hasInvoices,

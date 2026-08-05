@@ -133,6 +133,8 @@ const Tickets = lazyWithReload(() => import("./pages/Tickets"));
 const TicketDetail = lazyWithReload(() => import("./pages/TicketDetail"));
 const TicketsKanban = lazyWithReload(() => import("./pages/TicketsKanban"));
 const NewTicket = lazyWithReload(() => import("./pages/NewTicket"));
+const ChatbotFlows = lazyWithReload(() => import("./pages/ChatbotFlows"));
+const ChatbotFlowEditor = lazyWithReload(() => import("./pages/ChatbotFlowEditor"));
 const SuperAdminDashboard = lazyWithReload(() => import("./pages/superadmin/SuperAdminDashboard"));
 const SuperAdminPlans = lazyWithReload(() => import("./pages/superadmin/SuperAdminPlans"));
 const SuperAdminClients = lazyWithReload(() => import("./pages/superadmin/SuperAdminClients"));
@@ -1014,6 +1016,24 @@ const App = () => (
                   <AppLayout>
                     <Suspense fallback={<PageContentSkeleton />}>
                       <Tickets />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/chatbot-flows" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <ChatbotFlows />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/chatbot-flows/:id" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <ChatbotFlowEditor />
                     </Suspense>
                   </AppLayout>
               </AuthGuard>

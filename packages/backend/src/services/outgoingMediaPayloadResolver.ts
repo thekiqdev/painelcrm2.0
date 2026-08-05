@@ -6,7 +6,7 @@ import {
   getWhatsappTemplateMediaRoot,
 } from './whatsappTemplateMediaStorageService.js';
 
-type OutgoingMediaType = 'image' | 'document';
+type OutgoingMediaType = 'image' | 'document' | 'audio';
 
 type ResolveOutgoingMediaPayloadParams = {
   type: OutgoingMediaType;
@@ -25,7 +25,9 @@ type ResolvedOutgoingMediaPayload = {
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 
 function defaultMime(type: OutgoingMediaType): string {
-  return type === 'document' ? 'application/pdf' : 'image/jpeg';
+  if (type === 'document') return 'application/pdf';
+  if (type === 'audio') return 'audio/mpeg';
+  return 'image/jpeg';
 }
 
 function isPrivateIpv4(host: string): boolean {

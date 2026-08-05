@@ -11,6 +11,7 @@ import {
   runInboundChatRoutingAsync,
 } from '../services/chatInboundAutomationHooks.js';
 import { runChatbotPhase8Inbound } from '../services/chatbotPhase8Runner.js';
+import { runChatbotFlowsRuntimeInbound } from '../services/chatbotFlows/chatbotFlowsRuntimeRunner.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { uazapiService } from '../services/uazapi.js';
 import { resolveOutgoingMediaPayload } from '../services/outgoingMediaPayloadResolver.js';
@@ -110,6 +111,7 @@ import {
   ensurePlainString,
   extractMediaInfo,
   extractMessageBody,
+  extractInteractiveReplyId,
   extractUazDownloadMessageId,
   inferMessageTypeFromPayload,
   mediaItemsFromDownloadPayload,
@@ -2116,11 +2118,24 @@ async function saveMessage(
         messageBody: bodyForInsert,
         inserted: true,
       }).catch((e) => console.warn('[SaveMessage] inbound routing async failed', e));
-      void runChatbotPhase8Inbound({
-        conversationId,
-        messageBody: bodyForInsert,
-        inserted: true,
-      }).catch((e) => console.warn('[SaveMessage] chatbot phase8 async failed', e));
+      void (async () => {
+        try {
+          const flowsHandled = await runChatbotFlowsRuntimeInbound({
+            conversationId,
+            messageBody: bodyForInsert,
+            inserted: true,
+            interactiveReplyId: extractInteractiveReplyId(rawMeta) || null,
+          });
+          if (flowsHandled) return;
+          await runChatbotPhase8Inbound({
+            conversationId,
+            messageBody: bodyForInsert,
+            inserted: true,
+          });
+        } catch (e) {
+          console.warn('[SaveMessage] chatbot inbound async failed', e);
+        }
+      })();
     }
 
     return { rowId: messageResult.rows[0]?.id ?? null, inserted: true };
@@ -10036,7 +10051,7 @@ export type KanbanAutomationOutboundTextInput = {
 export type KanbanAutomationOutboundMediaInput = {
   actorUserId: string;
   conversationId: string;
-  type: 'image' | 'document';
+  type: 'image' | 'document' | 'audio';
   fileUrl?: string | null;
   storagePath?: string | null;
   caption?: string | null;
@@ -10289,7 +10304,8 @@ export async function sendKanbanAutomationOutboundText(
 export async function sendKanbanAutomationOutboundMedia(
   input: KanbanAutomationOutboundMediaInput,
 ): Promise<{ ok: boolean; error?: string }> {
-  const mimeDefault = input.type === 'document' ? 'application/pdf' : 'image/jpeg';
+  const mimeDefault =
+    input.type === 'document' ? 'application/pdf' : input.type === 'audio' ? 'audio/mpeg' : 'image/jpeg';
   const mime = (input.mimeType ?? mimeDefault).trim() || mimeDefault;
   let resolvedMedia: Awaited<ReturnType<typeof resolveOutgoingMediaPayload>>;
   try {
@@ -10332,7 +10348,8 @@ export async function sendKanbanAutomationOutboundMedia(
       return { ok: false, error: 'no_recipient_number' };
     }
 
-    const caption = (input.caption ?? '').trim() || '';
+    // WhatsApp não usa legenda em áudio; mantém caption só para image/document.
+    const caption = input.type === 'audio' ? '' : (input.caption ?? '').trim() || '';
     const localTrackId = `kanban_auto_media_${randomUUID()}`;
     const provisionalExternalId = `local:${randomUUID()}`;
     const metaBase: Record<string, unknown> = {
@@ -10351,7 +10368,8 @@ export async function sendKanbanAutomationOutboundMedia(
       metaBase.whatsapp_model_item_type = input.whatsappModelTrace.message_type;
     }
 
-    const messageKind = input.type === 'document' ? 'document' : 'image';
+    const messageKind =
+      input.type === 'document' ? 'document' : input.type === 'audio' ? 'audio' : 'image';
     const saveResult = await saveMessage(conversation.id, 'outgoing', {
       externalMessageId: provisionalExternalId,
       body: caption || null,

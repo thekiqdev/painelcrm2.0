@@ -13,6 +13,7 @@ import { processDueKanbanScheduledMovesBatch } from '../services/kanbanScheduled
 import { processAnnouncementSendRecipientsBatch } from '../services/announcements/announcementSendWorker.js';
 import { runChatSlaAutomationTick } from '../services/chatSlaWorkerService.js';
 import { processChatScheduledMessagesWorkerTick } from '../services/chatScheduledMessagesWorker.js';
+import { processDueChatbotFlowDelaysBatch } from '../services/chatbotFlows/chatbotFlowsRuntimeRunner.js';
 import { startWhatsappAvatarCacheWorkerInterval } from '../services/whatsappAvatarCacheWorker.js';
 import { getChatAutomationWorkerPollMs } from '../config/chatAutomationEnv.js';
 import { getAnnouncementsSendPollMs } from '../config/announcementsWorkerEnv.js';
@@ -87,6 +88,18 @@ export function startDenseBackgroundWorkers(pool: Pool): DenseWorkerHandles {
     }, chatSchedMsgPollMs),
   );
 
+  const chatbotDelayPollMs = Math.max(
+    10_000,
+    parseInt(process.env.CHATBOT_FLOWS_DELAY_POLL_MS || '20000', 10),
+  );
+  timers.push(
+    setInterval(() => {
+      void processDueChatbotFlowDelaysBatch(20).catch((err) =>
+        appLogger.error('chatbot-flows-delay', 'batch error', { err: String(err) }),
+      );
+    }, chatbotDelayPollMs),
+  );
+
   startWhatsappAvatarCacheWorkerInterval();
 
   appLogger.boot('dense-workers', 'started', {
@@ -94,6 +107,7 @@ export function startDenseBackgroundWorkers(pool: Pool): DenseWorkerHandles {
     announcementsPollMs,
     chatAutomationMs,
     chatSchedMsgPollMs,
+    chatbotDelayPollMs,
   });
 
   return { timers };

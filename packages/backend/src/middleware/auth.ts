@@ -433,6 +433,18 @@ export const appointmentsAuth = [
   setRequestDb,
 ];
 
+/** CRM com feature "chatbot_flows" (editor visual de fluxos). */
+export const chatbotFlowsAuth = [
+  authenticateToken,
+  setCurrentTenant,
+  bindRequestContext,
+  requireTenantForBusinessApp,
+  requireTenantCommercialAccess,
+  requireActivePlanPeriod,
+  requireFeature('chatbot_flows'),
+  setRequestDb,
+];
+
 /** Cadeia para rotas superadmin: auth + superadmin + RLS (bypass). */
 export const superadminAuth = [authenticateToken, requireSuperAdmin, bindRequestContext, setRequestDb];
 

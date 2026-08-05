@@ -1,0 +1,976 @@
+import { z } from 'zod';
+
+import { outHandlesForMenuChoice } from './menuChoiceHelpers';
+import {
+  migrateConditionGraph,
+  migrateLegacyConditionData,
+  outHandlesForCondition,
+} from './conditionHelpers';
+import { isInputTimeoutEnabled } from './inputTimeout';
+import {
+  annotationArrowDataSchema,
+  annotationTextDataSchema,
+  isEditorOnlyNodeType,
+  stickyNoteDataSchema,
+} from './canvasAnnotations';
+
+export const FLOW_NODE_TYPES = [
+  'start',
+  'send_message',
+  'wait_input',
+  'condition',
+  'transfer_human',
+  'end',
+  'set_variable',
+  'add_tag',
+  'assign_agent',
+  'move_kanban',
+  'kanban_add_card',
+  'delay',
+  'http_request',
+  'webhook_out',
+  'webhook_in',
+  'lookup_invoice',
+  'select_invoice',
+  'invoice_assist',
+  'menu_choice',
+  'conversation_note',
+  'resolve_conversation',
+] as const;
+
+export type EssentialNodeType = (typeof FLOW_NODE_TYPES)[number];
+export type FlowNodeType = EssentialNodeType;
+
+export const NODE_LABELS: Record<EssentialNodeType, string> = {
+  start: 'Início',
+  send_message: 'Mensagem',
+  wait_input: 'Pergunta',
+  condition: 'Condição',
+  transfer_human: 'Humano',
+  end: 'Fim',
+  set_variable: 'Variável',
+  add_tag: 'Tag',
+  assign_agent: 'Atribuir',
+  move_kanban: 'Kanban',
+  kanban_add_card: 'Kanban',
+  delay: 'Delay',
+  http_request: 'HTTP',
+  webhook_out: 'Webhook out',
+  webhook_in: 'Webhook in',
+  lookup_invoice: 'Consultar fatura',
+  select_invoice: 'Escolher fatura',
+  invoice_assist: 'Faturas',
+  menu_choice: 'Menu / IF',
+  conversation_note: 'Nota interna',
+  resolve_conversation: 'Resolver',
+};
+
+const varName = z
+  .string()
+  .trim()
+  .min(1)
+  .regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/, 'Variável inválida');
+
+export const httpHeaderSchema = z.object({
+  key: z.string().trim().min(1),
+  value: z.string(),
+});
+
+/** Aceita linhas vazias no editor; filtra na validação. */
+const headersArraySchema = z.preprocess((v) => {
+  if (!Array.isArray(v)) return [];
+  return v.filter(
+    (h) => h && typeof h === 'object' && String((h as { key?: unknown }).key ?? '').trim()
+  );
+}, z.array(httpHeaderSchema).default([]));
+
+const jsonFieldsUiSchema = z.enum(['fields', 'json']).optional();
+
+export const httpResponseMapSchema = z.object({
+  path: z.string().trim().min(1),
+  variable: varName,
+});
+
+export const httpRequestDataSchema = z.object({
+  label: z.string().optional(),
+  method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).default('GET'),
+  url: z.string().trim().min(1, 'URL obrigatória'),
+  headers: headersArraySchema,
+  headers_ui: jsonFieldsUiSchema,
+  body: z.string().optional().default(''),
+  body_ui: jsonFieldsUiSchema,
+  timeout_ms: z.coerce.number().int().min(500).max(30000).default(10000),
+  response_variable: z.preprocess(
+    (v) => (v === '' || v == null ? undefined : v),
+    z
+      .string()
+      .trim()
+      .regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/)
+      .optional()
+  ),
+  status_variable: z.preprocess(
+    (v) => (v === '' || v == null ? undefined : v),
+    z
+      .string()
+      .trim()
+      .regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/)
+      .optional()
+  ),
+  response_map: z.array(httpResponseMapSchema).optional().default([]),
+});
+
+export const webhookOutDataSchema = z.object({
+  label: z.string().optional(),
+  method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).optional().default('POST'),
+  url: z.string().trim().min(1, 'URL obrigatória'),
+  headers: headersArraySchema,
+  headers_ui: jsonFieldsUiSchema,
+  secret: z.string().optional().default(''),
+  timeout_ms: z.coerce.number().int().min(500).max(30000).default(10000),
+  include_session_vars: z.boolean().optional().default(true),
+  /**
+   * envelope = payload padrão PainelCRM
+   * envelope_plus = padrão + campo `data` (JSON do body_template)
+   * custom = body inteiro = body_template interpolado
+   */
+  payload_mode: z.enum(['envelope', 'envelope_plus', 'custom']).optional().default('envelope'),
+  body_template: z.string().optional().default(''),
+  body_ui: jsonFieldsUiSchema,
+});
+
+export const webhookInDataSchema = z.object({
+  label: z.string().optional(),
+  token: z
+    .string()
+    .trim()
+    .min(16, 'Token do webhook obrigatório')
+    .max(128)
+    .regex(/^[a-zA-Z0-9_-]+$/, 'Token inválido'),
+  secret: z.string().optional().default(''),
+});
+
+export function generateInboundWebhookToken(): string {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+export function buildInboundWebhookPath(token: string): string {
+  return `/webhooks/chatbot-flows/${encodeURIComponent(token)}`;
+}
+
+export const triggerSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('keyword'),
+    value: z.string().trim().min(1, 'Palavra-chave obrigatória'),
+  }),
+  z.object({
+    type: z.literal('first_message'),
+  }),
+]);
+
+export const startDataSchema = z.object({
+  label: z.string().optional(),
+  trigger: triggerSchema.default({ type: 'first_message' }),
+});
+
+export const sendMessageDataSchema = z
+  .object({
+    label: z.string().optional(),
+    send_mode: z.enum(['text', 'media']).optional().default('text'),
+    text: z.string().optional().default(''),
+    media_url: z.string().optional().default(''),
+    media_type: z.enum(['image', 'document', 'audio']).optional().default('image'),
+    caption: z.string().optional().default(''),
+    filename: z.string().optional().default(''),
+  })
+  .superRefine((d, ctx) => {
+    const mode = d.send_mode === 'media' ? 'media' : 'text';
+    if (mode === 'text') {
+      if (!String(d.text || '').trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Texto da mensagem obrigatório',
+          path: ['text'],
+        });
+      }
+    } else if (!String(d.media_url || '').trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'URL da mídia obrigatória',
+        path: ['media_url'],
+      });
+    }
+  });
+
+export const waitInputDataSchema = z
+  .object({
+    label: z.string().optional(),
+    prompt: z.string().trim().min(1, 'Pergunta obrigatória'),
+    variable: z
+      .string()
+      .trim()
+      .min(1, 'Nome da variável obrigatório')
+      .regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/, 'Variável inválida'),
+    timeout_enabled: z.boolean().optional().default(false),
+    timeout_amount: z.coerce.number().int().min(1).max(99999).optional().default(5),
+    timeout_unit: z.enum(['seconds', 'minutes', 'hours', 'days']).optional().default('minutes'),
+    /** S20: persiste a resposta no cliente/lead vinculado à conversa. */
+    save_to_contact: z.boolean().optional().default(false),
+    contact_field: z
+      .enum(['name', 'email', 'phone', 'company', 'cpf_cnpj'])
+      .optional()
+      .default('name'),
+  })
+  .superRefine((d, ctx) => {
+    if (d.save_to_contact && !d.contact_field) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Selecione o campo do contato',
+        path: ['contact_field'],
+      });
+    }
+  });
+
+const conditionOperatorSchema = z.enum(['eq', 'neq', 'contains', 'exists', 'empty']);
+
+const conditionRuleSchema = z.object({
+  variable: z.string().trim().min(1, 'Variável obrigatória'),
+  operator: conditionOperatorSchema.default('eq'),
+  value: z.string().optional().default(''),
+});
+
+const conditionCaseSchema = z.object({
+  id: z
+    .string()
+    .trim()
+    .min(1)
+    .regex(/^[a-zA-Z0-9_-]+$/, 'ID de caso inválido'),
+  name: z.string().optional(),
+  join: z.enum(['and', 'or']).default('and'),
+  conditions: z.array(conditionRuleSchema).min(1, 'Inclua ao menos 1 condição no caso'),
+});
+
+export const conditionDataSchema = z.preprocess(
+  (raw) => migrateLegacyConditionData(raw),
+  z.object({
+    label: z.string().optional(),
+    cases: z.array(conditionCaseSchema).min(1, 'Inclua ao menos 1 caso'),
+  })
+);
+
+export const transferHumanDataSchema = z
+  .object({
+    label: z.string().optional(),
+    message: z.string().optional(),
+    /** Destino opcional ao transferir (sem destino = qualquer humano / pending). */
+    mode: z.enum(['none', 'user', 'team', 'queue']).optional().default('none'),
+    user_id: z.string().uuid().optional(),
+    team_id: z.string().uuid().optional(),
+    queue_id: z.string().uuid().optional().nullable(),
+    assignee_label: z.string().optional(),
+  })
+  .superRefine((d, ctx) => {
+    if (d.mode === 'user' && !d.user_id) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Selecione o agente' });
+    }
+    if (d.mode === 'team' && !d.team_id) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Selecione a equipe' });
+    }
+  });
+
+export const endDataSchema = z.object({
+  label: z.string().optional(),
+});
+
+export const conversationNoteDataSchema = z.object({
+  label: z.string().optional(),
+  text: z.string().min(1, 'Texto da nota obrigatório'),
+  visibility: z.enum(['internal']).optional().default('internal'),
+});
+
+export const resolveConversationDataSchema = z.object({
+  label: z.string().optional(),
+  message: z.string().optional().default(''),
+  close_attendance: z.boolean().optional().default(true),
+});
+
+export const setVariableDataSchema = z.object({
+  label: z.string().optional(),
+  variable: z
+    .string()
+    .trim()
+    .min(1)
+    .regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/, 'Variável inválida'),
+  value: z.string(),
+});
+
+export const addTagDataSchema = z
+  .object({
+    label: z.string().optional(),
+    tag_label: z.string().trim().optional(),
+    tag_id: z.string().uuid().optional(),
+  })
+  .refine((d) => Boolean(d.tag_id || (d.tag_label && d.tag_label.trim())), {
+    message: 'Informe o nome da tag',
+  });
+
+export const assignAgentDataSchema = z
+  .object({
+    label: z.string().optional(),
+    mode: z.enum(['user', 'team', 'queue']),
+    user_id: z.string().uuid().optional(),
+    team_id: z.string().uuid().optional(),
+    queue_id: z.string().uuid().optional().nullable(),
+  })
+  .superRefine((d, ctx) => {
+    if (d.mode === 'user' && !d.user_id) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'user_id obrigatório' });
+    }
+    if (d.mode === 'team' && !d.team_id) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'team_id obrigatório' });
+    }
+  });
+
+export const moveKanbanDataSchema = z.object({
+  label: z.string().optional(),
+  board_id: z.preprocess(
+    (v) => (v === '' || v == null ? undefined : v),
+    z.string().uuid().optional()
+  ),
+  board_label: z.string().optional(),
+  column_id: z.string().uuid('Selecione a coluna do Kanban'),
+  column_label: z.string().optional(),
+  title: z.string().optional().default(''),
+  description: z.string().optional().default(''),
+  tag_id: z.preprocess(
+    (v) => (v === '' || v == null ? undefined : v),
+    z.string().uuid().optional()
+  ),
+  tag_label: z.string().optional(),
+});
+
+/** Alias legado S16 — mesmo schema do Kanban (cria ou move pela conversa). */
+export const kanbanAddCardDataSchema = moveKanbanDataSchema.extend({
+  board_id: z.preprocess(
+    (v) => (v === '' || v == null ? undefined : v),
+    z.string().uuid().optional()
+  ),
+  only_if_not_exists: z.boolean().optional(),
+});
+
+export const delayDataSchema = z.object({
+  label: z.string().optional(),
+  amount: z.coerce.number().int().min(1).max(99999),
+  unit: z.enum(['seconds', 'minutes', 'hours', 'days']).default('minutes'),
+});
+
+export const lookupInvoiceDataSchema = z.object({
+  label: z.string().optional(),
+  /** last_open = 1 fatura em invoice.*; open_menu = lista numerada + invoice._items */
+  mode: z.enum(['last_open', 'open_menu']).default('last_open'),
+  limit: z.coerce.number().int().min(1).max(20).optional().default(8),
+});
+
+export const selectInvoiceDataSchema = z.object({
+  label: z.string().optional(),
+  /** Variável com a opção digitada (1, 2, …) — default answer */
+  variable: z
+    .string()
+    .trim()
+    .min(1)
+    .regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/, 'Variável inválida')
+    .default('answer'),
+});
+
+/** S11.1 — consulta + mensagem + espera + envio do link num único nó. */
+export const invoiceAssistDataSchema = z.object({
+  label: z.string().optional(),
+  mode: z.enum(['last_open', 'open_menu']).default('last_open'),
+  limit: z.coerce.number().int().min(1).max(20).optional().default(8),
+  prompt_template: z
+    .string()
+    .optional()
+    .default(
+      'Estas são suas faturas em aberto:\n{{invoice.menu}}\n\nResponda com o número da opção desejada.'
+    ),
+  link_template: z
+    .string()
+    .optional()
+    .default(
+      'Segue o link da fatura {{invoice.number}} ({{invoice.total}}):\n{{invoice.public_link}}'
+    ),
+  empty_message: z.string().optional().default(''),
+  invalid_message: z
+    .string()
+    .optional()
+    .default('Opção inválida. Digite o número de uma das faturas da lista.'),
+  max_invalid: z.coerce.number().int().min(1).max(10).optional().default(3),
+});
+
+export const menuChoiceOptionSchema = z.object({
+  id: z
+    .string()
+    .trim()
+    .min(1, 'ID da opção obrigatório')
+    .max(64)
+    .regex(/^[a-zA-Z0-9_-]+$/, 'ID: só letras, números, _ e -'),
+  label: z.string().trim().min(1, 'Texto do botão obrigatório').max(24),
+  description: z.string().max(72).optional().default(''),
+  section: z.string().max(24).optional().default(''),
+  set_variables: z
+    .array(
+      z.object({
+        name: varName,
+        value: z.string(),
+      })
+    )
+    .optional()
+    .default([]),
+});
+
+export const menuChoiceDataSchema = z
+  .object({
+    label: z.string().optional(),
+    mode: z.enum(['button', 'list']).default('button'),
+    text: z.string().trim().min(1, 'Texto do menu obrigatório'),
+    footer_text: z.string().optional().default(''),
+    list_button: z.string().optional().default('Ver opções'),
+    variable: z
+      .string()
+      .trim()
+      .min(1)
+      .regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/)
+      .default('answer'),
+    max_invalid: z.coerce.number().int().min(1).max(10).optional().default(3),
+    invalid_message: z
+      .string()
+      .optional()
+      .default('Opção inválida. Escolha uma das alternativas.'),
+    options: z.array(menuChoiceOptionSchema).min(1, 'Inclua ao menos 1 opção').max(10),
+    timeout_enabled: z.boolean().optional().default(false),
+    timeout_amount: z.coerce.number().int().min(1).max(99999).optional().default(5),
+    timeout_unit: z.enum(['seconds', 'minutes', 'hours', 'days']).optional().default('minutes'),
+  })
+  .superRefine((d, ctx) => {
+    if (d.mode === 'button' && d.options.length > 3) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Botões WhatsApp: no máximo 3 opções',
+        path: ['options'],
+      });
+    }
+    const ids = d.options.map((o) => o.id);
+    if (new Set(ids).size !== ids.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'IDs das opções devem ser únicos',
+        path: ['options'],
+      });
+    }
+  });
+
+export const DATA_SCHEMAS: Record<EssentialNodeType, z.ZodTypeAny> = {
+  start: startDataSchema,
+  send_message: sendMessageDataSchema,
+  wait_input: waitInputDataSchema,
+  condition: conditionDataSchema,
+  transfer_human: transferHumanDataSchema,
+  end: endDataSchema,
+  set_variable: setVariableDataSchema,
+  add_tag: addTagDataSchema,
+  assign_agent: assignAgentDataSchema,
+  move_kanban: moveKanbanDataSchema,
+  kanban_add_card: kanbanAddCardDataSchema,
+  delay: delayDataSchema,
+  http_request: httpRequestDataSchema,
+  webhook_out: webhookOutDataSchema,
+  webhook_in: webhookInDataSchema,
+  lookup_invoice: lookupInvoiceDataSchema,
+  select_invoice: selectInvoiceDataSchema,
+  invoice_assist: invoiceAssistDataSchema,
+  menu_choice: menuChoiceDataSchema,
+  conversation_note: conversationNoteDataSchema,
+  resolve_conversation: resolveConversationDataSchema,
+};
+
+export const OUT_HANDLES: Record<EssentialNodeType, string[]> = {
+  start: ['default'],
+  send_message: ['default'],
+  wait_input: ['default'],
+  condition: ['else'],
+  transfer_human: [],
+  end: [],
+  conversation_note: ['default'],
+  resolve_conversation: [],
+  set_variable: ['default'],
+  add_tag: ['default'],
+  assign_agent: ['default'],
+  move_kanban: ['default'],
+  kanban_add_card: ['default', 'error'],
+  delay: ['default'],
+  http_request: ['default', 'error'],
+  webhook_out: ['default', 'error'],
+  webhook_in: ['default'],
+  lookup_invoice: ['default', 'empty'],
+  select_invoice: ['default', 'invalid'],
+  invoice_assist: ['default', 'empty', 'invalid'],
+  /** Dinâmico — use outHandlesForNode() */
+  menu_choice: ['fallback'],
+};
+
+/** Handles de saída obrigatórios no publish (menu_choice / condition / timeout dinâmicos). */
+export function outHandlesForNode(
+  type: string,
+  data?: Record<string, unknown> | null
+): string[] {
+  if (type === 'menu_choice') {
+    const base = outHandlesForMenuChoice(data || {});
+    return isInputTimeoutEnabled(data) ? [...base, 'timeout'] : base;
+  }
+  if (type === 'condition') {
+    return outHandlesForCondition(data || {});
+  }
+  if (type === 'wait_input') {
+    return isInputTimeoutEnabled(data) ? ['default', 'timeout'] : ['default'];
+  }
+  if ((FLOW_NODE_TYPES as readonly string[]).includes(type)) {
+    return OUT_HANDLES[type as EssentialNodeType] || [];
+  }
+  return [];
+}
+
+/**
+ * Handles permitidos em edges (inclui opcionais).
+ * Ex.: move_kanban exige só `default`, mas aceita `error` se conectado.
+ */
+export function allowedOutHandlesForNode(
+  type: string,
+  data?: Record<string, unknown> | null
+): string[] {
+  const required = outHandlesForNode(type, data);
+  if (type === 'move_kanban') {
+    return Array.from(new Set([...required, 'error']));
+  }
+  return required;
+}
+
+export type GraphValidationIssue = {
+  code: string;
+  message: string;
+  nodeIds?: string[];
+  edgeIds?: string[];
+  /** Handle relacionado (missing_out / edge_handle). */
+  handle?: string;
+  /** Dica curta para o usuário. */
+  hint?: string;
+  /** Ação automática disponível no editor. */
+  autofix?: 'remove_edges' | 'wire_to_end' | 'remove_orphan';
+  autofixLabel?: string;
+};
+
+export function defaultDataForType(type: EssentialNodeType): Record<string, unknown> {
+  switch (type) {
+    case 'start':
+      return { label: NODE_LABELS.start, trigger: { type: 'first_message' } };
+    case 'send_message':
+      return {
+        label: NODE_LABELS.send_message,
+        send_mode: 'text',
+        text: '',
+        media_url: '',
+        media_type: 'image',
+        caption: '',
+        filename: '',
+      };
+    case 'wait_input':
+      return {
+        label: NODE_LABELS.wait_input,
+        prompt: '',
+        variable: 'answer',
+        save_to_contact: false,
+        contact_field: 'name',
+      };
+    case 'condition':
+      return {
+        label: NODE_LABELS.condition,
+        cases: [
+          {
+            id: 'c1',
+            name: 'Caso 1',
+            join: 'and',
+            conditions: [{ variable: 'answer', operator: 'eq', value: '' }],
+          },
+        ],
+      };
+    case 'transfer_human':
+      return { label: NODE_LABELS.transfer_human, message: '', mode: 'none' };
+    case 'end':
+      return { label: NODE_LABELS.end };
+    case 'set_variable':
+      return { label: NODE_LABELS.set_variable, variable: 'var1', value: '' };
+    case 'add_tag':
+      return { label: NODE_LABELS.add_tag, tag_label: '' };
+    case 'assign_agent':
+      return { label: NODE_LABELS.assign_agent, mode: 'queue', queue_id: '' };
+    case 'move_kanban':
+    case 'kanban_add_card':
+      return {
+        label: NODE_LABELS.move_kanban,
+        board_id: '',
+        column_id: '',
+        title: '',
+        description: '',
+        tag_label: '',
+      };
+    case 'delay':
+      return { label: NODE_LABELS.delay, amount: 5, unit: 'minutes' };
+    case 'http_request':
+      return {
+        label: NODE_LABELS.http_request,
+        method: 'GET',
+        url: '',
+        headers: [],
+        headers_ui: 'fields',
+        body: '',
+        body_ui: 'fields',
+        timeout_ms: 10000,
+        response_variable: 'http_body',
+        status_variable: 'http_status',
+        response_map: [],
+      };
+    case 'webhook_out':
+      return {
+        label: NODE_LABELS.webhook_out,
+        method: 'POST',
+        url: '',
+        headers: [],
+        headers_ui: 'fields',
+        secret: '',
+        timeout_ms: 10000,
+        include_session_vars: true,
+        payload_mode: 'envelope',
+        body_template: '{\n  "exemplo": "{{answer}}"\n}',
+        body_ui: 'fields',
+      };
+    case 'lookup_invoice':
+      return {
+        label: NODE_LABELS.lookup_invoice,
+        mode: 'last_open',
+        limit: 8,
+      };
+    case 'select_invoice':
+      return {
+        label: NODE_LABELS.select_invoice,
+        variable: 'answer',
+      };
+    case 'invoice_assist':
+      return {
+        label: NODE_LABELS.invoice_assist,
+        mode: 'open_menu',
+        limit: 8,
+        prompt_template:
+          'Estas são suas faturas em aberto:\n{{invoice.menu}}\n\nResponda com o número da opção desejada.',
+        link_template:
+          'Segue o link da fatura {{invoice.number}} ({{invoice.total}}):\n{{invoice.public_link}}',
+        empty_message: '',
+        invalid_message: 'Opção inválida. Digite o número de uma das faturas da lista.',
+        max_invalid: 3,
+      };
+    case 'menu_choice':
+      return {
+        label: NODE_LABELS.menu_choice,
+        mode: 'button',
+        text: 'Como posso ajudar?',
+        footer_text: '',
+        list_button: 'Ver opções',
+        variable: 'answer',
+        max_invalid: 3,
+        invalid_message: 'Opção inválida. Escolha uma das alternativas.',
+        options: [
+          { id: 'opt_a', label: 'Opção A', description: '', section: '', set_variables: [] },
+          { id: 'opt_b', label: 'Opção B', description: '', section: '', set_variables: [] },
+        ],
+      };
+    case 'conversation_note':
+      return {
+        label: NODE_LABELS.conversation_note,
+        text: '',
+        visibility: 'internal',
+      };
+    case 'resolve_conversation':
+      return {
+        label: NODE_LABELS.resolve_conversation,
+        message: '',
+        close_attendance: true,
+      };
+    case 'webhook_in':
+      return {
+        label: NODE_LABELS.webhook_in,
+        token: generateInboundWebhookToken(),
+        secret: '',
+      };
+  }
+}
+
+export function nodePreview(type: string, data: Record<string, unknown>): string {
+  if (type === 'send_message') {
+    if (String(data.send_mode || 'text') === 'media') {
+      const mt = String(data.media_type || 'image');
+      const cap = String(data.caption || data.media_url || '').trim();
+      return `[mídia: ${mt}] ${cap}`.trim().slice(0, 48);
+    }
+    if (typeof data.text === 'string' && data.text.trim()) {
+      return data.text.trim().slice(0, 48);
+    }
+  }
+  if (type === 'wait_input' && typeof data.prompt === 'string' && data.prompt.trim()) {
+    return data.prompt.trim().slice(0, 48);
+  }
+  if (type === 'condition') {
+    const cases = Array.isArray(data.cases) ? data.cases : [];
+    if (cases.length > 0) return `${cases.length} caso${cases.length === 1 ? '' : 's'}`;
+    return `${String(data.variable || '?')} ${String(data.operator || '')} ${String(data.value ?? '')}`.slice(
+      0,
+      48
+    );
+  }
+  if (type === 'start') {
+    const t = data.trigger as { type?: string; value?: string } | undefined;
+    if (t?.type === 'keyword') return `Keyword: ${t.value || '…'}`;
+    return '1ª mensagem';
+  }
+  if (type === 'transfer_human') {
+    if (data.assignee_label) return String(data.assignee_label).slice(0, 40);
+    const mode = String(data.mode || 'none');
+    if (mode === 'none') return 'Atendimento humano';
+    return `destino: ${mode}`;
+  }
+  if (type === 'conversation_note' && typeof data.text === 'string' && data.text.trim()) {
+    return data.text.trim().slice(0, 48);
+  }
+  if (type === 'resolve_conversation') {
+    return data.close_attendance === false ? 'Só encerra bot' : 'Fecha atendimento';
+  }
+  if (type === 'set_variable') return `${data.variable || '?'} = ${String(data.value ?? '').slice(0, 24)}`;
+  if (type === 'add_tag') return String(data.tag_label || 'tag');
+  if (type === 'assign_agent') {
+    if (data.assignee_label) return String(data.assignee_label).slice(0, 40);
+    return `modo: ${String(data.mode || 'queue')}`;
+  }
+  if (type === 'move_kanban' || type === 'kanban_add_card') {
+    return String(data.column_label || data.title || 'coluna').slice(0, 40);
+  }
+  if (type === 'delay') return `${data.amount || '?'} ${data.unit || 'minutes'}`;
+  if (type === 'http_request') {
+    return `${String(data.method || 'GET')} ${String(data.url || '…').slice(0, 36)}`;
+  }
+  if (type === 'webhook_out') {
+    return `${String(data.method || 'POST')} ${String(data.url || 'webhook').slice(0, 32)}`;
+  }
+  if (type === 'webhook_in') {
+    const tok = String(data.token || '');
+    return tok ? `…${tok.slice(-8)}` : 'gerar token';
+  }
+  if (type === 'lookup_invoice') {
+    return String(data.mode || 'last_open') === 'open_menu' ? 'Menu de abertas' : 'Última aberta';
+  }
+  if (type === 'select_invoice') {
+    return `opção em {{${String(data.variable || 'answer')}}}`;
+  }
+  if (type === 'invoice_assist') {
+    return String(data.mode || 'open_menu') === 'last_open'
+      ? 'Última → envia link'
+      : 'Menu → espera → link';
+  }
+  if (type === 'menu_choice') {
+    const n = Array.isArray(data.options) ? data.options.length : 0;
+    return `${data.mode === 'list' ? 'Lista' : 'Botões'} · ${n} opção(ões)`;
+  }
+  return NODE_LABELS[type as EssentialNodeType] || type;
+}
+
+/** Validação client-side espelhando o backend (UX prévia ao publish). */
+export function validateGraphForPublish(graph: {
+  nodes: Array<{ id: string; type?: string; data?: Record<string, unknown> }>;
+  edges: Array<{
+    id: string;
+    source: string;
+    target: string;
+    sourceHandle?: string | null;
+  }>;
+}): { ok: true } | { ok: false; issues: GraphValidationIssue[] } {
+  const issues: GraphValidationIssue[] = [];
+  const migrated = migrateConditionGraph({
+    nodes: graph.nodes,
+    edges: graph.edges,
+  });
+  const nodes = (migrated.nodes || []) as Array<{
+    id: string;
+    type?: string;
+    data?: Record<string, unknown>;
+  }>;
+  const edges = (migrated.edges || []) as Array<{
+    id: string;
+    source: string;
+    target: string;
+    sourceHandle?: string | null;
+  }>;
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+
+  const starts = nodes.filter((n) => n.type === 'start');
+  if (starts.length !== 1) {
+    issues.push({
+      code: 'start_count',
+      message: starts.length === 0 ? 'É obrigatório ter 1 nó Início' : 'Só pode haver 1 nó Início',
+      nodeIds: starts.map((s) => s.id),
+    });
+  }
+
+  const webhookIns = nodes.filter((n) => n.type === 'webhook_in');
+  if (webhookIns.length > 1) {
+    issues.push({
+      code: 'webhook_in_count',
+      message: 'Só pode haver 1 nó Webhook in',
+      nodeIds: webhookIns.map((n) => n.id),
+    });
+  }
+
+  for (const n of nodes) {
+    const type = n.type || '';
+    if (isEditorOnlyNodeType(type)) {
+      const schema =
+        type === 'annotation_arrow'
+          ? annotationArrowDataSchema
+          : type === 'annotation_text'
+            ? annotationTextDataSchema
+            : stickyNoteDataSchema;
+      const parsed = schema.safeParse(n.data || {});
+      if (!parsed.success) {
+        issues.push({
+          code: 'node_data',
+          message: `${type}: ${parsed.error.issues[0]?.message || 'dados inválidos'}`,
+          nodeIds: [n.id],
+        });
+      }
+      continue;
+    }
+    if (!(FLOW_NODE_TYPES as readonly string[]).includes(type)) {
+      issues.push({
+        code: 'unknown_type',
+        message: `Tipo não suportado: ${type}`,
+        nodeIds: [n.id],
+      });
+      continue;
+    }
+    const parsed = DATA_SCHEMAS[type as EssentialNodeType].safeParse(n.data || {});
+    if (!parsed.success) {
+      issues.push({
+        code: 'node_data',
+        message: `${type}: ${parsed.error.issues[0]?.message || 'dados inválidos'}`,
+        nodeIds: [n.id],
+      });
+    }
+  }
+
+  const outgoing = new Map<string, typeof edges>();
+  const incoming = new Map<string, typeof edges>();
+  for (const e of edges) {
+    if (!byId.has(e.source) || !byId.has(e.target)) {
+      issues.push({
+        code: 'edge_invalid',
+        message: 'Conexão inválida',
+        edgeIds: [e.id],
+      });
+      continue;
+    }
+    const src = byId.get(e.source)!;
+    const tgt = byId.get(e.target)!;
+    if (isEditorOnlyNodeType(src.type) || isEditorOnlyNodeType(tgt.type)) {
+      issues.push({
+        code: 'edge_handle',
+        message: 'Anotações de canvas não devem ter conexões de fluxo',
+        nodeIds: [src.id, tgt.id],
+        edgeIds: [e.id],
+      });
+      continue;
+    }
+    if (!outgoing.has(e.source)) outgoing.set(e.source, []);
+    outgoing.get(e.source)!.push(e);
+    if (!incoming.has(e.target)) incoming.set(e.target, []);
+    incoming.get(e.target)!.push(e);
+
+    if ((FLOW_NODE_TYPES as readonly string[]).includes(src.type || '')) {
+      const allowed = allowedOutHandlesForNode(src.type || '', src.data as Record<string, unknown>);
+      const handle = e.sourceHandle || 'default';
+      if (allowed.length && !allowed.includes(handle)) {
+        issues.push({
+          code: 'edge_handle',
+          message: `Saída "${handle}" inválida neste nó`,
+          nodeIds: [src.id],
+          edgeIds: [e.id],
+          handle,
+        });
+      }
+    }
+  }
+
+  for (const n of nodes) {
+    if (isEditorOnlyNodeType(n.type)) continue;
+    if (!(FLOW_NODE_TYPES as readonly string[]).includes(n.type || '')) continue;
+    const type = n.type as EssentialNodeType;
+    const outs = outgoing.get(n.id) || [];
+    for (const h of outHandlesForNode(type, n.data as Record<string, unknown>)) {
+      if (!outs.some((e) => (e.sourceHandle || 'default') === h)) {
+        issues.push({
+          code: 'missing_out',
+          message: `Nó ${NODE_LABELS[type]} precisa de saída "${h}"`,
+          nodeIds: [n.id],
+          handle: h,
+        });
+      }
+    }
+    if (type !== 'start' && type !== 'webhook_in' && (incoming.get(n.id) || []).length === 0) {
+      issues.push({
+        code: 'orphan',
+        message: `Nó órfão (${NODE_LABELS[type]})`,
+        nodeIds: [n.id],
+      });
+    }
+  }
+
+  const entryIds = [
+    ...starts.map((s) => s.id),
+    ...webhookIns.map((w) => w.id),
+  ];
+  if (entryIds.length) {
+    const seen = new Set<string>();
+    const stack = [...entryIds];
+    while (stack.length) {
+      const cur = stack.pop()!;
+      if (seen.has(cur)) continue;
+      seen.add(cur);
+      for (const e of outgoing.get(cur) || []) stack.push(e.target);
+    }
+    const unreachable = nodes.filter(
+      (n) =>
+        !isEditorOnlyNodeType(n.type) &&
+        n.type !== 'start' &&
+        n.type !== 'webhook_in' &&
+        !seen.has(n.id)
+    );
+    if (unreachable.length) {
+      issues.push({
+        code: 'unreachable',
+        message: 'Há nós inacessíveis a partir do Início / Webhook in',
+        nodeIds: unreachable.map((n) => n.id),
+      });
+    }
+  }
+
+  if (issues.length) return { ok: false, issues };
+  return { ok: true };
+}
+
+/** @deprecated */
+export const ESSENTIAL_NODE_TYPES = FLOW_NODE_TYPES;

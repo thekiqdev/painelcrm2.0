@@ -19,6 +19,7 @@ function pathToModule(pathname: string): string | null {
   if (pathname.startsWith('/projects')) return 'projects';
   if (pathname.startsWith('/tasks')) return 'tasks';
   if (pathname.startsWith('/agenda')) return 'agenda';
+  if (pathname.startsWith('/chatbot-flows')) return 'chatbot_flows';
   if (pathname.startsWith('/chat')) return 'chat';
   if (pathname.startsWith('/proposals')) return 'proposals';
   if (pathname.startsWith('/contracts')) return 'contracts';

@@ -382,6 +382,10 @@ export async function attendConversation(req: AuthRequest, res: Response) {
 
     await client.query('COMMIT');
 
+    void import('../services/chatbotFlows/chatbotFlowsRuntimeRunner.js')
+      .then((m) => m.pauseChatbotFlowSessionsForConversation(conversationId))
+      .catch((e) => console.warn('[attendConversation] pause chatbot sessions', e));
+
     const assigneeFields = await loadAssigneePublicFields(actorUserId);
     const patch = attendancePatchFromRow({
       ...row,

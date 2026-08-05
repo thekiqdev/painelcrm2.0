@@ -30,7 +30,9 @@ export type ModuleId =
   | 'billing'
   | 'finance'
   | 'settings'
-  | 'meu_plano';
+  | 'meu_plano'
+  | 'agenda'
+  | 'chatbot_flows';
 
 /** Permissões de um módulo para um usuário (espelho de role_module_permissions / custom_role_module_permissions). */
 export interface ModulePermissionRow {

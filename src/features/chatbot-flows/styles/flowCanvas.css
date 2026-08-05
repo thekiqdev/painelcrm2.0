@@ -1,0 +1,93 @@
+/* Edges “vivas” — trânsito visual no canvas do Chatbot Flows */
+
+.chatbot-flow-edge .react-flow__edge-path {
+  stroke-dasharray: 7 5;
+  animation: chatbot-flow-dash 0.9s linear infinite;
+}
+
+.chatbot-flow-edge--ok .react-flow__edge-path {
+  stroke: #059669 !important;
+  animation-duration: 0.75s;
+}
+
+.chatbot-flow-edge--error .react-flow__edge-path {
+  stroke: #e11d48 !important;
+  stroke-dasharray: 5 4;
+  animation-duration: 0.55s;
+}
+
+.chatbot-flow-edge .react-flow__edge-interaction {
+  cursor: pointer;
+}
+
+/* Zona maior no meio da linha para revelar a lixeira (EdgeLabelRenderer) */
+.chatbot-flow-edge-del-hit {
+  padding: 12px;
+}
+
+.react-flow__edge:hover,
+.react-flow__edge.selected {
+  z-index: 1;
+}
+
+@keyframes chatbot-flow-dash {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+
+/* Sticky: handles nas 4 bordas + cantos com área de clique ampla */
+.chatbot-sticky-node .chatbot-sticky-resize-line {
+  border-color: rgb(0 0 0 / 45%) !important;
+  border-width: 2px !important;
+  z-index: 5;
+}
+.chatbot-sticky-node .chatbot-sticky-resize-line.top,
+.chatbot-sticky-node .chatbot-sticky-resize-line.bottom {
+  height: 10px !important;
+  border-left: none !important;
+  border-right: none !important;
+}
+.chatbot-sticky-node .chatbot-sticky-resize-line.left,
+.chatbot-sticky-node .chatbot-sticky-resize-line.right {
+  width: 10px !important;
+  border-top: none !important;
+  border-bottom: none !important;
+}
+.chatbot-sticky-node .chatbot-sticky-resize-handle {
+  width: 12px !important;
+  height: 12px !important;
+  border-radius: 2px !important;
+  border-width: 2px !important;
+  background: #fff !important;
+  z-index: 6;
+}
+
+/* Handles mais legíveis no card Typebot-like */
+.chatbot-flow-handle {
+  width: 10px !important;
+  height: 10px !important;
+  border: 2px solid #fff !important;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 12%);
+}
+
+.react-flow__controls {
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 12%);
+}
+
+.chatbot-flow-nav-panel .react-flow__minimap {
+  position: relative !important;
+  margin: 0 !important;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 12%);
+  width: 140px !important;
+  height: 100px !important;
+}
+
+.chatbot-flow-nav-panel .react-flow__controls {
+  position: relative !important;
+  margin: 0 !important;
+}

@@ -472,5 +472,19 @@ export const MIGRATION_ORDER = [
   '306_subscriptions_completed_cycles_exhausted.sql',
   /** Sprint 5.1 — antecipação de geração separada para assinaturas weekly */
   '307_tenants_recurring_generate_days_before_weekly.sql',
+  /** Chatbot Flows S0 — tabela multi-flow + draft_graph + módulo/feature */
+  '308_chatbot_flows.sql',
+  /** Chatbot Flows S1 — versões publicadas imutáveis */
+  '309_chatbot_flow_versions.sql',
+  /** Chatbot Flows S3 — sessões runtime WhatsApp + feature chatbot_flows_runtime */
+  '310_chatbot_flow_sessions.sql',
+  /** Chatbot Flows S4 — delay resume_at + waiting_delay */
+  '311_chatbot_flow_delay.sql',
+  /** Chatbot Flows S5 — waiting_http */
+  '312_chatbot_flow_http.sql',
+  /** Chatbot Flows — webhook_in token index */
+  '313_chatbot_flow_webhook_in.sql',
+  /** Chatbot Flows S18 — timeout wait_input/menu + índice resume_at */
+  '314_chatbot_flow_input_timeout.sql',
   'create-admin-user.sql',
 ];

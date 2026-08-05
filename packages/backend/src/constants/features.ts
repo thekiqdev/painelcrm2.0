@@ -21,6 +21,8 @@ export const FEATURE_KEYS = [
   'message_templates',
   'whatsapp',
   'agenda',
+  'chatbot_flows',
+  'chatbot_flows_runtime',
 ] as const;
 
 export type FeatureKey = (typeof FEATURE_KEYS)[number];
@@ -44,6 +46,8 @@ export const FEATURE_LABELS: Record<string, string> = {
   message_templates: 'Modelos de mensagem',
   whatsapp: 'Integração WhatsApp',
   agenda: 'Agenda',
+  chatbot_flows: 'Chatbot Flows',
+  chatbot_flows_runtime: 'Chatbot Flows Runtime (WhatsApp)',
 };
 
 export function isValidFeatureKey(key: string): key is FeatureKey {

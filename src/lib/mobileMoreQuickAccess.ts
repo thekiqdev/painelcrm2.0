@@ -29,6 +29,7 @@ import {
   UserCircle,
   UserPlus,
   Users,
+  Workflow,
 } from "lucide-react";
 import { routePreload } from "@/routePreload";
 
@@ -58,6 +59,7 @@ export type MobileMoreMenuFlags = {
   agenda: boolean;
   chat: boolean;
   tickets: boolean;
+  chatbot_flows: boolean;
   proposals: boolean;
   contracts: boolean;
   invoices: boolean;
@@ -85,6 +87,7 @@ export const MOBILE_MORE_ICONS = {
   MessageSquare,
   LayoutGrid,
   LifeBuoy,
+  Workflow,
   Package,
   ShoppingCart,
   Store,
@@ -287,6 +290,19 @@ export const MOBILE_MORE_ITEM_DEFS = [
     quickRank: 3,
     tone: "bg-rose-500/10 text-rose-700 dark:text-rose-200",
     preload: "tickets",
+  },
+  {
+    id: "chatbot_flows",
+    label: "Chatbot Flows",
+    to: "/chatbot-flows",
+    description: "Fluxos visuais de atendimento",
+    icon: "Workflow" as const,
+    group: "Atendimento",
+    featureFlag: "chatbot_flows" as const,
+    moduleView: "chatbot_flows",
+    quickRank: 7,
+    tone: "bg-teal-500/10 text-teal-800 dark:text-teal-200",
+    preload: "chatbotFlows" as const,
   },
   {
     id: "catalog",
