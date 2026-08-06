@@ -105,15 +105,9 @@ export function selectChatBadges(conv: ChatConversation, sla: SlaContextForUi | 
       return { key: 'wait', label: 'Aguardando', variant: 'outline' };
     }
 
+    // in_progress: lista/header usam headset + foto + nome (assigneeBesideCrm); sem badge genérico.
     if (st === 'in_progress' || st === 'in_service') {
-      // Foto/nome do agente é a fonte de verdade na lista — não duplicar com badge.
-      if (conv.assignee_display?.trim()) return null;
-      return {
-        key: 'prog',
-        label: 'Em atendimento',
-        variant: 'default',
-        leadingIcon: 'headphones',
-      };
+      return null;
     }
 
     if (st === 'queued') {

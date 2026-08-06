@@ -79,7 +79,8 @@ export function kanbanAttendanceShort(status?: string | null): string | null {
       return 'Na fila';
     case 'in_progress':
     case 'in_service':
-      return 'Em atendimento';
+      // Sem rótulo genérico — card usa headset + nome do operador.
+      return null;
     case 'waiting_customer':
       return 'Aguardando cliente';
     case 'closed':

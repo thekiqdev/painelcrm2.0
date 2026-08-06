@@ -2730,8 +2730,9 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     const att = attendanceStatusLabel(conv.attendance_status);
     const skipAttLabel = att === 'Aberto' || att === 'Sem resp.';
     const assignee =
-      attendanceIsInProgress(conv.attendance_status) && conv.assignee_display?.trim()
-        ? shortOperatorName(conv.assignee_display)
+      attendanceIsInProgress(conv.attendance_status) &&
+      (conv.assignee_display?.trim() || conv.assigned_to_user_id)
+        ? shortOperatorName(conv.assignee_display?.trim() || 'Atendente')
         : '';
     const team =
       conv.assigned_team_id && conv.assigned_team_name?.trim()
@@ -2819,7 +2820,6 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       (id?.phoneLine && id.phoneLine.trim()) || conv.phoneNumber || conv.canonicalPhone || conv.canonical_phone || null;
     const statusParts: string[] = [];
     if (id?.waSubtitle?.trim()) statusParts.push(id.waSubtitle.trim());
-    if (attendanceIsInProgress(conv.attendance_status)) statusParts.push('Em atendimento');
     if (conv.attendance_status === 'queued') statusParts.push('Na fila');
     if (conv.attendance_status === 'closed') statusParts.push('Encerrado');
     const statusLine = statusParts.length ? statusParts.join(' · ') : null;
@@ -5336,8 +5336,11 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     const identity = resolveConversationIdentity(conversation, linkedClient, linkedLead);
     const showPhoneRow =
       Boolean(identity.phoneLine) && identity.displayName.trim() !== identity.phoneLine.trim();
+    const listAssigneeLabel =
+      conversation.assignee_display?.trim() ||
+      (conversation.assigned_to_user_id ? 'Atendente' : '');
     const assigneeBesideCrm =
-      attendanceIsInProgress(conversation.attendance_status) && conversation.assignee_display?.trim() ? (
+      attendanceIsInProgress(conversation.attendance_status) && listAssigneeLabel ? (
         <span className="inline-flex items-center gap-0.5 text-foreground/90">
           <Headphones className="h-2.5 w-2.5 shrink-0 opacity-85" aria-hidden />
           {(() => {
@@ -5346,19 +5349,17 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
               <Avatar className="h-3.5 w-3.5 shrink-0 border border-border/50">
                 {src ? <AvatarImage src={src} alt="" className="object-cover" /> : null}
                 <AvatarFallback className="text-[6px] font-semibold">
-                  {assigneeInitials(conversation.assignee_display!)}
+                  {assigneeInitials(listAssigneeLabel)}
                 </AvatarFallback>
               </Avatar>
             );
           })()}
-          <span className="font-medium">{shortOperatorName(conversation.assignee_display)}</span>
+          <span className="font-medium">{shortOperatorName(listAssigneeLabel)}</span>
         </span>
       ) : null;
     const rawListBadges = selectChatBadges(conversation, slaUiContext);
-    // Foto/nome é a fonte de verdade — nunca duplicar com badge "Em atendimento".
-    const listAttendanceBadges = assigneeBesideCrm
-      ? rawListBadges.filter((b) => b.key !== 'prog')
-      : rawListBadges;
+    // Padrão único: headset + foto + nome; nunca badge «Em atendimento» / prog.
+    const listAttendanceBadges = rawListBadges.filter((b) => b.key !== 'prog');
 
     return (
       <ChatConversationRow conversation={conversation} isActive={isActive}>
