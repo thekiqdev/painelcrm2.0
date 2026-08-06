@@ -27,11 +27,50 @@ function nonEmptyString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
+const ASSIGNEE_RAW_KEYS = [
+  'assigned_to_user_id',
+  'assignee_email',
+  'assignee_display',
+  'assignee_avatar_url',
+] as const;
+
 function mergeAvatarRaw(
   existingRaw: Record<string, unknown>,
   incomingRaw: Record<string, unknown>,
 ): Record<string, unknown> {
+  const lean = Boolean(incomingRaw.__leanRealtimePatch);
   const out: Record<string, unknown> = { ...existingRaw, ...incomingRaw };
+
+  if (lean) {
+    // Lean bump não deve apagar assignee hidratado na inbox.
+    for (const key of ASSIGNEE_RAW_KEYS) {
+      if (!(key in incomingRaw) || incomingRaw[key] == null) {
+        const prev = existingRaw[key];
+        if (prev != null && prev !== '') out[key] = prev;
+      }
+    }
+  } else if (
+    Object.prototype.hasOwnProperty.call(incomingRaw, 'assigned_to_user_id') &&
+    (incomingRaw.assigned_to_user_id === null || incomingRaw.assigned_to_user_id === '')
+  ) {
+    out.assigned_to_user_id = null;
+    out.assignee_email = null;
+    out.assignee_display = null;
+    out.assignee_avatar_url = null;
+  } else {
+    for (const key of ASSIGNEE_RAW_KEYS) {
+      const next = incomingRaw[key];
+      if (typeof next === 'string' && next.trim()) {
+        out[key] = next;
+        continue;
+      }
+      if (next == null || next === '') {
+        const prev = existingRaw[key];
+        if (prev != null && prev !== '') out[key] = prev;
+      }
+    }
+  }
+
   for (const key of AVATAR_RAW_KEYS) {
     const next = nonEmptyString(incomingRaw[key]);
     if (next) {
@@ -83,6 +122,25 @@ export function mergeDomainConversationFullUpsert(
       ? (incoming.raw as Record<string, unknown>)
       : {};
 
+  const lean = Boolean(incomingRaw.__leanRealtimePatch);
+  const explicitUnassign =
+    !lean &&
+    Object.prototype.hasOwnProperty.call(incomingRaw, 'assigned_to_user_id') &&
+    (incomingRaw.assigned_to_user_id === null || incomingRaw.assigned_to_user_id === '');
+
+  let assignedToUserId = existing.assignedToUserId;
+  if (lean) {
+    assignedToUserId = existing.assignedToUserId;
+  } else if (explicitUnassign) {
+    assignedToUserId = null;
+  } else if (incoming.assignedToUserId) {
+    assignedToUserId = incoming.assignedToUserId;
+  } else if (incoming.assignedToUserId === null && incomingRaw.last_assignment_reason) {
+    assignedToUserId = null;
+  } else {
+    assignedToUserId = incoming.assignedToUserId ?? existing.assignedToUserId;
+  }
+
   return {
     ...existing,
     ...incoming,
@@ -90,7 +148,7 @@ export function mergeDomainConversationFullUpsert(
     contactName: incoming.contactName ?? existing.contactName,
     phoneNumber: incoming.phoneNumber ?? existing.phoneNumber,
     attendanceStatus: incoming.attendanceStatus ?? existing.attendanceStatus,
-    assignedToUserId: incoming.assignedToUserId ?? existing.assignedToUserId,
+    assignedToUserId,
     clientId: incoming.clientId ?? existing.clientId,
     leadId: incoming.leadId ?? existing.leadId,
     conversationType: incoming.conversationType ?? existing.conversationType,

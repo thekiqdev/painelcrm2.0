@@ -16,6 +16,7 @@ import {
   patchFloatingChatMinimizedMeta,
 } from '../query-cache';
 import { isAttendanceUpdatedPayloadSufficient } from '../payload-sufficiency';
+import { mergeAttendanceAssigneeFields } from '../attendanceAssigneeMerge';
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
@@ -53,9 +54,20 @@ export function applyAttendanceUpdatedPatch(
   }
 
   const scopes: string[] = [];
-  if (patchAllFloatingConversationLists(queryClient, conversationId, (prev) =>
-    prev ? { ...prev, ...incoming } : null,
-  )) {
+  if (patchAllFloatingConversationLists(queryClient, conversationId, (prev) => {
+    if (!prev) return null;
+    const assignee = mergeAttendanceAssigneeFields(prev, {
+      assigned_to_user_id: incoming.assigned_to_user_id,
+      assignee_email: incoming.assignee_email,
+      assignee_display: incoming.assignee_display,
+      assignee_avatar_url: incoming.assignee_avatar_url,
+    });
+    return {
+      ...prev,
+      ...incoming,
+      ...assignee,
+    };
+  })) {
     scopes.push('lists');
   }
   if (patchFloatingChatConversationMeta(queryClient, conversationId, incoming)) {

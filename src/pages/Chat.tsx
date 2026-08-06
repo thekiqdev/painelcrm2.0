@@ -357,6 +357,7 @@ import {
   mergeChatConversationRealtimePatch,
   type CrmNotePreviewRow,
 } from '@/pages/chat/chatPageHelpers';
+import { mergeAttendanceAssigneeFields } from '@/features/chat-core/ws-patch/attendanceAssigneeMerge';
 import { ChatHeaderKanbanThreadExtras } from '@/pages/chat/ChatHeaderKanbanThreadExtras';
 import { useChatPageAccess, type ChatPageScope } from '@/pages/chat/useChatPageAccess';
 
@@ -1692,27 +1693,26 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       setConversations((prev) =>
         prev.map((c) => {
           if (c.id !== conv.id) return c;
+          const assignee = mergeAttendanceAssigneeFields(c, {
+            assigned_to_user_id: conv.assigned_to_user_id as string | null | undefined,
+            assignee_email: conv.assignee_email as string | null | undefined,
+            assignee_display: conv.assignee_display as string | null | undefined,
+            assignee_avatar_url: conv.assignee_avatar_url as string | null | undefined,
+          });
           return {
             ...c,
             attendance_status:
               (conv.attendance_status as ChatConversation['attendance_status']) ?? c.attendance_status,
-            assigned_to_user_id:
-              (conv.assigned_to_user_id as string | null | undefined) ?? c.assigned_to_user_id,
             queue_id: (conv.queue_id as string | null | undefined) ?? c.queue_id,
             assigned_at: (conv.assigned_at as string | undefined) ?? c.assigned_at,
             closed_at: (conv.closed_at as string | null | undefined) ?? c.closed_at,
             last_assignment_reason:
               (conv.last_assignment_reason as string | undefined) ?? c.last_assignment_reason,
-            assignee_email: (conv.assignee_email as string | undefined) ?? c.assignee_email,
-            assignee_display: (conv.assignee_display as string | undefined) ?? c.assignee_display,
-            assignee_avatar_url:
-              conv.assignee_avatar_url !== undefined
-                ? (conv.assignee_avatar_url as string | null | undefined) ?? null
-                : c.assignee_avatar_url,
             assigned_team_id:
               (conv.assigned_team_id as string | null | undefined) ?? c.assigned_team_id,
             assigned_team_name:
               (conv.assigned_team_name as string | null | undefined) ?? c.assigned_team_name,
+            ...assignee,
           };
         }),
       );
@@ -4764,27 +4764,21 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     setConversations((prev) =>
       prev.map((c) => {
         if (c.id !== id) return c;
+        const assignee = mergeAttendanceAssigneeFields(c, {
+          assigned_to_user_id: raw.assigned_to_user_id as string | null | undefined,
+          assignee_email: raw.assignee_email as string | null | undefined,
+          assignee_display: raw.assignee_display as string | null | undefined,
+          assignee_avatar_url: raw.assignee_avatar_url as string | null | undefined,
+        });
         return {
           ...c,
           attendance_status:
             (raw.attendance_status as ChatConversation['attendance_status']) ?? c.attendance_status,
-          assigned_to_user_id:
-            (raw.assigned_to_user_id as string | null | undefined) ?? c.assigned_to_user_id,
           queue_id: (raw.queue_id as string | null | undefined) ?? c.queue_id,
           assigned_at: (raw.assigned_at as string | undefined) ?? c.assigned_at,
           closed_at: (raw.closed_at as string | null | undefined) ?? c.closed_at,
           last_assignment_reason:
             (raw.last_assignment_reason as string | undefined) ?? c.last_assignment_reason,
-          assignee_email:
-            raw.assignee_email !== undefined ? (raw.assignee_email as string | null | undefined) : c.assignee_email,
-          assignee_display:
-            raw.assignee_display !== undefined
-              ? (raw.assignee_display as string | null | undefined)
-              : c.assignee_display,
-          assignee_avatar_url:
-            raw.assignee_avatar_url !== undefined
-              ? (raw.assignee_avatar_url as string | null | undefined)
-              : c.assignee_avatar_url,
           assigned_team_id:
             raw.assigned_team_id !== undefined
               ? (raw.assigned_team_id as string | null | undefined)
@@ -4793,6 +4787,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
             raw.assigned_team_name !== undefined
               ? (raw.assigned_team_name as string | null | undefined)
               : c.assigned_team_name,
+          ...assignee,
         };
       }),
     );
@@ -5347,24 +5342,21 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
           <Headphones className="h-2.5 w-2.5 shrink-0 opacity-85" aria-hidden />
           {(() => {
             const src = chatAvatarUrlForImgSrc(conversation.assignee_avatar_url);
-            return src ? (
+            return (
               <Avatar className="h-3.5 w-3.5 shrink-0 border border-border/50">
-                <AvatarImage src={src} alt="" className="object-cover" />
+                {src ? <AvatarImage src={src} alt="" className="object-cover" /> : null}
                 <AvatarFallback className="text-[6px] font-semibold">
                   {assigneeInitials(conversation.assignee_display!)}
                 </AvatarFallback>
               </Avatar>
-            ) : null;
+            );
           })()}
           <span className="font-medium">{shortOperatorName(conversation.assignee_display)}</span>
         </span>
       ) : null;
     const rawListBadges = selectChatBadges(conversation, slaUiContext);
-    const hideProgBadgeInList =
-      (Boolean(conversation.client_id) || Boolean(conversation.leadId)) &&
-      attendanceIsInProgress(conversation.attendance_status) &&
-      Boolean(conversation.assignee_display?.trim());
-    const listAttendanceBadges = hideProgBadgeInList
+    // Foto/nome é a fonte de verdade — nunca duplicar com badge "Em atendimento".
+    const listAttendanceBadges = assigneeBesideCrm
       ? rawListBadges.filter((b) => b.key !== 'prog')
       : rawListBadges;
 
@@ -5453,6 +5445,11 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                 {!conversation.client_id && conversation.leadId ? (
                   <span className="ml-1.5 inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5 font-normal text-[10px] text-muted-foreground">
                     <span>· Lead</span>
+                    {assigneeBesideCrm}
+                  </span>
+                ) : null}
+                {!conversation.client_id && !conversation.leadId && assigneeBesideCrm ? (
+                  <span className="ml-1.5 inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5 font-normal text-[10px] text-muted-foreground">
                     {assigneeBesideCrm}
                   </span>
                 ) : null}

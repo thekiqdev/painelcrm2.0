@@ -75,13 +75,6 @@ export type ChatBadgeUi = {
   leadingIcon?: 'headphones';
 };
 
-/** Primeiro nome / truncado — lista de conversas (badge no lugar de «Em atendimento»). */
-function shortAssigneeNameForList(display?: string | null): string {
-  if (!display?.trim()) return '';
-  const first = display.trim().split(/\s+/)[0];
-  return first.length > 18 ? `${first.slice(0, 16)}…` : first;
-}
-
 /** No máximo 2: (1) estado de atendimento curto (2) SLA só se crítico (risco ou vencido). */
 export function selectChatBadges(conv: ChatConversation, sla: SlaContextForUi | null): ChatBadgeUi[] {
   const st = conv.attendance_status;
@@ -113,10 +106,11 @@ export function selectChatBadges(conv: ChatConversation, sla: SlaContextForUi | 
     }
 
     if (st === 'in_progress' || st === 'in_service') {
-      const name = shortAssigneeNameForList(conv.assignee_display);
+      // Foto/nome do agente é a fonte de verdade na lista — não duplicar com badge.
+      if (conv.assignee_display?.trim()) return null;
       return {
         key: 'prog',
-        label: name || 'Em atendimento',
+        label: 'Em atendimento',
         variant: 'default',
         leadingIcon: 'headphones',
       };

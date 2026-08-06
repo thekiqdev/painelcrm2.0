@@ -1,5 +1,4 @@
 import type {
-  ChatConversation,
   ChatInstance,
   ChatMessage,
   ChatInternalComment,
@@ -209,35 +208,6 @@ export function resolveInstanceConnectionUi(instance: ChatInstance | null): {
 export const CHAT_COMPOSER_MAX_HEIGHT_PX = 120;
 
 /** Eventos realtime enviam payloads parciais — não apagar `instance_id` / vínculos quando o patch vem sem esses campos. */
-export function mergeChatConversationRealtimePatch(
-  prev: ChatConversation,
-  incoming: ChatConversation,
-): ChatConversation {
-  return {
-    ...prev,
-    ...incoming,
-    instance_id: incoming.instance_id ?? prev.instance_id ?? null,
-    whatsapp_official_account_id:
-      incoming.whatsapp_official_account_id ?? prev.whatsapp_official_account_id ?? null,
-    client_id: incoming.client_id ?? prev.client_id ?? null,
-    leadId: incoming.leadId ?? prev.leadId ?? null,
-    external_chat_id: incoming.external_chat_id || prev.external_chat_id,
-    phoneNumber: incoming.phoneNumber ?? prev.phoneNumber,
-    canonicalPhone: incoming.canonicalPhone ?? prev.canonicalPhone,
-    canonical_phone: incoming.canonical_phone ?? prev.canonical_phone,
-    conversation_type: incoming.conversation_type ?? prev.conversation_type,
-    provider: incoming.provider || prev.provider,
-    contactName: incoming.contactName ?? prev.contactName ?? null,
-    profileName: incoming.profileName ?? prev.profileName ?? null,
-    displayName: incoming.displayName ?? prev.displayName ?? null,
-    display_name: incoming.display_name ?? prev.display_name ?? null,
-    avatarUrl: incoming.avatarUrl ?? prev.avatarUrl ?? null,
-    avatar_url: incoming.avatar_url ?? prev.avatar_url ?? null,
-    final_avatar_url: incoming.final_avatar_url ?? prev.final_avatar_url ?? null,
-    avatar_cached_url: incoming.avatar_cached_url ?? prev.avatar_cached_url ?? null,
-    tags: incoming.tags !== undefined ? incoming.tags : prev.tags,
-    metadata: incoming.metadata !== undefined ? incoming.metadata : prev.metadata,
-  };
-}
+export { mergeChatConversationRealtimePatch } from '@/features/chat-core/ws-patch/conversation-merge';
 
 /** Cabeçalho da thread: pills de tags Kanban, + (lista / criar) e nome do operador. */

@@ -39,6 +39,11 @@ export function domainConversationToUi(conversation: ChatDomainConversation): Ch
         client_id,
         leadId,
         wa_archived: waArchived,
+        attendance_status:
+          (conversation.attendanceStatus as ChatConversation['attendance_status']) ??
+          raw.attendance_status ??
+          null,
+        assigned_to_user_id: conversation.assignedToUserId ?? raw.assigned_to_user_id ?? null,
       };
     }
   }
