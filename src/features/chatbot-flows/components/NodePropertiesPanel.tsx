@@ -507,9 +507,9 @@ export function NodePropertiesPanel({
                 onValueChange={(v) =>
                   onChange({
                     mode: v,
-                    user_id: undefined,
-                    team_id: undefined,
-                    queue_id: v === 'queue' ? data.queue_id : undefined,
+                    user_id: v === 'user' ? data.user_id : null,
+                    team_id: v === 'team' ? data.team_id : null,
+                    queue_id: v === 'queue' ? data.queue_id ?? null : null,
                     assignee_label: undefined,
                   })
                 }

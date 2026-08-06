@@ -8,6 +8,10 @@ import { getOrCreateKanbanTag } from '../chatKanbanTagStore.js';
 import { addKanbanTagToConversation } from '../chatKanbanConversationKanbanTagsService.js';
 import { emitToTenant } from '../realtimeService.js';
 import { emitConversationAttendanceUpdated } from '../websocketService.js';
+import {
+  EMPTY_ASSIGNEE_PUBLIC_FIELDS,
+  loadAssigneePublicFields,
+} from '../chatAssigneePublicFields.js';
 
 export async function runtimeAddTag(opts: {
   tenantId: string;
@@ -72,6 +76,7 @@ export async function runtimeAssignConversation(opts: {
     const row = r.rows[0] as Record<string, unknown> | undefined;
     if (row) {
       ownerUserId = row.user_id != null ? String(row.user_id) : null;
+      const assigneeFields = await loadAssigneePublicFields(userId);
       patch = {
         id: opts.conversationId,
         attendance_status: 'in_progress',
@@ -79,6 +84,7 @@ export async function runtimeAssignConversation(opts: {
         queue_id: row.queue_id ?? null,
         assigned_at: row.assigned_at,
         last_assignment_reason: 'chatbot_flows_assign',
+        ...assigneeFields,
       };
     }
   } else if (opts.mode === 'team') {
@@ -106,6 +112,7 @@ export async function runtimeAssignConversation(opts: {
         assigned_team_id: teamId,
         queue_id: null,
         last_assignment_reason: 'chatbot_flows_assign_team',
+        ...EMPTY_ASSIGNEE_PUBLIC_FIELDS,
       };
     }
   } else {
@@ -130,6 +137,7 @@ export async function runtimeAssignConversation(opts: {
         assigned_to_user_id: null,
         queue_id: queueId,
         last_assignment_reason: 'chatbot_flows_queue',
+        ...EMPTY_ASSIGNEE_PUBLIC_FIELDS,
       };
     }
   }
@@ -188,6 +196,11 @@ export async function runtimeTransferToHuman(opts: {
   if (!row || !opts.tenantId) return;
   const ownerUserId = row.user_id != null ? String(row.user_id) : null;
   if (!ownerUserId) return;
+  const assignedId =
+    row.assigned_to_user_id != null ? String(row.assigned_to_user_id) : null;
+  const assigneeFields = assignedId
+    ? await loadAssigneePublicFields(assignedId)
+    : EMPTY_ASSIGNEE_PUBLIC_FIELDS;
   emitConversationAttendanceUpdated(opts.tenantId, ownerUserId, {
     id: opts.conversationId,
     attendance_status: row.attendance_status,
@@ -196,6 +209,7 @@ export async function runtimeTransferToHuman(opts: {
     ...(hasTeamCol ? { assigned_team_id: row.assigned_team_id ?? null } : {}),
     metadata: row.metadata,
     last_assignment_reason: 'chatbot_flows_transfer_human',
+    ...assigneeFields,
   });
 }
 

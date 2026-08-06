@@ -18,6 +18,7 @@ import {
   loadUserShortDisplay,
   mergeConversationFieldsIntoNotificationData,
 } from '../services/chatNotificationContext.js';
+import { loadAssigneePublicFields } from '../services/chatAssigneePublicFields.js';
 
 function respondAttendanceMigrationRequired(res: Response): void {
   res.status(503).json({
@@ -25,47 +26,6 @@ function respondAttendanceMigrationRequired(res: Response): void {
       'Módulo de atendimento (Etapa 5) não está aplicado na base de dados. Execute a migration: database/init/96_chat_conversations_attendance_etapa5.sql (e, se ainda não correu, 97_rls_chat_app_actor_visibility.sql).',
     code: 'CHAT_ATTENDANCE_MIGRATION_REQUIRED',
   });
-}
-
-/** Nome, email e foto do operador para merge na conversa / WebSocket. */
-async function loadAssigneePublicFields(userId: string | null): Promise<{
-  assignee_email: string | null;
-  assignee_display: string | null;
-  assignee_avatar_url: string | null;
-}> {
-  if (!userId) {
-    return { assignee_email: null, assignee_display: null, assignee_avatar_url: null };
-  }
-  try {
-    const r = await pool.query<{
-      email: string;
-      display: string | null;
-      avatar: string | null;
-    }>(
-      `SELECT u.email,
-              COALESCE(
-                NULLIF(TRIM(COALESCE(pf.first_name, '') || ' ' || COALESCE(pf.last_name, '')), ''),
-                u.email
-              ) AS display,
-              COALESCE(NULLIF(TRIM(pf.avatar_url), ''), NULLIF(TRIM(u.avatar_url), '')) AS avatar
-       FROM users u
-       LEFT JOIN profiles pf ON pf.id = u.id
-       WHERE u.id = $1`,
-      [userId]
-    );
-    const row = r.rows[0];
-    if (!row) return { assignee_email: null, assignee_display: null, assignee_avatar_url: null };
-    const av = row.avatar?.trim() || null;
-    return {
-      assignee_email: row.email ?? null,
-      assignee_display: row.display?.trim() || row.email || null,
-      assignee_avatar_url: av,
-    };
-  } catch {
-    const r2 = await pool.query<{ email: string }>(`SELECT email FROM users WHERE id = $1`, [userId]);
-    const em = r2.rows[0]?.email ?? null;
-    return { assignee_email: em, assignee_display: em, assignee_avatar_url: null };
-  }
 }
 
 const attendanceStatusSchema = z.enum([

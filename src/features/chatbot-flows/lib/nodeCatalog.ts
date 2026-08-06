@@ -1034,10 +1034,12 @@ export function nodePreview(type: string, data: Record<string, unknown>): string
     return `1ª mensagem${dm}`;
   }
   if (type === 'transfer_human') {
-    if (data.assignee_label) return String(data.assignee_label).slice(0, 40);
     const mode = String(data.mode || 'none');
-    if (mode === 'none') return 'Atendimento humano';
-    return `destino: ${mode}`;
+    const label = data.assignee_label ? String(data.assignee_label).slice(0, 32) : '';
+    if (mode === 'user') return label ? `Agente: ${label}` : 'Agente específico';
+    if (mode === 'team') return label ? `Equipe: ${label}` : 'Equipe';
+    if (mode === 'queue') return label ? `Fila: ${label}` : 'Fila';
+    return 'Atendimento humano';
   }
   if (type === 'conversation_note' && typeof data.text === 'string' && data.text.trim()) {
     return data.text.trim().slice(0, 48);
