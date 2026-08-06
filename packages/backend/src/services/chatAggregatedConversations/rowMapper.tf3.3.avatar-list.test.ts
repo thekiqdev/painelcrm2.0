@@ -76,4 +76,34 @@ describe('TF3.3 list avatar display (CDN / meta)', () => {
     expect(item.final_avatar_url).toBe(catalog);
     expect(item.avatar_url).toBe(catalog);
   });
+
+  it('view=list keeps assignee_display / assignee_avatar_url for inbox after reload', () => {
+    const [item] = mapConversationRowsForClient(
+      [
+        {
+          id: 'c4',
+          user_id: 'u1',
+          external_chat_id: '5511777777777@s.whatsapp.net',
+          display_name: 'Criar Loja',
+          contact_name: 'Criar Loja',
+          attendance_status: 'in_progress',
+          assigned_to_user_id: 'agent-1',
+          assignee_email: 'kaique@example.com',
+          assignee_display: 'Kaique',
+          assignee_avatar_url: 'https://cdn.example/kaique.jpg',
+          last_assignment_reason: 'attend',
+          last_message_preview: 'oi',
+          last_message_at: '2026-07-15T12:00:00.000Z',
+          unread_count: 0,
+        },
+      ],
+      'list',
+    );
+
+    expect(item.assigned_to_user_id).toBe('agent-1');
+    expect(item.assignee_display).toBe('Kaique');
+    expect(item.assignee_avatar_url).toBe('https://cdn.example/kaique.jpg');
+    expect(item.assignee_email).toBe('kaique@example.com');
+    expect(item.last_assignment_reason).toBe('attend');
+  });
 });

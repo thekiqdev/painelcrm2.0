@@ -1,6 +1,7 @@
 import {
   conversationRowForClientApi,
 } from '../../utils/uazapiIdentityResolve.js';
+import { refreshCatalogMediaRelativeSignedUrl } from '../../utils/catalogMediaPublicSignedUrl.js';
 import { resolveCommunicationDisplayIdentity } from '../communicationContactService.js';
 
 export function mapConversationRowsForClient(
@@ -37,7 +38,12 @@ export function mapConversationRowsForClient(
     });
 
     if (view === 'full') {
-      return full;
+      return {
+        ...full,
+        assignee_avatar_url: refreshCatalogMediaRelativeSignedUrl(
+          typeof full.assignee_avatar_url === 'string' ? full.assignee_avatar_url : null,
+        ),
+      };
     }
 
     return toListViewItem(full);
@@ -71,6 +77,15 @@ function toListViewItem(full: Record<string, unknown>): Record<string, unknown> 
     assigned_to_user_id: full.assigned_to_user_id ?? null,
     assigned_team_id: full.assigned_team_id ?? null,
     assigned_team_name: full.assigned_team_name ?? null,
+    /** Sem estes campos o FE só vê assigned_to_user_id e cai no fallback "Atendente". */
+    assignee_email: full.assignee_email ?? null,
+    assignee_display: full.assignee_display ?? null,
+    assignee_avatar_url: refreshCatalogMediaRelativeSignedUrl(
+      typeof full.assignee_avatar_url === 'string' ? full.assignee_avatar_url : null,
+    ),
+    assigned_at: full.assigned_at ?? null,
+    closed_at: full.closed_at ?? null,
+    last_assignment_reason: full.last_assignment_reason ?? null,
     queue_id: full.queue_id ?? null,
     client_id: full.client_id ?? null,
     lead_id: full.lead_id ?? full.leadId ?? null,

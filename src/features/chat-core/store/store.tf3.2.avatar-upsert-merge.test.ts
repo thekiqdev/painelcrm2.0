@@ -124,4 +124,40 @@ describe('TF3.2 preserve avatar on full upsert', () => {
     expect(raw.avatar_cached_url).toBe('https://cdn.example/cached-group.jpg');
     expect(raw.client_whatsapp_avatar_cached_url).toBe('https://cdn.example/client-wa.jpg');
   });
+
+  it('attendance_updated partial patch does not wipe contact name in raw', () => {
+    const existing = rich('conv-1');
+    existing.raw = {
+      ...(existing.raw as object),
+      contactName: 'Criar Loja',
+      displayName: 'Criar Loja',
+      phoneNumber: '+5511999999999',
+    };
+    const incoming: ChatDomainConversation = {
+      ...existing,
+      attendanceStatus: 'in_progress',
+      assignedToUserId: 'agent-1',
+      contactName: null,
+      phoneNumber: null,
+      raw: {
+        id: 'conv-1',
+        attendance_status: 'in_progress',
+        assigned_to_user_id: 'agent-1',
+        assignee_display: 'Kaique',
+        assignee_avatar_url: 'https://cdn.example/kaique.jpg',
+        last_assignment_reason: 'attend',
+        contactName: null,
+        displayName: null,
+        phoneNumber: null,
+      },
+    };
+    const merged = mergeDomainConversationFullUpsert(existing, incoming);
+    const raw = merged.raw as Record<string, unknown>;
+    expect(merged.contactName).toBe('Mercado Livre');
+    expect(raw.contactName).toBe('Criar Loja');
+    expect(raw.displayName).toBe('Criar Loja');
+    expect(raw.phoneNumber).toBe('+5511999999999');
+    expect(raw.assignee_display).toBe('Kaique');
+    expect(merged.assignedToUserId).toBe('agent-1');
+  });
 });

@@ -34,6 +34,46 @@ const ASSIGNEE_RAW_KEYS = [
   'assignee_avatar_url',
 ] as const;
 
+/** Identidade do contacto — patch parcial (attendance) não pode apagar → UI "?". */
+const IDENTITY_RAW_KEYS = [
+  'contactName',
+  'contact_name',
+  'profileName',
+  'profile_name',
+  'displayName',
+  'display_name',
+  'phoneNumber',
+  'phone_number',
+  'canonicalPhone',
+  'canonical_phone',
+  'canonicalChatId',
+  'canonical_chat_id',
+  'external_chat_id',
+  'client_id',
+  'leadId',
+  'lead_id',
+  'link_state',
+  'user_id',
+  'instance_id',
+  'whatsapp_official_account_id',
+  'provider',
+  'conversation_type',
+] as const;
+
+function preserveRawKeysWhenEmpty(
+  out: Record<string, unknown>,
+  existingRaw: Record<string, unknown>,
+  incomingRaw: Record<string, unknown>,
+  keys: readonly string[],
+): void {
+  for (const key of keys) {
+    if (!(key in incomingRaw) || incomingRaw[key] == null || incomingRaw[key] === '') {
+      const prev = existingRaw[key];
+      if (prev != null && prev !== '') out[key] = prev;
+    }
+  }
+}
+
 function mergeAvatarRaw(
   existingRaw: Record<string, unknown>,
   incomingRaw: Record<string, unknown>,
@@ -41,14 +81,12 @@ function mergeAvatarRaw(
   const lean = Boolean(incomingRaw.__leanRealtimePatch);
   const out: Record<string, unknown> = { ...existingRaw, ...incomingRaw };
 
+  // Sempre: patch magro/parcial não pode limpar nome/telefone do contacto.
+  preserveRawKeysWhenEmpty(out, existingRaw, incomingRaw, IDENTITY_RAW_KEYS);
+
   if (lean) {
     // Lean bump não deve apagar assignee hidratado na inbox.
-    for (const key of ASSIGNEE_RAW_KEYS) {
-      if (!(key in incomingRaw) || incomingRaw[key] == null) {
-        const prev = existingRaw[key];
-        if (prev != null && prev !== '') out[key] = prev;
-      }
-    }
+    preserveRawKeysWhenEmpty(out, existingRaw, incomingRaw, ASSIGNEE_RAW_KEYS);
   } else if (
     Object.prototype.hasOwnProperty.call(incomingRaw, 'assigned_to_user_id') &&
     (incomingRaw.assigned_to_user_id === null || incomingRaw.assigned_to_user_id === '')

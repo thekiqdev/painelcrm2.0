@@ -129,6 +129,18 @@ function shouldWriteToStore(items: ChatConversation[], allowEmpty: boolean): boo
   return readStoreConversationCount() === 0;
 }
 
+/**
+ * Filtros de attendance / quick (Fila, Minhas, etc.) podem legitimamente devolver lista vazia.
+ * Sem allowEmpty o Store singleton mantinha a lista do filtro anterior.
+ */
+function resolveAllowEmpty(params: LoadInboxParams): boolean {
+  if (params.allowEmpty === true) return true;
+  const attendance = params.attendanceFilter ?? '';
+  if (attendance !== '') return true;
+  const quick = params.quickFilter ?? 'all';
+  return quick !== 'all';
+}
+
 function writeInboxToStore(
   items: ChatConversation[],
   generation: number,
@@ -343,18 +355,25 @@ export async function loadInboxCommand(params: LoadInboxParams): Promise<LoadInb
     if (
       cached &&
       Date.now() - cached.at < ttl &&
-      readStoreConversationCount() > 0
+      (readStoreConversationCount() > 0 || cached.result.items.length > 0 || resolveAllowEmpty(params))
     ) {
+      // Store é singleton entre Fila/Minhas/etc. — reaplicar a lista deste filtro
+      // (senão o skip GET deixa a UI com conversas do filtro anterior).
+      const allowEmpty = resolveAllowEmpty(params);
+      const applied = shouldWriteToStore(cached.result.items, allowEmpty)
+        ? writeInboxToStore(cached.result.items, loadInboxGeneration, 'replace')
+        : false;
       logInboxCacheEvent('inbox_fetch_skipped_fresh', {
         ttlMs: ttl,
         ageMs: Date.now() - cached.at,
         storeCount: readStoreConversationCount(),
         reason: isChatRealtimeConnectedForInboxFresh() ? 'ws_connected' : 'disk_seed_or_session',
         wsConnected: isChatRealtimeConnectedForInboxFresh(),
+        reapplied: applied,
       });
       return {
         ...cached.result,
-        applied: false,
+        applied,
         stale: false,
         source: 'cache',
       };
@@ -417,7 +436,7 @@ export async function loadInboxCommand(params: LoadInboxParams): Promise<LoadInb
         return result;
       }
 
-      const allowEmpty = params.allowEmpty === true;
+      const allowEmpty = resolveAllowEmpty(params);
       if (!shouldWriteToStore(items, allowEmpty) && mode === 'replace') {
         return {
           items,

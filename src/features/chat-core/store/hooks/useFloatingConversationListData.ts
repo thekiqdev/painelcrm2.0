@@ -17,7 +17,6 @@ import {
 } from '@/repositories/chatConversationsRepository';
 import {
   buildDefaultChatPageInboxFiltersKey,
-  readChatPageCacheUpdatedAt,
   type ChatPageCacheScope,
 } from '@/lib/chatPageCache';
 import { useAuth } from '@/contexts/AuthContext';
@@ -155,6 +154,7 @@ export function useFloatingConversationListData(params: {
     ensureChatDomainStoreSession();
 
     // TF7 E4 — warm + seed freshness (mesmo contrato Chat E1/E2).
+    // Só semear após warm bem-sucedido — seed sem warm misturava lista de outro filtro no Store singleton.
     if (cacheScope.userId) {
       const warm = warmInboxFromPageCache({
         scope: cacheScope,
@@ -164,14 +164,6 @@ export function useFloatingConversationListData(params: {
         const seeded = markInboxFreshFromClient(inboxParams, warm.cachedUpdatedAt);
         if (seeded) {
           scheduleInboxSoftReconcileOnRealtimeConnected(inboxParams);
-        }
-      } else if (!warm.warmed) {
-        const diskAt = readChatPageCacheUpdatedAt(cacheScope, pageFiltersKey);
-        if (diskAt != null) {
-          const seeded = markInboxFreshFromClient(inboxParams, diskAt);
-          if (seeded) {
-            scheduleInboxSoftReconcileOnRealtimeConnected(inboxParams);
-          }
         }
       }
     }

@@ -19,6 +19,7 @@ import {
   mergeConversationFieldsIntoNotificationData,
 } from '../services/chatNotificationContext.js';
 import { loadAssigneePublicFields } from '../services/chatAssigneePublicFields.js';
+import { pauseChatbotFlowSessionsForConversation } from '../services/chatbotFlows/chatbotFlowsRuntimeRunner.js';
 
 function respondAttendanceMigrationRequired(res: Response): void {
   res.status(503).json({
@@ -26,6 +27,18 @@ function respondAttendanceMigrationRequired(res: Response): void {
       'Módulo de atendimento (Etapa 5) não está aplicado na base de dados. Execute a migration: database/init/96_chat_conversations_attendance_etapa5.sql (e, se ainda não correu, 97_rls_chat_app_actor_visibility.sql).',
     code: 'CHAT_ATTENDANCE_MIGRATION_REQUIRED',
   });
+}
+
+/** Garante pause do bot quando humano assume / fica em in_progress com assignee. */
+async function pauseFlowsWhenHumanTakesOver(
+  conversationId: string,
+  context: string,
+): Promise<void> {
+  try {
+    await pauseChatbotFlowSessionsForConversation(conversationId);
+  } catch (e) {
+    console.warn(`[${context}] pause chatbot sessions`, e);
+  }
 }
 
 const attendanceStatusSchema = z.enum([
@@ -342,9 +355,7 @@ export async function attendConversation(req: AuthRequest, res: Response) {
 
     await client.query('COMMIT');
 
-    void import('../services/chatbotFlows/chatbotFlowsRuntimeRunner.js')
-      .then((m) => m.pauseChatbotFlowSessionsForConversation(conversationId))
-      .catch((e) => console.warn('[attendConversation] pause chatbot sessions', e));
+    await pauseFlowsWhenHumanTakesOver(conversationId, 'attendConversation');
 
     const assigneeFields = await loadAssigneePublicFields(actorUserId);
     const patch = attendancePatchFromRow({
@@ -681,6 +692,12 @@ export async function patchConversationAttendance(req: AuthRequest, res: Respons
     });
 
     await client.query('COMMIT');
+
+    const humanBusy =
+      nextAssigned != null || nextStatus === 'in_progress' || nextStatus === 'in_service';
+    if (humanBusy) {
+      await pauseFlowsWhenHumanTakesOver(conversationId, 'patchConversationAttendance');
+    }
 
     const assigneeFields = await loadAssigneePublicFields(
       (row.assigned_to_user_id as string | null) ?? null

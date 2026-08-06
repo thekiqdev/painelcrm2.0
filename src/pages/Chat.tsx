@@ -280,7 +280,7 @@ import {
 } from '@/lib/communicationChannelUi';
 import { isChatClientProfileReturn, isChatListReturnPath } from '@/lib/chatListNavigation';
 import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
-import { assigneeInitials } from '@/utils/chatKanbanCardDisplay';
+import { ChatAssigneePresence } from '@/components/chat/ChatAssigneePresence';
 import {
   logChatRealtimeDuplicateSkipped,
   logChatRealtimeLegacyEventReceived,
@@ -293,7 +293,6 @@ import {
   buildDefaultChatPageInboxFiltersKey,
   clearChatPageCacheForSession,
   readChatPageCache,
-  readChatPageCacheUpdatedAt,
   readChatPageMessages,
   saveChatPageConversations,
   saveChatPageLastConversation,
@@ -357,7 +356,7 @@ import {
   mergeChatConversationRealtimePatch,
   type CrmNotePreviewRow,
 } from '@/pages/chat/chatPageHelpers';
-import { mergeAttendanceAssigneeFields } from '@/features/chat-core/ws-patch/attendanceAssigneeMerge';
+import { mergeAttendanceConversationPatch } from '@/features/chat-core/ws-patch/conversation-merge';
 import { ChatHeaderKanbanThreadExtras } from '@/pages/chat/ChatHeaderKanbanThreadExtras';
 import { useChatPageAccess, type ChatPageScope } from '@/pages/chat/useChatPageAccess';
 
@@ -534,16 +533,33 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     [user?.tenant_id, user?.id],
   );
 
+  /** Metadados do último warm bem-sucedido — só então semear freshness (evita seed com lista do filtro anterior). */
+  const inboxWarmMetaRef = useRef<{ filtersKey: string; at: number } | null>(null);
+  const chatPageFiltersKeyPrevRef = useRef(chatPageFiltersKey);
+
   useLayoutEffect(() => {
     if (!chatPageCacheScope.userId) return;
+
+    const filtersChanged = chatPageFiltersKeyPrevRef.current !== chatPageFiltersKey;
+    chatPageFiltersKeyPrevRef.current = chatPageFiltersKey;
 
     // TF7 E1 — Store ON: warm Domain Store do localStorage (disco nunca SoT; GET segue em background).
     if (isChatStoreSourceOfTruth()) {
       ensureChatDomainStoreSession();
+      // Ao trocar Fila/Minhas/etc., substituir a lista do filtro anterior pelo cache do filtro novo.
       const warm = warmInboxFromPageCache({
         scope: chatPageCacheScope,
         filtersKey: chatPageFiltersKey,
+        onlyIfEmpty: !filtersChanged,
       });
+      if (warm.warmed && warm.cachedUpdatedAt != null) {
+        inboxWarmMetaRef.current = {
+          filtersKey: chatPageFiltersKey,
+          at: warm.cachedUpdatedAt,
+        };
+      } else if (filtersChanged) {
+        inboxWarmMetaRef.current = null;
+      }
       if (!warm.warmed) return;
       conversationsHydratedRef.current = true;
       if (!routeConversationId && !selectedConversationIdRef.current && warm.lastConversationId) {
@@ -554,7 +570,9 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
 
     const cached = readChatPageCache(chatPageCacheScope, chatPageFiltersKey);
     if (!cached?.conversations.length) return;
-    setConversations((prev) => (prev.length > 0 ? prev : cached.conversations));
+    setConversations((prev) =>
+      filtersChanged || prev.length === 0 ? cached.conversations : prev,
+    );
     conversationsHydratedRef.current = true;
     if (!routeConversationId && !selectedConversationIdRef.current && cached.lastConversationId) {
       const hit = cached.conversations.some((c) => c.id === cached.lastConversationId);
@@ -901,11 +919,11 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
         force: options?.force === true,
       };
 
-      // TF7 E2 — após warm E1 (F5), semear freshness do disk para skip GET se ainda fresco.
+      // TF7 E2 — semear freshness só após warm deste filtersKey (não misturar Fila↔Minhas).
       if (!inboxParams.force && isChatStoreSourceOfTruth()) {
-        const diskAt = readChatPageCacheUpdatedAt(chatPageCacheScope, chatPageFiltersKey);
-        if (diskAt != null) {
-          const seeded = markInboxFreshFromClient(inboxParams, diskAt);
+        const warmMeta = inboxWarmMetaRef.current;
+        if (warmMeta && warmMeta.filtersKey === chatPageFiltersKey) {
+          const seeded = markInboxFreshFromClient(inboxParams, warmMeta.at);
           if (seeded) {
             scheduleInboxSoftReconcileOnRealtimeConnected(inboxParams);
           }
@@ -916,7 +934,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
 
       const uniqueConversations = result.items;
       loadedConvCount =
-        isChatStoreSourceOfTruth() && result.source === 'cache'
+        isChatStoreSourceOfTruth() && result.source === 'cache' && !result.applied
           ? conversationsCountRef.current
           : uniqueConversations.length;
       setInboxHasMore(result.hasMore);
@@ -931,8 +949,8 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
         });
       }
 
-      // TF7 E1/E3 — espelhar cache local (Store ON lê do Store; OFF usa items do GET).
-      if (result.source !== 'cache' && result.applied) {
+      // TF7 E1/E3 — espelhar cache local (Store ON lê do Store; OFF usa items do GET/reapply).
+      if (result.applied) {
         if (!isChatStoreSourceOfTruth()) {
           setConversations(uniqueConversations);
           saveChatPageConversations(
@@ -1693,27 +1711,20 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       setConversations((prev) =>
         prev.map((c) => {
           if (c.id !== conv.id) return c;
-          const assignee = mergeAttendanceAssigneeFields(c, {
+          return mergeAttendanceConversationPatch(c, {
             assigned_to_user_id: conv.assigned_to_user_id as string | null | undefined,
             assignee_email: conv.assignee_email as string | null | undefined,
             assignee_display: conv.assignee_display as string | null | undefined,
             assignee_avatar_url: conv.assignee_avatar_url as string | null | undefined,
-          });
-          return {
-            ...c,
             attendance_status:
-              (conv.attendance_status as ChatConversation['attendance_status']) ?? c.attendance_status,
-            queue_id: (conv.queue_id as string | null | undefined) ?? c.queue_id,
-            assigned_at: (conv.assigned_at as string | undefined) ?? c.assigned_at,
-            closed_at: (conv.closed_at as string | null | undefined) ?? c.closed_at,
-            last_assignment_reason:
-              (conv.last_assignment_reason as string | undefined) ?? c.last_assignment_reason,
-            assigned_team_id:
-              (conv.assigned_team_id as string | null | undefined) ?? c.assigned_team_id,
-            assigned_team_name:
-              (conv.assigned_team_name as string | null | undefined) ?? c.assigned_team_name,
-            ...assignee,
-          };
+              (conv.attendance_status as ChatConversation['attendance_status']) ?? undefined,
+            queue_id: conv.queue_id as string | null | undefined,
+            assigned_at: conv.assigned_at as string | null | undefined,
+            closed_at: conv.closed_at as string | null | undefined,
+            last_assignment_reason: conv.last_assignment_reason as string | null | undefined,
+            assigned_team_id: conv.assigned_team_id as string | null | undefined,
+            assigned_team_name: conv.assigned_team_name as string | null | undefined,
+          });
         }),
       );
       scheduleOperationsPanelRefresh();
@@ -2436,13 +2447,32 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     conversationsToShow.length,
   ]);
 
+  // Contagem da chip "Fila" = queue + unassigned (ver ChatSidebarTagFilters).
+  // Só auto-limpar depois de haver contagens reais (estado inicial é tudo 0).
+  const attendanceCountsReadyRef = useRef(false);
   useEffect(() => {
-    if (attendanceCounts.queue === 0 && chatAttendanceFilter === 'queue') {
-      setChatAttendanceFilter('');
+    if (
+      attendanceCounts.queue > 0 ||
+      attendanceCounts.unassigned > 0 ||
+      attendanceCounts.mine > 0 ||
+      attendanceCounts.team > 0 ||
+      attendanceCounts.closed > 0 ||
+      (attendanceCounts.wa_archived ?? 0) > 0
+    ) {
+      attendanceCountsReadyRef.current = true;
     }
-  }, [attendanceCounts.queue, chatAttendanceFilter]);
+  }, [attendanceCounts]);
 
   useEffect(() => {
+    if (!attendanceCountsReadyRef.current) return;
+    const filaCount = attendanceCounts.queue + attendanceCounts.unassigned;
+    if (filaCount === 0 && chatAttendanceFilter === 'queue') {
+      setChatAttendanceFilter('');
+    }
+  }, [attendanceCounts.queue, attendanceCounts.unassigned, chatAttendanceFilter]);
+
+  useEffect(() => {
+    if (!attendanceCountsReadyRef.current) return;
     if (attendanceCounts.team === 0 && chatAttendanceFilter === 'team') {
       setChatAttendanceFilter('');
     }
@@ -4764,31 +4794,20 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     setConversations((prev) =>
       prev.map((c) => {
         if (c.id !== id) return c;
-        const assignee = mergeAttendanceAssigneeFields(c, {
+        return mergeAttendanceConversationPatch(c, {
           assigned_to_user_id: raw.assigned_to_user_id as string | null | undefined,
           assignee_email: raw.assignee_email as string | null | undefined,
           assignee_display: raw.assignee_display as string | null | undefined,
           assignee_avatar_url: raw.assignee_avatar_url as string | null | undefined,
-        });
-        return {
-          ...c,
           attendance_status:
-            (raw.attendance_status as ChatConversation['attendance_status']) ?? c.attendance_status,
-          queue_id: (raw.queue_id as string | null | undefined) ?? c.queue_id,
-          assigned_at: (raw.assigned_at as string | undefined) ?? c.assigned_at,
-          closed_at: (raw.closed_at as string | null | undefined) ?? c.closed_at,
-          last_assignment_reason:
-            (raw.last_assignment_reason as string | undefined) ?? c.last_assignment_reason,
-          assigned_team_id:
-            raw.assigned_team_id !== undefined
-              ? (raw.assigned_team_id as string | null | undefined)
-              : c.assigned_team_id,
-          assigned_team_name:
-            raw.assigned_team_name !== undefined
-              ? (raw.assigned_team_name as string | null | undefined)
-              : c.assigned_team_name,
-          ...assignee,
-        };
+            (raw.attendance_status as ChatConversation['attendance_status']) ?? undefined,
+          queue_id: raw.queue_id as string | null | undefined,
+          assigned_at: raw.assigned_at as string | null | undefined,
+          closed_at: raw.closed_at as string | null | undefined,
+          last_assignment_reason: raw.last_assignment_reason as string | null | undefined,
+          assigned_team_id: raw.assigned_team_id as string | null | undefined,
+          assigned_team_name: raw.assigned_team_name as string | null | undefined,
+        });
       }),
     );
   }, []);
@@ -4809,9 +4828,10 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
         assignee_display:
           [user.first_name, user.last_name].filter(Boolean).join(' ').trim() || user.email,
         assignee_avatar_url:
-          typeof profile?.avatar_url === 'string' && profile.avatar_url.trim()
-            ? profile.avatar_url.trim()
-            : null,
+          (typeof profile?.avatar_url === 'string' && profile.avatar_url.trim()) ||
+          (typeof (user as { avatar_url?: string | null }).avatar_url === 'string' &&
+            (user as { avatar_url?: string | null }).avatar_url!.trim()) ||
+          null,
       });
     } catch (error) {
       toast.error('Não foi possível atender', {
@@ -5341,21 +5361,13 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       (conversation.assigned_to_user_id ? 'Atendente' : '');
     const assigneeBesideCrm =
       attendanceIsInProgress(conversation.attendance_status) && listAssigneeLabel ? (
-        <span className="inline-flex items-center gap-0.5 text-foreground/90">
-          <Headphones className="h-2.5 w-2.5 shrink-0 opacity-85" aria-hidden />
-          {(() => {
-            const src = chatAvatarUrlForImgSrc(conversation.assignee_avatar_url);
-            return (
-              <Avatar className="h-3.5 w-3.5 shrink-0 border border-border/50">
-                {src ? <AvatarImage src={src} alt="" className="object-cover" /> : null}
-                <AvatarFallback className="text-[6px] font-semibold">
-                  {assigneeInitials(listAssigneeLabel)}
-                </AvatarFallback>
-              </Avatar>
-            );
-          })()}
-          <span className="font-medium">{shortOperatorName(listAssigneeLabel)}</span>
-        </span>
+        <ChatAssigneePresence
+          displayName={listAssigneeLabel}
+          avatarUrl={conversation.assignee_avatar_url}
+          size="sm"
+          className="text-foreground/90"
+          nameClassName="text-foreground/90"
+        />
       ) : null;
     const rawListBadges = selectChatBadges(conversation, slaUiContext);
     // Padrão único: headset + foto + nome; nunca badge «Em atendimento» / prog.

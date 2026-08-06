@@ -2,8 +2,59 @@
  * Merge seguro de patches realtime em conversas (espelha Chat.tsx).
  */
 
-import type { ChatConversation } from '@/services/chat';
-import { mergeAttendanceAssigneeFields } from './attendanceAssigneeMerge';
+import type { ChatAttendanceStatus, ChatConversation } from '@/services/chat';
+import {
+  mergeAttendanceAssigneeFields,
+  type AttendanceAssigneeSlice,
+} from './attendanceAssigneeMerge';
+
+/** Campos de atendimento / assignee — nunca identidade do contacto. */
+export type AttendanceConversationPatch = AttendanceAssigneeSlice & {
+  attendance_status?: ChatAttendanceStatus | null;
+  queue_id?: string | null;
+  assigned_at?: string | null;
+  closed_at?: string | null;
+  last_assignment_reason?: string | null;
+  assigned_team_id?: string | null;
+  assigned_team_name?: string | null;
+};
+
+/**
+ * Fonte única para Atender / transfer / WS attendance_updated.
+ * Não espalha payload parcial (evita contactName/phone virarem null → "?").
+ */
+export function mergeAttendanceConversationPatch(
+  prev: ChatConversation,
+  incoming: AttendanceConversationPatch,
+): ChatConversation {
+  const assignee = mergeAttendanceAssigneeFields(prev, {
+    assigned_to_user_id: incoming.assigned_to_user_id,
+    assignee_email: incoming.assignee_email,
+    assignee_display: incoming.assignee_display,
+    assignee_avatar_url: incoming.assignee_avatar_url,
+  });
+  return {
+    ...prev,
+    attendance_status:
+      incoming.attendance_status !== undefined
+        ? incoming.attendance_status
+        : (prev.attendance_status ?? null),
+    queue_id: incoming.queue_id !== undefined ? incoming.queue_id : prev.queue_id,
+    assigned_at: incoming.assigned_at !== undefined ? incoming.assigned_at : prev.assigned_at,
+    closed_at: incoming.closed_at !== undefined ? incoming.closed_at : prev.closed_at,
+    last_assignment_reason:
+      incoming.last_assignment_reason !== undefined
+        ? incoming.last_assignment_reason
+        : prev.last_assignment_reason,
+    assigned_team_id:
+      incoming.assigned_team_id !== undefined ? incoming.assigned_team_id : prev.assigned_team_id,
+    assigned_team_name:
+      incoming.assigned_team_name !== undefined
+        ? incoming.assigned_team_name
+        : prev.assigned_team_name,
+    ...assignee,
+  };
+}
 
 export function mergeChatConversationRealtimePatch(
   prev: ChatConversation,

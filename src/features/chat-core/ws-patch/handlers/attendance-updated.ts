@@ -1,13 +1,15 @@
 /**
  * F2.5 — patch conversation_attendance_updated
  *
- * Atualiza campos de atendimento na conversa em cache.
+ * Atualiza só campos de atendimento/assignee na conversa em cache.
  * Contadores agregados (queue/mine/team/unread global) NÃO vêm no payload —
  * permanecem no fluxo legado (HTTP reconcile).
+ *
+ * Nunca espalhar `normalizeConversation` parcial: isso zera contactName/phone → "?".
  */
 
 import type { QueryClient } from '@tanstack/react-query';
-import { normalizeConversation } from '@/services/chat';
+import type { ChatAttendanceStatus, ChatConversation } from '@/services/chat';
 import type { ChatWsPatchResult } from '../types';
 import {
   conversationExistsInFloatingCaches,
@@ -16,10 +18,44 @@ import {
   patchFloatingChatMinimizedMeta,
 } from '../query-cache';
 import { isAttendanceUpdatedPayloadSufficient } from '../payload-sufficiency';
-import { mergeAttendanceAssigneeFields } from '../attendanceAssigneeMerge';
+import { mergeAttendanceConversationPatch } from '../conversation-merge';
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+}
+
+function attendancePatchFromPayload(conv: Record<string, unknown>) {
+  return {
+    attendance_status: (conv.attendance_status as ChatAttendanceStatus | null | undefined) ?? undefined,
+    assigned_to_user_id: conv.assigned_to_user_id as string | null | undefined,
+    assignee_email: conv.assignee_email as string | null | undefined,
+    assignee_display: conv.assignee_display as string | null | undefined,
+    assignee_avatar_url: conv.assignee_avatar_url as string | null | undefined,
+    queue_id: conv.queue_id as string | null | undefined,
+    assigned_at: conv.assigned_at as string | null | undefined,
+    closed_at: conv.closed_at as string | null | undefined,
+    last_assignment_reason: conv.last_assignment_reason as string | null | undefined,
+    assigned_team_id: conv.assigned_team_id as string | null | undefined,
+    assigned_team_name: conv.assigned_team_name as string | null | undefined,
+  };
+}
+
+/**
+ * Incoming mínimo para os helpers de meta (que re-aplicam mergeChatConversationRealtimePatch).
+ * `last_assignment_reason` força o ramo de assignee; identidade fica preservada via `??`.
+ */
+function attendanceIncomingForMetaMerge(
+  conversationId: string,
+  patch: ReturnType<typeof attendancePatchFromPayload>,
+): ChatConversation {
+  return {
+    id: conversationId,
+    user_id: '',
+    external_chat_id: '',
+    unreadCount: 0,
+    ...patch,
+    last_assignment_reason: patch.last_assignment_reason ?? 'attendance_ws',
+  };
 }
 
 export function applyAttendanceUpdatedPatch(
@@ -44,7 +80,6 @@ export function applyAttendanceUpdatedPatch(
     };
   }
 
-  const incoming = normalizeConversation(conv);
   if (!conversationExistsInFloatingCaches(queryClient, conversationId)) {
     return {
       applied: false,
@@ -53,27 +88,24 @@ export function applyAttendanceUpdatedPatch(
     };
   }
 
+  const patch = attendancePatchFromPayload(conv);
   const scopes: string[] = [];
-  if (patchAllFloatingConversationLists(queryClient, conversationId, (prev) => {
-    if (!prev) return null;
-    const assignee = mergeAttendanceAssigneeFields(prev, {
-      assigned_to_user_id: incoming.assigned_to_user_id,
-      assignee_email: incoming.assignee_email,
-      assignee_display: incoming.assignee_display,
-      assignee_avatar_url: incoming.assignee_avatar_url,
-    });
-    return {
-      ...prev,
-      ...incoming,
-      ...assignee,
-    };
-  })) {
+
+  if (
+    patchAllFloatingConversationLists(queryClient, conversationId, (prev) => {
+      if (!prev) return null;
+      // Já mesclado; patchConversationRow no helper re-aplica merge seguro (identidade via ??).
+      return mergeAttendanceConversationPatch(prev, patch);
+    })
+  ) {
     scopes.push('lists');
   }
-  if (patchFloatingChatConversationMeta(queryClient, conversationId, incoming)) {
+
+  const metaIncoming = attendanceIncomingForMetaMerge(conversationId, patch);
+  if (patchFloatingChatConversationMeta(queryClient, conversationId, metaIncoming)) {
     scopes.push('meta');
   }
-  if (patchFloatingChatMinimizedMeta(queryClient, conversationId, incoming)) {
+  if (patchFloatingChatMinimizedMeta(queryClient, conversationId, metaIncoming)) {
     scopes.push('minimized-meta');
   }
 

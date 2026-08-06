@@ -118,6 +118,16 @@ export function chatAvatarUrlForImgSrc(url: string | null | undefined): string |
       return full;
     }
   } catch {
+    // Path relativo (ex.: avatar de perfil `/api/...`) — não descartar.
+    if (t.startsWith('/')) {
+      const base = getApiUrl();
+      const out = base ? `${base.replace(/\/$/, '')}${t}` : t;
+      chatAvatarDebugLog('chatAvatarUrlForImgSrc', {
+        outcome: 'relative_path',
+        prefix: t.length > 96 ? `${t.slice(0, 96)}…` : t,
+      });
+      return out;
+    }
     return null;
   }
   chatAvatarDebugLog('chatAvatarUrlForImgSrc', {

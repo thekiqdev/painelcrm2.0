@@ -2,6 +2,7 @@
  * Nome/foto do operador para merge na conversa e WebSocket (Atender / flows).
  */
 import { pool } from '../utils/db.js';
+import { refreshCatalogMediaRelativeSignedUrl } from '../utils/catalogMediaPublicSignedUrl.js';
 
 export type AssigneePublicFields = {
   assignee_email: string | null;
@@ -38,7 +39,8 @@ export async function loadAssigneePublicFields(
     return {
       assignee_email: row.email ?? null,
       assignee_display: row.display?.trim() || row.email || null,
-      assignee_avatar_url: av,
+      // Re-assina catalog-media (mesmo path do GET /api/me/profile) para a foto carregar no chat.
+      assignee_avatar_url: refreshCatalogMediaRelativeSignedUrl(av),
     };
   } catch {
     const r2 = await pool.query<{ email: string }>(`SELECT email FROM users WHERE id = $1`, [

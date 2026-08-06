@@ -33,7 +33,7 @@ import { applyStoreConversationPartialPatch } from '@/features/chat-core/store/p
 import { conversationCrmProfileQueryKey } from '@/features/chat-core/crm/crmDetailProjection';
 import { recordCrmDetailFetchScheduled } from '@/features/chat-core/metrics/crmDetailProjectionMetrics';
 import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
-import { assigneeInitials } from '@/utils/chatKanbanCardDisplay';
+import { ChatAssigneePresence } from '@/components/chat/ChatAssigneePresence';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import {
   Users,
@@ -791,19 +791,14 @@ export function FloatingCompactProfile({
               {conversation?.assignee_display?.trim() ? (
                 <p className="flex min-w-0 items-center gap-1.5 truncate text-[10px] text-muted-foreground">
                   <span className="shrink-0">Responsável:</span>
-                  <Avatar className="h-4 w-4 shrink-0 border border-border/50">
-                    {chatAvatarUrlForImgSrc(conversation.assignee_avatar_url) ? (
-                      <AvatarImage
-                        src={chatAvatarUrlForImgSrc(conversation.assignee_avatar_url)!}
-                        alt=""
-                        className="object-cover"
-                      />
-                    ) : null}
-                    <AvatarFallback className="text-[7px] font-semibold">
-                      {assigneeInitials(conversation.assignee_display)}
-                    </AvatarFallback>
-                  </Avatar>
-                  <span className="min-w-0 truncate font-medium text-foreground/90">{conversation.assignee_display}</span>
+                  <ChatAssigneePresence
+                    displayName={conversation.assignee_display}
+                    avatarUrl={conversation.assignee_avatar_url}
+                    size="md"
+                    showHeadphones={false}
+                    shortName={conversation.assignee_display.trim()}
+                    nameClassName="text-[10px] text-foreground/90"
+                  />
                 </p>
               ) : null}
             </div>
@@ -881,19 +876,14 @@ export function FloatingCompactProfile({
           {conversation?.assignee_display?.trim() ? (
             <p className="mt-2 flex min-w-0 items-center justify-center gap-1.5 truncate px-1 text-[10px] text-muted-foreground">
               <span className="shrink-0">Responsável:</span>
-              <Avatar className="h-4 w-4 shrink-0 border border-border/50">
-                {chatAvatarUrlForImgSrc(conversation.assignee_avatar_url) ? (
-                  <AvatarImage
-                    src={chatAvatarUrlForImgSrc(conversation.assignee_avatar_url)!}
-                    alt=""
-                    className="object-cover"
-                  />
-                ) : null}
-                <AvatarFallback className="text-[7px] font-semibold">
-                  {assigneeInitials(conversation.assignee_display)}
-                </AvatarFallback>
-              </Avatar>
-              <span className="min-w-0 truncate font-medium text-foreground/90">{conversation.assignee_display}</span>
+              <ChatAssigneePresence
+                displayName={conversation.assignee_display}
+                avatarUrl={conversation.assignee_avatar_url}
+                size="md"
+                showHeadphones={false}
+                shortName={conversation.assignee_display.trim()}
+                nameClassName="text-[10px] text-foreground/90"
+              />
             </p>
           ) : null}
           {scheduledStrip ? <div className="mt-2">{scheduledStrip}</div> : null}

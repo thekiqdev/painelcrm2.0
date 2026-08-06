@@ -15,8 +15,10 @@ import { setChatMigrationFlagsForTests, resetChatMigrationFlagsToDefaults } from
 import {
   createChatDomainStore,
   setChatDomainStoreSessionForTests,
+  getChatDomainStoreSession,
 } from '../store/index';
 import { applyStoreConversationList } from '../store/consolidation';
+import { selectConversationsForUi } from '../store/conversationSelectors';
 import { chatRealtimeBridge } from '../realtime/bridge';
 
 vi.mock('../core/inboxFetch', () => ({
@@ -149,5 +151,66 @@ describe('TF7 E2 inbox fresh TTL', () => {
     expect(chatRealtimeBridge.status === 'connected').toBe(false);
     expect(isChatRealtimeConnectedForInboxFresh()).toBe(false);
     expect(getEffectiveInboxFreshTtlMs()).toBe(INBOX_FRESH_TTL_DISCONNECTED_MS);
+  });
+
+  it('reapplies cached items to Store when switching attendance filters (Fila ↔ Minhas)', async () => {
+    vi.mocked(fetchInboxConversationsPage)
+      .mockResolvedValueOnce({
+        items: [legacy('mine-1', '2026-07-16T12:00:00.000Z')],
+        nextCursor: null,
+        hasMore: false,
+        source: 'aggregated',
+      })
+      .mockResolvedValueOnce({
+        items: [legacy('queue-1', '2026-07-16T12:01:00.000Z')],
+        nextCursor: null,
+        hasMore: false,
+        source: 'aggregated',
+      });
+
+    await loadInboxCommand({ ...baseParams, attendanceFilter: 'mine' });
+    expect(selectConversationsForUi(getChatDomainStoreSession()!.getState()).map((c) => c.id)).toEqual([
+      'mine-1',
+    ]);
+
+    await loadInboxCommand({ ...baseParams, attendanceFilter: 'queue' });
+    expect(selectConversationsForUi(getChatDomainStoreSession()!.getState()).map((c) => c.id)).toEqual([
+      'queue-1',
+    ]);
+
+    // Voltar a Minhas dentro do TTL — skip GET mas Store deve voltar a mine-1
+    const backToMine = await loadInboxCommand({ ...baseParams, attendanceFilter: 'mine' });
+    expect(fetchInboxConversationsPage).toHaveBeenCalledTimes(2);
+    expect(backToMine.source).toBe('cache');
+    expect(backToMine.applied).toBe(true);
+    expect(selectConversationsForUi(getChatDomainStoreSession()!.getState()).map((c) => c.id)).toEqual([
+      'mine-1',
+    ]);
+  });
+
+  it('attendance filter empty result clears Store (allowEmpty implícito)', async () => {
+    vi.mocked(fetchInboxConversationsPage)
+      .mockResolvedValueOnce({
+        items: [legacy('mine-1', '2026-07-16T12:00:00.000Z')],
+        nextCursor: null,
+        hasMore: false,
+        source: 'aggregated',
+      })
+      .mockResolvedValueOnce({
+        items: [],
+        nextCursor: null,
+        hasMore: false,
+        source: 'aggregated',
+      });
+
+    await loadInboxCommand({ ...baseParams, attendanceFilter: 'mine' });
+    const emptyQueue = await loadInboxCommand({
+      ...baseParams,
+      attendanceFilter: 'queue',
+      force: true,
+    });
+
+    expect(emptyQueue.applied).toBe(true);
+    expect(selectConversationsForUi(getChatDomainStoreSession()!.getState())).toHaveLength(0);
   });
 });

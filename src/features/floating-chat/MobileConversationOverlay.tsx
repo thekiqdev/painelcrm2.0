@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { useChatOutboundQueue } from '@/hooks/useChatOutboundQueue';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { ArrowLeft, Headphones, Info, Plus, Send } from 'lucide-react';
+import { ArrowLeft, Info, Plus, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -20,6 +20,7 @@ import { cn } from '@/lib/utils';
 import { useFloatingChat } from './floatingChatContext';
 import { useFloatingConversationIdentity } from './useFloatingConversationIdentity';
 import { floatingAttendanceRowModel } from './attendanceUi';
+import { ChatAssigneePresence } from '@/components/chat/ChatAssigneePresence';
 import { Badge } from '@/components/ui/badge';
 import { FloatingCompactProfile } from './FloatingCompactProfile';
 import { scheduleInvalidateFloatingChatAggregates } from './floatingChatQueries';
@@ -47,7 +48,6 @@ import { buildFloatingComposerQuickSections } from './buildFloatingComposerQuick
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 import { ChatKanbanTagBadge } from '@/components/chat/ChatKanbanTagBadge';
-import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
 import { useModulePermissions } from '@/contexts/ModulePermissionsContext';
 import { chatCommercialGates } from '@/utils/chatCommercialGates';
 import { dispatchFloatingCompactAction } from './dispatchFloatingCompactAction';
@@ -458,21 +458,22 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
               const m = floatingAttendanceRowModel(conversation);
               if (!m) return null;
               if (m.kind === 'assignee') {
-                const src = chatAvatarUrlForImgSrc(m.avatarUrl);
                 return (
                   <Badge
                     variant="default"
                     className="h-4 max-w-[min(9rem,50vw)] shrink-0 gap-0.5 px-1 py-0 pr-1 text-[9px] font-normal"
                     title={conversation?.assignee_display?.trim() ?? undefined}
                   >
-                    <Headphones className="h-2.5 w-2.5 shrink-0 opacity-90" aria-hidden />
-                    <Avatar className="h-3 w-3 shrink-0 border border-primary-foreground/25">
-                      {src ? <AvatarImage src={src} alt="" className="object-cover" /> : null}
-                      <AvatarFallback className="bg-primary/30 text-[6px] font-semibold text-primary-foreground">
-                        {m.initials}
-                      </AvatarFallback>
-                    </Avatar>
-                    <span className="min-w-0 truncate">{m.shortName}</span>
+                    <ChatAssigneePresence
+                      displayName={conversation?.assignee_display?.trim() || m.shortName}
+                      avatarUrl={m.avatarUrl}
+                      shortName={m.shortName}
+                      size="xs"
+                      headphonesClassName="opacity-90 text-primary-foreground"
+                      avatarClassName="border-primary-foreground/25"
+                      fallbackClassName="bg-primary/30 text-primary-foreground"
+                      nameClassName="text-[9px] text-primary-foreground"
+                    />
                   </Badge>
                 );
               }

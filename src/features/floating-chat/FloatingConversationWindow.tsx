@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChatOutboundQueue } from '@/hooks/useChatOutboundQueue';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { Headphones, Info, Minus, Plus, Send, X } from 'lucide-react';
+import { Info, Minus, Plus, Send, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -35,6 +35,7 @@ import {
 import { useFloatingConversationIdentity } from './useFloatingConversationIdentity';
 import { FLOATING_WINDOW_WIDTH_PX, FLOATING_Z_WINDOWS } from './constants';
 import { floatingAttendanceRowModel } from './attendanceUi';
+import { ChatAssigneePresence } from '@/components/chat/ChatAssigneePresence';
 import { Badge } from '@/components/ui/badge';
 import { ChatComposerDropZone } from '@/components/chat/ChatComposerDropZone';
 import { ChatComposerQuickActionsPanel } from '@/components/chat/ChatComposerQuickActionsPanel';
@@ -67,7 +68,6 @@ import {
 } from '@/components/chat/virtualized/useVirtualizedMessages';
 import { ChatKanbanTagQuickPicker } from '@/components/chat/ChatKanbanTagQuickPicker';
 import { patchConversationKanbanTagsEverywhere } from './conversationKanbanTagsCache';
-import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
 import { dispatchFloatingCompactAction } from './dispatchFloatingCompactAction';
 import { ChatAppointmentSchedulePanel } from '@/components/chat/ChatAppointmentSchedulePanel';
 import {
@@ -728,21 +728,22 @@ export function FloatingConversationWindow({
               const m = floatingAttendanceRowModel(conversation);
               if (!m) return null;
               if (m.kind === 'assignee') {
-                const src = chatAvatarUrlForImgSrc(m.avatarUrl);
                 return (
                   <Badge
                     variant="default"
                     className="h-4 max-w-[min(9rem,42vw)] shrink-0 gap-0.5 px-1 py-0 pr-1 text-[9px] font-normal"
                     title={conversation?.assignee_display?.trim() ?? undefined}
                   >
-                    <Headphones className="h-2.5 w-2.5 shrink-0 opacity-90" aria-hidden />
-                    <Avatar className="h-3 w-3 shrink-0 border border-primary-foreground/25">
-                      {src ? <AvatarImage src={src} alt="" className="object-cover" /> : null}
-                      <AvatarFallback className="bg-primary/30 text-[6px] font-semibold text-primary-foreground">
-                        {m.initials}
-                      </AvatarFallback>
-                    </Avatar>
-                    <span className="min-w-0 truncate">{m.shortName}</span>
+                    <ChatAssigneePresence
+                      displayName={conversation?.assignee_display?.trim() || m.shortName}
+                      avatarUrl={m.avatarUrl}
+                      shortName={m.shortName}
+                      size="xs"
+                      headphonesClassName="opacity-90 text-primary-foreground"
+                      avatarClassName="border-primary-foreground/25"
+                      fallbackClassName="bg-primary/30 text-primary-foreground"
+                      nameClassName="text-[9px] text-primary-foreground"
+                    />
                   </Badge>
                 );
               }

@@ -120,17 +120,37 @@ async function applyTransferHuman(opts: {
   });
 }
 
-/** Pausa sessões vivas da conversa (humano assumiu). */
+/** Pausa sessões vivas da conversa (humano assumiu / atendimento em curso). */
 export async function pauseChatbotFlowSessionsForConversation(
   conversationId: string
 ): Promise<number> {
   const r = await pool.query(
     `UPDATE chatbot_flow_sessions
-     SET status = 'paused', ended_at = COALESCE(ended_at, now()), updated_at = now()
-     WHERE conversation_id = $1::uuid AND status IN ('active', 'waiting_input', 'waiting_delay', 'waiting_http')
+     SET status = 'paused',
+         ended_at = COALESCE(ended_at, now()),
+         resume_at = NULL,
+         waiting_variable = NULL,
+         updated_at = now()
+     WHERE conversation_id = $1::uuid
+       AND status IN ('active', 'waiting_input', 'waiting_delay', 'waiting_http')
      RETURNING id`,
     [conversationId]
   );
+
+  // Limpa flag de “à espera de humano” para o inbox não tratar como bot a aguardar.
+  try {
+    await pool.query(
+      `UPDATE chat_conversations
+       SET metadata = COALESCE(metadata, '{}'::jsonb) - 'chatbot_flows_waiting_human',
+           updated_at = now()
+       WHERE id = $1::uuid
+         AND metadata ? 'chatbot_flows_waiting_human'`,
+      [conversationId]
+    );
+  } catch {
+    /* metadata pode faltar / JSON antigo */
+  }
+
   return r.rowCount ?? 0;
 }
 
