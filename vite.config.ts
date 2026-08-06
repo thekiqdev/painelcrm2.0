@@ -26,6 +26,10 @@ export default defineConfig(({ mode }) => {
         target: apiProxyTarget,
         changeOrigin: true,
       },
+      "/webhooks": {
+        target: apiProxyTarget,
+        changeOrigin: true,
+      },
       "/socket.io": {
         target: apiProxyTarget,
         changeOrigin: true,

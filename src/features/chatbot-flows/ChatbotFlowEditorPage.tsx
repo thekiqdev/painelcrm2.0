@@ -1665,6 +1665,7 @@ function ChatbotFlowEditorInner() {
                 onChange={patchSelectedData}
                 crmOptions={crmOptions}
                 graphNodes={graphNodesForVars}
+                flowId={id}
               />
             </div>
           ) : null}

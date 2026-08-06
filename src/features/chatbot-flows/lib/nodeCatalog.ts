@@ -217,6 +217,19 @@ export const webhookInDataSchema = z.object({
     .max(128)
     .regex(/^[a-zA-Z0-9_-]+$/, 'Token inválido'),
   secret: z.string().optional().default(''),
+  /** S27 — path no JSON do body → variável de sessão */
+  payload_map: z
+    .array(
+      z.object({
+        path: z.string().trim().min(1, 'Path obrigatório'),
+        variable: sessionVarName,
+      })
+    )
+    .optional()
+    .default([]),
+  /** Sample colado no editor (S27 preview; S27.1 listen gravará aqui) */
+  last_payload_json: z.unknown().optional().nullable(),
+  last_payload_at: z.string().optional().nullable(),
 });
 
 export function generateInboundWebhookToken(): string {
@@ -985,6 +998,7 @@ export function defaultDataForType(type: EssentialNodeType): Record<string, unkn
         label: NODE_LABELS.webhook_in,
         token: generateInboundWebhookToken(),
         secret: '',
+        payload_map: [],
       };
   }
 }
@@ -1057,8 +1071,10 @@ export function nodePreview(type: string, data: Record<string, unknown>): string
     return `${String(data.method || 'POST')} ${String(data.url || 'webhook').slice(0, 32)}`;
   }
   if (type === 'webhook_in') {
+    const n = Array.isArray(data.payload_map) ? data.payload_map.length : 0;
     const tok = String(data.token || '');
-    return tok ? `…${tok.slice(-8)}` : 'gerar token';
+    const suffix = tok ? `…${tok.slice(-8)}` : 'gerar token';
+    return n > 0 ? `${n} map · ${suffix}` : suffix;
   }
   if (type === 'lookup_invoice') {
     return String(data.mode || 'last_open') === 'open_menu' ? 'Menu de abertas' : 'Última aberta';

@@ -182,6 +182,19 @@ export const webhookInDataSchema = z.object({
     .max(128)
     .regex(/^[a-zA-Z0-9_-]+$/, 'Token inválido'),
   secret: z.string().optional().default(''),
+  /** S27 — path no JSON do body → variável de sessão */
+  payload_map: z
+    .array(
+      z.object({
+        path: z.string().trim().min(1, 'Path obrigatório'),
+        variable: sessionVarName,
+      })
+    )
+    .optional()
+    .default([]),
+  /** Sample colado no editor (S27 preview; S27.1 listen gravará aqui) */
+  last_payload_json: z.unknown().optional().nullable(),
+  last_payload_at: z.string().optional().nullable(),
 });
 
 export const triggerSchema = z.discriminatedUnion('type', [

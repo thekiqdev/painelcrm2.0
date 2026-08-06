@@ -204,6 +204,56 @@ export async function testChatbotFlowIntegration(
   return throwIfError(res);
 }
 
+export type WebhookInListenStartResult = {
+  listenId: string;
+  expiresAt: string;
+  ingestPath: string;
+  ingestUrl: string;
+  ttlMs: number;
+};
+
+export type WebhookInListenPollResult =
+  | { status: 'waiting' }
+  | {
+      status: 'received';
+      payload: unknown;
+      received_at: string;
+      content_type: string | null;
+    };
+
+/** S27.1 — inicia janela de listen do webhook_in. */
+export async function startWebhookInListen(
+  flowId: string,
+  body?: { ttl_ms?: number }
+): Promise<WebhookInListenStartResult> {
+  const res = await apiClient.post<WebhookInListenStartResult>(
+    `/api/chatbot-flows/${encodeURIComponent(flowId)}/webhook-in-listen`,
+    body || {}
+  );
+  return throwIfError(res);
+}
+
+/** S27.1 — poll/long-poll do payload capturado. */
+export async function pollWebhookInListen(
+  flowId: string,
+  listenId: string,
+  opts?: { wait_ms?: number }
+): Promise<WebhookInListenPollResult> {
+  const wait = opts?.wait_ms ?? 25000;
+  const res = await apiClient.get<WebhookInListenPollResult>(
+    `/api/chatbot-flows/${encodeURIComponent(flowId)}/webhook-in-listen/${encodeURIComponent(listenId)}?wait_ms=${wait}`
+  );
+  return throwIfError(res);
+}
+
+/** S27.1 — cancela listen. */
+export async function cancelWebhookInListen(flowId: string, listenId: string): Promise<void> {
+  const res = await apiClient.delete<{ ok: true }>(
+    `/api/chatbot-flows/${encodeURIComponent(flowId)}/webhook-in-listen/${encodeURIComponent(listenId)}`
+  );
+  throwIfError(res);
+}
+
 export async function importChatbotFlow(body: {
   document: unknown;
   mode?: 'create' | 'replace_draft';

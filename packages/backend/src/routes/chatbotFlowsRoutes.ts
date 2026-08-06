@@ -16,6 +16,9 @@ import {
   deleteChatbotFlowVersionHandler,
   revertChatbotFlowToDraftHandler,
   testChatbotFlowIntegrationHandler,
+  startWebhookInListenHandler,
+  pollWebhookInListenHandler,
+  cancelWebhookInListenHandler,
   startChatbotFlowSessionHandler,
 } from '../controllers/chatbotFlowsController.js';
 
@@ -38,5 +41,8 @@ router.post('/:id/versions/:version/restore', restoreChatbotFlowVersionHandler);
 router.delete('/:id/versions/:version', deleteChatbotFlowVersionHandler);
 router.get('/:id/export', exportChatbotFlowHandler);
 router.post('/:id/duplicate', duplicateChatbotFlowHandler);
+router.post('/:id/webhook-in-listen', startWebhookInListenHandler);
+router.get('/:id/webhook-in-listen/:listenId', pollWebhookInListenHandler);
+router.delete('/:id/webhook-in-listen/:listenId', cancelWebhookInListenHandler);
 
 export default router;

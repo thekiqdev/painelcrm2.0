@@ -574,5 +574,6 @@ Entrega antecipada de polish visual no editor (independente do hardening):
 2. **Fase regras de início:** [`PLAN_SPRINTS_CHATBOT_FLOWS_S22.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S22.md) (**S22–S24** no código).  
 3. **Fase tickets:** [`PLAN_SPRINTS_CHATBOT_FLOWS_S25.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S25.md) (**S25–S25.2** no código) · suporte [`SUPPORT_TICKET_FLOW.md`](./SUPPORT_TICKET_FLOW.md).  
 4. **Fase vínculo CRM:** [`PLAN_SPRINTS_CHATBOT_FLOWS_S26.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S26.md) (**S26–S26.1** no código).  
-5. Manter decisões **D1–D5**; D15.x · D22.x–D24.x · **D25.x** · **D26.x**.  
-6. Candidatos **S27**: gatilho tag/kanban; opt-out global `parar`/`sair`.
+5. **Fase Webhook in:** [`PLAN_SPRINTS_CHATBOT_FLOWS_S27.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S27.md) (**S27** map · **S27.1** listen).  
+6. Manter decisões **D1–D5**; D15.x · D22.x–D24.x · **D25.x** · **D26.x** · **D27.x**.  
+7. Candidatos **S28**: gatilho tag/kanban; opt-out global `parar`/`sair`.

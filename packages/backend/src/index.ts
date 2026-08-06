@@ -55,6 +55,7 @@ import kanbanAttachRoutes from './routes/kanbanAttachRoutes.js';
 import uazapiWebhookRoutes from './routes/uazapiWebhookRoutes.js';
 import asaasWebhookRoutes from './routes/asaasWebhookRoutes.js';
 import chatbotFlowsWebhookRoutes from './routes/chatbotFlowsWebhookRoutes.js';
+import chatbotFlowsListenWebhookRoutes from './routes/chatbotFlowsListenWebhookRoutes.js';
 import notificationsRoutes from './routes/notificationsRoutes.js';
 import notificationsEngineRoutes from './routes/notificationsEngineRoutes.js';
 import messageTemplatesRoutes from './routes/messageTemplatesRoutes.js';
@@ -498,6 +499,8 @@ app.use('/webhooks/uazapi', uazapiWebhookRoutes);
 app.use('/webhooks/asaas', asaasWebhookRoutes);
 app.use('/webhooks/chatbot-flows', chatbotFlowsWebhookRoutes);
 app.use('/api/webhooks/chatbot-flows', chatbotFlowsWebhookRoutes);
+app.use('/webhooks/chatbot-flows-listen', chatbotFlowsListenWebhookRoutes);
+app.use('/api/webhooks/chatbot-flows-listen', chatbotFlowsListenWebhookRoutes);
 
 // 404 handler
 app.use((req, res) => {

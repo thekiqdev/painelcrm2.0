@@ -2,6 +2,7 @@
  * Helpers compartilhados do webhook de entrada (S5+).
  */
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { getByDotPath } from './flowHttpActions.js';
 
 export function generateInboundWebhookToken(): string {
   return randomBytes(24).toString('hex');
@@ -31,7 +32,12 @@ export function buildInboundWebhookUrl(token: string): string {
 
 export function extractWebhookInFromGraph(graph: {
   nodes?: unknown[];
-}): { token: string; secret: string; nodeId: string } | null {
+}): {
+  token: string;
+  secret: string;
+  nodeId: string;
+  payloadMap: Array<{ path: string; variable: string }>;
+} | null {
   for (const raw of graph.nodes || []) {
     if (!raw || typeof raw !== 'object') continue;
     const n = raw as Record<string, unknown>;
@@ -39,13 +45,41 @@ export function extractWebhookInFromGraph(graph: {
     const data = n.data && typeof n.data === 'object' ? (n.data as Record<string, unknown>) : {};
     const token = String(data.token || '').trim();
     if (!token) continue;
+    const payloadMapRaw = Array.isArray(data.payload_map) ? data.payload_map : [];
+    const payloadMap = payloadMapRaw
+      .map((row) => {
+        if (!row || typeof row !== 'object') return null;
+        const r = row as Record<string, unknown>;
+        const path = String(r.path || '').trim();
+        const variable = String(r.variable || '').trim();
+        if (!path || !variable) return null;
+        return { path, variable };
+      })
+      .filter(Boolean) as Array<{ path: string; variable: string }>;
     return {
       token,
       secret: String(data.secret || '').trim(),
       nodeId: String(n.id || ''),
+      payloadMap,
     };
   }
   return null;
+}
+
+/** S27 — aplica payload_map sobre o JSON do body do webhook. */
+export function applyWebhookPayloadMap(
+  payload: unknown,
+  map: Array<{ path: string; variable: string }>
+): Record<string, string> {
+  const mapped: Record<string, string> = {};
+  for (const m of map || []) {
+    const name = String(m.variable || '').trim();
+    const path = String(m.path || '').trim();
+    if (!name || !path) continue;
+    const v = getByDotPath(payload, path);
+    mapped[name] = v == null ? '' : typeof v === 'string' ? v : JSON.stringify(v);
+  }
+  return mapped;
 }
 
 /** Verifica assinatura opcional: header X-PainelCRM-Signature: sha256=hex */

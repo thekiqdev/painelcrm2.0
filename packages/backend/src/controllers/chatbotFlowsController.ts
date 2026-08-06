@@ -487,6 +487,113 @@ export async function testChatbotFlowIntegrationHandler(req: AuthRequest, res: R
   }
 }
 
+const webhookInListenStartSchema = z.object({
+  ttl_ms: z.coerce.number().int().min(5000).max(120000).optional(),
+});
+
+/** S27.1 — inicia janela de listen do webhook_in (sem runtime). */
+export async function startWebhookInListenHandler(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ error: 'Não autenticado' });
+    await assertModulePermission(userId, MODULE, 'edit', undefined, req);
+    const tenantId = tenantIdOrThrow(req);
+    const flowId = String(req.params.id || '').trim();
+    const flow = await getChatbotFlowById(tenantId, flowId);
+    if (!flow) return res.status(404).json({ error: 'Flow não encontrado' });
+
+    const parsed = webhookInListenStartSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Dados inválidos' });
+    }
+
+    const { createWebhookInListenSession } = await import(
+      '../services/chatbotFlows/flowWebhookInListen.js'
+    );
+    const session = createWebhookInListenSession({
+      tenantId,
+      flowId,
+      ttlMs: parsed.data.ttl_ms,
+    });
+    return res.status(201).json(session);
+  } catch (e) {
+    if (respondPerm(res, e)) return;
+    const status = (e as { status?: number }).status ?? 500;
+    const message = e instanceof Error ? e.message : 'Erro ao iniciar listen';
+    return res.status(status === 403 ? 403 : status).json({ error: message });
+  }
+}
+
+/** S27.1 — poll/long-poll do payload capturado. */
+export async function pollWebhookInListenHandler(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ error: 'Não autenticado' });
+    await assertModulePermission(userId, MODULE, 'edit', undefined, req);
+    const tenantId = tenantIdOrThrow(req);
+    const flowId = String(req.params.id || '').trim();
+    const listenId = String(req.params.listenId || '').trim();
+    const waitMs = Number(req.query.wait_ms);
+    const flow = await getChatbotFlowById(tenantId, flowId);
+    if (!flow) return res.status(404).json({ error: 'Flow não encontrado' });
+
+    const { waitWebhookInListenPayload } = await import(
+      '../services/chatbotFlows/flowWebhookInListen.js'
+    );
+    const result = await waitWebhookInListenPayload({
+      tenantId,
+      flowId,
+      listenId,
+      waitMs: Number.isFinite(waitMs) ? waitMs : 25_000,
+    });
+
+    if (result.status === 'not_found') {
+      return res.status(404).json({ status: 'not_found', error: 'listen_nao_encontrado' });
+    }
+    if (result.status === 'forbidden') {
+      return res.status(403).json({ status: 'forbidden', error: 'listen_proibido' });
+    }
+    if (result.status === 'expired') {
+      return res.status(410).json({ status: 'expired', error: 'listen_expirado' });
+    }
+    if (result.status === 'waiting') {
+      return res.json({ status: 'waiting' });
+    }
+    return res.json({
+      status: 'received',
+      payload: result.payload,
+      received_at: result.received_at,
+      content_type: result.content_type,
+    });
+  } catch (e) {
+    if (respondPerm(res, e)) return;
+    const message = e instanceof Error ? e.message : 'Erro ao consultar listen';
+    return res.status(500).json({ error: message });
+  }
+}
+
+/** S27.1 — cancela janela de listen. */
+export async function cancelWebhookInListenHandler(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ error: 'Não autenticado' });
+    await assertModulePermission(userId, MODULE, 'edit', undefined, req);
+    const tenantId = tenantIdOrThrow(req);
+    const flowId = String(req.params.id || '').trim();
+    const listenId = String(req.params.listenId || '').trim();
+    const { cancelWebhookInListenSession } = await import(
+      '../services/chatbotFlows/flowWebhookInListen.js'
+    );
+    const ok = cancelWebhookInListenSession({ tenantId, flowId, listenId });
+    if (!ok) return res.status(404).json({ error: 'listen_nao_encontrado' });
+    return res.json({ ok: true });
+  } catch (e) {
+    if (respondPerm(res, e)) return;
+    const message = e instanceof Error ? e.message : 'Erro ao cancelar listen';
+    return res.status(500).json({ error: message });
+  }
+}
+
 const manualStartSchema = z.object({
   conversation_id: z.string().uuid(),
   flow_id: z.string().uuid().optional().nullable(),

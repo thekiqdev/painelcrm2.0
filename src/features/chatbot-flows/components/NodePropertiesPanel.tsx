@@ -20,7 +20,7 @@ import {
 } from '../lib/canvasAnnotations';
 import type { FlowKanbanColumnMeta, FlowSelectOption } from '../hooks/useFlowCrmOptions';
 import { Button } from '@/components/ui/button';
-import { Copy, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { Copy, Plus, RefreshCw, Trash2, Radio, Loader2 } from 'lucide-react';
 import { VariableTextField } from './VariableTextField';
 import { readMenuOptionsForEditor, type MenuChoiceOption } from '../lib/menuChoiceHelpers';
 import {
@@ -36,7 +36,14 @@ import { HttpIntegrationTestSection } from './HttpIntegrationTestSection';
 import { HttpMethodTags } from './HttpMethodTags';
 import { BodyJsonFieldsEditor, HeadersJsonFieldsEditor } from './JsonOrFieldsEditor';
 import { collectFlowDefinedVariables, type FlowDefinedVariable } from '../lib/flowDefinedVariables';
-import { useMemo } from 'react';
+import { applyHttpResponseMap, suggestVarNameFromPath } from '../lib/httpTestHelpers';
+import { HttpJsonSampleTree } from './HttpJsonSampleTree';
+import {
+  cancelWebhookInListen,
+  pollWebhookInListen,
+  startWebhookInListen,
+} from '@/services/chatbotFlows';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 
 type CrmOptions = {
@@ -59,6 +66,8 @@ type Props = {
   crmOptions?: CrmOptions;
   /** Nós do canvas — para listar variáveis criadas neste flow. */
   graphNodes?: Array<{ id: string; type?: string; data?: Record<string, unknown> }>;
+  /** Flow atual — necessário para listen do webhook_in (S27.1). */
+  flowId?: string | null;
 };
 
 function OptionSelect({
@@ -116,6 +125,7 @@ export function NodePropertiesPanel({
   onChange,
   crmOptions,
   graphNodes = [],
+  flowId = null,
 }: Props) {
   const title = isEditorOnlyNodeType(type)
     ? EDITOR_ONLY_LABELS[type as EditorOnlyNodeType]
@@ -448,7 +458,7 @@ export function NodePropertiesPanel({
         ) : null}
 
         {type === 'webhook_in' ? (
-          <WebhookInFields data={data} onChange={onChange} />
+          <WebhookInFields data={data} onChange={onChange} flowId={flowId} />
         ) : null}
 
         {type === 'send_message' ? (
@@ -1467,6 +1477,7 @@ export function NodePropertiesPanel({
               uiMode={String(data.headers_ui || 'fields')}
               onHeadersChange={(headers) => onChange({ headers })}
               onUiModeChange={(headers_ui) => onChange({ headers_ui })}
+              flowVariables={flowVariables}
               hint="Secrets (Authorization, token…) são removidos no export."
             />
             {String(data.method || 'GET') !== 'GET' ? (
@@ -1537,6 +1548,7 @@ export function NodePropertiesPanel({
               uiMode={String(data.headers_ui || 'fields')}
               onHeadersChange={(headers) => onChange({ headers })}
               onUiModeChange={(headers_ui) => onChange({ headers_ui })}
+              flowVariables={flowVariables}
               hint="Secrets (Authorization, token…) são removidos no export."
             />
             <div className="space-y-1.5">
@@ -1749,15 +1761,187 @@ function resolvePublicWebhookUrl(token: string): string {
   return path;
 }
 
+function uniquePayloadMapVar(base: string, existing: Array<{ path: string; variable: string }>): string {
+  const used = new Set(existing.map((r) => r.variable));
+  if (!used.has(base)) return base;
+  let i = 2;
+  while (used.has(`${base}_${i}`)) i += 1;
+  return `${base}_${i}`;
+}
+
+function resolveListenIngestUrl(ingestUrl: string, ingestPath: string): string {
+  if (/^https?:\/\//i.test(ingestUrl)) return ingestUrl;
+  const env = String(import.meta.env.VITE_PUBLIC_API_URL || import.meta.env.VITE_API_URL || '')
+    .trim()
+    .replace(/\/$/, '');
+  if (env) return `${env}${ingestPath}`;
+  if (typeof window !== 'undefined') return `${window.location.origin}${ingestPath}`;
+  return ingestPath;
+}
+
 function WebhookInFields({
   data,
   onChange,
+  flowId,
 }: {
   data: Record<string, unknown>;
   onChange: (patch: Record<string, unknown>) => void;
+  flowId?: string | null;
 }) {
   const token = String(data.token || '');
   const url = token ? resolvePublicWebhookUrl(token) : '';
+  const mapRows = Array.isArray(data.payload_map)
+    ? (data.payload_map as Array<{ path: string; variable: string }>).map((r) => ({
+        path: String(r?.path || ''),
+        variable: String(r?.variable || ''),
+      }))
+    : [];
+  const [sampleDraft, setSampleDraft] = useState(() => {
+    if (data.last_payload_json != null) {
+      try {
+        return JSON.stringify(data.last_payload_json, null, 2);
+      } catch {
+        return '';
+      }
+    }
+    return '';
+  });
+  const [sampleError, setSampleError] = useState<string | null>(null);
+  const [pickPath, setPickPath] = useState<string | null>(null);
+  const [pickVar, setPickVar] = useState('');
+  const [listening, setListening] = useState(false);
+  const [listenUrl, setListenUrl] = useState<string | null>(null);
+  const [listenError, setListenError] = useState<string | null>(null);
+  const listenAbortRef = useRef<{ cancelled: boolean; listenId: string | null }>({
+    cancelled: false,
+    listenId: null,
+  });
+
+  useEffect(() => {
+    return () => {
+      listenAbortRef.current.cancelled = true;
+      const lid = listenAbortRef.current.listenId;
+      if (lid && flowId) {
+        void cancelWebhookInListen(flowId, lid).catch(() => undefined);
+      }
+    };
+  }, [flowId]);
+
+  const sampleJson = (() => {
+    if (data.last_payload_json != null) return data.last_payload_json;
+    try {
+      return sampleDraft.trim() ? JSON.parse(sampleDraft) : null;
+    } catch {
+      return null;
+    }
+  })();
+
+  const previewMapped =
+    sampleJson != null && mapRows.length
+      ? applyHttpResponseMap({
+          bodyJson: sampleJson,
+          bodyText: '',
+          status: 200,
+          responseMap: mapRows.filter((r) => r.path && r.variable),
+        })
+      : {};
+
+  const applyCapturedPayload = (payload: unknown, at?: string) => {
+    onChange({
+      last_payload_json: payload,
+      last_payload_at: at || new Date().toISOString(),
+    });
+    try {
+      setSampleDraft(JSON.stringify(payload, null, 2));
+    } catch {
+      setSampleDraft(String(payload ?? ''));
+    }
+    setSampleError(null);
+  };
+
+  const stopListen = async () => {
+    listenAbortRef.current.cancelled = true;
+    const lid = listenAbortRef.current.listenId;
+    listenAbortRef.current.listenId = null;
+    setListening(false);
+    setListenUrl(null);
+    if (lid && flowId) {
+      try {
+        await cancelWebhookInListen(flowId, lid);
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+
+  const startListen = async () => {
+    if (!flowId) {
+      setListenError('Salve o flow antes de ouvir.');
+      return;
+    }
+    setListenError(null);
+    listenAbortRef.current = { cancelled: false, listenId: null };
+    setListening(true);
+    try {
+      const started = await startWebhookInListen(flowId, { ttl_ms: 60_000 });
+      if (listenAbortRef.current.cancelled) {
+        await cancelWebhookInListen(flowId, started.listenId).catch(() => undefined);
+        return;
+      }
+      listenAbortRef.current.listenId = started.listenId;
+      const publicUrl = resolveListenIngestUrl(started.ingestUrl, started.ingestPath);
+      setListenUrl(publicUrl);
+
+      const deadline = Date.now() + (started.ttlMs || 60_000);
+      while (!listenAbortRef.current.cancelled && Date.now() < deadline) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) break;
+        const poll = await pollWebhookInListen(flowId, started.listenId, {
+          wait_ms: Math.min(25_000, remaining),
+        });
+        if (listenAbortRef.current.cancelled) return;
+        if (poll.status === 'received') {
+          applyCapturedPayload(poll.payload, poll.received_at);
+          listenAbortRef.current.listenId = null;
+          setListening(false);
+          setListenUrl(null);
+          return;
+        }
+      }
+      if (!listenAbortRef.current.cancelled) {
+        setListenError('Tempo esgotado. Clique em Ouvir e envie o POST de novo.');
+      }
+    } catch (e) {
+      if (!listenAbortRef.current.cancelled) {
+        setListenError(e instanceof Error ? e.message : 'Falha no listen');
+      }
+    } finally {
+      if (!listenAbortRef.current.cancelled) {
+        setListening(false);
+        setListenUrl(null);
+        listenAbortRef.current.listenId = null;
+      }
+    }
+  };
+
+  const startPick = (path: string) => {
+    const effective = path === 'body' ? '' : path;
+    if (!effective) return;
+    setPickPath(effective);
+    setPickVar(uniquePayloadMapVar(suggestVarNameFromPath(effective), mapRows));
+  };
+
+  const confirmPick = () => {
+    if (!pickPath) return;
+    const variable = pickVar.trim();
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$/.test(variable)) return;
+    const next = [
+      ...mapRows.filter((r) => r.path !== pickPath && r.variable !== variable),
+      { path: pickPath, variable },
+    ];
+    onChange({ payload_map: next });
+    setPickPath(null);
+  };
 
   return (
     <>
@@ -1792,9 +1976,9 @@ function WebhookInFields({
           </Button>
         </div>
         <p className="text-[11px] text-muted-foreground">
-          POST com{' '}
-          <code className="text-[10px]">{`{ "conversation_id": "…", "variables": {} }`}</code>.
-          Publique o flow para a URL funcionar.
+          Produção: POST com{' '}
+          <code className="text-[10px]">{`{ "conversation_id": "…", … }`}</code> na URL
+          publicada. Use Ouvir (abaixo) para capturar um body de teste sem publicar.
         </p>
       </div>
       <div className="space-y-1.5">
@@ -1810,6 +1994,201 @@ function WebhookInFields({
         <p className="text-[11px] text-muted-foreground">
           Se preenchido, exige header <code>X-PainelCRM-Signature: sha256=…</code>
         </p>
+      </div>
+
+      <div className="space-y-2 border-t pt-3">
+        <div className="flex items-center justify-between">
+          <Label className="text-[11px]">Mapear payload → variáveis</Label>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-6 px-2 text-[11px]"
+            onClick={() =>
+              onChange({
+                payload_map: [...mapRows, { path: 'data.id', variable: 'ext_id' }],
+              })
+            }
+          >
+            <Plus className="mr-0.5 h-3 w-3" />
+            Campo
+          </Button>
+        </div>
+        {mapRows.length === 0 ? (
+          <p className="text-[11px] text-muted-foreground">
+            Nenhum ainda. Ouça/cole um JSON e clique num campo, ou adicione manualmente.
+          </p>
+        ) : (
+          mapRows.map((row, i) => (
+            <div key={`pm-${i}`} className="flex gap-1.5">
+              <Input
+                className="h-8 font-mono text-[11px]"
+                value={row.path}
+                placeholder="data.order.id"
+                onChange={(e) => {
+                  const next = [...mapRows];
+                  next[i] = { ...row, path: e.target.value };
+                  onChange({ payload_map: next });
+                }}
+              />
+              <Input
+                className="h-8 font-mono text-[11px]"
+                value={row.variable}
+                placeholder="order_id"
+                onChange={(e) => {
+                  const next = [...mapRows];
+                  next[i] = { ...row, variable: e.target.value };
+                  onChange({ payload_map: next });
+                }}
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 shrink-0"
+                onClick={() => onChange({ payload_map: mapRows.filter((_, j) => j !== i) })}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          ))
+        )}
+      </div>
+
+      <div className="space-y-2 rounded-lg border border-dashed p-3">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <p className="text-sm font-medium">Ouvir payload de teste</p>
+            <p className="text-[11px] text-muted-foreground">
+              Abre URL temporária (~60s). Não dispara o flow.
+            </p>
+          </div>
+          {listening ? (
+            <Button type="button" size="sm" variant="outline" onClick={() => void stopListen()}>
+              Parar
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => void startListen()}
+              disabled={!flowId}
+            >
+              <Radio className="mr-1.5 h-3.5 w-3.5" />
+              Ouvir
+            </Button>
+          )}
+        </div>
+        {listening ? (
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-1.5 text-[11px] text-emerald-700 dark:text-emerald-300">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Aguardando POST…
+            </div>
+            {listenUrl ? (
+              <div className="flex gap-1.5">
+                <Input readOnly value={listenUrl} className="font-mono text-[11px]" />
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="outline"
+                  className="shrink-0"
+                  title="Copiar URL de teste"
+                  onClick={() => void navigator.clipboard.writeText(listenUrl)}
+                >
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        {listenError ? <p className="text-[11px] text-rose-600">{listenError}</p> : null}
+      </div>
+
+      <div className="space-y-1.5 border-t pt-3">
+        <Label htmlFor="whin-sample">JSON de exemplo (colar ou ouvir)</Label>
+        <Textarea
+          id="whin-sample"
+          rows={5}
+          className="font-mono text-[11px]"
+          value={sampleDraft}
+          onChange={(e) => {
+            setSampleDraft(e.target.value);
+            setSampleError(null);
+          }}
+          placeholder={`{\n  "conversation_id": "…",\n  "order": { "id": "123" }\n}`}
+        />
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            className="h-7"
+            onClick={() => {
+              try {
+                const parsed = sampleDraft.trim() ? JSON.parse(sampleDraft) : null;
+                applyCapturedPayload(parsed);
+                if (parsed && typeof parsed === 'object') {
+                  setSampleDraft(JSON.stringify(parsed, null, 2));
+                }
+              } catch {
+                setSampleError('JSON inválido');
+              }
+            }}
+          >
+            Aplicar sample
+          </Button>
+          {data.last_payload_at ? (
+            <span className="self-center text-[11px] text-muted-foreground">
+              Capturado {new Date(String(data.last_payload_at)).toLocaleString()}
+            </span>
+          ) : null}
+        </div>
+        {sampleError ? <p className="text-[11px] text-rose-600">{sampleError}</p> : null}
+
+        {sampleJson != null && typeof sampleJson === 'object' ? (
+          <div className="space-y-1.5">
+            <Label className="text-[11px]">Árvore — clique para mapear</Label>
+            <HttpJsonSampleTree value={sampleJson} onPickPath={(p) => startPick(p)} />
+            {pickPath != null ? (
+              <div className="space-y-1.5 rounded-md border bg-background p-2">
+                <p className="text-[11px]">
+                  Mapear <code className="text-[10px]">{pickPath}</code>
+                </p>
+                <div className="flex gap-1.5">
+                  <Input
+                    className="h-8 font-mono text-xs"
+                    value={pickVar}
+                    onChange={(e) => setPickVar(e.target.value)}
+                    placeholder="order_id"
+                  />
+                  <Button type="button" size="sm" className="h-8" onClick={confirmPick}>
+                    Criar
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-8"
+                    onClick={() => setPickPath(null)}
+                  >
+                    Cancelar
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {Object.keys(previewMapped).length > 0 ? (
+          <pre className="max-h-28 overflow-auto rounded-md border bg-muted/20 p-2 font-mono text-[10px] whitespace-pre-wrap">
+            {JSON.stringify(previewMapped, null, 2)}
+          </pre>
+        ) : (
+          <p className="text-[11px] text-muted-foreground">
+            Preview do map aparece quando houver sample + paths configurados.
+          </p>
+        )}
       </div>
     </>
   );

@@ -56,6 +56,20 @@ export function collectFlowDefinedVariables(nodes: FlowNodeLike[]): FlowDefinedV
       });
     }
 
+    if (type === 'webhook_in') {
+      const mapRows = Array.isArray(data.payload_map) ? data.payload_map : [];
+      for (const row of mapRows) {
+        if (!row || typeof row !== 'object') continue;
+        const r = row as Record<string, unknown>;
+        const path = String(r.path || '').trim();
+        pushVar(out, r.variable, {
+          label: path ? `${String(r.variable)} ← ${path}` : String(r.variable || ''),
+          source: `${src} · map`,
+          nodeId: n.id,
+        });
+      }
+    }
+
     if (type === 'set_variable') {
       const rows = Array.isArray(data.assignments)
         ? data.assignments

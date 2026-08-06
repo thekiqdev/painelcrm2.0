@@ -2,6 +2,8 @@
  * S21 — Adaptador de import `chatbot.flow_data` (builder externo / “Safe”) → painelcrm.chatbot_flow.
  * Espelho FE do backend (preview local sem depender do BE reiniciado).
  */
+import { generateInboundWebhookToken } from './nodeCatalog';
+
 type ChatbotFlowGraph = { nodes: unknown[]; edges: unknown[] };
 
 export type FlowImportFormat = 'painelcrm.chatbot_flow' | 'chatbot.flow_data' | 'unknown';
@@ -593,6 +595,31 @@ function mapNodeData(
     } else {
       out.trigger = { type: 'first_message' };
     }
+  }
+
+  if (toType === 'webhook_in') {
+    out.label = str(cleaned.label || 'Webhook in') || 'Webhook in';
+    out.token = generateInboundWebhookToken();
+    out.secret = '';
+    const mappings = Array.isArray(cleaned.payload_map)
+      ? cleaned.payload_map
+      : Array.isArray(cleaned.save_mappings)
+        ? cleaned.save_mappings
+        : Array.isArray(cleaned.response_map)
+          ? cleaned.response_map
+          : [];
+    out.payload_map = mappings
+      .map((row) => {
+        const o = asObj(row);
+        if (!o) return null;
+        const path = str(o.path || o.data_path || o.json_path || o.from);
+        const variable = str(o.variable || o.to || o.name);
+        if (!path || !variable) return null;
+        return { path, variable };
+      })
+      .filter(Boolean);
+    delete out.last_payload_json;
+    delete out.last_payload_at;
   }
 
   if (toType === 'end') {

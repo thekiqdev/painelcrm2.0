@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -71,6 +71,7 @@ export function normalizeKvRows(raw: unknown): KvRow[] {
  * Fields → JSON object string.
  * Valores são sempre string (evita `123` virar número e perder aspas no password).
  * Só interpreta como JSON se começar com `{` ou `[`.
+ * Linhas com key vazia são omitidas do JSON (mas a UI pode mantê-las em state local).
  */
 export function kvRowsToJsonObjectString(rows: KvRow[]): string {
   const obj: Record<string, unknown> = {};
@@ -109,16 +110,29 @@ export function jsonObjectStringToKvRows(text: string): KvRow[] {
   return [{ key: '', value: '' }];
 }
 
+function canonicalBodyJson(text: string): string {
+  try {
+    return JSON.stringify(JSON.parse(text || '{}'));
+  } catch {
+    return text;
+  }
+}
+
 function KvRowsEditor({
   rows,
   onChange,
   keyPlaceholder,
   valuePlaceholder,
+  flowVariables,
+  enableValueVariables,
 }: {
   rows: KvRow[];
   onChange: (rows: KvRow[]) => void;
   keyPlaceholder: string;
   valuePlaceholder: string;
+  flowVariables?: FlowDefinedVariable[];
+  /** Mostra picker {{ }} no Value (body custom / headers). */
+  enableValueVariables?: boolean;
 }) {
   const list = rows.length ? rows : [{ key: '', value: '' }];
 
@@ -141,22 +155,42 @@ function KvRowsEditor({
               onChange(next);
             }}
           />
-          <Input
-            className="h-8 min-w-0 flex-1 font-mono text-[11px]"
-            value={row.value}
-            placeholder={valuePlaceholder}
-            onChange={(e) => {
-              const next = [...list];
-              next[i] = { ...row, value: e.target.value };
-              onChange(next);
-            }}
-          />
+          {enableValueVariables ? (
+            <VariableTextField
+              id={`kv-value-${i}`}
+              label="Value"
+              inline
+              multiline={false}
+              value={row.value}
+              onChange={(value) => {
+                const next = [...list];
+                next[i] = { ...row, value };
+                onChange(next);
+              }}
+              placeholder={valuePlaceholder}
+              flowVariables={flowVariables}
+            />
+          ) : (
+            <Input
+              className="h-8 min-w-0 flex-1 font-mono text-[11px]"
+              value={row.value}
+              placeholder={valuePlaceholder}
+              onChange={(e) => {
+                const next = [...list];
+                next[i] = { ...row, value: e.target.value };
+                onChange(next);
+              }}
+            />
+          )}
           <Button
             type="button"
             variant="ghost"
             size="icon"
             className="h-8 w-8 shrink-0"
-            onClick={() => onChange(list.filter((_, j) => j !== i))}
+            onClick={() => {
+              const next = list.filter((_, j) => j !== i);
+              onChange(next.length ? next : [{ key: '', value: '' }]);
+            }}
             aria-label="Remover linha"
           >
             <Trash2 className="h-3.5 w-3.5" />
@@ -183,6 +217,7 @@ export function HeadersJsonFieldsEditor({
   uiMode,
   onHeadersChange,
   onUiModeChange,
+  flowVariables,
   hint,
 }: {
   headers: unknown;
@@ -227,10 +262,12 @@ export function HeadersJsonFieldsEditor({
       </div>
       {mode === 'fields' ? (
         <KvRowsEditor
-          rows={rows}
+          rows={rows.length ? rows : [{ key: '', value: '' }]}
           onChange={onHeadersChange}
           keyPlaceholder="Authorization"
           valuePlaceholder="Bearer {{token}}"
+          flowVariables={flowVariables}
+          enableValueVariables={Boolean(flowVariables)}
         />
       ) : (
         <Textarea
@@ -252,7 +289,7 @@ export function HeadersJsonFieldsEditor({
 
 /**
  * Body JSON: persiste string. Fields = objeto flat chave/valor.
- * Em JSON inválido no modo fields, mantém o texto e alerta no switch.
+ * State local preserva linhas com key vazia (senão “Incluir linha” some no roundtrip JSON).
  */
 export function BodyJsonFieldsEditor({
   body,
@@ -272,12 +309,34 @@ export function BodyJsonFieldsEditor({
   hint?: string;
 }) {
   const mode: JsonFieldsMode = uiMode === 'json' ? 'json' : 'fields';
-  const rows = jsonObjectStringToKvRows(body);
+  const [rows, setRows] = useState<KvRow[]>(() => jsonObjectStringToKvRows(body));
+  /** Último body que nós mesmos emitimos — evita useEffect apagar linhas vazias. */
+  const lastEmittedRef = useRef(canonicalBodyJson(body));
+
+  useEffect(() => {
+    const incoming = canonicalBodyJson(body);
+    if (incoming === lastEmittedRef.current) return;
+    lastEmittedRef.current = incoming;
+    setRows(jsonObjectStringToKvRows(body));
+  }, [body]);
+
+  const commitRows = (next: KvRow[]) => {
+    const ensured = next.length ? next : [{ key: '', value: '' }];
+    setRows(ensured);
+    const json = kvRowsToJsonObjectString(ensured);
+    lastEmittedRef.current = canonicalBodyJson(json);
+    onBodyChange(json);
+  };
 
   const switchMode = (m: JsonFieldsMode) => {
     if (m === mode) return;
     if (m === 'json' && mode === 'fields') {
-      onBodyChange(kvRowsToJsonObjectString(rows));
+      const json = kvRowsToJsonObjectString(rows);
+      lastEmittedRef.current = canonicalBodyJson(json);
+      onBodyChange(json);
+    }
+    if (m === 'fields' && mode === 'json') {
+      setRows(jsonObjectStringToKvRows(body));
     }
     onUiModeChange(m);
   };
@@ -291,9 +350,11 @@ export function BodyJsonFieldsEditor({
       {mode === 'fields' ? (
         <KvRowsEditor
           rows={rows}
-          onChange={(next) => onBodyChange(kvRowsToJsonObjectString(next))}
+          onChange={commitRows}
           keyPlaceholder="nome"
           valuePlaceholder="{{answer}}"
+          flowVariables={flowVariables}
+          enableValueVariables
         />
       ) : (
         <VariableTextField
@@ -301,7 +362,10 @@ export function BodyJsonFieldsEditor({
           label="JSON"
           rows={5}
           value={body}
-          onChange={onBodyChange}
+          onChange={(v) => {
+            lastEmittedRef.current = canonicalBodyJson(v);
+            onBodyChange(v);
+          }}
           placeholder={'{\n  "nome": "{{answer}}"\n}'}
           inputClassName="font-mono text-xs"
           flowVariables={flowVariables}

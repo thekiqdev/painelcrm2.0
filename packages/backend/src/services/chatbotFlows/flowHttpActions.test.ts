@@ -104,7 +104,7 @@ describe('sanitizeGraph secrets S5', () => {
     expect(headers.some((h) => h.key === 'X-Custom')).toBe(true);
   });
 
-  it('remove last_test_* do sample do editor (S14)', () => {
+  it('remove last_test_* e last_payload_* do sample do editor (S14/S27)', () => {
     const g = sanitizeGraph({
       nodes: [
         {
@@ -117,6 +117,16 @@ describe('sanitizeGraph secrets S5', () => {
             last_test_ok: true,
           },
         },
+        {
+          id: 'w1',
+          type: 'webhook_in',
+          data: {
+            token: 'tokentokentoken12',
+            payload_map: [{ path: 'a', variable: 'b' }],
+            last_payload_json: { a: 1 },
+            last_payload_at: '2026-01-01T00:00:00.000Z',
+          },
+        },
       ],
       edges: [],
     });
@@ -124,5 +134,10 @@ describe('sanitizeGraph secrets S5', () => {
     expect(http.data.last_test_body).toBeUndefined();
     expect(http.data.last_test_status).toBeUndefined();
     expect(http.data.url).toBe('https://example.com');
+    const wh = g.nodes[1] as { data: Record<string, unknown> };
+    expect(wh.data.last_payload_json).toBeUndefined();
+    expect(wh.data.last_payload_at).toBeUndefined();
+    // token é sensível e some no sanitize; payload_map permanece
+    expect(wh.data.payload_map).toEqual([{ path: 'a', variable: 'b' }]);
   });
 });

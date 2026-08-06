@@ -1103,7 +1103,7 @@ export async function runChatbotFlowsRuntimeFromWebhook(opts: {
   }
 
   const graph = normalizeGraph(flowRow.graph_json);
-  const { extractWebhookInFromGraph } = await import('./flowWebhookIn.js');
+  const { extractWebhookInFromGraph, applyWebhookPayloadMap } = await import('./flowWebhookIn.js');
   const wh = extractWebhookInFromGraph(graph);
   if (!wh || wh.token !== token) {
     return { ok: false, error: 'webhook_inconsistente', status: 404 };
@@ -1142,6 +1142,14 @@ export async function runChatbotFlowsRuntimeFromWebhook(opts: {
     variables.webhook_payload =
       typeof opts.rawPayload === 'string' ? opts.rawPayload : JSON.stringify(opts.rawPayload);
     variables['flow_session.webhook_payload'] = variables.webhook_payload;
+  }
+
+  // S27 — mapear campos do body → variáveis de sessão
+  if (wh.payloadMap.length) {
+    const mapped = applyWebhookPayloadMap(opts.rawPayload ?? opts.variables ?? {}, wh.payloadMap);
+    for (const [k, v] of Object.entries(mapped)) {
+      variables[k] = v;
+    }
   }
 
   const { buildFlowSessionVariableBag, mergeFlowVariableSeed } = await import(
