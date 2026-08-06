@@ -578,6 +578,13 @@ export function NodePropertiesPanel({
             flowVariables={flowVariables}
               placeholder="Vou te passar para um atendente…"
             />
+            <p className="text-[11px] text-muted-foreground">
+              {String(data.mode || 'none') === 'user'
+                ? 'O chat será atrelado ao agente (in_progress) e o bot encerra.'
+                : String(data.mode) === 'team' || String(data.mode) === 'queue'
+                  ? 'O chat vai para a equipe/fila em pending; um humano assume depois.'
+                  : 'Fila geral: fica pending sem agente. Para atrelar a alguém, escolha Agente específico.'}
+            </p>
           </>
         ) : null}
 

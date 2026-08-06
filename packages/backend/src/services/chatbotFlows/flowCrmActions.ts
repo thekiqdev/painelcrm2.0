@@ -44,11 +44,16 @@ export async function runtimeAssignConversation(opts: {
   userId?: string;
   teamId?: string;
   queueId?: string;
+  /** Para emitir realtime ao inbox do tenant. */
+  tenantId?: string;
 }): Promise<void> {
+  let patch: Record<string, unknown> | null = null;
+  let ownerUserId: string | null = null;
+
   if (opts.mode === 'user') {
     const userId = opts.userId?.trim();
     if (!userId) throw new Error('userId obrigatório');
-    await pool.query(
+    const r = await pool.query(
       `UPDATE chat_conversations
        SET assigned_to_user_id = $2::uuid,
            assigned_team_id = NULL,
@@ -59,15 +64,27 @@ export async function runtimeAssignConversation(opts: {
            closed_by = NULL,
            last_assignment_reason = 'chatbot_flows_assign',
            updated_at = now()
-       WHERE id = $1::uuid`,
+       WHERE id = $1::uuid
+       RETURNING id, user_id, attendance_status, assigned_to_user_id, queue_id,
+                 assigned_at, last_assignment_reason`,
       [opts.conversationId, userId]
     );
-    return;
-  }
-  if (opts.mode === 'team') {
+    const row = r.rows[0] as Record<string, unknown> | undefined;
+    if (row) {
+      ownerUserId = row.user_id != null ? String(row.user_id) : null;
+      patch = {
+        id: opts.conversationId,
+        attendance_status: 'in_progress',
+        assigned_to_user_id: userId,
+        queue_id: row.queue_id ?? null,
+        assigned_at: row.assigned_at,
+        last_assignment_reason: 'chatbot_flows_assign',
+      };
+    }
+  } else if (opts.mode === 'team') {
     const teamId = opts.teamId?.trim();
     if (!teamId) throw new Error('teamId obrigatório');
-    await pool.query(
+    const r = await pool.query(
       `UPDATE chat_conversations
        SET assigned_team_id = $2::uuid,
            assigned_to_user_id = NULL,
@@ -75,22 +92,111 @@ export async function runtimeAssignConversation(opts: {
            attendance_status = 'pending',
            last_assignment_reason = 'chatbot_flows_assign_team',
            updated_at = now()
-       WHERE id = $1::uuid`,
+       WHERE id = $1::uuid
+       RETURNING id, user_id, attendance_status, assigned_to_user_id, queue_id, assigned_team_id`,
       [opts.conversationId, teamId]
     );
-    return;
+    const row = r.rows[0] as Record<string, unknown> | undefined;
+    if (row) {
+      ownerUserId = row.user_id != null ? String(row.user_id) : null;
+      patch = {
+        id: opts.conversationId,
+        attendance_status: 'pending',
+        assigned_to_user_id: null,
+        assigned_team_id: teamId,
+        queue_id: null,
+        last_assignment_reason: 'chatbot_flows_assign_team',
+      };
+    }
+  } else {
+    const queueId = opts.queueId?.trim() || null;
+    const r = await pool.query(
+      `UPDATE chat_conversations
+       SET queue_id = $2::uuid,
+           assigned_to_user_id = NULL,
+           attendance_status = 'pending',
+           last_assignment_reason = 'chatbot_flows_queue',
+           updated_at = now()
+       WHERE id = $1::uuid
+       RETURNING id, user_id, attendance_status, assigned_to_user_id, queue_id`,
+      [opts.conversationId, queueId]
+    );
+    const row = r.rows[0] as Record<string, unknown> | undefined;
+    if (row) {
+      ownerUserId = row.user_id != null ? String(row.user_id) : null;
+      patch = {
+        id: opts.conversationId,
+        attendance_status: 'pending',
+        assigned_to_user_id: null,
+        queue_id: queueId,
+        last_assignment_reason: 'chatbot_flows_queue',
+      };
+    }
   }
-  const queueId = opts.queueId?.trim() || null;
-  await pool.query(
+
+  if (patch && ownerUserId && opts.tenantId) {
+    emitConversationAttendanceUpdated(opts.tenantId, ownerUserId, patch);
+  }
+}
+
+/**
+ * Próximo attendance_status após transfer_human.
+ * Agente já atrelado → mantém in_progress; senão → pending (fila geral).
+ */
+export function nextAttendanceAfterTransferHuman(opts: {
+  currentStatus: string | null | undefined;
+  assignedToUserId: string | null | undefined;
+}): 'closed' | 'archived' | 'in_progress' | 'pending' {
+  const st = String(opts.currentStatus || '');
+  if (st === 'closed' || st === 'archived') return st;
+  if (opts.assignedToUserId) return 'in_progress';
+  return 'pending';
+}
+
+/**
+ * Transferência para humano (S3).
+ * - Se já houver `assigned_to_user_id` (Destino = agente), mantém atrelado + `in_progress`.
+ * - Sem agente: `pending` para a fila geral.
+ * Não limpa assignment prévia.
+ */
+export async function runtimeTransferToHuman(opts: {
+  conversationId: string;
+  tenantId?: string;
+}): Promise<void> {
+  const hasTeamCol = await hasAssignedTeamColumn();
+  const teamRet = hasTeamCol ? ', assigned_team_id' : '';
+  const r = await pool.query(
     `UPDATE chat_conversations
-     SET queue_id = $2::uuid,
-         assigned_to_user_id = NULL,
-         attendance_status = 'pending',
-         last_assignment_reason = 'chatbot_flows_queue',
+     SET attendance_status = CASE
+           WHEN attendance_status IN ('closed', 'archived') THEN attendance_status
+           WHEN assigned_to_user_id IS NOT NULL THEN 'in_progress'
+           ELSE 'pending'
+         END,
+         metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
          updated_at = now()
-     WHERE id = $1::uuid`,
-    [opts.conversationId, queueId]
+     WHERE id = $1::uuid
+     RETURNING id, user_id, attendance_status, assigned_to_user_id, queue_id${teamRet}, metadata`,
+    [
+      opts.conversationId,
+      JSON.stringify({
+        chatbot_flows_transferred_at: new Date().toISOString(),
+        chatbot_flows_waiting_human: true,
+      }),
+    ]
   );
+  const row = r.rows[0] as Record<string, unknown> | undefined;
+  if (!row || !opts.tenantId) return;
+  const ownerUserId = row.user_id != null ? String(row.user_id) : null;
+  if (!ownerUserId) return;
+  emitConversationAttendanceUpdated(opts.tenantId, ownerUserId, {
+    id: opts.conversationId,
+    attendance_status: row.attendance_status,
+    assigned_to_user_id: row.assigned_to_user_id ?? null,
+    queue_id: row.queue_id ?? null,
+    ...(hasTeamCol ? { assigned_team_id: row.assigned_team_id ?? null } : {}),
+    metadata: row.metadata,
+    last_assignment_reason: 'chatbot_flows_transfer_human',
+  });
 }
 
 /**

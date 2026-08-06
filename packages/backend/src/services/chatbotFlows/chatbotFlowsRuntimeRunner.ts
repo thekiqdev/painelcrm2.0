@@ -109,24 +109,15 @@ async function persistSession(
   );
 }
 
-async function applyTransferHuman(conversationId: string): Promise<void> {
-  await pool.query(
-    `UPDATE chat_conversations
-     SET attendance_status = CASE
-           WHEN attendance_status IN ('closed', 'archived') THEN attendance_status
-           ELSE 'pending'
-         END,
-         metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
-         updated_at = now()
-     WHERE id = $1::uuid`,
-    [
-      conversationId,
-      JSON.stringify({
-        chatbot_flows_transferred_at: new Date().toISOString(),
-        chatbot_flows_waiting_human: true,
-      }),
-    ]
-  );
+async function applyTransferHuman(opts: {
+  conversationId: string;
+  tenantId: string;
+}): Promise<void> {
+  const { runtimeTransferToHuman } = await import('./flowCrmActions.js');
+  await runtimeTransferToHuman({
+    conversationId: opts.conversationId,
+    tenantId: opts.tenantId,
+  });
 }
 
 /** Pausa sessões vivas da conversa (humano assumiu). */
@@ -583,7 +574,10 @@ async function applyRuntimeActions(opts: {
           console.warn('[chatbot_flows_runtime] send_media failed', r.error);
         }
       } else if (action.type === 'transfer_human') {
-        await applyTransferHuman(opts.conversationId);
+        await applyTransferHuman({
+          conversationId: opts.conversationId,
+          tenantId: opts.tenantId,
+        });
       } else if (action.type === 'conversation_note') {
         await runtimeCreateConversationNote({
           tenantId: opts.tenantId,
@@ -624,6 +618,7 @@ async function applyRuntimeActions(opts: {
       } else if (action.type === 'assign_agent') {
         await runtimeAssignConversation({
           conversationId: opts.conversationId,
+          tenantId: opts.tenantId,
           mode: action.mode,
           userId: action.userId,
           teamId: action.teamId,
