@@ -559,12 +559,15 @@ export async function pollWebhookInListenHandler(req: AuthRequest, res: Response
     if (result.status === 'waiting') {
       return res.json({ status: 'waiting' });
     }
-    return res.json({
-      status: 'received',
-      payload: result.payload,
-      received_at: result.received_at,
-      content_type: result.content_type,
-    });
+    if (result.status === 'received') {
+      return res.json({
+        status: 'received',
+        payload: result.payload,
+        received_at: result.received_at,
+        content_type: result.content_type,
+      });
+    }
+    return res.status(500).json({ error: 'listen_status_desconhecido' });
   } catch (e) {
     if (respondPerm(res, e)) return;
     const message = e instanceof Error ? e.message : 'Erro ao consultar listen';

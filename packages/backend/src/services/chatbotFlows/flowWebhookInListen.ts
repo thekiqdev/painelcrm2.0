@@ -155,7 +155,9 @@ export async function waitWebhookInListenPayload(opts: {
 }): Promise<
   | { status: 'waiting' }
   | { status: 'received'; payload: unknown; received_at: string; content_type: string | null }
-  | { status: 'expired' | 'not_found' | 'forbidden' }
+  | { status: 'expired' }
+  | { status: 'not_found' }
+  | { status: 'forbidden' }
 > {
   const deadline = Date.now() + Math.min(Math.max(opts.waitMs ?? 25_000, 0), 55_000);
   for (;;) {
