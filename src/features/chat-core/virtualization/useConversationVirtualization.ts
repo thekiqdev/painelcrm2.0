@@ -179,7 +179,8 @@ export function useConversationVirtualization<T extends { id: string }>(
 
   const measureElement = useCallback((conversationId: string, element: HTMLElement | null) => {
     if (!element || !engineRef.current) return;
-    const height = element.getBoundingClientRect().height;
+    const height = Math.ceil(element.getBoundingClientRect().height);
+    if (height <= 0) return;
     if (engineRef.current.setHeight(conversationId, height)) {
       setHeightVersion((v) => v + 1);
     }
@@ -218,6 +219,11 @@ export function useConversationVirtualization<T extends { id: string }>(
           if (!enabledRef.current) return;
           measureElement(conversationId, element);
           attachRowObserver(conversationId, element);
+          // Segunda medida após layout (tags/foto) — evita clip/gap no 1º frame.
+          requestAnimationFrame(() => {
+            if (!enabledRef.current) return;
+            measureElement(conversationId, element);
+          });
         };
         measureBindersRef.current.set(conversationId, binder);
       }

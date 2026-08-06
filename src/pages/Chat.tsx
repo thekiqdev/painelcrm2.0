@@ -5392,7 +5392,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
           }
         }}
         className={cn(
-          'my-0.5 box-border w-full max-w-full min-w-0 rounded-lg border border-transparent px-2 py-1.5 text-left transition-colors active:bg-muted/40 md:min-h-0 md:px-2 md:py-1.5',
+          'my-0 box-border w-full max-w-full min-w-0 rounded-lg border border-transparent px-2 py-1 text-left transition-colors active:bg-muted/40 md:min-h-0 md:px-2 md:py-1',
           'touch-manipulation cursor-grab active:cursor-grabbing',
           isActive
             ? 'bg-primary/10 shadow-none ring-1 ring-primary/25 dark:bg-primary/15 dark:ring-primary/35'
@@ -5427,7 +5427,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-start justify-between gap-2">
-              <div
+                <div
                 className={cn(
                   'min-w-0 flex-1 truncate text-sm font-semibold leading-tight md:text-sm md:font-medium',
                   isActive ? 'text-foreground' : 'text-foreground/95',
@@ -5435,21 +5435,21 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                 )}
                 onClick={(e) => openContactProfileFromList(conversation, e)}
               >
-                <span>{identity.displayName}</span>
+                <span className="truncate">{identity.displayName}</span>
                 {conversation.client_id ? (
-                  <span className="ml-1.5 inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5 font-normal text-[10px] text-muted-foreground">
-                    <span>· Cliente</span>
+                  <span className="ml-1.5 inline-flex max-w-[55%] shrink items-center gap-x-1 overflow-hidden font-normal text-[10px] text-muted-foreground">
+                    <span className="shrink-0">· Cliente</span>
                     {assigneeBesideCrm}
                   </span>
                 ) : null}
                 {!conversation.client_id && conversation.leadId ? (
-                  <span className="ml-1.5 inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5 font-normal text-[10px] text-muted-foreground">
-                    <span>· Lead</span>
+                  <span className="ml-1.5 inline-flex max-w-[55%] shrink items-center gap-x-1 overflow-hidden font-normal text-[10px] text-muted-foreground">
+                    <span className="shrink-0">· Lead</span>
                     {assigneeBesideCrm}
                   </span>
                 ) : null}
                 {!conversation.client_id && !conversation.leadId && assigneeBesideCrm ? (
-                  <span className="ml-1.5 inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5 font-normal text-[10px] text-muted-foreground">
+                  <span className="ml-1.5 inline-flex max-w-[55%] shrink items-center gap-x-1 overflow-hidden font-normal text-[10px] text-muted-foreground">
                     {assigneeBesideCrm}
                   </span>
                 ) : null}
@@ -6090,12 +6090,16 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                           {conversationVirtual.visibleItems.map(({ item, offsetTop, height }) => (
                             <div
                               key={item.id}
-                              data-conversation-id={item.id}
-                              ref={conversationVirtual.getMeasureRef(item.id)}
-                              className="absolute left-0 right-0 box-border px-0"
-                              style={{ top: offsetTop, minHeight: height }}
+                              className="absolute left-0 right-0 box-border overflow-hidden px-0"
+                              style={{ top: offsetTop, height }}
                             >
-                              {renderConversationItem(item)}
+                              <div
+                                data-conversation-id={item.id}
+                                ref={conversationVirtual.getMeasureRef(item.id)}
+                                className="box-border w-full"
+                              >
+                                {renderConversationItem(item)}
+                              </div>
                             </div>
                           ))}
                         </div>
