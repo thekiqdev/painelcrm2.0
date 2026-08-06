@@ -97,7 +97,7 @@ describe('F6.3 conversation virtualization', () => {
   it('continuous scroll moves the window', () => {
     const ids = Array.from({ length: 200 }, (_, i) => `c${i}`);
     const a = selectComputedConversationWindow(ids, 0, 300);
-    const b = selectComputedConversationWindow(ids, 76 * 50, 300);
+    const b = selectComputedConversationWindow(ids, DEFAULT_CONVERSATION_ROW_HEIGHT * 50, 300);
     expect(b.visibleStart).toBeGreaterThan(a.visibleStart);
     expect(b.overscanStart).toBeGreaterThan(a.overscanStart);
   });
@@ -184,7 +184,7 @@ describe('F6.3 conversation virtualization', () => {
 
   it('stress 10000 conversations: constant render bound', () => {
     const ids = Array.from({ length: 10_000 }, (_, i) => `c${i}`);
-    const samples = [0, 76 * 100, 76 * 5000, 76 * 9900].map((scrollTop) =>
+    const samples = [0, DEFAULT_CONVERSATION_ROW_HEIGHT * 100, DEFAULT_CONVERSATION_ROW_HEIGHT * 5000, DEFAULT_CONVERSATION_ROW_HEIGHT * 9900].map((scrollTop) =>
       selectComputedConversationWindow(ids, scrollTop, 760),
     );
     for (const win of samples) {

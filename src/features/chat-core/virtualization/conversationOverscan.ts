@@ -2,7 +2,7 @@
  * F6.3 — tipos e defaults da virtualização de conversas.
  */
 
-export const DEFAULT_CONVERSATION_ROW_HEIGHT = 76;
+export const DEFAULT_CONVERSATION_ROW_HEIGHT = 92;
 export const DEFAULT_CONVERSATION_OVERSCAN = 10;
 
 export type ConversationVirtualWindow = {

@@ -6091,8 +6091,8 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                             <div
                               key={item.id}
                               data-conversation-id={item.id}
-                              ref={conversationVirtual.measureRef}
-                              className="absolute left-0 right-0 px-0"
+                              ref={conversationVirtual.getMeasureRef(item.id)}
+                              className="absolute left-0 right-0 box-border px-0"
                               style={{ top: offsetTop, minHeight: height }}
                             >
                               {renderConversationItem(item)}

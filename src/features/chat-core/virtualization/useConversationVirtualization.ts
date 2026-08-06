@@ -35,8 +35,12 @@ export type UseConversationVirtualizationResult<T extends { id: string }> = {
   overscanEnd: number;
   onScroll: () => void;
   measureElement: (conversationId: string, element: HTMLElement | null) => void;
-  /** Preferir sobre measureElement em JSX — identidade estável entre renders. */
+  /**
+   * @deprecated Preferir `getMeasureRef(id)` — ref compartilhado não limpa ResizeObserver no unmount.
+   */
   measureRef: (element: HTMLElement | null) => void;
+  /** Ref estável por conversa + ResizeObserver (re-mede quando foto/tags mudam a altura). */
+  getMeasureRef: (conversationId: string) => (element: HTMLElement | null) => void;
 };
 
 export function useConversationVirtualization<T extends { id: string }>(
@@ -51,6 +55,13 @@ export function useConversationVirtualization<T extends { id: string }>(
 
   const [viewport, setViewport] = useState({ scrollTop: 0, viewportHeight: 0 });
   const [heightVersion, setHeightVersion] = useState(0);
+
+  const rowObserversRef = useRef(new Map<string, ResizeObserver>());
+  const measureBindersRef = useRef(
+    new Map<string, (element: HTMLElement | null) => void>(),
+  );
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
 
   const onViewportChange = useCallback((scrollTop: number, viewportHeight: number) => {
     setViewport((prev) => {
@@ -128,6 +139,26 @@ export function useConversationVirtualization<T extends { id: string }>(
     }
   }, [enabled]);
 
+  /** Remove observers/binders de ids que saíram da lista. */
+  useEffect(() => {
+    const alive = new Set(conversationIds);
+    for (const id of [...rowObserversRef.current.keys()]) {
+      if (alive.has(id)) continue;
+      rowObserversRef.current.get(id)?.disconnect();
+      rowObserversRef.current.delete(id);
+      measureBindersRef.current.delete(id);
+    }
+  }, [conversationIds]);
+
+  useEffect(
+    () => () => {
+      for (const ro of rowObserversRef.current.values()) ro.disconnect();
+      rowObserversRef.current.clear();
+      measureBindersRef.current.clear();
+    },
+    [],
+  );
+
   const visibleItems = useMemo((): ConversationVirtualListItem<T>[] => {
     if (!enabled) {
       return params.items.map((item, index) => ({
@@ -154,14 +185,57 @@ export function useConversationVirtualization<T extends { id: string }>(
     }
   }, []);
 
-  /** Ref estável — evita callback-ref novo a cada render (ciclo measure → setState). */
+  const detachRowObserver = useCallback((conversationId: string) => {
+    const ro = rowObserversRef.current.get(conversationId);
+    if (!ro) return;
+    ro.disconnect();
+    rowObserversRef.current.delete(conversationId);
+  }, []);
+
+  const attachRowObserver = useCallback(
+    (conversationId: string, element: HTMLElement) => {
+      detachRowObserver(conversationId);
+      if (typeof ResizeObserver === 'undefined') return;
+      const ro = new ResizeObserver(() => {
+        if (!enabledRef.current) return;
+        measureElement(conversationId, element);
+      });
+      ro.observe(element);
+      rowObserversRef.current.set(conversationId, ro);
+    },
+    [detachRowObserver, measureElement],
+  );
+
+  const getMeasureRef = useCallback(
+    (conversationId: string) => {
+      let binder = measureBindersRef.current.get(conversationId);
+      if (!binder) {
+        binder = (element: HTMLElement | null) => {
+          if (!element) {
+            detachRowObserver(conversationId);
+            return;
+          }
+          if (!enabledRef.current) return;
+          measureElement(conversationId, element);
+          attachRowObserver(conversationId, element);
+        };
+        measureBindersRef.current.set(conversationId, binder);
+      }
+      return binder;
+    },
+    [attachRowObserver, detachRowObserver, measureElement],
+  );
+
+  /** Compat: mede uma vez; sem cleanup de RO no unmount. */
   const measureRef = useCallback(
     (element: HTMLElement | null) => {
       if (!element) return;
       const id = element.dataset.conversationId;
-      if (id) measureElement(id, element);
+      if (!id) return;
+      measureElement(id, element);
+      attachRowObserver(id, element);
     },
-    [measureElement],
+    [attachRowObserver, measureElement],
   );
 
   return {
@@ -176,5 +250,6 @@ export function useConversationVirtualization<T extends { id: string }>(
     onScroll,
     measureElement,
     measureRef,
+    getMeasureRef,
   };
 }
