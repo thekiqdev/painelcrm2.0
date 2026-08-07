@@ -17,7 +17,7 @@ const SENSITIVE_KEY_RE =
   /^(authorization|cookie|set-cookie|api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|secret|password|passwd|token|bearer|x-api-key)$/i;
 
 /** Campos só de editor (S14 HTTP · S27 webhook sample) — não vão para publish/export. */
-const EDITOR_SAMPLE_KEY_RE = /^last_(test_|payload_)/;
+const EDITOR_SAMPLE_KEY_RE = /^last_(test_|payload_|normalized_)/;
 
 const graphSchema = z.object({
   nodes: z.array(z.unknown()),

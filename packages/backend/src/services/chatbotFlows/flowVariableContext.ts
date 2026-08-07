@@ -25,7 +25,8 @@ function todayParts(d = new Date()) {
  */
 export async function buildFlowSessionVariableBag(opts: {
   tenantId: string;
-  conversationId: string;
+  /** Null = sessão órfã (S28.1 webhook sem conversation_id). */
+  conversationId: string | null;
   actorUserId?: string | null;
 }): Promise<Record<string, string>> {
   const bag: Record<string, string> = {};
@@ -34,143 +35,148 @@ export async function buildFlowSessionVariableBag(opts: {
   put(bag, 'system.date_formatted', dates.formatted);
   put(bag, 'system.name', process.env.APP_PUBLIC_NAME?.trim() || 'PainelCRM');
 
-  put(bag, 'conversation.id', opts.conversationId);
-  put(bag, 'conversation_id', opts.conversationId);
+  if (opts.conversationId) {
+    put(bag, 'conversation.id', opts.conversationId);
+    put(bag, 'conversation_id', opts.conversationId);
+  }
 
-  try {
-    const leadCol = await pool.query<{ exists: boolean }>(
-      `SELECT EXISTS (
-         SELECT 1 FROM information_schema.columns
-         WHERE table_schema = 'public' AND table_name = 'chat_conversations' AND column_name = 'lead_id'
-       ) AS exists`
-    );
-    const hasLeadCol = Boolean(leadCol.rows[0]?.exists);
+  if (opts.conversationId) {
+    try {
+      const conversationId = opts.conversationId;
+      const leadCol = await pool.query<{ exists: boolean }>(
+        `SELECT EXISTS (
+           SELECT 1 FROM information_schema.columns
+           WHERE table_schema = 'public' AND table_name = 'chat_conversations' AND column_name = 'lead_id'
+         ) AS exists`
+      );
+      const hasLeadCol = Boolean(leadCol.rows[0]?.exists);
 
-    const conv = await pool.query<{
-      display_name: string | null;
-      contact_name: string | null;
-      profile_name: string | null;
-      canonical_phone: string | null;
-      phone_number: string | null;
-      assigned_team_id: string | null;
-      assigned_to_user_id: string | null;
-      user_id: string;
-      client_id: string | null;
-      lead_id: string | null;
-    }>(
-      // phone_normalized não existe no schema; usar canonical_phone / phone_number
-      `SELECT c.display_name, c.contact_name, c.profile_name, c.canonical_phone, c.phone_number,
-              c.assigned_team_id, c.assigned_to_user_id, c.user_id, c.client_id,
-              ${hasLeadCol ? 'c.lead_id' : 'NULL::uuid AS lead_id'}
-       FROM chat_conversations c
-       INNER JOIN users u ON u.id = c.user_id
-       WHERE c.id = $1::uuid AND u.tenant_id = $2::uuid
-       LIMIT 1`,
-      [opts.conversationId, opts.tenantId]
-    );
-    const row = conv.rows[0];
-    if (row) {
-      const contact =
-        (row.display_name || row.contact_name || row.profile_name || '').trim() || '';
-      put(bag, 'contact.name', contact);
-      put(bag, 'contact_name', contact);
-      put(bag, 'client_name', contact);
-      put(bag, 'display_name', contact);
+      const conv = await pool.query<{
+        display_name: string | null;
+        contact_name: string | null;
+        profile_name: string | null;
+        canonical_phone: string | null;
+        phone_number: string | null;
+        assigned_team_id: string | null;
+        assigned_to_user_id: string | null;
+        user_id: string;
+        client_id: string | null;
+        lead_id: string | null;
+      }>(
+        // phone_normalized não existe no schema; usar canonical_phone / phone_number
+        `SELECT c.display_name, c.contact_name, c.profile_name, c.canonical_phone, c.phone_number,
+                c.assigned_team_id, c.assigned_to_user_id, c.user_id, c.client_id,
+                ${hasLeadCol ? 'c.lead_id' : 'NULL::uuid AS lead_id'}
+         FROM chat_conversations c
+         INNER JOIN users u ON u.id = c.user_id
+         WHERE c.id = $1::uuid AND u.tenant_id = $2::uuid
+         LIMIT 1`,
+        [conversationId, opts.tenantId]
+      );
+      const row = conv.rows[0];
+      if (row) {
+        const contact =
+          (row.display_name || row.contact_name || row.profile_name || '').trim() || '';
+        put(bag, 'contact.name', contact);
+        put(bag, 'contact_name', contact);
+        put(bag, 'client_name', contact);
+        put(bag, 'display_name', contact);
 
-      const phone = String(row.canonical_phone || row.phone_number || '')
-        .replace(/\D/g, '')
-        .trim();
-      put(bag, 'contact.phone', phone);
-      put(bag, 'canonical_phone', phone);
-      put(bag, 'contact_phone', phone);
+        const phone = String(row.canonical_phone || row.phone_number || '')
+          .replace(/\D/g, '')
+          .trim();
+        put(bag, 'contact.phone', phone);
+        put(bag, 'canonical_phone', phone);
+        put(bag, 'contact_phone', phone);
 
-      if (row.client_id) {
-        put(bag, 'client.id', row.client_id);
-        put(bag, 'client_id', row.client_id);
-      }
+        if (row.client_id) {
+          put(bag, 'client.id', row.client_id);
+          put(bag, 'client_id', row.client_id);
+        }
 
-      if (row.lead_id) {
-        put(bag, 'lead.id', row.lead_id);
-        put(bag, 'lead_id', row.lead_id);
+        if (row.lead_id) {
+          put(bag, 'lead.id', row.lead_id);
+          put(bag, 'lead_id', row.lead_id);
+          try {
+            const leadRow = await pool.query<{ name: string | null }>(
+              `SELECT name FROM leads WHERE id = $1::uuid LIMIT 1`,
+              [row.lead_id]
+            );
+            const leadName = (leadRow.rows[0]?.name || '').trim();
+            if (leadName) {
+              put(bag, 'lead.name', leadName);
+              put(bag, 'lead_name', leadName);
+            }
+          } catch {
+            /* ignore */
+          }
+        }
+
+        // Kanban column/board (best-effort)
         try {
-          const leadRow = await pool.query<{ name: string | null }>(
-            `SELECT name FROM leads WHERE id = $1::uuid LIMIT 1`,
-            [row.lead_id]
+          const kanban = await pool.query<{ column_name: string | null; board_name: string | null }>(
+            `SELECT col.name AS column_name, b.name AS board_name
+             FROM chat_kanban_cards card
+             INNER JOIN chat_kanban_columns col ON col.id = card.column_id
+             INNER JOIN chat_kanban_boards b ON b.id = col.board_id
+             WHERE card.conversation_id = $1::uuid AND b.tenant_id = $2::uuid
+             ORDER BY card.updated_at DESC NULLS LAST
+             LIMIT 1`,
+            [conversationId, opts.tenantId]
           );
-          const leadName = (leadRow.rows[0]?.name || '').trim();
-          if (leadName) {
-            put(bag, 'lead.name', leadName);
-            put(bag, 'lead_name', leadName);
+          const k = kanban.rows[0];
+          if (k) {
+            put(bag, 'conversation.column_name', k.column_name);
+            put(bag, 'column_name', k.column_name);
+            put(bag, 'conversation.board_name', k.board_name);
+            put(bag, 'board_name', k.board_name);
           }
         } catch {
-          /* ignore */
+          /* tabela pode variar — ignore */
         }
-      }
 
-      // Kanban column/board (best-effort)
-      try {
-        const kanban = await pool.query<{ column_name: string | null; board_name: string | null }>(
-          `SELECT col.name AS column_name, b.name AS board_name
-           FROM chat_kanban_cards card
-           INNER JOIN chat_kanban_columns col ON col.id = card.column_id
-           INNER JOIN chat_kanban_boards b ON b.id = col.board_id
-           WHERE card.conversation_id = $1::uuid AND b.tenant_id = $2::uuid
-           ORDER BY card.updated_at DESC NULLS LAST
-           LIMIT 1`,
-          [opts.conversationId, opts.tenantId]
-        );
-        const k = kanban.rows[0];
-        if (k) {
-          put(bag, 'conversation.column_name', k.column_name);
-          put(bag, 'column_name', k.column_name);
-          put(bag, 'conversation.board_name', k.board_name);
-          put(bag, 'board_name', k.board_name);
-        }
-      } catch {
-        /* tabela pode variar — ignore */
-      }
-
-      const agentUserId =
-        opts.actorUserId || row.assigned_to_user_id || row.user_id || null;
-      if (agentUserId) {
-        try {
-          const userRow = await pool.query<{
-            first_name: string | null;
-            last_name: string | null;
-            email: string | null;
-          }>(
-            `SELECT first_name, last_name, email FROM users WHERE id = $1::uuid LIMIT 1`,
-            [agentUserId]
-          );
-          const u = userRow.rows[0];
-          if (u) {
-            const op =
-              [u.first_name, u.last_name].filter(Boolean).join(' ').trim() ||
-              (u.email || '').trim();
-            put(bag, 'agent.name', op);
-            put(bag, 'operator_name', op);
+        const agentUserId =
+          opts.actorUserId || row.assigned_to_user_id || row.user_id || null;
+        if (agentUserId) {
+          try {
+            const userRow = await pool.query<{
+              first_name: string | null;
+              last_name: string | null;
+              email: string | null;
+            }>(
+              `SELECT first_name, last_name, email FROM users WHERE id = $1::uuid LIMIT 1`,
+              [agentUserId]
+            );
+            const u = userRow.rows[0];
+            if (u) {
+              const op =
+                [u.first_name, u.last_name].filter(Boolean).join(' ').trim() ||
+                (u.email || '').trim();
+              put(bag, 'agent.name', op);
+              put(bag, 'operator_name', op);
+            }
+          } catch {
+            /* ignore */
           }
-        } catch {
-          /* ignore */
         }
-      }
 
-      if (row.assigned_team_id) {
-        try {
-          const teamRow = await pool.query<{ name: string }>(
-            `SELECT name FROM teams WHERE id = $1::uuid AND tenant_id = $2::uuid LIMIT 1`,
-            [row.assigned_team_id, opts.tenantId]
-          );
-          const teamName = teamRow.rows[0]?.name;
-          put(bag, 'agent.team_name', teamName);
-          put(bag, 'team_name', teamName);
-        } catch {
-          /* ignore */
+        if (row.assigned_team_id) {
+          try {
+            const teamRow = await pool.query<{ name: string }>(
+              `SELECT name FROM teams WHERE id = $1::uuid AND tenant_id = $2::uuid LIMIT 1`,
+              [row.assigned_team_id, opts.tenantId]
+            );
+            const teamName = teamRow.rows[0]?.name;
+            put(bag, 'agent.team_name', teamName);
+            put(bag, 'team_name', teamName);
+          } catch {
+            /* ignore */
+          }
         }
       }
+    } catch {
+      /* ignore */
     }
-  } catch {
-    /* ignore */
   }
 
   try {

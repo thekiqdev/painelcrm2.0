@@ -31,7 +31,14 @@ import {
 } from './menuChoiceHelpers';
 import { pickConditionHandle } from './conditionHelpers';
 import { computeInputTimeoutResumeAt } from './inputTimeout';
-import { matchStartTrigger, parseStartTrigger } from './flowStartTrigger';
+import {
+  matchKanbanColumnTrigger,
+  matchStartTrigger,
+  matchTagTrigger,
+  parseStartTrigger,
+  type StartTriggerKanbanColumn,
+  type StartTriggerTag,
+} from './flowStartTrigger';
 import { readSetVariableAssignments } from './nodeCatalog';
 
 const INVOICE_ASSIST_RETRIES_KEY = 'invoice._assist_retries';
@@ -258,6 +265,15 @@ export type RuntimeOutboundAction =
         section?: string;
         set_variables?: Array<{ name: string; value: string }>;
       }>;
+    }
+  | {
+      type: 'ensure_conversation';
+      phone: string;
+      normalizeBr: boolean;
+      instanceId?: string | null;
+      reusePolicy: 'open' | 'any' | 'always_create';
+      /** S29.1 — template opcional (ex. {{order.id}}). */
+      idempotencyKey?: string | null;
     };
 
 export type RuntimeStepResult = {
@@ -340,7 +356,7 @@ export type FlowTriggerMatch = {
   flowId: string;
   versionId: string;
   graph: RuntimeGraph;
-  reason: 'keyword' | 'first_message';
+  reason: 'keyword' | 'first_message' | 'tag' | 'kanban_column' | 'manual' | 'webhook';
 };
 
 export function matchFlowTrigger(opts: {
@@ -358,6 +374,36 @@ export function matchFlowTrigger(opts: {
     incomingMessageCount: opts.incomingMessageCount,
     hoursSincePreviousIncoming: opts.hoursSincePreviousIncoming,
   });
+}
+
+/** S31 — match de gatilho por evento CRM (tag / coluna). */
+export function matchFlowCrmEventTrigger(opts: {
+  graph: RuntimeGraph;
+  event:
+    | { kind: 'tag'; tagId?: string | null; tagLabel?: string | null }
+    | { kind: 'kanban_column'; columnId: string; boardId?: string | null };
+}): 'tag' | 'kanban_column' | null {
+  const start = findStartNode(opts.graph);
+  if (!start) return null;
+  const trigger = parseStartTrigger(start.data?.trigger);
+  const type = String(trigger.type || '');
+  if (opts.event.kind === 'tag' && type === 'tag') {
+    return matchTagTrigger(trigger as StartTriggerTag, {
+      tagId: opts.event.tagId,
+      tagLabel: opts.event.tagLabel,
+    })
+      ? 'tag'
+      : null;
+  }
+  if (opts.event.kind === 'kanban_column' && type === 'kanban_column') {
+    return matchKanbanColumnTrigger(trigger as StartTriggerKanbanColumn, {
+      columnId: opts.event.columnId,
+      boardId: opts.event.boardId,
+    })
+      ? 'kanban_column'
+      : null;
+  }
+  return null;
 }
 
 function evalCondition(
@@ -722,7 +768,8 @@ export function processInboundStep(opts: {
         httpNode.type !== 'crm_link_check' &&
         httpNode.type !== 'crm_convert' &&
         httpNode.type !== 'kanban_add_card' &&
-        httpNode.type !== 'move_kanban')
+        httpNode.type !== 'move_kanban' &&
+        httpNode.type !== 'ensure_conversation')
     ) {
       session.status = 'error';
       actions.push({ type: 'error', message: 'Sessão HTTP/lookup inválida' });
@@ -1437,6 +1484,23 @@ export function processInboundStep(opts: {
         }
         session.currentNodeId = next.target;
         continue;
+      }
+      case 'ensure_conversation': {
+        const phone = String(data.phone || '');
+        const policyRaw = String(data.reuse_policy || 'open');
+        const reusePolicy =
+          policyRaw === 'any' || policyRaw === 'always_create' ? policyRaw : 'open';
+        const idemRaw = data.idempotency_key != null ? String(data.idempotency_key).trim() : '';
+        actions.push({
+          type: 'ensure_conversation',
+          phone,
+          normalizeBr: data.normalize_br !== false,
+          instanceId: data.instance_id != null ? String(data.instance_id) : null,
+          reusePolicy,
+          idempotencyKey: idemRaw || null,
+        });
+        session.status = 'waiting_http';
+        return { session, actions, handled: true };
       }
       case 'resolve_conversation': {
         const msg = interpolateTemplate(String(data.message || ''), session.variables).trim();

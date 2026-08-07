@@ -1,13 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isGlobalOptOutWord,
   isGroupExternalChatId,
   isStartDmOnly,
   matchFirstMessageTrigger,
+  matchKanbanColumnTrigger,
   matchKeywordBody,
   matchStartTrigger,
+  matchTagTrigger,
   resolveKeywordList,
 } from './flowStartTrigger.js';
-import { matchFlowTrigger, type RuntimeGraph } from './flowRuntimeEngine.js';
+import {
+  matchFlowCrmEventTrigger,
+  matchFlowTrigger,
+  type RuntimeGraph,
+} from './flowRuntimeEngine.js';
 
 describe('flowStartTrigger S22', () => {
   it('resolveKeywordList split | e array', () => {
@@ -115,5 +122,127 @@ describe('flowStartTrigger S22', () => {
     expect(getStartSessionPolicy({ session_policy: 'restart_on_keyword' })).toBe(
       'restart_on_keyword'
     );
+  });
+});
+
+describe('flowStartTrigger S31', () => {
+  it('isGlobalOptOutWord equals parar/sair', () => {
+    expect(isGlobalOptOutWord('parar')).toBe(true);
+    expect(isGlobalOptOutWord(' SAIR ')).toBe(true);
+    expect(isGlobalOptOutWord('Parar')).toBe(true);
+    expect(isGlobalOptOutWord('quero parar')).toBe(false);
+    expect(isGlobalOptOutWord('parar agora')).toBe(false);
+    expect(isGlobalOptOutWord('')).toBe(false);
+  });
+
+  it('matchTagTrigger por id ou label', () => {
+    expect(
+      matchTagTrigger(
+        { type: 'tag', tag_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' },
+        { tagId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', tagLabel: 'x' }
+      )
+    ).toBe(true);
+    expect(
+      matchTagTrigger(
+        { type: 'tag', tag_label: 'Lead-Quente' },
+        { tagId: 'other', tagLabel: 'lead-quente' }
+      )
+    ).toBe(true);
+    expect(
+      matchTagTrigger({ type: 'tag', tag_label: 'a' }, { tagId: null, tagLabel: 'b' })
+    ).toBe(false);
+    expect(matchTagTrigger({ type: 'tag' }, { tagId: 'x', tagLabel: 'y' })).toBe(false);
+  });
+
+  it('matchKanbanColumnTrigger com board opcional', () => {
+    const col = '11111111-1111-1111-1111-111111111111';
+    const board = '22222222-2222-2222-2222-222222222222';
+    expect(
+      matchKanbanColumnTrigger(
+        { type: 'kanban_column', column_id: col },
+        { columnId: col, boardId: board }
+      )
+    ).toBe(true);
+    expect(
+      matchKanbanColumnTrigger(
+        { type: 'kanban_column', column_id: col, board_id: board },
+        { columnId: col, boardId: board }
+      )
+    ).toBe(true);
+    expect(
+      matchKanbanColumnTrigger(
+        { type: 'kanban_column', column_id: col, board_id: board },
+        { columnId: col, boardId: '33333333-3333-3333-3333-333333333333' }
+      )
+    ).toBe(false);
+    expect(
+      matchKanbanColumnTrigger(
+        { type: 'kanban_column', column_id: col },
+        { columnId: '33333333-3333-3333-3333-333333333333' }
+      )
+    ).toBe(false);
+  });
+
+  it('matchStartTrigger ignora tag/kanban no inbound de mensagem', () => {
+    expect(
+      matchStartTrigger({
+        trigger: { type: 'tag', tag_label: 'x' },
+        messageBody: 'oi',
+        incomingMessageCount: 1,
+      })
+    ).toBeNull();
+    expect(
+      matchStartTrigger({
+        trigger: {
+          type: 'kanban_column',
+          column_id: '11111111-1111-1111-1111-111111111111',
+        },
+        messageBody: 'oi',
+        incomingMessageCount: 1,
+      })
+    ).toBeNull();
+  });
+
+  it('matchFlowCrmEventTrigger integra tag e coluna', () => {
+    const tagId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const colId = '11111111-1111-1111-1111-111111111111';
+    const gTag: RuntimeGraph = {
+      nodes: [{ id: 'start', type: 'start', data: { trigger: { type: 'tag', tag_id: tagId } } }],
+      edges: [],
+    };
+    const gCol: RuntimeGraph = {
+      nodes: [
+        {
+          id: 'start',
+          type: 'start',
+          data: { trigger: { type: 'kanban_column', column_id: colId } },
+        },
+      ],
+      edges: [],
+    };
+    expect(
+      matchFlowCrmEventTrigger({
+        graph: gTag,
+        event: { kind: 'tag', tagId, tagLabel: 'Lead' },
+      })
+    ).toBe('tag');
+    expect(
+      matchFlowCrmEventTrigger({
+        graph: gTag,
+        event: { kind: 'tag', tagId: 'other', tagLabel: 'x' },
+      })
+    ).toBeNull();
+    expect(
+      matchFlowCrmEventTrigger({
+        graph: gCol,
+        event: { kind: 'kanban_column', columnId: colId },
+      })
+    ).toBe('kanban_column');
+    expect(
+      matchFlowCrmEventTrigger({
+        graph: gCol,
+        event: { kind: 'tag', tagId, tagLabel: 'x' },
+      })
+    ).toBeNull();
   });
 });

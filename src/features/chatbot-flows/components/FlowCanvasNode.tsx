@@ -117,7 +117,8 @@ function FlowNodeInner({ id, data, type, selected }: NodeProps & { data: FlowNod
     type === 'http_request' ||
     type === 'webhook_out' ||
     type === 'kanban_add_card' ||
-    type === 'move_kanban';
+    type === 'move_kanban' ||
+    type === 'ensure_conversation';
   const showDualInvoice =
     type === 'lookup_invoice' ||
     type === 'select_invoice' ||

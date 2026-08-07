@@ -1,5 +1,6 @@
 /**
  * S22 — helpers de gatilho do nó start (keyword / first_message + idle / dm_only).
+ * S31 — tag / kanban_column (evento CRM) + opt-out global parar/sair.
  */
 
 export type StartTriggerKeyword = {
@@ -14,7 +15,29 @@ export type StartTriggerFirstMessage = {
   idle_after_hours?: number | null;
 };
 
-export type StartTrigger = StartTriggerKeyword | StartTriggerFirstMessage | { type?: string };
+/** S31 — dispara ao adicionar tag na conversa (evento CRM). */
+export type StartTriggerTag = {
+  type: 'tag';
+  tag_id?: string | null;
+  tag_label?: string | null;
+};
+
+/** S31 — dispara ao entrar na coluna (create/move card). */
+export type StartTriggerKanbanColumn = {
+  type: 'kanban_column';
+  column_id: string;
+  board_id?: string | null;
+};
+
+export type StartTrigger =
+  | StartTriggerKeyword
+  | StartTriggerFirstMessage
+  | StartTriggerTag
+  | StartTriggerKanbanColumn
+  | { type?: string };
+
+/** Palavras de opt-out global (equals, trim + lower). */
+export const GLOBAL_OPT_OUT_WORDS = ['parar', 'sair'] as const;
 
 export function parseStartTrigger(raw: unknown): StartTrigger {
   if (raw && typeof raw === 'object') return raw as StartTrigger;
@@ -81,6 +104,10 @@ export function matchFirstMessageTrigger(
   return hours >= idle;
 }
 
+/**
+ * Match de gatilho baseado em mensagem (keyword / first_message).
+ * Tipos `tag` / `kanban_column` retornam null aqui (S31 — só via evento CRM).
+ */
 export function matchStartTrigger(opts: {
   trigger: StartTrigger;
   messageBody: string;
@@ -89,6 +116,7 @@ export function matchStartTrigger(opts: {
 }): 'keyword' | 'first_message' | null {
   const t = opts.trigger;
   const type = String(t.type || 'first_message');
+  if (type === 'tag' || type === 'kanban_column') return null;
   if (type === 'keyword') {
     return matchKeywordBody(opts.messageBody, t as StartTriggerKeyword) ? 'keyword' : null;
   }
@@ -101,6 +129,48 @@ export function matchStartTrigger(opts: {
     return 'first_message';
   }
   return null;
+}
+
+export function matchTagTrigger(
+  trigger: StartTriggerTag,
+  opts: { tagId?: string | null; tagLabel?: string | null }
+): boolean {
+  const wantId = String(trigger.tag_id || '').trim();
+  const wantLabel = String(trigger.tag_label || '')
+    .trim()
+    .toLowerCase();
+  if (!wantId && !wantLabel) return false;
+  const gotId = String(opts.tagId || '').trim();
+  const gotLabel = String(opts.tagLabel || '')
+    .trim()
+    .toLowerCase();
+  if (wantId && gotId && wantId === gotId) return true;
+  if (wantLabel && gotLabel && wantLabel === gotLabel) return true;
+  return false;
+}
+
+export function matchKanbanColumnTrigger(
+  trigger: StartTriggerKanbanColumn,
+  opts: { columnId: string; boardId?: string | null }
+): boolean {
+  const wantCol = String(trigger.column_id || '').trim();
+  if (!wantCol) return false;
+  if (wantCol !== String(opts.columnId || '').trim()) return false;
+  const wantBoard = String(trigger.board_id || '').trim();
+  if (wantBoard) {
+    const gotBoard = String(opts.boardId || '').trim();
+    if (!gotBoard || wantBoard !== gotBoard) return false;
+  }
+  return true;
+}
+
+/** S31 — equals em parar/sair (mensagem inteira). */
+export function isGlobalOptOutWord(messageBody: string): boolean {
+  const body = String(messageBody || '')
+    .trim()
+    .toLowerCase();
+  if (!body) return false;
+  return (GLOBAL_OPT_OUT_WORDS as readonly string[]).includes(body);
 }
 
 export function isGroupExternalChatId(externalChatId: string | null | undefined): boolean {

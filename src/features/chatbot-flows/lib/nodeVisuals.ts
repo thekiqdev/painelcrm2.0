@@ -8,6 +8,7 @@ import {
   Kanban,
   MessageSquareText,
   PauseCircle,
+  PhoneCall,
   Play,
   StopCircle,
   Tag,
@@ -64,6 +65,10 @@ export const NODE_VISUALS: Record<EssentialNodeType, NodeVisual> = {
   resolve_conversation: {
     headerClass: 'bg-rose-700 text-white',
     Icon: CircleCheckBig,
+  },
+  ensure_conversation: {
+    headerClass: 'bg-emerald-700 text-white',
+    Icon: PhoneCall,
   },
   set_variable: {
     headerClass: 'bg-teal-600 text-white',

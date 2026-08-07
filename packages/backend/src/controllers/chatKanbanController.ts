@@ -1327,6 +1327,26 @@ export async function createCard(req: AuthRequest, res: Response): Promise<void>
       outPayload.kanban_auto_created_proposal = autoRes;
     }
 
+    // S31 — gatilho flow por entrada em coluna (create)
+    try {
+      const { runChatbotFlowsRuntimeFromCrmEvent } = await import(
+        '../services/chatbotFlows/chatbotFlowsRuntimeRunner.js'
+      );
+      void runChatbotFlowsRuntimeFromCrmEvent({
+        tenantId,
+        actorUserId: userId,
+        conversationId: body.conversation_id,
+        event: {
+          kind: 'kanban_column',
+          columnId: body.column_id,
+          boardId,
+        },
+        source: 'user',
+      });
+    } catch (e) {
+      console.warn('[chatKanban] createCard chatbot flow trigger', e);
+    }
+
     res.status(201).json(outPayload);
   } catch (e: any) {
     if (e instanceof z.ZodError) {
@@ -1777,6 +1797,28 @@ export async function patchCard(req: AuthRequest, res: Response): Promise<void> 
 
     if (attendancePatch && emitCtx) {
       emitKanbanAttendanceIfNeeded(emitCtx.tenantId, emitCtx.ownerUserId, attendancePatch);
+    }
+
+    // S31 — gatilho flow por entrada em coluna (move)
+    if (columnChanged && destColForRules && !leadOnlyCard && card.conversation_id) {
+      try {
+        const { runChatbotFlowsRuntimeFromCrmEvent } = await import(
+          '../services/chatbotFlows/chatbotFlowsRuntimeRunner.js'
+        );
+        void runChatbotFlowsRuntimeFromCrmEvent({
+          tenantId,
+          actorUserId: userId,
+          conversationId: String(card.conversation_id),
+          event: {
+            kind: 'kanban_column',
+            columnId: String(destColForRules.id),
+            boardId: String(card.board_id),
+          },
+          source: 'user',
+        });
+      } catch (e) {
+        console.warn('[chatKanban] patchCard chatbot flow trigger', e);
+      }
     }
 
     if (columnChanged && orgRulesApplied && !attendancePatch) {

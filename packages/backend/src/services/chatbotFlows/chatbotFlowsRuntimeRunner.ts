@@ -6,12 +6,18 @@ import { tenantHasFeature } from '../featureFlagService.js';
 import { isEditorOnlyNodeType } from './canvasAnnotations.js';
 import {
   matchFlowTrigger,
+  matchFlowCrmEventTrigger,
   processInboundStep,
   findStartNode,
   type RuntimeGraph,
   type RuntimeSessionSnapshot,
 } from './flowRuntimeEngine.js';
-import { isGroupExternalChatId, isStartDmOnly, getStartSessionPolicy } from './flowStartTrigger.js';
+import {
+  isGlobalOptOutWord,
+  isGroupExternalChatId,
+  isStartDmOnly,
+  getStartSessionPolicy,
+} from './flowStartTrigger.js';
 import {
   isCooldownActive,
   isInstanceAllowed,
@@ -154,6 +160,41 @@ export async function pauseChatbotFlowSessionsForConversation(
   return r.rowCount ?? 0;
 }
 
+/** S31 — encerra sessões vivas (opt-out). */
+export async function endChatbotFlowSessionsForConversation(
+  conversationId: string,
+  reason: string
+): Promise<number> {
+  const r = await pool.query(
+    `UPDATE chatbot_flow_sessions
+     SET status = 'ended',
+         ended_at = COALESCE(ended_at, now()),
+         resume_at = NULL,
+         waiting_variable = NULL,
+         last_error = $2,
+         updated_at = now()
+     WHERE conversation_id = $1::uuid
+       AND status IN ('active', 'waiting_input', 'waiting_delay', 'waiting_http')
+     RETURNING id`,
+    [conversationId, reason]
+  );
+
+  try {
+    await pool.query(
+      `UPDATE chat_conversations
+       SET metadata = COALESCE(metadata, '{}'::jsonb) - 'chatbot_flows_waiting_human',
+           updated_at = now()
+       WHERE id = $1::uuid
+         AND metadata ? 'chatbot_flows_waiting_human'`,
+      [conversationId]
+    );
+  } catch {
+    /* ignore */
+  }
+
+  return r.rowCount ?? 0;
+}
+
 /**
  * @returns true se o runtime consumiu a mensagem (Phase 8 deve ser pulado).
  */
@@ -207,6 +248,36 @@ export async function runChatbotFlowsRuntimeInbound(opts: {
     const inProgress = String(conv.attendance_status || '') === 'in_progress';
     if (assigned || inProgress) {
       await pauseChatbotFlowSessionsForConversation(opts.conversationId);
+      return false;
+    }
+
+    // S31 — opt-out global `parar` / `sair` (equals)
+    const bodyTrimmed = (opts.messageBody ?? '').trim();
+    if (isGlobalOptOutWord(bodyTrimmed)) {
+      const ended = await endChatbotFlowSessionsForConversation(opts.conversationId, 'opt_out');
+      if (ended > 0) {
+        try {
+          const { sendKanbanAutomationOutboundText } = await import(
+            '../../controllers/chatController.js'
+          );
+          await sendKanbanAutomationOutboundText({
+            conversationId: opts.conversationId,
+            actorUserId: ownerUserId,
+            text: 'Fluxo encerrado.',
+          });
+        } catch (e) {
+          console.warn('[chatbot_flows_runtime] opt_out ack failed', e);
+        }
+        console.log(
+          JSON.stringify({
+            event: 'chatbot_flows_runtime',
+            conversationId: opts.conversationId,
+            reason: 'opt_out',
+            endedSessions: ended,
+          })
+        );
+        return true;
+      }
       return false;
     }
 
@@ -513,7 +584,8 @@ export async function runChatbotFlowsRuntimeInbound(opts: {
 async function applyRuntimeActions(opts: {
   tenantId: string;
   ownerUserId: string;
-  conversationId: string;
+  /** Null = sessão órfã (S28.1); ações WhatsApp/CRM falham com conversation_required. */
+  conversationId: string | null;
   sessionId: string;
   result: ReturnType<typeof processInboundStep>;
   graph?: RuntimeGraph;
@@ -532,6 +604,10 @@ async function applyRuntimeActions(opts: {
   } = await import('./flowCrmActions.js');
   const { computeScheduledForFromDelay } = await import('../../utils/kanbanPhase2.js');
   const { executeFlowHttpRequest, executeFlowWebhookOut } = await import('./flowHttpActions.js');
+  const {
+    CONVERSATION_REQUIRED_ERROR,
+    runtimeActionRequiresConversation,
+  } = await import('./flowWebhookOrphan.js');
 
   const depth = opts.depth ?? 0;
   if (depth > 5) {
@@ -553,15 +629,39 @@ async function applyRuntimeActions(opts: {
 
   for (const action of opts.result.actions) {
     try {
+      if (!opts.conversationId && runtimeActionRequiresConversation(action.type)) {
+        console.warn(
+          '[chatbot_flows_runtime] conversation_required',
+          action.type,
+          opts.sessionId
+        );
+        opts.result.session.status = 'error';
+        await persistSession(
+          opts.sessionId,
+          opts.result.session,
+          { lastError: CONVERSATION_REQUIRED_ERROR }
+        );
+        return CONVERSATION_REQUIRED_ERROR;
+      }
+      const conversationId = opts.conversationId as string;
+
       if (action.type === 'send_text') {
         const r = await sendKanbanAutomationOutboundText({
-          conversationId: opts.conversationId,
+          conversationId,
           text: action.text,
           actorUserId: opts.ownerUserId,
           metadataSource: 'chatbot_flows_runtime',
         });
         if (!r.ok) {
-          console.warn('[chatbot_flows_runtime] send failed', r.error);
+          console.warn(
+            JSON.stringify({
+              event: 'chatbot_flows_runtime',
+              reason: 'send_text',
+              error: r.error || 'send_failed',
+              conversation_id: conversationId,
+              session_id: opts.sessionId,
+            })
+          );
           await persistSession(
             opts.sessionId,
             { ...opts.result.session, status: 'error' },
@@ -575,7 +675,7 @@ async function applyRuntimeActions(opts: {
             ? action.mediaType
             : 'image';
         const r = await sendKanbanAutomationOutboundMedia({
-          conversationId: opts.conversationId,
+          conversationId,
           actorUserId: opts.ownerUserId,
           type: mediaType,
           fileUrl: action.mediaUrl,
@@ -590,26 +690,34 @@ async function applyRuntimeActions(opts: {
           metadataSource: 'chatbot_flows_runtime',
         });
         if (!r.ok) {
-          // S19: falha de mídia não trava a sessão — log + segue.
-          console.warn('[chatbot_flows_runtime] send_media failed', r.error);
+          // S19/S29.1: falha de mídia não trava a sessão — log estruturado + segue.
+          console.warn(
+            JSON.stringify({
+              event: 'chatbot_flows_runtime',
+              reason: 'send_media',
+              error: r.error || 'send_media_failed',
+              conversation_id: conversationId,
+              session_id: opts.sessionId,
+            })
+          );
         }
       } else if (action.type === 'transfer_human') {
         await applyTransferHuman({
-          conversationId: opts.conversationId,
+          conversationId,
           tenantId: opts.tenantId,
         });
       } else if (action.type === 'conversation_note') {
         await runtimeCreateConversationNote({
           tenantId: opts.tenantId,
           actorUserId: opts.ownerUserId,
-          conversationId: opts.conversationId,
+          conversationId,
           noteText: action.text,
           noteType: action.noteType || 'internal',
         });
       } else if (action.type === 'update_contact') {
         const r = await runtimeUpdateContact({
           tenantId: opts.tenantId,
-          conversationId: opts.conversationId,
+          conversationId,
           field: action.field,
           value: action.value,
         });
@@ -624,20 +732,20 @@ async function applyRuntimeActions(opts: {
           await runtimeResolveConversation({
             tenantId: opts.tenantId,
             actorUserId: opts.ownerUserId,
-            conversationId: opts.conversationId,
+            conversationId,
           });
         }
       } else if (action.type === 'add_tag') {
         await runtimeAddTag({
           tenantId: opts.tenantId,
           actorUserId: opts.ownerUserId,
-          conversationId: opts.conversationId,
+          conversationId,
           tagLabel: action.tagLabel,
           tagId: action.tagId,
         });
       } else if (action.type === 'assign_agent') {
         await runtimeAssignConversation({
-          conversationId: opts.conversationId,
+          conversationId,
           tenantId: opts.tenantId,
           mode: action.mode,
           userId: action.userId,
@@ -661,7 +769,7 @@ async function applyRuntimeActions(opts: {
           const cardRes = await runtimeEnsureKanbanCard({
             tenantId: opts.tenantId,
             actorUserId: opts.ownerUserId,
-            conversationId: opts.conversationId,
+            conversationId,
             boardId: boardId || undefined,
             columnId,
             title: 'title' in action ? action.title : undefined,
@@ -714,7 +822,7 @@ async function applyRuntimeActions(opts: {
           secret: action.secret,
           timeoutMs: action.timeoutMs,
           variables: opts.result.session.variables,
-          conversationId: opts.conversationId,
+          conversationId,
           tenantId: opts.tenantId,
           includeSessionVars: action.includeSessionVars,
           payloadMode: action.payloadMode,
@@ -729,7 +837,7 @@ async function applyRuntimeActions(opts: {
         const { runtimeLookupInvoice } = await import('./flowInvoiceActions.js');
         const lookupRes = await runtimeLookupInvoice({
           tenantId: opts.tenantId,
-          conversationId: opts.conversationId,
+          conversationId,
           mode: action.mode,
           limit: action.limit,
         });
@@ -737,7 +845,7 @@ async function applyRuntimeActions(opts: {
           JSON.stringify({
             event: 'chatbot_flows_runtime',
             phase: 'lookup_invoice',
-            conversationId: opts.conversationId,
+            conversationId,
             sessionId: opts.sessionId,
             client_id: lookupRes.mapped['client.id'] || lookupRes.mapped.client_id || null,
             found: lookupRes.found,
@@ -753,7 +861,7 @@ async function applyRuntimeActions(opts: {
         const { runtimeLookupTicket } = await import('./flowTicketActions.js');
         const lookupRes = await runtimeLookupTicket({
           tenantId: opts.tenantId,
-          conversationId: opts.conversationId,
+          conversationId,
           mode: action.mode,
           limit: action.limit,
           includeClosed: action.includeClosed,
@@ -762,7 +870,7 @@ async function applyRuntimeActions(opts: {
           JSON.stringify({
             event: 'chatbot_flows_runtime',
             phase: 'lookup_ticket',
-            conversationId: opts.conversationId,
+            conversationId,
             sessionId: opts.sessionId,
             client_id: lookupRes.mapped['client.id'] || lookupRes.mapped.client_id || null,
             found: lookupRes.found,
@@ -778,7 +886,7 @@ async function applyRuntimeActions(opts: {
         const { runtimeTicketAssistBootstrap } = await import('./flowTicketActions.js');
         const boot = await runtimeTicketAssistBootstrap({
           tenantId: opts.tenantId,
-          conversationId: opts.conversationId,
+          conversationId,
           requireClient: action.requireClient,
         });
         const mapped = {
@@ -789,7 +897,7 @@ async function applyRuntimeActions(opts: {
           JSON.stringify({
             event: 'chatbot_flows_runtime',
             phase: 'ticket_assist_bootstrap',
-            conversationId: opts.conversationId,
+            conversationId,
             sessionId: opts.sessionId,
             ok: boot.ok,
             reason: boot.reason || null,
@@ -805,14 +913,14 @@ async function applyRuntimeActions(opts: {
         const { runtimeResolveCrmLink } = await import('./flowCrmLinkActions.js');
         const linkRes = await runtimeResolveCrmLink({
           tenantId: opts.tenantId,
-          conversationId: opts.conversationId,
+          conversationId,
           refreshClientMatch: action.refreshClientMatch,
         });
         console.log(
           JSON.stringify({
             event: 'chatbot_flows_runtime',
             phase: 'resolve_crm_link',
-            conversationId: opts.conversationId,
+            conversationId,
             sessionId: opts.sessionId,
             kind: linkRes.kind,
             linked_client: linkRes.linkedClient,
@@ -827,7 +935,7 @@ async function applyRuntimeActions(opts: {
         const { runtimeCrmConvert } = await import('./flowCrmConvertActions.js');
         const convRes = await runtimeCrmConvert({
           tenantId: opts.tenantId,
-          conversationId: opts.conversationId,
+          conversationId,
           actorUserId: opts.ownerUserId,
           mode: action.mode,
         });
@@ -835,7 +943,7 @@ async function applyRuntimeActions(opts: {
           JSON.stringify({
             event: 'chatbot_flows_runtime',
             phase: 'crm_convert',
-            conversationId: opts.conversationId,
+            conversationId,
             sessionId: opts.sessionId,
             mode: action.mode,
             out_handle: convRes.outHandle,
@@ -854,7 +962,7 @@ async function applyRuntimeActions(opts: {
         const vars = opts.result.session.variables;
         const createRes = await runtimeCreateTicketFromAssist({
           tenantId: opts.tenantId,
-          conversationId: opts.conversationId,
+          conversationId,
           sessionId: opts.sessionId,
           subject: String(vars['ticket._draft_subject'] || ''),
           description: String(vars['ticket._draft_description'] || ''),
@@ -866,7 +974,7 @@ async function applyRuntimeActions(opts: {
           JSON.stringify({
             event: 'chatbot_flows_runtime',
             phase: 'create_ticket',
-            conversationId: opts.conversationId,
+            conversationId,
             sessionId: opts.sessionId,
             ok: createRes.ok,
             ticket_number: createRes.mapped['ticket.number'] || null,
@@ -881,7 +989,7 @@ async function applyRuntimeActions(opts: {
       } else if (action.type === 'send_menu') {
         const { sendChatbotFlowOutboundMenu } = await import('./flowMenuOutbound.js');
         const menuRes = await sendChatbotFlowOutboundMenu({
-          conversationId: opts.conversationId,
+          conversationId,
           actorUserId: opts.ownerUserId,
           mode: action.mode,
           text: action.text,
@@ -898,6 +1006,101 @@ async function applyRuntimeActions(opts: {
             { lastError: menuRes.error || 'send_menu_failed' }
           );
           return menuRes.error || 'send_menu_failed';
+        }
+      } else if (action.type === 'ensure_conversation') {
+        const {
+          runtimeEnsureConversation,
+          bindSessionConversation,
+          resolveFlowIdFromSession,
+        } = await import('./flowEnsureConversation.js');
+        const flowId = await resolveFlowIdFromSession(opts.sessionId);
+        const ensureRes = await runtimeEnsureConversation({
+          tenantId: opts.tenantId,
+          ownerUserId: opts.ownerUserId,
+          flowId,
+          existingConversationId: opts.conversationId,
+          phoneTemplate: action.phone,
+          normalizeBr: action.normalizeBr,
+          instanceId: action.instanceId,
+          reusePolicy: action.reusePolicy,
+          idempotencyKeyTemplate: action.idempotencyKey,
+          variables: opts.result.session.variables,
+          graph: opts.graph,
+        });
+        if (!ensureRes.ok) {
+          console.warn(
+            JSON.stringify({
+              event: 'chatbot_flows_runtime',
+              reason: 'ensure_conversation',
+              error: ensureRes.error,
+              session_id: opts.sessionId,
+            })
+          );
+          httpResume = {
+            ok: false,
+            failHandle: 'error',
+            mappedVariables: ensureRes.mappedVariables,
+          };
+        } else {
+          opts.conversationId = ensureRes.conversationId;
+          await bindSessionConversation({
+            sessionId: opts.sessionId,
+            conversationId: ensureRes.conversationId,
+          });
+          for (const [k, v] of Object.entries(ensureRes.mappedVariables)) {
+            opts.result.session.variables[k] = v;
+          }
+          try {
+            const { buildFlowSessionVariableBag, mergeFlowVariableSeed } = await import(
+              './flowVariableContext.js'
+            );
+            const seed = await buildFlowSessionVariableBag({
+              tenantId: opts.tenantId,
+              conversationId: ensureRes.conversationId,
+              actorUserId: opts.ownerUserId,
+            });
+            opts.result.session.variables = mergeFlowVariableSeed(
+              opts.result.session.variables,
+              seed
+            );
+          } catch (e) {
+            console.warn('[chatbot_flows_runtime] ensure_conversation seed vars', e);
+          }
+
+          if (ensureRes.humanInProgress) {
+            console.log(
+              JSON.stringify({
+                event: 'chatbot_flows_runtime',
+                reason: 'ensure_conversation',
+                human_in_progress: true,
+                conversation_id: ensureRes.conversationId,
+                session_id: opts.sessionId,
+                idempotent: ensureRes.idempotent,
+              })
+            );
+            await pauseChatbotFlowSessionsForConversation(ensureRes.conversationId);
+            opts.result.session.status = 'paused';
+            await persistSession(opts.sessionId, opts.result.session, {
+              lastError: 'conversa_em_atendimento_humano',
+            });
+            return 'conversa_em_atendimento_humano';
+          }
+
+          console.log(
+            JSON.stringify({
+              event: 'chatbot_flows_runtime',
+              reason: 'ensure_conversation',
+              created: ensureRes.created,
+              reused: ensureRes.reused,
+              idempotent: ensureRes.idempotent,
+              conversation_id: ensureRes.conversationId,
+              session_id: opts.sessionId,
+            })
+          );
+          httpResume = {
+            ok: true,
+            mappedVariables: ensureRes.mappedVariables,
+          };
         }
       }
     } catch (e) {
@@ -979,11 +1182,12 @@ export async function processDueChatbotFlowDelaysBatch(limit = 20): Promise<numb
 export async function resumeChatbotFlowSessionAfterDelay(sessionId: string): Promise<boolean> {
   const runtimeOnCheck = await pool.query(
     `SELECT s.id, s.tenant_id, s.conversation_id, s.status, s.current_node_id,
-            s.variables, s.waiting_variable, v.graph_json,
+            s.variables, s.waiting_variable, v.graph_json, f.created_by AS flow_created_by,
             c.user_id AS owner_user_id, c.assigned_to_user_id, c.attendance_status
      FROM chatbot_flow_sessions s
      INNER JOIN chatbot_flow_versions v ON v.id = s.flow_version_id
-     INNER JOIN chat_conversations c ON c.id = s.conversation_id
+     INNER JOIN chatbot_flows f ON f.id = s.flow_id
+     LEFT JOIN chat_conversations c ON c.id = s.conversation_id
      WHERE s.id = $1::uuid
      LIMIT 1`,
     [sessionId]
@@ -992,14 +1196,38 @@ export async function resumeChatbotFlowSessionAfterDelay(sessionId: string): Pro
   if (!row || row.status !== 'waiting_delay') return false;
 
   const tenantId = String(row.tenant_id);
+  const conversationId =
+    row.conversation_id != null ? String(row.conversation_id) : null;
   if (!(await tenantHasFeature(tenantId, 'chatbot_flows_runtime'))) {
-    await pauseChatbotFlowSessionsForConversation(String(row.conversation_id));
+    if (conversationId) await pauseChatbotFlowSessionsForConversation(conversationId);
+    else {
+      await persistSession(sessionId, {
+        status: 'paused',
+        currentNodeId: row.current_node_id != null ? String(row.current_node_id) : null,
+        variables:
+          row.variables && typeof row.variables === 'object'
+            ? (row.variables as Record<string, unknown>)
+            : {},
+        waitingVariable: null,
+      });
+    }
     return false;
   }
-  if (row.assigned_to_user_id != null || String(row.attendance_status || '') === 'in_progress') {
-    await pauseChatbotFlowSessionsForConversation(String(row.conversation_id));
+  if (
+    conversationId &&
+    (row.assigned_to_user_id != null || String(row.attendance_status || '') === 'in_progress')
+  ) {
+    await pauseChatbotFlowSessionsForConversation(conversationId);
     return false;
   }
+
+  const ownerUserId =
+    row.owner_user_id != null
+      ? String(row.owner_user_id)
+      : row.flow_created_by != null
+        ? String(row.flow_created_by)
+        : null;
+  if (!ownerUserId) return false;
 
   const graph = normalizeGraph(row.graph_json);
   const snap: RuntimeSessionSnapshot = {
@@ -1021,8 +1249,8 @@ export async function resumeChatbotFlowSessionAfterDelay(sessionId: string): Pro
 
   await applyRuntimeActions({
     tenantId,
-    ownerUserId: String(row.owner_user_id),
-    conversationId: String(row.conversation_id),
+    ownerUserId,
+    conversationId,
     sessionId,
     result,
     graph,
@@ -1036,11 +1264,12 @@ export async function resumeChatbotFlowSessionAfterInputTimeout(
 ): Promise<boolean> {
   const runtimeOnCheck = await pool.query(
     `SELECT s.id, s.tenant_id, s.conversation_id, s.status, s.current_node_id,
-            s.variables, s.waiting_variable, v.graph_json,
+            s.variables, s.waiting_variable, v.graph_json, f.created_by AS flow_created_by,
             c.user_id AS owner_user_id, c.assigned_to_user_id, c.attendance_status
      FROM chatbot_flow_sessions s
      INNER JOIN chatbot_flow_versions v ON v.id = s.flow_version_id
-     INNER JOIN chat_conversations c ON c.id = s.conversation_id
+     INNER JOIN chatbot_flows f ON f.id = s.flow_id
+     LEFT JOIN chat_conversations c ON c.id = s.conversation_id
      WHERE s.id = $1::uuid
      LIMIT 1`,
     [sessionId]
@@ -1049,14 +1278,41 @@ export async function resumeChatbotFlowSessionAfterInputTimeout(
   if (!row || row.status !== 'waiting_input') return false;
 
   const tenantId = String(row.tenant_id);
+  const conversationId =
+    row.conversation_id != null ? String(row.conversation_id) : null;
+  // wait_input sem conversa não faz sentido (prompt WhatsApp); encerra com erro claro
+  if (!conversationId) {
+    await persistSession(
+      sessionId,
+      {
+        status: 'error',
+        currentNodeId: row.current_node_id != null ? String(row.current_node_id) : null,
+        variables:
+          row.variables && typeof row.variables === 'object'
+            ? (row.variables as Record<string, unknown>)
+            : {},
+        waitingVariable: null,
+      },
+      { lastError: 'conversation_required' }
+    );
+    return false;
+  }
   if (!(await tenantHasFeature(tenantId, 'chatbot_flows_runtime'))) {
-    await pauseChatbotFlowSessionsForConversation(String(row.conversation_id));
+    await pauseChatbotFlowSessionsForConversation(conversationId);
     return false;
   }
   if (row.assigned_to_user_id != null || String(row.attendance_status || '') === 'in_progress') {
-    await pauseChatbotFlowSessionsForConversation(String(row.conversation_id));
+    await pauseChatbotFlowSessionsForConversation(conversationId);
     return false;
   }
+
+  const ownerUserId =
+    row.owner_user_id != null
+      ? String(row.owner_user_id)
+      : row.flow_created_by != null
+        ? String(row.flow_created_by)
+        : null;
+  if (!ownerUserId) return false;
 
   const graph = normalizeGraph(row.graph_json);
   const snap: RuntimeSessionSnapshot = {
@@ -1078,8 +1334,8 @@ export async function resumeChatbotFlowSessionAfterInputTimeout(
 
   await applyRuntimeActions({
     tenantId,
-    ownerUserId: String(row.owner_user_id),
-    conversationId: String(row.conversation_id),
+    ownerUserId,
+    conversationId,
     sessionId,
     result,
     graph,
@@ -1089,18 +1345,24 @@ export async function resumeChatbotFlowSessionAfterInputTimeout(
 
 /**
  * Dispara flow publicado via webhook_in (POST /webhooks/chatbot-flows/:token).
+ * S28.1: conversationId opcional — sem UUID cria sessão órfã (conversation_id NULL).
  */
 export async function runChatbotFlowsRuntimeFromWebhook(opts: {
   token: string;
-  conversationId: string;
+  conversationId?: string | null;
   variables?: Record<string, unknown>;
   rawPayload?: unknown;
 }): Promise<{ ok: true; sessionId: string; flowId: string } | { ok: false; error: string; status: number }> {
   const token = opts.token.trim();
   if (!token) return { ok: false, error: 'token_obrigatorio', status: 400 };
 
+  const conversationId =
+    opts.conversationId != null && String(opts.conversationId).trim()
+      ? String(opts.conversationId).trim()
+      : null;
+
   const flowRes = await pool.query(
-    `SELECT f.id AS flow_id, f.tenant_id, v.id AS version_id, v.graph_json
+    `SELECT f.id AS flow_id, f.tenant_id, f.created_by, v.id AS version_id, v.graph_json
      FROM chatbot_flows f
      INNER JOIN chatbot_flow_versions v ON v.id = f.published_version_id
      WHERE f.inbound_webhook_token = $1
@@ -1124,31 +1386,55 @@ export async function runChatbotFlowsRuntimeFromWebhook(opts: {
     return { ok: false, error: 'webhook_inconsistente', status: 404 };
   }
 
-  const convRes = await pool.query(
-    `SELECT c.id, c.user_id, c.assigned_to_user_id, c.attendance_status, u.tenant_id
-     FROM chat_conversations c
-     INNER JOIN users u ON u.id = c.user_id
-     WHERE c.id = $1::uuid AND u.tenant_id = $2::uuid
-     LIMIT 1`,
-    [opts.conversationId, tenantId]
-  );
-  const conv = convRes.rows[0] as Record<string, unknown> | undefined;
-  if (!conv) return { ok: false, error: 'conversa_nao_encontrada', status: 404 };
-
-  if (conv.assigned_to_user_id != null || String(conv.attendance_status || '') === 'in_progress') {
-    await pauseChatbotFlowSessionsForConversation(opts.conversationId);
-    return { ok: false, error: 'conversa_em_atendimento_humano', status: 409 };
+  const { webhookGraphSupportsOrphanSession } = await import('./flowWebhookOrphan.js');
+  if (!conversationId && !webhookGraphSupportsOrphanSession(graph)) {
+    return { ok: false, error: 'conversation_required', status: 400 };
   }
 
-  // Encerra sessões vivas anteriores desta conversa para este flow
-  await pool.query(
-    `UPDATE chatbot_flow_sessions
-     SET status = 'paused', ended_at = COALESCE(ended_at, now()), updated_at = now()
-     WHERE conversation_id = $1::uuid
-       AND flow_id = $2::uuid
-       AND status IN ('active', 'waiting_input', 'waiting_delay', 'waiting_http')`,
-    [opts.conversationId, flowRow.flow_id]
-  );
+  let ownerUserId: string | null = null;
+
+  if (conversationId) {
+    const convRes = await pool.query(
+      `SELECT c.id, c.user_id, c.assigned_to_user_id, c.attendance_status, u.tenant_id
+       FROM chat_conversations c
+       INNER JOIN users u ON u.id = c.user_id
+       WHERE c.id = $1::uuid AND u.tenant_id = $2::uuid
+       LIMIT 1`,
+      [conversationId, tenantId]
+    );
+    const conv = convRes.rows[0] as Record<string, unknown> | undefined;
+    if (!conv) return { ok: false, error: 'conversa_nao_encontrada', status: 404 };
+
+    if (conv.assigned_to_user_id != null || String(conv.attendance_status || '') === 'in_progress') {
+      await pauseChatbotFlowSessionsForConversation(conversationId);
+      return { ok: false, error: 'conversa_em_atendimento_humano', status: 409 };
+    }
+
+    ownerUserId = String(conv.user_id);
+
+    // Encerra sessões vivas anteriores desta conversa para este flow
+    await pool.query(
+      `UPDATE chatbot_flow_sessions
+       SET status = 'paused', ended_at = COALESCE(ended_at, now()), updated_at = now()
+       WHERE conversation_id = $1::uuid
+         AND flow_id = $2::uuid
+         AND status IN ('active', 'waiting_input', 'waiting_delay', 'waiting_http')`,
+      [conversationId, flowRow.flow_id]
+    );
+  } else {
+    ownerUserId =
+      flowRow.created_by != null ? String(flowRow.created_by) : null;
+    if (!ownerUserId) {
+      const uRes = await pool.query(
+        `SELECT id FROM users WHERE tenant_id = $1::uuid ORDER BY created_at ASC NULLS LAST LIMIT 1`,
+        [tenantId]
+      );
+      ownerUserId = uRes.rows[0] ? String((uRes.rows[0] as { id: string }).id) : null;
+    }
+    if (!ownerUserId) {
+      return { ok: false, error: 'tenant_sem_usuario', status: 400 };
+    }
+  }
 
   const variables: Record<string, unknown> = {
     ...(opts.variables && typeof opts.variables === 'object' ? opts.variables : {}),
@@ -1172,8 +1458,8 @@ export async function runChatbotFlowsRuntimeFromWebhook(opts: {
   );
   const seed = await buildFlowSessionVariableBag({
     tenantId,
-    conversationId: opts.conversationId,
-    actorUserId: String(conv.user_id),
+    conversationId,
+    actorUserId: ownerUserId,
   });
   const mergedVars = mergeFlowVariableSeed(variables, seed);
 
@@ -1186,11 +1472,22 @@ export async function runChatbotFlowsRuntimeFromWebhook(opts: {
       tenantId,
       flowRow.flow_id,
       flowRow.version_id,
-      opts.conversationId,
+      conversationId,
       JSON.stringify(mergedVars),
     ]
   );
   const sessionId = String(ins.rows[0].id);
+
+  console.log(
+    JSON.stringify({
+      event: 'chatbot_flows_runtime',
+      reason: 'webhook',
+      session_id: sessionId,
+      flow_id: String(flowRow.flow_id),
+      conversation_id: conversationId,
+      orphan: conversationId == null,
+    })
+  );
 
   const result = processInboundStep({
     graph,
@@ -1206,8 +1503,8 @@ export async function runChatbotFlowsRuntimeFromWebhook(opts: {
 
   await applyRuntimeActions({
     tenantId,
-    ownerUserId: String(conv.user_id),
-    conversationId: opts.conversationId,
+    ownerUserId,
+    conversationId,
     sessionId,
     result,
     graph,
@@ -1220,6 +1517,241 @@ export async function runChatbotFlowsRuntimeFromWebhook(opts: {
  * S23 — start manual a partir do chat (operador).
  * Não usa mensagem outgoing como trigger.
  */
+/**
+ * S31 — inicia flow publicado por evento CRM (tag adicionada / entrada em coluna).
+ * Não re-dispara se já houver sessão viva; ignora quando source=chatbot_flows (loop-safe).
+ */
+export async function runChatbotFlowsRuntimeFromCrmEvent(opts: {
+  tenantId: string;
+  actorUserId: string;
+  conversationId: string;
+  event:
+    | { kind: 'tag'; tagId?: string | null; tagLabel?: string | null }
+    | { kind: 'kanban_column'; columnId: string; boardId?: string | null };
+  /** Origem: chatbot_flows = skip (evita loop add_tag/move_kanban). */
+  source?: 'user' | 'chatbot_flows' | 'system' | string;
+}): Promise<{ started: boolean; sessionId?: string; flowId?: string; skipped?: string }> {
+  if (opts.source === 'chatbot_flows') {
+    return { started: false, skipped: 'source_chatbot_flows' };
+  }
+
+  try {
+    if (!(await tenantHasFeature(opts.tenantId, 'chatbot_flows_runtime'))) {
+      return { started: false, skipped: 'runtime_off' };
+    }
+
+    const convRes = await pool.query(
+      `SELECT c.id, c.user_id, c.assigned_to_user_id, c.attendance_status, c.external_chat_id,
+              c.instance_id, u.tenant_id
+       FROM chat_conversations c
+       INNER JOIN users u ON u.id = c.user_id
+       WHERE c.id = $1::uuid AND u.tenant_id = $2::uuid
+       LIMIT 1`,
+      [opts.conversationId, opts.tenantId]
+    );
+    const conv = convRes.rows[0] as Record<string, unknown> | undefined;
+    if (!conv) return { started: false, skipped: 'conversation_not_found' };
+
+    const humanBusy =
+      conv.assigned_to_user_id != null || String(conv.attendance_status || '') === 'in_progress';
+    if (humanBusy) {
+      return { started: false, skipped: 'human_busy' };
+    }
+
+    const liveRes = await pool.query(
+      `SELECT id FROM chatbot_flow_sessions
+       WHERE conversation_id = $1::uuid
+         AND status IN ('active', 'waiting_input', 'waiting_delay', 'waiting_http')
+       LIMIT 1`,
+      [opts.conversationId]
+    );
+    if (liveRes.rows[0]) {
+      return { started: false, skipped: 'session_alive' };
+    }
+
+    let tenantTimezone = 'America/Sao_Paulo';
+    try {
+      const tzRes = await pool.query<{ timezone: string | null }>(
+        `SELECT timezone FROM tenants WHERE id = $1::uuid LIMIT 1`,
+        [opts.tenantId]
+      );
+      const tz = String(tzRes.rows[0]?.timezone || '').trim();
+      if (tz) tenantTimezone = tz;
+    } catch {
+      /* ignore */
+    }
+
+    const conversationInstanceId =
+      conv.instance_id != null ? String(conv.instance_id) : null;
+    const isGroup = isGroupExternalChatId(
+      conv.external_chat_id != null ? String(conv.external_chat_id) : null
+    );
+    const ownerUserId = String(conv.user_id);
+
+    const flowsRes = await pool.query(
+      `SELECT f.id AS flow_id, v.id AS version_id, v.graph_json, v.published_at
+       FROM chatbot_flows f
+       INNER JOIN chatbot_flow_versions v ON v.id = f.published_version_id
+       WHERE f.tenant_id = $1::uuid AND f.status = 'active' AND f.published_version_id IS NOT NULL
+       ORDER BY v.published_at DESC`,
+      [opts.tenantId]
+    );
+
+    let candidates: Array<{
+      flowId: string;
+      versionId: string;
+      graph: RuntimeGraph;
+      reason: 'tag' | 'kanban_column';
+      priority: number;
+      publishedAt: string | Date | null;
+    }> = [];
+
+    for (const row of flowsRes.rows as Array<Record<string, unknown>>) {
+      const g = normalizeGraph(row.graph_json);
+      const startNode = findStartNode(g);
+      const startData = startNode?.data as Record<string, unknown> | undefined;
+      const guards = parseStartGuardConfig(startData);
+      const flowId = String(row.flow_id);
+
+      if (isStartDmOnly(startData) && isGroup) {
+        logStartSkip({ conversationId: opts.conversationId, flowId, reason: 'dm_only_group' });
+        continue;
+      }
+      if (!isInstanceAllowed(guards.instanceIds, conversationInstanceId)) {
+        logStartSkip({
+          conversationId: opts.conversationId,
+          flowId,
+          reason: 'instance_mismatch',
+        });
+        continue;
+      }
+      if (guards.scheduleEnabled) {
+        const okSch = isWithinScheduleWindow({
+          timeZone: tenantTimezone,
+          startHm: guards.scheduleStartHm,
+          endHm: guards.scheduleEndHm,
+        });
+        if (!okSch) {
+          logStartSkip({
+            conversationId: opts.conversationId,
+            flowId,
+            reason: 'outside_schedule',
+          });
+          continue;
+        }
+      }
+
+      const reason = matchFlowCrmEventTrigger({ graph: g, event: opts.event });
+      if (!reason) continue;
+
+      if (guards.cooldownMinutes > 0) {
+        const coolRes = await pool.query<{ ended_at: Date }>(
+          `SELECT ended_at
+           FROM chatbot_flow_sessions
+           WHERE conversation_id = $1::uuid AND flow_id = $2::uuid
+             AND status IN ('ended', 'error', 'paused')
+             AND ended_at IS NOT NULL
+           ORDER BY ended_at DESC
+           LIMIT 1`,
+          [opts.conversationId, flowId]
+        );
+        if (
+          isCooldownActive({
+            cooldownMinutes: guards.cooldownMinutes,
+            lastEndedAt: coolRes.rows[0]?.ended_at ?? null,
+          })
+        ) {
+          logStartSkip({
+            conversationId: opts.conversationId,
+            flowId,
+            reason: 'cooldown',
+          });
+          continue;
+        }
+      }
+
+      candidates.push({
+        flowId,
+        versionId: String(row.version_id),
+        graph: g,
+        reason,
+        priority: guards.priority,
+        publishedAt: (row.published_at as Date | string) ?? null,
+      });
+    }
+
+    candidates = sortFlowMatchCandidates(candidates);
+    const matched = candidates[0] ?? null;
+    if (!matched) {
+      return { started: false, skipped: 'no_trigger_match' };
+    }
+
+    const { buildFlowSessionVariableBag, mergeFlowVariableSeed } = await import(
+      './flowVariableContext.js'
+    );
+    const seed = await buildFlowSessionVariableBag({
+      tenantId: opts.tenantId,
+      conversationId: opts.conversationId,
+      actorUserId: opts.actorUserId || ownerUserId,
+    });
+    const mergedVars = mergeFlowVariableSeed({}, seed);
+
+    const ins = await pool.query(
+      `INSERT INTO chatbot_flow_sessions
+         (tenant_id, flow_id, flow_version_id, conversation_id, status, current_node_id, variables)
+       VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'active', NULL, $5::jsonb)
+       RETURNING id`,
+      [
+        opts.tenantId,
+        matched.flowId,
+        matched.versionId,
+        opts.conversationId,
+        JSON.stringify(mergedVars),
+      ]
+    );
+    const sessionId = String(ins.rows[0].id);
+
+    const result = processInboundStep({
+      graph: matched.graph,
+      session: {
+        status: 'active',
+        currentNodeId: null,
+        variables: mergedVars,
+        waitingVariable: null,
+      },
+      messageBody: null,
+      justStarted: true,
+    });
+
+    const applyError = await applyRuntimeActions({
+      tenantId: opts.tenantId,
+      ownerUserId,
+      conversationId: opts.conversationId,
+      sessionId,
+      result,
+      graph: matched.graph,
+    });
+
+    console.log(
+      JSON.stringify({
+        event: 'chatbot_flows_runtime',
+        conversationId: opts.conversationId,
+        sessionId,
+        status: result.session.status,
+        reason: matched.reason,
+        flowId: matched.flowId,
+        applyError: applyError || null,
+        actions: result.actions.map((a) => a.type),
+      })
+    );
+
+    return { started: true, sessionId, flowId: matched.flowId };
+  } catch (e) {
+    console.warn('[chatbot_flows_runtime] crm_event failed', e);
+    return { started: false, skipped: 'error' };
+  }
+}
+
 export async function runChatbotFlowsRuntimeManualStart(opts: {
   tenantId: string;
   actorUserId: string;

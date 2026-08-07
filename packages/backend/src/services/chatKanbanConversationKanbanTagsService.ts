@@ -105,14 +105,18 @@ export async function getConversationKanbanTagsResolved(
 
 /**
  * Adiciona tag à conversa (metadata), sincroniza kanban_labels e dispara automação Kanban.
+ * S31: opcionalmente dispara flows com trigger `tag` (exceto source=chatbot_flows).
  */
 export async function addKanbanTagToConversation(params: {
   tenantId: string;
   actorUserId: string;
   conversationId: string;
   tag: ChatKanbanTagRow;
+  /** user | chatbot_flows | system — chatbot_flows não dispara flow (loop-safe). */
+  source?: 'user' | 'chatbot_flows' | 'system' | string;
 }): Promise<void> {
   const client = await pool.connect();
+  let added = false;
   try {
     await client.query('BEGIN');
     const row = await client.query<{ metadata: unknown; user_id: string }>(
@@ -144,6 +148,7 @@ export async function addKanbanTagToConversation(params: {
       JSON.stringify(meta),
     ]);
     await client.query('COMMIT');
+    added = true;
   } catch (e) {
     try {
       await client.query('ROLLBACK');
@@ -162,6 +167,27 @@ export async function addKanbanTagToConversation(params: {
     tagId: params.tag.id,
     reason: 'tag_added',
   });
+
+  if (added && params.source !== 'chatbot_flows') {
+    try {
+      const { runChatbotFlowsRuntimeFromCrmEvent } = await import(
+        './chatbotFlows/chatbotFlowsRuntimeRunner.js'
+      );
+      void runChatbotFlowsRuntimeFromCrmEvent({
+        tenantId: params.tenantId,
+        actorUserId: params.actorUserId,
+        conversationId: params.conversationId,
+        event: {
+          kind: 'tag',
+          tagId: params.tag.id,
+          tagLabel: params.tag.label,
+        },
+        source: params.source || 'user',
+      });
+    } catch (e) {
+      console.warn('[chatbot_flows] tag trigger failed', e);
+    }
+  }
 }
 
 /** Remove tag por id. Não altera cartões Kanban. */

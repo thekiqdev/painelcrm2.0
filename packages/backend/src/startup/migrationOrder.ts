@@ -486,5 +486,11 @@ export const MIGRATION_ORDER = [
   '313_chatbot_flow_webhook_in.sql',
   /** Chatbot Flows S18 — timeout wait_input/menu + índice resume_at */
   '314_chatbot_flow_input_timeout.sql',
+  /** Chatbot Flows S28 — sample URL fixa (captura sem runtime) */
+  '315_chatbot_flow_webhook_sample.sql',
+  /** Chatbot Flows S28.1 — sessão órfã (conversation_id nullable) */
+  '316_chatbot_flow_sessions_orphan.sql',
+  /** Chatbot Flows S29.1 — idempotência ensure_conversation */
+  '317_chatbot_flow_ensure_idempotency.sql',
   'create-admin-user.sql',
 ];

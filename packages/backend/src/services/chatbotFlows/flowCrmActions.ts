@@ -39,6 +39,7 @@ export async function runtimeAddTag(opts: {
     actorUserId: opts.actorUserId,
     conversationId: opts.conversationId,
     tag,
+    source: 'chatbot_flows',
   });
 }
 

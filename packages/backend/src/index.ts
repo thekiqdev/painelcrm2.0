@@ -56,6 +56,7 @@ import uazapiWebhookRoutes from './routes/uazapiWebhookRoutes.js';
 import asaasWebhookRoutes from './routes/asaasWebhookRoutes.js';
 import chatbotFlowsWebhookRoutes from './routes/chatbotFlowsWebhookRoutes.js';
 import chatbotFlowsListenWebhookRoutes from './routes/chatbotFlowsListenWebhookRoutes.js';
+import chatbotFlowsSampleWebhookRoutes from './routes/chatbotFlowsSampleWebhookRoutes.js';
 import notificationsRoutes from './routes/notificationsRoutes.js';
 import notificationsEngineRoutes from './routes/notificationsEngineRoutes.js';
 import messageTemplatesRoutes from './routes/messageTemplatesRoutes.js';
@@ -501,6 +502,8 @@ app.use('/webhooks/chatbot-flows', chatbotFlowsWebhookRoutes);
 app.use('/api/webhooks/chatbot-flows', chatbotFlowsWebhookRoutes);
 app.use('/webhooks/chatbot-flows-listen', chatbotFlowsListenWebhookRoutes);
 app.use('/api/webhooks/chatbot-flows-listen', chatbotFlowsListenWebhookRoutes);
+app.use('/webhooks/chatbot-flows-sample', chatbotFlowsSampleWebhookRoutes);
+app.use('/api/webhooks/chatbot-flows-sample', chatbotFlowsSampleWebhookRoutes);
 
 // 404 handler
 app.use((req, res) => {

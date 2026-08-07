@@ -386,6 +386,106 @@ describe('flowRuntimeEngine', () => {
     expect(r.session.status).toBe('ended');
   });
 
+  it('ensure_conversation emite action e waiting_http', () => {
+    const g: RuntimeGraph = {
+      nodes: [
+        { id: 'win', type: 'webhook_in', data: { token: 'abc12345678901234567' } },
+        {
+          id: 'ec',
+          type: 'ensure_conversation',
+          data: {
+            phone: '{{order.phone}}',
+            normalize_br: true,
+            reuse_policy: 'open',
+            idempotency_key: '{{order.id}}',
+          },
+        },
+        { id: 'm', type: 'send_message', data: { text: 'oi' } },
+        { id: 'end', type: 'end', data: {} },
+      ],
+      edges: [
+        { id: 'a', source: 'win', target: 'ec', sourceHandle: 'default' },
+        { id: 'b', source: 'ec', target: 'm', sourceHandle: 'default' },
+        { id: 'c', source: 'm', target: 'end', sourceHandle: 'default' },
+      ],
+    };
+    const r = processInboundStep({
+      graph: g,
+      session: { status: 'active', currentNodeId: null, variables: {}, waitingVariable: null },
+      messageBody: null,
+      startFromWebhook: { nodeId: 'win', variables: { 'order.phone': '11988887777' } },
+    });
+    expect(r.session.status).toBe('waiting_http');
+    expect(r.actions.find((a) => a.type === 'ensure_conversation')).toMatchObject({
+      type: 'ensure_conversation',
+      phone: '{{order.phone}}',
+      normalizeBr: true,
+      reusePolicy: 'open',
+      idempotencyKey: '{{order.id}}',
+    });
+
+    const resumed = processInboundStep({
+      graph: g,
+      session: r.session,
+      messageBody: null,
+      resumeFromHttp: {
+        ok: true,
+        mappedVariables: {
+          'conversation.id': 'c-1',
+          conversation_id: 'c-1',
+        },
+      },
+    });
+    expect(resumed.actions.some((a) => a.type === 'send_text' && a.text === 'oi')).toBe(true);
+    expect(resumed.session.status).toBe('ended');
+  });
+
+  it('ensure_conversation resume erro segue handle error', () => {
+    const g: RuntimeGraph = {
+      nodes: [
+        { id: 'start', type: 'start', data: { trigger: { type: 'first_message' } } },
+        {
+          id: 'ec',
+          type: 'ensure_conversation',
+          data: { phone: 'bad', normalize_br: true },
+        },
+        { id: 'ok', type: 'send_message', data: { text: 'ok' } },
+        { id: 'err', type: 'send_message', data: { text: 'falhou' } },
+        { id: 'end', type: 'end', data: {} },
+      ],
+      edges: [
+        { id: 'a', source: 'start', target: 'ec', sourceHandle: 'default' },
+        { id: 'b', source: 'ec', target: 'ok', sourceHandle: 'default' },
+        { id: 'c', source: 'ec', target: 'err', sourceHandle: 'error' },
+        { id: 'd', source: 'ok', target: 'end', sourceHandle: 'default' },
+        { id: 'e', source: 'err', target: 'end', sourceHandle: 'default' },
+      ],
+    };
+    const waiting = processInboundStep({
+      graph: g,
+      session: {
+        status: 'active',
+        currentNodeId: null,
+        variables: {},
+        waitingVariable: null,
+      },
+      messageBody: 'x',
+      justStarted: true,
+    });
+    expect(waiting.session.status).toBe('waiting_http');
+    const resumed = processInboundStep({
+      graph: g,
+      session: waiting.session,
+      messageBody: null,
+      resumeFromHttp: {
+        ok: false,
+        failHandle: 'error',
+        mappedVariables: { 'ensure_conversation.error': 'Telefone inválido' },
+      },
+    });
+    expect(resumed.actions.some((a) => a.type === 'send_text' && a.text === 'falhou')).toBe(true);
+  });
+
   it('conversation_note → resolve com mensagem encerra sessão', () => {
     const g: RuntimeGraph = {
       nodes: [

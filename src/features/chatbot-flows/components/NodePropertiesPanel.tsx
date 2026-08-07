@@ -22,6 +22,7 @@ import type { FlowKanbanColumnMeta, FlowSelectOption } from '../hooks/useFlowCrm
 import { Button } from '@/components/ui/button';
 import { Copy, Plus, RefreshCw, Trash2, Radio, Loader2 } from 'lucide-react';
 import { VariableTextField } from './VariableTextField';
+import { previewNormalizePhoneBr } from '../lib/ensureConversationPhone';
 import { readMenuOptionsForEditor, type MenuChoiceOption } from '../lib/menuChoiceHelpers';
 import {
   migrateLegacyConditionData,
@@ -40,7 +41,9 @@ import { applyHttpResponseMap, suggestVarNameFromPath } from '../lib/httpTestHel
 import { HttpJsonSampleTree } from './HttpJsonSampleTree';
 import {
   cancelWebhookInListen,
+  getWebhookInSample,
   pollWebhookInListen,
+  rotateWebhookInSample,
   startWebhookInListen,
 } from '@/services/chatbotFlows';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -189,7 +192,11 @@ export function NodePropertiesPanel({
                 value={
                   (data.trigger as { type?: string } | undefined)?.type === 'keyword'
                     ? 'keyword'
-                    : 'first_message'
+                    : (data.trigger as { type?: string } | undefined)?.type === 'tag'
+                      ? 'tag'
+                      : (data.trigger as { type?: string } | undefined)?.type === 'kanban_column'
+                        ? 'kanban_column'
+                        : 'first_message'
                 }
                 onValueChange={(v) => {
                   if (v === 'keyword') {
@@ -203,6 +210,28 @@ export function NodePropertiesPanel({
                           (data.trigger as { match?: string } | undefined)?.match === 'equals'
                             ? 'equals'
                             : 'contains',
+                      },
+                    });
+                  } else if (v === 'tag') {
+                    const prev = data.trigger as
+                      | { tag_id?: string; tag_label?: string }
+                      | undefined;
+                    onChange({
+                      trigger: {
+                        type: 'tag',
+                        tag_id: prev?.tag_id || null,
+                        tag_label: prev?.tag_label || null,
+                      },
+                    });
+                  } else if (v === 'kanban_column') {
+                    const prev = data.trigger as
+                      | { column_id?: string; board_id?: string }
+                      | undefined;
+                    onChange({
+                      trigger: {
+                        type: 'kanban_column',
+                        column_id: prev?.column_id || '',
+                        board_id: prev?.board_id || null,
                       },
                     });
                   } else {
@@ -225,6 +254,8 @@ export function NodePropertiesPanel({
                 <SelectContent>
                   <SelectItem value="first_message">Primeira mensagem / idle</SelectItem>
                   <SelectItem value="keyword">Palavra-chave</SelectItem>
+                  <SelectItem value="tag">Tag na conversa</SelectItem>
+                  <SelectItem value="kanban_column">Coluna Kanban</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -281,7 +312,151 @@ export function NodePropertiesPanel({
                   </Select>
                 </div>
               </>
-            ) : (
+            ) : null}
+            {(data.trigger as { type?: string } | undefined)?.type === 'tag' ? (
+              <>
+                <OptionSelect
+                  label="Tag do Kanban"
+                  value={String(
+                    (data.trigger as { tag_id?: string } | undefined)?.tag_id || ''
+                  )}
+                  placeholder="Selecione uma tag"
+                  options={opts.tagOptions}
+                  loading={opts.loading}
+                  onValueChange={(tagId) => {
+                    const found = opts.tagOptions.find((o) => o.value === tagId);
+                    onChange({
+                      trigger: {
+                        type: 'tag',
+                        tag_id: tagId || null,
+                        tag_label: found?.label || null,
+                      },
+                    });
+                  }}
+                />
+                <div className="space-y-1.5">
+                  <Label htmlFor="start-tag-label">Ou nome da tag</Label>
+                  <Input
+                    id="start-tag-label"
+                    value={
+                      (data.trigger as { tag_id?: string } | undefined)?.tag_id
+                        ? ''
+                        : String(
+                            (data.trigger as { tag_label?: string } | undefined)?.tag_label ||
+                              ''
+                          )
+                    }
+                    onChange={(e) =>
+                      onChange({
+                        trigger: {
+                          type: 'tag',
+                          tag_id: null,
+                          tag_label: e.target.value || null,
+                        },
+                      })
+                    }
+                    placeholder="Ex.: lead-quente"
+                    disabled={Boolean(
+                      (data.trigger as { tag_id?: string } | undefined)?.tag_id
+                    )}
+                  />
+                  <p className="text-[10px] text-muted-foreground">
+                    Dispara ao adicionar a tag na conversa (não pelo nó Tag do próprio flow).
+                  </p>
+                </div>
+              </>
+            ) : null}
+            {(data.trigger as { type?: string } | undefined)?.type === 'kanban_column' ? (
+              <>
+                <OptionSelect
+                  label="Board"
+                  value={
+                    String(
+                      (data.trigger as { board_id?: string } | undefined)?.board_id || ''
+                    ) ||
+                    opts.kanbanColumns.find(
+                      (c) =>
+                        c.columnId ===
+                        String(
+                          (data.trigger as { column_id?: string } | undefined)?.column_id ||
+                            ''
+                        )
+                    )?.boardId ||
+                    ''
+                  }
+                  placeholder="Selecione o board"
+                  options={opts.boardOptions}
+                  loading={opts.loading}
+                  onValueChange={(board_id) => {
+                    onChange({
+                      trigger: {
+                        type: 'kanban_column',
+                        board_id: board_id || null,
+                        column_id: '',
+                      },
+                    });
+                  }}
+                />
+                <OptionSelect
+                  label="Coluna"
+                  value={String(
+                    (data.trigger as { column_id?: string } | undefined)?.column_id || ''
+                  )}
+                  placeholder={
+                    String(
+                      (data.trigger as { board_id?: string } | undefined)?.board_id || ''
+                    ) || inferredBoardId
+                      ? 'Selecione a coluna'
+                      : 'Escolha o board primeiro'
+                  }
+                  options={
+                    opts.columnsByBoardId[
+                      String(
+                        (data.trigger as { board_id?: string } | undefined)?.board_id || ''
+                      ) ||
+                        opts.kanbanColumns.find(
+                          (c) =>
+                            c.columnId ===
+                            String(
+                              (data.trigger as { column_id?: string } | undefined)
+                                ?.column_id || ''
+                            )
+                        )?.boardId ||
+                        ''
+                    ] ?? []
+                  }
+                  loading={opts.loading}
+                  disabled={
+                    !(
+                      String(
+                        (data.trigger as { board_id?: string } | undefined)?.board_id || ''
+                      ) || inferredBoardId
+                    )
+                  }
+                  onValueChange={(column_id) => {
+                    const boardId =
+                      String(
+                        (data.trigger as { board_id?: string } | undefined)?.board_id || ''
+                      ) ||
+                      opts.kanbanColumns.find((c) => c.columnId === column_id)?.boardId ||
+                      '';
+                    onChange({
+                      trigger: {
+                        type: 'kanban_column',
+                        board_id: boardId || null,
+                        column_id,
+                      },
+                    });
+                  }}
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Dispara ao criar ou mover o card da conversa para esta coluna.
+                </p>
+              </>
+            ) : null}
+            {(data.trigger as { type?: string } | undefined)?.type !== 'keyword' &&
+            (data.trigger as { type?: string } | undefined)?.type !== 'tag' &&
+            (data.trigger as { type?: string } | undefined)?.type !== 'kanban_column' ? (
               <div className="space-y-1.5">
                 <Label htmlFor="idle">Reativar após idle (horas)</Label>
                 <Input
@@ -311,7 +486,11 @@ export function NodePropertiesPanel({
                   Além da 1ª mensagem: inicia se o cliente ficou sem enviar por N horas.
                 </p>
               </div>
-            )}
+            ) : null}
+            <p className="text-[10px] text-muted-foreground rounded-md border bg-muted/40 px-2 py-1.5">
+              Opt-out global: se o contato enviar exatamente <code>parar</code> ou{' '}
+              <code>sair</code>, qualquer sessão viva deste módulo encerra.
+            </p>
             <div className="flex items-center gap-2 pt-1">
               <input
                 id="dm_only"
@@ -354,7 +533,8 @@ export function NodePropertiesPanel({
                 </SelectContent>
               </Select>
               <p className="text-[10px] text-muted-foreground">
-                Com “Reiniciar”, a keyword encerra a sessão viva e começa o flow do zero.
+                Reiniciar só vale para gatilho palavra-chave. Tag/coluna não iniciam se já houver
+                sessão. Com “Reiniciar”, a keyword encerra a sessão viva e começa o flow do zero.
               </p>
             </div>
             <div className="space-y-1.5 pt-2 border-t">
@@ -726,6 +906,113 @@ export function NodePropertiesPanel({
               placeholder={'{{cpf}}\n{{resultado}}\n…'}
               hint="Nota interna no CRM — não é enviada ao WhatsApp."
             />
+          </>
+        ) : null}
+
+        {type === 'ensure_conversation' ? (
+          <>
+            <VariableTextField
+              id="ensure-phone"
+              label="Telefone"
+              multiline={false}
+              value={String(data.phone || '')}
+              onChange={(phone) => {
+                const normalizeBr = data.normalize_br !== false;
+                const preview = phone.includes('{{')
+                  ? ''
+                  : previewNormalizePhoneBr(phone, normalizeBr);
+                onChange({
+                  phone,
+                  last_normalized_preview: preview || null,
+                });
+              }}
+              flowVariables={flowVariables}
+              placeholder="{{order.phone}} ou 11999998888"
+              inputClassName="font-mono text-xs"
+            />
+            <div className="flex items-center justify-between gap-2 rounded-md border px-3 py-2">
+              <div>
+                <Label htmlFor="ensure-normalize" className="text-sm font-medium">
+                  Normalizar BR (E.164 / 55)
+                </Label>
+                <p className="text-[10px] text-muted-foreground">
+                  Prefixa 55 em números 10–11 dígitos.
+                </p>
+              </div>
+              <Switch
+                id="ensure-normalize"
+                checked={data.normalize_br !== false}
+                onCheckedChange={(checked) => {
+                  const phone = String(data.phone || '');
+                  const preview = phone.includes('{{')
+                    ? ''
+                    : previewNormalizePhoneBr(phone, checked);
+                  onChange({
+                    normalize_br: checked,
+                    last_normalized_preview: preview || null,
+                  });
+                }}
+              />
+            </div>
+            {String(data.last_normalized_preview || '').trim() ? (
+              <p className="rounded-md bg-muted/50 px-2 py-1.5 text-[11px] text-muted-foreground">
+                Vai abrir/reusar conversa com{' '}
+                <span className="font-mono text-foreground">
+                  {String(data.last_normalized_preview)}
+                </span>
+              </p>
+            ) : String(data.phone || '').includes('{{') ? (
+              <p className="text-[11px] text-muted-foreground">
+                Preview ao vivo quando o valor for literal (sem {'{{var}}'}).
+              </p>
+            ) : null}
+            <div className="space-y-1.5">
+              <Label htmlFor="ensure-instance">Instância (UUID, opcional)</Label>
+              <Input
+                id="ensure-instance"
+                className="font-mono text-xs"
+                placeholder="vazio = herdar start / padrão do tenant"
+                value={data.instance_id != null ? String(data.instance_id) : ''}
+                onChange={(e) => {
+                  const v = e.target.value.trim();
+                  onChange({ instance_id: v || null });
+                }}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Política de reuso</Label>
+              <Select
+                value={String(data.reuse_policy || 'open')}
+                onValueChange={(reuse_policy) => onChange({ reuse_policy })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="open">Reutilizar aberta (telefone + instância)</SelectItem>
+                  <SelectItem value="any">Reutilizar qualquer (mesmo telefone)</SelectItem>
+                  <SelectItem value="always_create">Sempre criar nova</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <VariableTextField
+              id="ensure-idem"
+              label="Chave de idempotência (opcional)"
+              multiline={false}
+              value={String(data.idempotency_key || '')}
+              onChange={(idempotency_key) => onChange({ idempotency_key })}
+              flowVariables={flowVariables}
+              placeholder="{{order.id}}"
+              inputClassName="font-mono text-xs"
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Amarras a sessão órfã (webhook sem conversa) a um chat 1:1 (DM-only). Saídas:{' '}
+              <span className="text-emerald-600">ok</span> /{' '}
+              <span className="text-rose-600">erro</span> (telefone inválido / grupo / sem
+              instância / desconectada). Com chave de idempotência, reenvio Woo do mesmo pedido
+              reusa a mesma conversa (não abre N chats). Se já estiver em atendimento humano, o
+              bot pausa.
+            </p>
           </>
         ) : null}
 
@@ -1819,14 +2106,49 @@ function WebhookInFields({
   const [listening, setListening] = useState(false);
   const [listenUrl, setListenUrl] = useState<string | null>(null);
   const [listenError, setListenError] = useState<string | null>(null);
+  const [sampleUrl, setSampleUrl] = useState<string | null>(null);
+  const [sampleBusy, setSampleBusy] = useState(false);
+  const [sampleSyncError, setSampleSyncError] = useState<string | null>(null);
+  const [sampleWatching, setSampleWatching] = useState(false);
+  const sampleWatchAbortRef = useRef(false);
   const listenAbortRef = useRef<{ cancelled: boolean; listenId: string | null }>({
     cancelled: false,
     listenId: null,
   });
 
+  const resolvePublicSampleUrl = (ingestUrl: string, ingestPath: string) => {
+    if (ingestUrl.startsWith('http://') || ingestUrl.startsWith('https://')) return ingestUrl;
+    if (typeof window !== 'undefined') return `${window.location.origin}${ingestPath}`;
+    return ingestPath;
+  };
+
+  useEffect(() => {
+    if (!flowId) {
+      setSampleUrl(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const state = await getWebhookInSample(flowId);
+        if (cancelled) return;
+        setSampleUrl(resolvePublicSampleUrl(state.ingestUrl, state.ingestPath));
+        setSampleSyncError(null);
+      } catch (e) {
+        if (!cancelled) {
+          setSampleSyncError(e instanceof Error ? e.message : 'Falha ao carregar URL de amostra');
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [flowId]);
+
   useEffect(() => {
     return () => {
       listenAbortRef.current.cancelled = true;
+      sampleWatchAbortRef.current = true;
       const lid = listenAbortRef.current.listenId;
       if (lid && flowId) {
         void cancelWebhookInListen(flowId, lid).catch(() => undefined);
@@ -1864,6 +2186,72 @@ function WebhookInFields({
       setSampleDraft(String(payload ?? ''));
     }
     setSampleError(null);
+  };
+
+  const refreshSampleFromServer = async (opts?: { applyPayload?: boolean }) => {
+    if (!flowId) return null;
+    const state = await getWebhookInSample(flowId);
+    setSampleUrl(resolvePublicSampleUrl(state.ingestUrl, state.ingestPath));
+    if (opts?.applyPayload && state.payload != null) {
+      applyCapturedPayload(state.payload, state.captured_at || undefined);
+    }
+    setSampleSyncError(null);
+    return state;
+  };
+
+  const rotateSample = async () => {
+    if (!flowId) {
+      setSampleSyncError('Salve o flow antes de rotacionar.');
+      return;
+    }
+    setSampleBusy(true);
+    setSampleSyncError(null);
+    try {
+      const state = await rotateWebhookInSample(flowId);
+      setSampleUrl(resolvePublicSampleUrl(state.ingestUrl, state.ingestPath));
+    } catch (e) {
+      setSampleSyncError(e instanceof Error ? e.message : 'Falha ao rotacionar');
+    } finally {
+      setSampleBusy(false);
+    }
+  };
+
+  const startSampleWatch = async () => {
+    if (!flowId) {
+      setSampleSyncError('Salve o flow antes de aguardar POST.');
+      return;
+    }
+    sampleWatchAbortRef.current = false;
+    setSampleWatching(true);
+    setSampleSyncError(null);
+    const startedAt = data.last_payload_at != null ? String(data.last_payload_at) : '';
+    const deadline = Date.now() + 120_000;
+    try {
+      while (!sampleWatchAbortRef.current && Date.now() < deadline) {
+        const state = await getWebhookInSample(flowId);
+        setSampleUrl(resolvePublicSampleUrl(state.ingestUrl, state.ingestPath));
+        const at = state.captured_at ? String(state.captured_at) : '';
+        if (state.payload != null && at && at !== startedAt) {
+          applyCapturedPayload(state.payload, at);
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      if (!sampleWatchAbortRef.current && Date.now() >= deadline) {
+        setSampleSyncError('Tempo esgotado. Reenvie o webhook ou clique em Aguardar de novo.');
+      }
+    } catch (e) {
+      if (!sampleWatchAbortRef.current) {
+        setSampleSyncError(e instanceof Error ? e.message : 'Falha ao aguardar sample');
+      }
+    } finally {
+      setSampleWatching(false);
+    }
+  };
+
+  const stopSampleWatch = () => {
+    sampleWatchAbortRef.current = true;
+    setSampleWatching(false);
   };
 
   const stopListen = async () => {
@@ -1952,8 +2340,8 @@ function WebhookInFields({
 
   return (
     <>
-      <div className="space-y-1.5">
-        <Label>URL de entrada</Label>
+      <div className="space-y-1.5 rounded-lg border border-border/60 bg-muted/20 p-3">
+        <Label>URL de produção</Label>
         <div className="flex gap-1.5">
           <Input readOnly value={url} className="font-mono text-xs" />
           <Button
@@ -1961,7 +2349,7 @@ function WebhookInFields({
             size="icon"
             variant="outline"
             className="shrink-0"
-            title="Copiar URL"
+            title="Copiar URL de produção"
             disabled={!url}
             onClick={() => {
               void navigator.clipboard.writeText(url);
@@ -1974,7 +2362,7 @@ function WebhookInFields({
             size="icon"
             variant="outline"
             className="shrink-0"
-            title="Gerar novo token"
+            title="Rotacionar token de produção (invalida a URL antiga após republicar)"
             onClick={() => {
               onChange({ token: generateInboundWebhookToken() });
             }}
@@ -1983,11 +2371,102 @@ function WebhookInFields({
           </Button>
         </div>
         <p className="text-[11px] text-muted-foreground">
-          Produção: POST com{' '}
-          <code className="text-[10px]">{`{ "conversation_id": "…", … }`}</code> na URL
-          publicada. Use Ouvir (abaixo) para capturar um body de teste sem publicar.
+          Dispara o flow na versão <strong>publicada</strong>. POST com{' '}
+          <code className="text-[10px]">{`{ "conversation_id": "…", … }`}</code>. Rotacionar
+          o token só vale após republicar.
         </p>
       </div>
+
+      <div className="space-y-2 rounded-lg border border-dashed border-emerald-500/40 bg-emerald-500/5 p-3">
+        <Label>URL de teste</Label>
+        <div className="flex gap-1.5">
+          <Input
+            readOnly
+            value={sampleUrl || (flowId ? 'Carregando…' : 'Salve o flow para gerar a URL')}
+            className="font-mono text-[11px]"
+          />
+          <Button
+            type="button"
+            size="icon"
+            variant="outline"
+            className="shrink-0"
+            title="Copiar URL de teste"
+            disabled={!sampleUrl}
+            onClick={() => {
+              if (sampleUrl) void navigator.clipboard.writeText(sampleUrl);
+            }}
+          >
+            <Copy className="h-4 w-4" />
+          </Button>
+          <Button
+            type="button"
+            size="icon"
+            variant="outline"
+            className="shrink-0"
+            title="Rotacionar URL de teste"
+            disabled={!flowId || sampleBusy}
+            onClick={() => void rotateSample()}
+          >
+            <RefreshCw className={cn('h-4 w-4', sampleBusy && 'animate-spin')} />
+          </Button>
+        </div>
+        <div className="flex gap-2">
+          {sampleWatching ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="flex-1"
+              onClick={stopSampleWatch}
+            >
+              Parar
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              size="sm"
+              className="flex-1"
+              disabled={!flowId || !sampleUrl}
+              onClick={() => void startSampleWatch()}
+            >
+              <Radio className="mr-1.5 h-3.5 w-3.5" />
+              Ouvir
+            </Button>
+          )}
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            className="flex-1"
+            title="Aplica o último JSON recebido na URL de teste"
+            disabled={!flowId || sampleBusy}
+            onClick={() => {
+              void (async () => {
+                setSampleBusy(true);
+                try {
+                  await refreshSampleFromServer({ applyPayload: true });
+                } catch (e) {
+                  setSampleSyncError(
+                    e instanceof Error ? e.message : 'Falha ao atualizar sample',
+                  );
+                } finally {
+                  setSampleBusy(false);
+                }
+              })();
+            }}
+          >
+            Último envio
+          </Button>
+        </div>
+        {sampleWatching ? (
+          <div className="flex items-center gap-1.5 text-[11px] text-emerald-700 dark:text-emerald-300">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            Aguardando POST na URL de amostra…
+          </div>
+        ) : null}
+        {sampleSyncError ? <p className="text-[11px] text-rose-600">{sampleSyncError}</p> : null}
+      </div>
+
       <div className="space-y-1.5">
         <Label htmlFor="whin-secret">Secret HMAC (opcional)</Label>
         <Input
@@ -2065,9 +2544,9 @@ function WebhookInFields({
       <div className="space-y-2 rounded-lg border border-dashed p-3">
         <div className="flex items-center justify-between gap-2">
           <div>
-            <p className="text-sm font-medium">Ouvir payload de teste</p>
+            <p className="text-sm font-medium">Ouvir (avançado · 60s)</p>
             <p className="text-[11px] text-muted-foreground">
-              Abre URL temporária (~60s). Não dispara o flow.
+              URL temporária one-shot. Prefira a <strong>URL de amostra fixa</strong> acima para Woo.
             </p>
           </div>
           {listening ? (
@@ -2078,19 +2557,20 @@ function WebhookInFields({
             <Button
               type="button"
               size="sm"
+              variant="outline"
               onClick={() => void startListen()}
               disabled={!flowId}
             >
               <Radio className="mr-1.5 h-3.5 w-3.5" />
-              Ouvir
+              Ouvir 60s
             </Button>
           )}
         </div>
         {listening ? (
           <div className="space-y-1.5">
-            <div className="flex items-center gap-1.5 text-[11px] text-emerald-700 dark:text-emerald-300">
+            <div className="flex items-center gap-1.5 text-[11px] text-amber-700 dark:text-amber-300">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Aguardando POST…
+              Aguardando POST na URL temporária…
             </div>
             {listenUrl ? (
               <div className="flex gap-1.5">
@@ -2100,7 +2580,7 @@ function WebhookInFields({
                   size="icon"
                   variant="outline"
                   className="shrink-0"
-                  title="Copiar URL de teste"
+                  title="Copiar URL temporária"
                   onClick={() => void navigator.clipboard.writeText(listenUrl)}
                 >
                   <Copy className="h-4 w-4" />

@@ -254,6 +254,31 @@ export async function cancelWebhookInListen(flowId: string, listenId: string): P
   throwIfError(res);
 }
 
+export type WebhookInSampleState = {
+  sampleToken: string;
+  ingestPath: string;
+  ingestUrl: string;
+  payload: unknown | null;
+  captured_at: string | null;
+};
+
+/** S28 — URL de amostra fixa (+ ensure token). */
+export async function getWebhookInSample(flowId: string): Promise<WebhookInSampleState> {
+  const res = await apiClient.get<WebhookInSampleState>(
+    `/api/chatbot-flows/${encodeURIComponent(flowId)}/webhook-in-sample`
+  );
+  return throwIfError(res);
+}
+
+/** S28 — rotaciona token de amostra. */
+export async function rotateWebhookInSample(flowId: string): Promise<WebhookInSampleState> {
+  const res = await apiClient.post<WebhookInSampleState>(
+    `/api/chatbot-flows/${encodeURIComponent(flowId)}/webhook-in-sample/rotate`,
+    {}
+  );
+  return throwIfError(res);
+}
+
 export async function importChatbotFlow(body: {
   document: unknown;
   mode?: 'create' | 'replace_draft';

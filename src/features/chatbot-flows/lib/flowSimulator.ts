@@ -50,7 +50,7 @@ export type FlowSimulationState = {
   currentNodeId: string | null;
   /** Aguardando decisão do usuário no HTTP/fatura dry-run. */
   pendingHttp: boolean;
-  pendingHttpKind?: 'http' | 'invoice' | 'ticket' | 'crm' | 'crm_convert' | 'kanban' | null;
+  pendingHttpKind?: 'http' | 'invoice' | 'ticket' | 'crm' | 'crm_convert' | 'kanban' | 'ensure_conversation' | null;
   /** Nó HTTP tem sample do editor (S14) para “Usar última resposta”. */
   pendingHttpHasSample?: boolean;
   /** Opções do menu_choice aguardando clique/texto (S13). */
@@ -113,6 +113,11 @@ function describeAction(a: RuntimeOutboundAction): { detail: string; status: Sim
       return {
         detail: `Kanban (cria ou move)${a.title ? `: ${String(a.title).slice(0, 40)}` : ''} (sim)`,
         status: 'ok',
+      };
+    case 'ensure_conversation':
+      return {
+        detail: `Iniciar atendimento: ${String(a.phone || '').slice(0, 40)} (sim)`,
+        status: 'wait',
       };
     case 'delay':
       return { detail: `Delay ${a.amount} ${a.unit} (simulado)`, status: 'info' };
@@ -256,6 +261,8 @@ function appendFromResult(
             ? 'crm_convert'
             : waitingNode?.type === 'kanban_add_card' || waitingNode?.type === 'move_kanban'
             ? 'kanban'
+            : waitingNode?.type === 'ensure_conversation'
+              ? 'ensure_conversation'
             : 'http'
     : null;
   const pendingHttpHasSample =
@@ -337,6 +344,44 @@ function autoResumeKanban(
   return next;
 }
 
+function autoResumeEnsureConversation(
+  graph: RuntimeGraph,
+  state: FlowSimulationState
+): FlowSimulationState {
+  if (state.session.status !== 'waiting_http') return state;
+  const node = graph.nodes.find((n) => n.id === state.session.currentNodeId);
+  if (node?.type !== 'ensure_conversation') return state;
+  const data = (node.data || {}) as Record<string, unknown>;
+  const phoneTpl = String(data.phone || '');
+  const simId = `sim-conv-${uid()}`;
+  const result = processInboundStep({
+    graph,
+    session: state.session,
+    messageBody: null,
+    resumeFromHttp: {
+      ok: true,
+      mappedVariables: {
+        'conversation.id': simId,
+        conversation_id: simId,
+        'contact.phone': phoneTpl.includes('{{') ? '5511999999999' : phoneTpl.replace(/\D/g, '') || '5511999999999',
+        'ensure_conversation.created': 'true',
+        'ensure_conversation.reused': 'false',
+      },
+    },
+  });
+  let next = appendFromResult(state, result, graph);
+  next.messages.push({
+    id: uid(),
+    role: 'system',
+    text: 'Iniciar atendimento: conversa amarrada (simulação).',
+    ok: true,
+  });
+  next = autoResumeDelay(graph, next);
+  next = autoResumeKanban(graph, next);
+  next = autoResumeEnsureConversation(graph, next);
+  return next;
+}
+
 function autoResumeIfNeeded(graph: RuntimeGraph, state: FlowSimulationState): FlowSimulationState {
   if (state.session.status === 'waiting_delay') {
     return autoResumeDelay(graph, state);
@@ -345,6 +390,9 @@ function autoResumeIfNeeded(graph: RuntimeGraph, state: FlowSimulationState): Fl
     const node = graph.nodes.find((n) => n.id === state.session.currentNodeId);
     if (node?.type === 'kanban_add_card' || node?.type === 'move_kanban') {
       return autoResumeKanban(graph, state);
+    }
+    if (node?.type === 'ensure_conversation') {
+      return autoResumeEnsureConversation(graph, state);
     }
   }
   return state;

@@ -68,6 +68,7 @@ export const FOREIGN_TYPE_ALIAS: Record<string, string> = {
   webhook_in: 'webhook_in',
   conversation_note: 'conversation_note',
   resolve_conversation: 'resolve_conversation',
+  ensure_conversation: 'ensure_conversation',
   add_tag: 'add_tag',
   assign_agent: 'assign_agent',
   move_kanban: 'move_kanban',
@@ -553,6 +554,20 @@ function mapNodeData(
     out.label = str(cleaned.label || 'Resolver') || 'Resolver';
     out.message = str(cleaned.message || cleaned.text);
     out.close_attendance = cleaned.close_attendance !== false;
+  }
+
+  if (toType === 'ensure_conversation') {
+    out.label = str(cleaned.label || 'Iniciar atendimento') || 'Iniciar atendimento';
+    out.phone = str(cleaned.phone || cleaned.number || '{{order.phone}}') || '{{order.phone}}';
+    out.normalize_br = cleaned.normalize_br !== false;
+    out.reuse_policy =
+      cleaned.reuse_policy === 'any' || cleaned.reuse_policy === 'always_create'
+        ? cleaned.reuse_policy
+        : 'open';
+    out.instance_id = cleaned.instance_id ? str(cleaned.instance_id) : null;
+    out.idempotency_key = str(
+      cleaned.idempotency_key || cleaned.idempotencyKey || ''
+    );
   }
 
   if (toType === 'add_tag') {

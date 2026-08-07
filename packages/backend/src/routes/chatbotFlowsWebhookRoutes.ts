@@ -1,6 +1,7 @@
 /**
  * Webhook de entrada público — POST /webhooks/chatbot-flows/:token
  * Sem JWT. Secret opcional via X-PainelCRM-Signature.
+ * S29.1 — rate limit dedicado por token.
  */
 import { Router, type Request, type Response } from 'express';
 import { pool } from '../utils/db.js';
@@ -9,6 +10,7 @@ import {
   verifyInboundWebhookSignature,
 } from '../services/chatbotFlows/flowWebhookIn.js';
 import { runChatbotFlowsRuntimeFromWebhook } from '../services/chatbotFlows/chatbotFlowsRuntimeRunner.js';
+import { chatbotFlowsInboundWebhookLimiter } from '../services/chatbotFlows/flowWebhookRateLimit.js';
 
 const router = Router();
 
@@ -18,10 +20,12 @@ router.get('/:token', (_req, res) => {
     provider: 'chatbot_flows',
     webhook: 'inbound',
     method: 'POST',
+    conversation_id: 'optional',
+    hint: 'Com conversation_id: comportamento legado. Sem: sessão órfã até ensure_conversation (S28.1/S29).',
   });
 });
 
-router.post('/:token', async (req: Request, res: Response) => {
+router.post('/:token', chatbotFlowsInboundWebhookLimiter, async (req: Request, res: Response) => {
   try {
     const token = String(req.params.token || '').trim();
     if (!token) {
@@ -74,14 +78,9 @@ router.post('/:token', async (req: Request, res: Response) => {
       string,
       unknown
     >;
-    const conversationId = String(body.conversation_id || body.conversationId || '').trim();
-    if (!conversationId) {
-      res.status(400).json({
-        error: 'conversation_id_obrigatorio',
-        hint: 'Envie { "conversation_id": "<uuid>", "variables": { ... } }',
-      });
-      return;
-    }
+    // S28.1 — conversation_id opcional (sessão órfã até ensure_conversation)
+    const conversationIdRaw = String(body.conversation_id || body.conversationId || '').trim();
+    const conversationId = conversationIdRaw || null;
 
     const variables =
       body.variables && typeof body.variables === 'object' && !Array.isArray(body.variables)
@@ -96,6 +95,14 @@ router.post('/:token', async (req: Request, res: Response) => {
     });
 
     if (!result.ok) {
+      console.warn(
+        JSON.stringify({
+          event: 'chatbot_flows_runtime',
+          reason: 'webhook',
+          error: result.error,
+          status: result.status,
+        })
+      );
       res.status(result.status).json({ error: result.error });
       return;
     }

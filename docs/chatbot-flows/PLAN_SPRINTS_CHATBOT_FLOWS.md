@@ -574,6 +574,6 @@ Entrega antecipada de polish visual no editor (independente do hardening):
 2. **Fase regras de início:** [`PLAN_SPRINTS_CHATBOT_FLOWS_S22.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S22.md) (**S22–S24** no código).  
 3. **Fase tickets:** [`PLAN_SPRINTS_CHATBOT_FLOWS_S25.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S25.md) (**S25–S25.2** no código) · suporte [`SUPPORT_TICKET_FLOW.md`](./SUPPORT_TICKET_FLOW.md).  
 4. **Fase vínculo CRM:** [`PLAN_SPRINTS_CHATBOT_FLOWS_S26.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S26.md) (**S26–S26.1** no código).  
-5. **Fase Webhook in:** [`PLAN_SPRINTS_CHATBOT_FLOWS_S27.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S27.md) (**S27** map · **S27.1** listen).  
-6. Manter decisões **D1–D5**; D15.x · D22.x–D24.x · **D25.x** · **D26.x** · **D27.x**.  
-7. Candidatos **S28**: gatilho tag/kanban; opt-out global `parar`/`sair`.
+5. **Fase Webhook in (map + listen):** [`PLAN_SPRINTS_CHATBOT_FLOWS_S27.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S27.md) (**S27** · **S27.1** feitos).  
+6. **Fase Webhook estável + abrir conversa:** [`PLAN_SPRINTS_CHATBOT_FLOWS_S28.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S28.md) (**S28 · S28.1 · S29 · S29.1** feitos; **S30 skip**; **S31** tag/opt-out feito — [`PLAN_SPRINTS_CHATBOT_FLOWS_S31.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S31.md)) · detalhe S29/S29.1: [`PLAN_SPRINTS_CHATBOT_FLOWS_S29.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S29.md) · decisão S30: [`PLAN_SPRINTS_CHATBOT_FLOWS_S30.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S30.md).  
+7. Manter decisões **D1–D5**; D15.x · D22.x–D24.x · **D25.x** · **D26.x** · **D27.x** · **D28.x** · **D29.x** · **D30.x** · **D31.x**.

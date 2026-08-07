@@ -597,6 +597,60 @@ export async function cancelWebhookInListenHandler(req: AuthRequest, res: Respon
   }
 }
 
+/** S28 — estado da URL de amostra fixa (+ ensure token). */
+export async function getWebhookInSampleHandler(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ error: 'Não autenticado' });
+    await assertModulePermission(userId, MODULE, 'edit', undefined, req);
+    const tenantId = tenantIdOrThrow(req);
+    const flowId = String(req.params.id || '').trim();
+    const { getWebhookInSampleState } = await import(
+      '../services/chatbotFlows/flowWebhookInSample.js'
+    );
+    const state = await getWebhookInSampleState({ tenantId, flowId });
+    return res.json({
+      sampleToken: state.sampleToken,
+      ingestPath: state.ingestPath,
+      ingestUrl: state.ingestUrl,
+      payload: state.payload,
+      captured_at: state.capturedAt,
+    });
+  } catch (e) {
+    if (respondPerm(res, e)) return;
+    const status = (e as { status?: number }).status ?? 500;
+    const message = e instanceof Error ? e.message : 'Erro ao obter sample';
+    return res.status(status === 404 ? 404 : status).json({ error: message });
+  }
+}
+
+/** S28 — rotaciona token de amostra (invalida URL antiga). */
+export async function rotateWebhookInSampleHandler(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ error: 'Não autenticado' });
+    await assertModulePermission(userId, MODULE, 'edit', undefined, req);
+    const tenantId = tenantIdOrThrow(req);
+    const flowId = String(req.params.id || '').trim();
+    const { rotateWebhookInSampleToken } = await import(
+      '../services/chatbotFlows/flowWebhookInSample.js'
+    );
+    const state = await rotateWebhookInSampleToken({ tenantId, flowId });
+    return res.json({
+      sampleToken: state.sampleToken,
+      ingestPath: state.ingestPath,
+      ingestUrl: state.ingestUrl,
+      payload: state.payload,
+      captured_at: state.capturedAt,
+    });
+  } catch (e) {
+    if (respondPerm(res, e)) return;
+    const status = (e as { status?: number }).status ?? 500;
+    const message = e instanceof Error ? e.message : 'Erro ao rotacionar sample';
+    return res.status(status === 404 ? 404 : status).json({ error: message });
+  }
+}
+
 const manualStartSchema = z.object({
   conversation_id: z.string().uuid(),
   flow_id: z.string().uuid().optional().nullable(),

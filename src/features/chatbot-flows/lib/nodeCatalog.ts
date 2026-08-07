@@ -42,6 +42,7 @@ export const FLOW_NODE_TYPES = [
   'menu_choice',
   'conversation_note',
   'resolve_conversation',
+  'ensure_conversation',
 ] as const;
 
 export type EssentialNodeType = (typeof FLOW_NODE_TYPES)[number];
@@ -75,6 +76,7 @@ export const NODE_LABELS: Record<EssentialNodeType, string> = {
   menu_choice: 'Menu / IF',
   conversation_note: 'Nota interna',
   resolve_conversation: 'Resolver',
+  ensure_conversation: 'Iniciar atendimento',
 };
 
 const varName = z
@@ -253,26 +255,53 @@ export const triggerSchema = z.discriminatedUnion('type', [
     type: z.literal('first_message'),
     idle_after_hours: z.coerce.number().min(0).max(8760).nullable().optional(),
   }),
+  /** S31 — gatilho por tag na conversa. */
+  z.object({
+    type: z.literal('tag'),
+    tag_id: z.string().uuid().optional().nullable(),
+    tag_label: z.string().trim().optional().nullable(),
+  }),
+  /** S31 — gatilho por coluna kanban. */
+  z.object({
+    type: z.literal('kanban_column'),
+    column_id: z.string().uuid({ message: 'Coluna Kanban obrigatória' }),
+    board_id: z.string().uuid().optional().nullable(),
+  }),
 ]);
 
-export const startDataSchema = z.object({
-  label: z.string().optional(),
-  trigger: triggerSchema.default({ type: 'first_message' }),
-  /** S22: true = só chats 1:1. Ausente/false = compat (grupos permitidos). */
-  dm_only: z.boolean().optional().default(false),
-  /** S23: política com sessão viva. */
-  session_policy: z
-    .enum(['ignore_if_session_alive', 'restart_on_keyword'])
-    .optional()
-    .default('ignore_if_session_alive'),
-  /** S24 */
-  cooldown_minutes: z.coerce.number().int().min(0).max(10080).optional().default(0),
-  schedule_enabled: z.boolean().optional().default(false),
-  schedule_start: z.string().optional().default('09:00'),
-  schedule_end: z.string().optional().default('18:00'),
-  instance_ids: z.array(z.string().uuid()).optional().default([]),
-  priority: z.coerce.number().int().min(-999).max(9999).optional().default(0),
-});
+export const startDataSchema = z
+  .object({
+    label: z.string().optional(),
+    trigger: triggerSchema.default({ type: 'first_message' }),
+    /** S22: true = só chats 1:1. Ausente/false = compat (grupos permitidos). */
+    dm_only: z.boolean().optional().default(false),
+    /** S23: política com sessão viva. */
+    session_policy: z
+      .enum(['ignore_if_session_alive', 'restart_on_keyword'])
+      .optional()
+      .default('ignore_if_session_alive'),
+    /** S24 */
+    cooldown_minutes: z.coerce.number().int().min(0).max(10080).optional().default(0),
+    schedule_enabled: z.boolean().optional().default(false),
+    schedule_start: z.string().optional().default('09:00'),
+    schedule_end: z.string().optional().default('18:00'),
+    instance_ids: z.array(z.string().uuid()).optional().default([]),
+    priority: z.coerce.number().int().min(-999).max(9999).optional().default(0),
+  })
+  .superRefine((d, ctx) => {
+    const t = d.trigger as { type?: string; tag_id?: unknown; tag_label?: unknown };
+    if (t?.type === 'tag') {
+      const hasId = Boolean(String(t.tag_id || '').trim());
+      const hasLabel = Boolean(String(t.tag_label || '').trim());
+      if (!hasId && !hasLabel) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Selecione uma tag (id ou nome)',
+          path: ['trigger', 'tag_id'],
+        });
+      }
+    }
+  });
 
 export const sendMessageDataSchema = z
   .object({
@@ -393,6 +422,21 @@ export const resolveConversationDataSchema = z.object({
   label: z.string().optional(),
   message: z.string().optional().default(''),
   close_attendance: z.boolean().optional().default(true),
+});
+
+/** S29 / S29.1 — telefone → create/reuse conversa (+ idempotência opcional). */
+export const ensureConversationDataSchema = z.object({
+  label: z.string().optional(),
+  phone: z.string().min(1, 'Telefone obrigatório (literal ou {{var}})'),
+  normalize_br: z.boolean().optional().default(true),
+  instance_id: z.preprocess(
+    (v) => (v === '' || v == null ? null : v),
+    z.string().uuid().nullable().optional().default(null)
+  ),
+  reuse_policy: z.enum(['open', 'any', 'always_create']).optional().default('open'),
+  /** S29.1 — chave opcional (ex. {{order.id}}). Vazio = off. */
+  idempotency_key: z.string().max(256).optional().nullable().default(''),
+  last_normalized_preview: z.string().optional().nullable(),
 });
 
 export const setVariableAssignmentSchema = z.object({
@@ -705,6 +749,7 @@ export const DATA_SCHEMAS: Record<EssentialNodeType, z.ZodTypeAny> = {
   menu_choice: menuChoiceDataSchema,
   conversation_note: conversationNoteDataSchema,
   resolve_conversation: resolveConversationDataSchema,
+  ensure_conversation: ensureConversationDataSchema,
 };
 
 export const OUT_HANDLES: Record<EssentialNodeType, string[]> = {
@@ -716,6 +761,7 @@ export const OUT_HANDLES: Record<EssentialNodeType, string[]> = {
   end: [],
   conversation_note: ['default'],
   resolve_conversation: [],
+  ensure_conversation: ['default', 'error'],
   set_variable: ['default'],
   add_tag: ['default'],
   assign_agent: ['default'],
@@ -993,6 +1039,15 @@ export function defaultDataForType(type: EssentialNodeType): Record<string, unkn
         message: '',
         close_attendance: true,
       };
+    case 'ensure_conversation':
+      return {
+        label: NODE_LABELS.ensure_conversation,
+        phone: '{{order.phone}}',
+        normalize_br: true,
+        instance_id: null,
+        reuse_policy: 'open',
+        idempotency_key: '{{order.id}}',
+      };
     case 'webhook_in':
       return {
         label: NODE_LABELS.webhook_in,
@@ -1026,9 +1081,23 @@ export function nodePreview(type: string, data: Record<string, unknown>): string
     );
   }
   if (type === 'start') {
-    const t = data.trigger as { type?: string; value?: string; idle_after_hours?: number } | undefined;
+    const t = data.trigger as {
+      type?: string;
+      value?: string;
+      idle_after_hours?: number;
+      tag_label?: string;
+      tag_id?: string;
+      column_id?: string;
+    } | undefined;
     const dm = data.dm_only === true ? ' · só 1:1' : '';
     if (t?.type === 'keyword') return `Keyword: ${t.value || '…'}${dm}`;
+    if (t?.type === 'tag') {
+      const label = String(t.tag_label || '').trim();
+      return `Tag: ${label || t.tag_id?.slice(0, 8) || '…'}${dm}`;
+    }
+    if (t?.type === 'kanban_column') {
+      return `Kanban: ${t.column_id ? t.column_id.slice(0, 8) : '…'}${dm}`;
+    }
     const idle = Number(t?.idle_after_hours);
     if (Number.isFinite(idle) && idle > 0) return `1ª msg / idle ${idle}h${dm}`;
     return `1ª mensagem${dm}`;
@@ -1043,6 +1112,12 @@ export function nodePreview(type: string, data: Record<string, unknown>): string
   }
   if (type === 'conversation_note' && typeof data.text === 'string' && data.text.trim()) {
     return data.text.trim().slice(0, 48);
+  }
+  if (type === 'ensure_conversation') {
+    const phone = String(data.phone || '').trim();
+    const prev = String(data.last_normalized_preview || '').trim();
+    if (prev) return prev.slice(0, 48);
+    return phone ? phone.slice(0, 48) : 'telefone…';
   }
   if (type === 'resolve_conversation') {
     return data.close_attendance === false ? 'Só encerra bot' : 'Fecha atendimento';

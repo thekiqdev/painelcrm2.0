@@ -132,6 +132,7 @@ const nodeTypes: NodeTypes = {
   menu_choice: FlowCanvasNode,
   conversation_note: FlowCanvasNode,
   resolve_conversation: FlowCanvasNode,
+  ensure_conversation: FlowCanvasNode,
   sticky_note: StickyNoteNode,
   annotation_arrow: AnnotationArrowNode,
   annotation_text: AnnotationTextNode,

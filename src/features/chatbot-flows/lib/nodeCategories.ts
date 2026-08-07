@@ -29,6 +29,12 @@ export const NODE_PALETTE_CATEGORIES: NodePaletteCategory[] = [
     types: ['send_message', 'wait_input', 'menu_choice'],
   },
   {
+    id: 'conversation',
+    label: 'Conversa',
+    description: 'Abrir ou amarrar atendimento WhatsApp',
+    types: ['ensure_conversation'],
+  },
+  {
     id: 'logic',
     label: 'Lógica',
     description: 'Condições e variáveis',

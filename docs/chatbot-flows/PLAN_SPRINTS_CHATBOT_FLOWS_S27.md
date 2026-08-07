@@ -105,4 +105,5 @@ Ordem: **S27 → S27.1**.
 
 1. ~~Implementar **S27**.~~  
 2. ~~Implementar **S27.1**.~~  
-3. Candidatos **S28**: tag/kanban trigger; opt-out `parar`/`sair`.
+3. Fase seguinte: [`PLAN_SPRINTS_CHATBOT_FLOWS_S28.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S28.md) — **S28 · S28.1 · S29 · S29.1 · S31** feitos; **S30 skip** ([`PLAN_SPRINTS_CHATBOT_FLOWS_S30.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S30.md)); S31: [`PLAN_SPRINTS_CHATBOT_FLOWS_S31.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S31.md).
+4. Candidatos antigos (tag/kanban · opt-out) → **S31** feito.

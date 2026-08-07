@@ -19,6 +19,8 @@ import {
   startWebhookInListenHandler,
   pollWebhookInListenHandler,
   cancelWebhookInListenHandler,
+  getWebhookInSampleHandler,
+  rotateWebhookInSampleHandler,
   startChatbotFlowSessionHandler,
 } from '../controllers/chatbotFlowsController.js';
 
@@ -44,5 +46,7 @@ router.post('/:id/duplicate', duplicateChatbotFlowHandler);
 router.post('/:id/webhook-in-listen', startWebhookInListenHandler);
 router.get('/:id/webhook-in-listen/:listenId', pollWebhookInListenHandler);
 router.delete('/:id/webhook-in-listen/:listenId', cancelWebhookInListenHandler);
+router.get('/:id/webhook-in-sample', getWebhookInSampleHandler);
+router.post('/:id/webhook-in-sample/rotate', rotateWebhookInSampleHandler);
 
 export default router;

@@ -109,7 +109,7 @@ export type FlowMatchCandidate = {
   versionId: string;
   priority: number;
   publishedAt: string | Date | null;
-  reason: 'keyword' | 'first_message';
+  reason: 'keyword' | 'first_message' | 'tag' | 'kanban_column';
 };
 
 /** Maior priority primeiro; empate = published_at mais recente. */

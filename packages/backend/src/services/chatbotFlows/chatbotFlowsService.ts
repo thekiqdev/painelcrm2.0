@@ -4,6 +4,7 @@
 import { pool } from '../../utils/db.js';
 import type { PoolClient } from 'pg';
 import {
+  collectWebhookOrphanConversationWarnings,
   validateGraphForPublish,
   type ChatbotFlowGraph,
   type GraphValidationIssue,
@@ -16,7 +17,7 @@ import {
   stripEditorSamplesFromGraph,
   type ChatbotFlowExportDocument,
 } from './flowPortability.js';
-import { extractWebhookInFromGraph } from './flowWebhookIn.js';
+import { extractWebhookInFromGraph, generateInboundWebhookToken } from './flowWebhookIn.js';
 import { resolveKeywordList, type StartTriggerKeyword } from './flowStartTrigger.js';
 import { parseStartGuardConfig } from './flowStartGuards.js';
 
@@ -166,11 +167,18 @@ export async function createChatbotFlow(opts: {
 }): Promise<ChatbotFlowRow> {
   const name = opts.name.trim();
   if (!name) throw new Error('Nome é obrigatório');
+  const sampleToken = generateInboundWebhookToken();
   const r = await pool.query(
-    `INSERT INTO chatbot_flows (tenant_id, name, status, draft_graph, created_by)
-     VALUES ($1::uuid, $2, 'draft', $3::jsonb, $4::uuid)
+    `INSERT INTO chatbot_flows (tenant_id, name, status, draft_graph, created_by, inbound_webhook_sample_token)
+     VALUES ($1::uuid, $2, 'draft', $3::jsonb, $4::uuid, $5)
      RETURNING id`,
-    [opts.tenantId, name.slice(0, 200), JSON.stringify(DEFAULT_STUB_GRAPH), opts.createdBy]
+    [
+      opts.tenantId,
+      name.slice(0, 200),
+      JSON.stringify(DEFAULT_STUB_GRAPH),
+      opts.createdBy,
+      sampleToken,
+    ]
   );
   const id = String(r.rows[0].id);
   const flow = await getChatbotFlowById(opts.tenantId, id);
@@ -338,12 +346,15 @@ export async function publishChatbotFlow(opts: {
       throw new PublishValidationError(validation.issues);
     }
 
-    const warnings = await collectKeywordOverlapWarnings({
-      client,
-      tenantId: opts.tenantId,
-      flowId: opts.id,
-      draft,
-    });
+    const warnings = [
+      ...(await collectKeywordOverlapWarnings({
+        client,
+        tenantId: opts.tenantId,
+        flowId: opts.id,
+        draft,
+      })),
+      ...collectWebhookOrphanConversationWarnings(draft),
+    ];
 
     const verRes = await client.query(
       `SELECT COALESCE(MAX(version), 0)::int AS max_version
@@ -594,12 +605,13 @@ export async function duplicateChatbotFlow(opts: {
 
   const clean = sanitizeGraph(graph);
   const name = `${source.name} ${nameSuffix}`.slice(0, 200);
+  const sampleToken = generateInboundWebhookToken();
 
   const r = await pool.query(
-    `INSERT INTO chatbot_flows (tenant_id, name, status, draft_graph, created_by)
-     VALUES ($1::uuid, $2, 'draft', $3::jsonb, $4::uuid)
+    `INSERT INTO chatbot_flows (tenant_id, name, status, draft_graph, created_by, inbound_webhook_sample_token)
+     VALUES ($1::uuid, $2, 'draft', $3::jsonb, $4::uuid, $5)
      RETURNING id`,
-    [opts.tenantId, name, JSON.stringify(clean), opts.createdBy]
+    [opts.tenantId, name, JSON.stringify(clean), opts.createdBy, sampleToken]
   );
   return getChatbotFlowById(opts.tenantId, String(r.rows[0].id));
 }
@@ -633,11 +645,12 @@ export async function importChatbotFlow(opts: {
   const graph = resolved.doc.graph;
 
   if (opts.mode === 'create' || resolved.createOnly) {
+    const sampleToken = generateInboundWebhookToken();
     const r = await pool.query(
-      `INSERT INTO chatbot_flows (tenant_id, name, status, draft_graph, created_by)
-       VALUES ($1::uuid, $2, 'draft', $3::jsonb, $4::uuid)
+      `INSERT INTO chatbot_flows (tenant_id, name, status, draft_graph, created_by, inbound_webhook_sample_token)
+       VALUES ($1::uuid, $2, 'draft', $3::jsonb, $4::uuid, $5)
        RETURNING id`,
-      [opts.tenantId, name, JSON.stringify(graph), opts.createdBy]
+      [opts.tenantId, name, JSON.stringify(graph), opts.createdBy, sampleToken]
     );
     const flow = await getChatbotFlowById(opts.tenantId, String(r.rows[0].id));
     if (!flow) throw new Error('Falha ao importar flow');

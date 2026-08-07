@@ -70,6 +70,24 @@ export function collectFlowDefinedVariables(nodes: FlowNodeLike[]): FlowDefinedV
       }
     }
 
+    if (type === 'ensure_conversation') {
+      pushVar(out, 'conversation.id', {
+        label: 'conversation.id',
+        source: src,
+        nodeId: n.id,
+      });
+      pushVar(out, 'ensure_conversation.phone', {
+        label: 'ensure_conversation.phone',
+        source: src,
+        nodeId: n.id,
+      });
+      pushVar(out, 'ensure_conversation.idempotent', {
+        label: 'ensure_conversation.idempotent',
+        source: src,
+        nodeId: n.id,
+      });
+    }
+
     if (type === 'set_variable') {
       const rows = Array.isArray(data.assignments)
         ? data.assignments

@@ -39,6 +39,7 @@ export const FLOW_NODE_TYPES = [
   'menu_choice',
   'conversation_note',
   'resolve_conversation',
+  'ensure_conversation',
 ] as const;
 
 /** @deprecated use FLOW_NODE_TYPES */
@@ -208,29 +209,56 @@ export const triggerSchema = z.discriminatedUnion('type', [
     type: z.literal('first_message'),
     idle_after_hours: z.coerce.number().min(0).max(8760).nullable().optional(),
   }),
+  /** S31 — gatilho por tag na conversa. */
+  z.object({
+    type: z.literal('tag'),
+    tag_id: z.string().uuid().optional().nullable(),
+    tag_label: z.string().trim().optional().nullable(),
+  }),
+  /** S31 — gatilho por coluna kanban. */
+  z.object({
+    type: z.literal('kanban_column'),
+    column_id: z.string().uuid({ message: 'Coluna Kanban obrigatória' }),
+    board_id: z.string().uuid().optional().nullable(),
+  }),
 ]);
 
-export const startDataSchema = z.object({
-  label: z.string().optional(),
-  trigger: triggerSchema.default({ type: 'first_message' }),
-  /** S22: true = só chats 1:1. Ausente/false = compat (grupos permitidos). */
-  dm_only: z.boolean().optional().default(false),
-  /** S23: política com sessão viva. */
-  session_policy: z
-    .enum(['ignore_if_session_alive', 'restart_on_keyword'])
-    .optional()
-    .default('ignore_if_session_alive'),
-  /** S24: minutos sem reiniciar após ended/error (0 = off). */
-  cooldown_minutes: z.coerce.number().int().min(0).max(10080).optional().default(0),
-  /** S24: janela horária (timezone do tenant se não houver override). */
-  schedule_enabled: z.boolean().optional().default(false),
-  schedule_start: z.string().optional().default('09:00'),
-  schedule_end: z.string().optional().default('18:00'),
-  /** S24: vazia = todas as instâncias; senão só estes UUIDs. */
-  instance_ids: z.array(z.string().uuid()).optional().default([]),
-  /** S24: maior vence em overlap de trigger. */
-  priority: z.coerce.number().int().min(-999).max(9999).optional().default(0),
-});
+export const startDataSchema = z
+  .object({
+    label: z.string().optional(),
+    trigger: triggerSchema.default({ type: 'first_message' }),
+    /** S22: true = só chats 1:1. Ausente/false = compat (grupos permitidos). */
+    dm_only: z.boolean().optional().default(false),
+    /** S23: política com sessão viva. */
+    session_policy: z
+      .enum(['ignore_if_session_alive', 'restart_on_keyword'])
+      .optional()
+      .default('ignore_if_session_alive'),
+    /** S24: minutos sem reiniciar após ended/error (0 = off). */
+    cooldown_minutes: z.coerce.number().int().min(0).max(10080).optional().default(0),
+    /** S24: janela horária (timezone do tenant se não houver override). */
+    schedule_enabled: z.boolean().optional().default(false),
+    schedule_start: z.string().optional().default('09:00'),
+    schedule_end: z.string().optional().default('18:00'),
+    /** S24: vazia = todas as instâncias; senão só estes UUIDs. */
+    instance_ids: z.array(z.string().uuid()).optional().default([]),
+    /** S24: maior vence em overlap de trigger. */
+    priority: z.coerce.number().int().min(-999).max(9999).optional().default(0),
+  })
+  .superRefine((d, ctx) => {
+    const t = d.trigger as { type?: string; tag_id?: unknown; tag_label?: unknown };
+    if (t?.type === 'tag') {
+      const hasId = Boolean(String(t.tag_id || '').trim());
+      const hasLabel = Boolean(String(t.tag_label || '').trim());
+      if (!hasId && !hasLabel) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Selecione uma tag (id ou nome)',
+          path: ['trigger', 'tag_id'],
+        });
+      }
+    }
+  });
 
 export const sendMessageDataSchema = z
   .object({
@@ -350,6 +378,22 @@ export const resolveConversationDataSchema = z.object({
   label: z.string().optional(),
   message: z.string().optional().default(''),
   close_attendance: z.boolean().optional().default(true),
+});
+
+/** S29 — telefone → create/reuse conversa → bind sessão órfã. */
+export const ensureConversationDataSchema = z.object({
+  label: z.string().optional(),
+  phone: z.string().min(1, 'Telefone obrigatório (literal ou {{var}})'),
+  normalize_br: z.boolean().optional().default(true),
+  instance_id: z.preprocess(
+    (v) => (v === '' || v == null ? null : v),
+    z.string().uuid().nullable().optional().default(null)
+  ),
+  reuse_policy: z.enum(['open', 'any', 'always_create']).optional().default('open'),
+  /** S29.1 — chave opcional (literal ou {{var}}, ex. {{order.id}}). Vazio = off. */
+  idempotency_key: z.string().max(256).optional().nullable().default(''),
+  /** Preview só editor — strip no publish. */
+  last_normalized_preview: z.string().optional().nullable(),
 });
 
 export const setVariableDataSchema = z.preprocess(
@@ -657,6 +701,7 @@ const DATA_BY_TYPE: Record<FlowNodeType, z.ZodTypeAny> = {
   menu_choice: menuChoiceDataSchema,
   conversation_note: conversationNoteDataSchema,
   resolve_conversation: resolveConversationDataSchema,
+  ensure_conversation: ensureConversationDataSchema,
 };
 
 export type ChatbotFlowGraph = {
@@ -724,6 +769,7 @@ const OUT_HANDLES: Record<FlowNodeType, string[]> = {
   end: [],
   conversation_note: ['default'],
   resolve_conversation: [],
+  ensure_conversation: ['default', 'error'],
   set_variable: ['default'],
   add_tag: ['default'],
   assign_agent: ['default'],
@@ -798,6 +844,7 @@ const NEEDS_IN: Set<FlowNodeType> = new Set([
   'menu_choice',
   'conversation_note',
   'resolve_conversation',
+  'ensure_conversation',
 ]);
 
 export function validateGraphForPublish(graph: ChatbotFlowGraph): GraphValidationResult {
@@ -973,4 +1020,104 @@ export function validateGraphForPublish(graph: ChatbotFlowGraph): GraphValidatio
 
   if (issues.length) return { ok: false, issues };
   return { ok: true };
+}
+
+/** Nó S29 que amarra conversa à sessão órfã (reconhecido na reachability antes do catálogo completo). */
+export const CONVERSATION_BINDING_NODE_TYPE = 'ensure_conversation';
+
+/** Nós que exigem conversation_id na sessão (WhatsApp / CRM / ticket). */
+export const NODES_REQUIRING_CONVERSATION: ReadonlySet<string> = new Set([
+  'send_message',
+  'wait_input',
+  'menu_choice',
+  'transfer_human',
+  'add_tag',
+  'assign_agent',
+  'move_kanban',
+  'kanban_add_card',
+  'conversation_note',
+  'resolve_conversation',
+  'lookup_invoice',
+  'select_invoice',
+  'invoice_assist',
+  'ticket_assist',
+  'lookup_ticket',
+  'select_ticket',
+  'ticket_lookup_assist',
+  'crm_link_check',
+  'crm_convert',
+  'webhook_out',
+]);
+
+/**
+ * S28.1 — a partir de webhook_in, encontra nós que exigem conversa sem passar por ensure_conversation.
+ * Aviso de publish (não bloqueia); runtime falha em send com conversation_required até o bind (S29).
+ */
+export function findWebhookConversationPathGaps(graph: ChatbotFlowGraph): {
+  gapNodeIds: string[];
+  hasWebhookIn: boolean;
+  hasEnsureOnAllPaths: boolean;
+} {
+  const migrated = migrateConditionGraph({
+    nodes: Array.isArray(graph.nodes) ? graph.nodes : [],
+    edges: Array.isArray(graph.edges) ? graph.edges : [],
+  });
+  const nodes = parseNodes(migrated.nodes);
+  const edges = parseEdges(migrated.edges);
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const webhookIns = nodes.filter((n) => n.type === 'webhook_in');
+  if (webhookIns.length === 0) {
+    return { gapNodeIds: [], hasWebhookIn: false, hasEnsureOnAllPaths: true };
+  }
+
+  const outgoing = new Map<string, ParsedEdge[]>();
+  for (const e of edges) {
+    if (!byId.has(e.source) || !byId.has(e.target)) continue;
+    if (!outgoing.has(e.source)) outgoing.set(e.source, []);
+    outgoing.get(e.source)!.push(e);
+  }
+
+  const gapIds = new Set<string>();
+  const visited = new Set<string>();
+  const stack: Array<{ id: string; hasEnsure: boolean }> = webhookIns.map((w) => ({
+    id: w.id,
+    hasEnsure: false,
+  }));
+
+  while (stack.length) {
+    const cur = stack.pop()!;
+    const key = `${cur.id}|${cur.hasEnsure ? 1 : 0}`;
+    if (visited.has(key)) continue;
+    visited.add(key);
+    const node = byId.get(cur.id);
+    if (!node) continue;
+
+    const hasEnsure =
+      cur.hasEnsure || node.type === CONVERSATION_BINDING_NODE_TYPE;
+
+    if (!hasEnsure && NODES_REQUIRING_CONVERSATION.has(node.type)) {
+      gapIds.add(node.id);
+    }
+
+    for (const e of outgoing.get(cur.id) || []) {
+      stack.push({ id: e.target, hasEnsure });
+    }
+  }
+
+  return {
+    gapNodeIds: [...gapIds],
+    hasWebhookIn: true,
+    hasEnsureOnAllPaths: gapIds.size === 0,
+  };
+}
+
+/** Avisos de publish (não bloqueiam) — webhook sem ensure_conversation antes de nós que exigem conversa. */
+export function collectWebhookOrphanConversationWarnings(graph: ChatbotFlowGraph): string[] {
+  const { gapNodeIds, hasWebhookIn, hasEnsureOnAllPaths } =
+    findWebhookConversationPathGaps(graph);
+  if (!hasWebhookIn || hasEnsureOnAllPaths) return [];
+  return [
+    `Webhook in: caminho até nó(s) que exigem conversa sem ensure_conversation (${gapNodeIds.join(', ')}). ` +
+      'POST sem conversation_id cria sessão órfã; send_message/wait_input falham até amarrar conversa (ensure_conversation).',
+  ];
 }
