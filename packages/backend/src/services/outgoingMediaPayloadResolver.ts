@@ -5,6 +5,13 @@ import {
   getWhatsappTemplateMediaRootCandidates,
   getWhatsappTemplateMediaRoot,
 } from './whatsappTemplateMediaStorageService.js';
+import { readBuffer } from './media/mediaLocalStorageAdapter.js';
+import {
+  extractMediaStorageKeyFromStoredUrl,
+  buildMediaRawSignedRelativeUrl,
+} from './media/mediaUrlSigner.js';
+import { getMediaAssetForOutgoingSend } from './media/mediaLibraryService.js';
+import { pool } from '../utils/db.js';
 
 type OutgoingMediaType = 'image' | 'document' | 'audio';
 
@@ -13,6 +20,9 @@ type ResolveOutgoingMediaPayloadParams = {
   fileUrl?: string | null;
   storagePath?: string | null;
   mimeType?: string | null;
+  /** S33.1 — asset da Media Library (scopes library / product_image). */
+  assetId?: string | null;
+  tenantId?: string | null;
 };
 
 type ResolvedOutgoingMediaPayload = {
@@ -102,12 +112,57 @@ async function readStorageAsDataUri(storagePath: string, mime: string): Promise<
   return `data:${mime};base64,${bin.toString('base64')}`;
 }
 
+/** Soft-delete / purged em media_assets bloqueia leitura para envio. */
+async function assertMediaAssetReadableByStorageKey(storageKey: string): Promise<void> {
+  try {
+    const st = await pool.query<{ status: string; deleted_at: string | null }>(
+      `SELECT status, deleted_at::text
+       FROM public.media_assets
+       WHERE storage_key = $1
+       LIMIT 1`,
+      [storageKey],
+    );
+    const row = st.rows[0];
+    if (row && (row.deleted_at || row.status === 'deleted' || row.status === 'purged')) {
+      throw new Error('media_asset_deleted');
+    }
+  } catch (e) {
+    if (e instanceof Error && e.message === 'media_asset_deleted') throw e;
+    // Sem linha / falha BD: segue (compat legado disco).
+  }
+}
+
+async function readMediaV1StorageAsDataUri(storageKey: string, mime: string): Promise<string> {
+  await assertMediaAssetReadableByStorageKey(storageKey);
+  const bin = await readBuffer(storageKey);
+  return `data:${mime};base64,${bin.toString('base64')}`;
+}
+
+/**
+ * Resolve payload de mídia outbound para UazAPI.
+ * Ordem: assetId (Media Library) → storagePath template → data URI → media v1 raw → template URL → HTTP público.
+ */
 export async function resolveOutgoingMediaPayload(
   params: ResolveOutgoingMediaPayloadParams,
 ): Promise<ResolvedOutgoingMediaPayload> {
   const mime = (params.mimeType ?? '').trim() || defaultMime(params.type);
   const rawUrl = (params.fileUrl ?? '').trim();
   const storagePath = (params.storagePath ?? '').trim();
+  const assetId = (params.assetId ?? '').trim();
+  const tenantId = (params.tenantId ?? '').trim();
+
+  if (assetId) {
+    if (!tenantId) throw new Error('tenantId_required_for_assetId');
+    const asset = await getMediaAssetForOutgoingSend({ tenantId, assetId });
+    if (!asset) throw new Error('media_asset_not_found');
+    const dataUri = await readMediaV1StorageAsDataUri(asset.storageKey, asset.mimeType || mime);
+    return {
+      fileForProvider: dataUri,
+      mimeType: asset.mimeType || mime,
+      persistedUrl: asset.relativeUrl || buildMediaRawSignedRelativeUrl(asset.storageKey),
+      strategy: 'data_uri',
+    };
+  }
 
   if (storagePath) {
     const dataUri = await readStorageAsDataUri(storagePath, mime);
@@ -129,6 +184,17 @@ export async function resolveOutgoingMediaPayload(
   }
 
   if (rawUrl) {
+    const mediaV1Key = extractMediaStorageKeyFromStoredUrl(rawUrl);
+    if (mediaV1Key) {
+      const dataUri = await readMediaV1StorageAsDataUri(mediaV1Key, mime);
+      return {
+        fileForProvider: dataUri,
+        mimeType: mime,
+        persistedUrl: rawUrl.startsWith('/') ? rawUrl : buildMediaRawSignedRelativeUrl(mediaV1Key),
+        strategy: 'data_uri',
+      };
+    }
+
     const inferredStoragePath = storagePathFromKnownMediaUrl(rawUrl);
     if (inferredStoragePath) {
       const dataUri = await readStorageAsDataUri(inferredStoragePath, mime);
@@ -153,4 +219,3 @@ export async function resolveOutgoingMediaPayload(
 
   throw new Error('missing_media_source');
 }
-

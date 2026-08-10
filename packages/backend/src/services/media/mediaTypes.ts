@@ -4,9 +4,13 @@ export type MediaScope =
   | 'tenant_logo'
   | 'store_logo'
   | 'product_image'
+  /** S33 — Media Library tenant (≠ flow_inbound_temp / D32.2). */
+  | 'library'
   | 'chat_attachment'
   | 'contract_document'
-  | 'invoice_document';
+  | 'invoice_document'
+  /** S32.1 — cópia temp do wait_input (≠ Media Library / produtos). */
+  | 'flow_inbound_temp';
 
 export type MediaOwnerType =
   | 'conversation'
@@ -33,6 +37,10 @@ export interface SaveMediaFromBufferInput {
   metadata?: Record<string, unknown>;
   /** Força indexação em media_assets mesmo com flag global desligada. */
   writeAssetRecord?: boolean;
+  /** Override do limite global MEDIA_MAX_FILE_BYTES (ex.: flow inbound temp). */
+  maxBytes?: number;
+  /** Opcional: utilizador que criou o asset (media_assets.created_by). */
+  createdBy?: string | null;
 }
 
 export interface SaveMediaResult {
@@ -41,4 +49,6 @@ export interface SaveMediaResult {
   mimeType: string;
   sizeBytes: number;
   checksum: string;
+  /** Presente quando writeAssetRecord gravou linha em media_assets. */
+  assetId?: string | null;
 }

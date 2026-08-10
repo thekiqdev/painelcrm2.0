@@ -1817,16 +1817,24 @@ export const chatService = {
     return response.data;
   },
 
-  /** Imagem via UazAPI `/send/media` (base64 ou URL). Legenda opcional. */
+  /** Imagem via UazAPI `/send/media` (base64, URL ou assetId da Media Library — S33.1). */
   async sendImageMessage(
     conversationId: string,
-    opts: { fileBase64: string; mimeType: string; caption?: string }
+    opts: {
+      fileBase64?: string;
+      fileUrl?: string;
+      assetId?: string;
+      mimeType: string;
+      caption?: string;
+    },
   ) {
     const response = await apiClient.post(`/api/chat/messages`, {
       conversationId,
       type: 'image',
-      fileBase64: opts.fileBase64,
       mimeType: opts.mimeType,
+      ...(opts.fileBase64 ? { fileBase64: opts.fileBase64 } : {}),
+      ...(opts.fileUrl?.trim() ? { fileUrl: opts.fileUrl.trim() } : {}),
+      ...(opts.assetId?.trim() ? { assetId: opts.assetId.trim() } : {}),
       ...(opts.caption?.trim() ? { caption: opts.caption.trim() } : {}),
     });
     if (response.error) {
@@ -1835,16 +1843,25 @@ export const chatService = {
     return response.data;
   },
 
-  /** Documento/PDF via `/send/media` (base64 ou URL). Texto opcional como legenda. */
+  /** Documento/PDF via `/send/media` (base64, URL ou assetId — S33.1). */
   async sendDocumentMessage(
     conversationId: string,
-    opts: { fileBase64: string; mimeType: string; caption?: string; fileName?: string },
+    opts: {
+      fileBase64?: string;
+      fileUrl?: string;
+      assetId?: string;
+      mimeType: string;
+      caption?: string;
+      fileName?: string;
+    },
   ) {
     const response = await apiClient.post(`/api/chat/messages`, {
       conversationId,
       type: 'document',
-      fileBase64: opts.fileBase64,
       mimeType: opts.mimeType,
+      ...(opts.fileBase64 ? { fileBase64: opts.fileBase64 } : {}),
+      ...(opts.fileUrl?.trim() ? { fileUrl: opts.fileUrl.trim() } : {}),
+      ...(opts.assetId?.trim() ? { assetId: opts.assetId.trim() } : {}),
       ...(opts.fileName?.trim() ? { fileName: opts.fileName.trim() } : {}),
       ...(opts.caption?.trim() ? { caption: opts.caption.trim() } : {}),
     });

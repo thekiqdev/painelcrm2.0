@@ -20,8 +20,10 @@ import {
 } from '../lib/canvasAnnotations';
 import type { FlowKanbanColumnMeta, FlowSelectOption } from '../hooks/useFlowCrmOptions';
 import { Button } from '@/components/ui/button';
-import { Copy, Plus, RefreshCw, Trash2, Radio, Loader2 } from 'lucide-react';
+import { Copy, Plus, RefreshCw, Trash2, Radio, Loader2, Images } from 'lucide-react';
 import { VariableTextField } from './VariableTextField';
+import { MediaPickerDialog, type MediaPickerAccept } from '@/components/media/MediaPickerDialog';
+import type { MediaLibraryAsset } from '@/services/mediaLibrary';
 import { previewNormalizePhoneBr } from '../lib/ensureConversationPhone';
 import { readMenuOptionsForEditor, type MenuChoiceOption } from '../lib/menuChoiceHelpers';
 import {
@@ -665,6 +667,7 @@ export function NodePropertiesPanel({
                 placeholder="answer"
               />
             </div>
+            <WaitInputAcceptFields data={data} onChange={onChange} />
             <WaitInputContactFields data={data} onChange={onChange} />
             <InputTimeoutFields data={data} onChange={onChange} />
           </>
@@ -2692,6 +2695,19 @@ function newMenuOptionId(existing: MenuChoiceOption[]): string {
   return id;
 }
 
+function mediaTypeFromMime(mime: string): 'image' | 'document' | 'audio' {
+  const mt = String(mime || '').toLowerCase();
+  if (mt.startsWith('image/')) return 'image';
+  if (mt.startsWith('audio/')) return 'audio';
+  return 'document';
+}
+
+function pickerAcceptForMediaType(mediaType: string): MediaPickerAccept {
+  if (mediaType === 'image') return 'image';
+  if (mediaType === 'document') return 'document';
+  return 'any';
+}
+
 function SendMessageFields({
   data,
   onChange,
@@ -2701,7 +2717,25 @@ function SendMessageFields({
   onChange: (patch: Record<string, unknown>) => void;
   flowVariables?: FlowDefinedVariable[];
 }) {
+  const [pickerOpen, setPickerOpen] = useState(false);
   const mode = String(data.send_mode || 'text') === 'media' ? 'media' : 'text';
+  const mediaTypeRaw = String(data.media_type || 'image');
+  const mediaType =
+    mediaTypeRaw === 'document' || mediaTypeRaw === 'audio' ? mediaTypeRaw : 'image';
+  const assetId = String(data.media_asset_id || '').trim();
+  const assetLabel = String(data.media_asset_label || '').trim();
+
+  const handlePickAsset = (asset: MediaLibraryAsset) => {
+    const nextType = mediaTypeFromMime(asset.mimeType);
+    onChange({
+      media_asset_id: asset.id,
+      media_asset_label: asset.originalFilename || asset.id,
+      media_url: '',
+      media_type: nextType,
+      filename: asset.originalFilename || String(data.filename || ''),
+    });
+  };
+
   return (
     <>
       <div className="space-y-1.5">
@@ -2735,12 +2769,7 @@ function SendMessageFields({
           <div className="space-y-1.5">
             <Label>Tipo de mídia</Label>
             <Select
-              value={
-                (() => {
-                  const mt = String(data.media_type || 'image');
-                  return mt === 'document' || mt === 'audio' ? mt : 'image';
-                })()
-              }
+              value={mediaType}
               onValueChange={(v) => onChange({ media_type: v })}
             >
               <SelectTrigger>
@@ -2753,16 +2782,65 @@ function SendMessageFields({
               </SelectContent>
             </Select>
           </div>
+
+          <div className="space-y-2 rounded-md border border-border/60 bg-muted/20 p-3">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 space-y-0.5">
+                <Label>Biblioteca de mídias</Label>
+                <p className="text-[11px] text-muted-foreground">
+                  Escolha um asset do tenant (Media Library). Google Drive não é necessário.
+                </p>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="shrink-0"
+                onClick={() => setPickerOpen(true)}
+              >
+                <Images className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                Escolher
+              </Button>
+            </div>
+            {assetId ? (
+              <div className="flex items-center justify-between gap-2 rounded-md bg-background/80 px-2.5 py-2 text-xs">
+                <span className="truncate font-medium" title={assetLabel || assetId}>
+                  {assetLabel || assetId.slice(0, 8)}
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 shrink-0 px-2 text-muted-foreground"
+                  onClick={() =>
+                    onChange({ media_asset_id: '', media_asset_label: '' })
+                  }
+                >
+                  Remover
+                </Button>
+              </div>
+            ) : (
+              <p className="text-[11px] text-muted-foreground">Nenhum asset selecionado.</p>
+            )}
+          </div>
+
           <VariableTextField
             id="media-url"
-            label="URL da mídia"
+            label="URL da mídia (opcional se houver asset)"
             rows={2}
             value={String(data.media_url || '')}
-            onChange={(media_url) => onChange({ media_url })}
+            onChange={(media_url) =>
+              onChange({
+                media_url,
+                ...(String(media_url || '').trim()
+                  ? { media_asset_id: '', media_asset_label: '' }
+                  : {}),
+              })
+            }
             flowVariables={flowVariables}
             placeholder="https://… ou {{vars}}"
           />
-          {String(data.media_type || 'image') !== 'audio' ? (
+          {mediaType !== 'audio' ? (
             <VariableTextField
               id="media-caption"
               label="Legenda (opcional)"
@@ -2773,27 +2851,148 @@ function SendMessageFields({
               placeholder="Texto junto da mídia"
             />
           ) : null}
-          {String(data.media_type || 'image') === 'document' ||
-          String(data.media_type || 'image') === 'audio' ? (
+          {mediaType === 'document' || mediaType === 'audio' ? (
             <div className="space-y-1.5">
               <Label htmlFor="media-filename">Nome do arquivo (opcional)</Label>
               <Input
                 id="media-filename"
                 value={String(data.filename || '')}
                 onChange={(e) => onChange({ filename: e.target.value })}
-                placeholder={
-                  String(data.media_type || '') === 'audio' ? 'mensagem.mp3' : 'proposta.pdf'
-                }
+                placeholder={mediaType === 'audio' ? 'mensagem.mp3' : 'proposta.pdf'}
               />
             </div>
           ) : null}
           <p className="text-[11px] text-muted-foreground">
-            Use uma URL pública acessível pelo WhatsApp. Áudio não leva legenda. Se o envio falhar, o
-            fluxo continua (não trava a sessão).
+            Preferir a biblioteca (URL assinada / storage interno). URL pública continua válida.
+            Áudio não leva legenda. Se o envio falhar, o fluxo continua (não trava a sessão).
           </p>
+
+          <MediaPickerDialog
+            open={pickerOpen}
+            onOpenChange={setPickerOpen}
+            title="Mídia do nó send_message"
+            description="Selecione ou carregue um ficheiro da Media Library para enviar no fluxo."
+            accept={pickerAcceptForMediaType(mediaType)}
+            confirmLabel="Usar neste nó"
+            onSelect={handlePickAsset}
+          />
         </>
       )}
     </>
+  );
+}
+
+function WaitInputAcceptFields({
+  data,
+  onChange,
+}: {
+  data: Record<string, unknown>;
+  onChange: (patch: Record<string, unknown>) => void;
+}) {
+  const acceptRaw = String(data.accept || 'text');
+  const accept = acceptRaw === 'media' || acceptRaw === 'any' ? acceptRaw : 'text';
+  const varName = String(data.variable || 'arquivo').trim() || 'arquivo';
+  const kindsRaw = Array.isArray(data.media_kinds) ? data.media_kinds : ['document', 'image'];
+  const kinds = new Set(
+    kindsRaw.map((k) => String(k)).filter((k) => ['document', 'image', 'audio', 'video'].includes(k))
+  );
+  if (kinds.size === 0) {
+    kinds.add('document');
+    kinds.add('image');
+  }
+
+  const toggleKind = (kind: string, on: boolean) => {
+    const next = new Set(kinds);
+    if (on) next.add(kind);
+    else next.delete(kind);
+    if (next.size === 0) {
+      next.add('document');
+      next.add('image');
+    }
+    onChange({ media_kinds: Array.from(next) });
+  };
+
+  return (
+    <div className="space-y-3 rounded-md border border-border/60 p-3">
+      <div className="space-y-1.5">
+        <Label>Aceitar</Label>
+        <Select
+          value={accept}
+          onValueChange={(v) =>
+            onChange({
+              accept: v,
+              ...(v !== 'text' && !Array.isArray(data.media_kinds)
+                ? { media_kinds: ['document', 'image'] }
+                : {}),
+            })
+          }
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="text">Texto</SelectItem>
+            <SelectItem value="media">Mídia</SelectItem>
+            <SelectItem value="any">Ambos</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      {accept === 'media' || accept === 'any' ? (
+        <>
+          <div className="space-y-2">
+            <Label>Tipos de mídia</Label>
+            {(
+              [
+                ['document', 'Documento / PDF'],
+                ['image', 'Imagem'],
+                ['audio', 'Áudio'],
+                ['video', 'Vídeo'],
+              ] as const
+            ).map(([id, label]) => (
+              <label key={id} className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-border"
+                  checked={kinds.has(id)}
+                  onChange={(e) => toggleKind(id, e.target.checked)}
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="wait-invalid">Mensagem se inválido (opcional)</Label>
+            <Input
+              id="wait-invalid"
+              value={String(data.invalid_message || '')}
+              onChange={(e) => onChange({ invalid_message: e.target.value })}
+              placeholder="Por favor, envie um arquivo…"
+            />
+          </div>
+          <p className="text-[11px] text-muted-foreground leading-relaxed">
+            Ao receber mídia, grava{' '}
+            <code className="text-[10px]">
+              {`{{${varName}.url}}`}
+            </code>
+            ,{' '}
+            <code className="text-[10px]">
+              {`{{${varName}.nome}}`}
+            </code>{' '}
+            e{' '}
+            <code className="text-[10px]">
+              {`{{${varName}.tipo}}`}
+            </code>
+            . Para enviar à parceira, use <strong>webhook_out</strong> custom. Em produção o runtime
+            copia o ficheiro para storage nosso e grava URL assinada (
+            <code className="text-[10px]">/api/media/v1/raw?k=&amp;s=&amp;e=</code>
+            ) com TTL configurável (default 48h — env{' '}
+            <code className="text-[10px]">FLOW_INBOUND_TEMP_TTL_HOURS</code>
+            ). A parceira deve baixar dentro do TTL; o ficheiro <strong>não</strong> entra na Media
+            Library de produtos.
+          </p>
+        </>
+      ) : null}
+    </div>
   );
 }
 

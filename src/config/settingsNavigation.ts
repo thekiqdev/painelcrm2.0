@@ -12,6 +12,7 @@ import {
   Folder,
   FolderOpen,
   Globe,
+  Images,
   LayoutTemplate,
   LifeBuoy,
   MessageSquare,
@@ -41,6 +42,7 @@ export type SettingSection =
   | "paymentGateway"
   | "googleCalendar"
   | "googleDrive"
+  | "mediaLibrary"
   | "agendaAvailability"
   | "chatAttendance"
   | "support"
@@ -287,6 +289,16 @@ const BASE_ITEMS: SettingsNavItem[] = [
     pathSegment: "google-drive",
   },
   {
+    id: "mediaLibrary",
+    title: "Mídias",
+    description: "Biblioteca de ficheiros do tenant (upload, preview e quotas)",
+    icon: Images,
+    sidebarCategory: "Integrações",
+    subcategory: "Arquivos",
+    mobileCategory: "Sistema",
+    pathSegment: "midias",
+  },
+  {
     id: "agendaAvailability",
     title: "Disponibilidade da agenda",
     description: "Horários e bloqueios da agenda",
@@ -360,6 +372,7 @@ export const SECTION_QUERY_VALUES: SettingSection[] = [
   "paymentGateway",
   "googleCalendar",
   "googleDrive",
+  "mediaLibrary",
   "agendaAvailability",
   "chatAttendance",
   "support",

@@ -58,7 +58,9 @@ tenants/{tenantId}/{scope}/{entityType}/{entityId}/{uuid}.{ext}
 ```
 
 - **`tenantId`:** UUID do tenant (string sem espaços).
-- **`scope`:** domínio funcional em minúsculas (ex.: `avatar`, `product`, `message`, `tenant_logo`, `conversation`).
+- **`scope`:** domínio funcional em minúsculas (ex.: `avatar`, `product`, `message`, `tenant_logo`, `conversation`, `flow_inbound_temp`, `library`).
+  - **`flow_inbound_temp` (S32.1):** cópia temporária de mídia capturada no `wait_input` do chatbot-flows para URL assinada com TTL. **Não** faz parte da Media Library de produtos (D32.2). Purge após `metadata.expires_at` / `FLOW_INBOUND_TEMP_TTL_HOURS` (default 48h).
+  - **`library` (S33):** Media Library tenant (upload/lista/soft-delete + quotas). Listagem inclui também `product_image`. **Nunca** mistura com `flow_inbound_temp`.
 - **`entityType`:** tipo da entidade ligada (ex.: `conversation`, `product`, `user`, `tenant`).
 - **`entityId`:** ID estável da entidade no nosso sistema (UUID ou ID numérico como string).
 - **`uuid`:** UUID v4 (ou ULID) gerado no upload.
@@ -173,9 +175,10 @@ GET /api/public/catalog-media/raw?k=&s=
 
 ```http
 GET /api/media/v1/raw?k=&s=
+GET /api/media/v1/raw?k=&s=&e=   # S32.1 — e = unix expiry; HMAC cobre k.e; após e → 410
 ```
 
-Mesmos parâmetros `k` e `s` (ou superset documentado). Documentação e novos clientes devem preferir `/api/media/v1/raw`.
+Mesmos parâmetros `k` e `s` (ou superset documentado). Sem `e`, comportamento legado (assinatura só de `k`). Documentação e novos clientes devem preferir `/api/media/v1/raw`. URLs de `flow_inbound_temp` **devem** incluir `e` (TTL).
 
 ---
 
@@ -284,4 +287,10 @@ WHERE avatar_url LIKE '%/api/public/catalog-media/raw%'
 
 ---
 
-*Última atualização: contrato v1.1 — precedência de avatar, anti-dupla normalização, persistência não destrutiva, proxy, JSON, upload e SQL.*
+## 15. Continuação de produto (ponteiro)
+
+Plano de mídia inbound em chatbot flows (cópia temp + URL assinada p/ webhook) e Media Library tenant/picker: [`chatbot-flows/PLAN_SPRINTS_CHATBOT_FLOWS_S32.md`](./chatbot-flows/PLAN_SPRINTS_CHATBOT_FLOWS_S32.md) (**S32 · S32.1 · S33 · S33.1 · S33.2** feitos). Inbound de flow **não** substitui este contrato; deve reutilizar `storage_key`, raw assinado e GC.
+
+---
+
+*Última atualização: contrato v1.1 — precedência de avatar, anti-dupla normalização, persistência não destrutiva, proxy, JSON, upload e SQL; ponteiro S32+.*

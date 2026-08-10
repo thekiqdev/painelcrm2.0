@@ -47,6 +47,7 @@ import {
   Ticket,
   Clock,
   Paperclip,
+  Images,
 } from 'lucide-react';
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -117,6 +118,8 @@ import { chatKanbanService } from '@/services/chatKanban';
 import { ChatSidebarTagFilters } from '@/components/chat/ChatSidebarTagFilters';
 import { useChatTagFilters } from '@/hooks/useChatTagFilters';
 import { ChatWhatsappModelPickerDialog } from '@/components/chat/ChatWhatsappModelPickerDialog';
+import { MediaPickerDialog } from '@/components/media/MediaPickerDialog';
+import type { MediaLibraryAsset } from '@/services/mediaLibrary';
 import {
   buildSlaContextFromDashboard,
   selectChatBadges,
@@ -421,6 +424,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   const [newMessage, setNewMessage] = useState('');
   const newMessageRef = useRef('');
   const [whatsappModelPickerOpen, setWhatsappModelPickerOpen] = useState(false);
+  const [mediaPickerOpen, setMediaPickerOpen] = useState(false);
   const [meetNowConfirmOpen, setMeetNowConfirmOpen] = useState(false);
   const [meetNowSubmitting, setMeetNowSubmitting] = useState(false);
   const [scheduleChatDlgOpen, setScheduleChatDlgOpen] = useState(false);
@@ -3758,6 +3762,51 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     else toast.error('Tipo de arquivo não suportado para envio pelo WhatsApp.');
   };
 
+  /** S33.1 — envia anexo a partir da Media Library (assetId; sem colar URL). */
+  const sendChatLibraryAsset = async (asset: MediaLibraryAsset) => {
+    if (!selectedConversationId) return;
+    const caption = newMessage.trim();
+    setNewMessage('');
+    try {
+      setSendingMessage(true);
+      const isImage = String(asset.mimeType || '').toLowerCase().startsWith('image/');
+      if (isImage) {
+        await chatService.sendImageMessage(selectedConversationId, {
+          assetId: asset.id,
+          mimeType: asset.mimeType || 'image/jpeg',
+          caption: caption || undefined,
+        });
+        bumpConversationListRow(selectedConversationId, {
+          lastMessagePreview: caption.trim() ? caption.trim().slice(0, 200) : '[Imagem]',
+          lastMessageAt: new Date().toISOString(),
+        });
+      } else {
+        await chatService.sendDocumentMessage(selectedConversationId, {
+          assetId: asset.id,
+          mimeType: asset.mimeType || 'application/pdf',
+          fileName: asset.originalFilename || undefined,
+          caption: caption || undefined,
+        });
+        bumpConversationListRow(selectedConversationId, {
+          lastMessagePreview: caption.trim() ? caption.trim().slice(0, 200) : '[Documento]',
+          lastMessageAt: new Date().toISOString(),
+        });
+      }
+      await loadMessages(selectedConversationId, { silent: true });
+      scheduleOperationsPanelRefresh();
+      toast.success(isImage ? 'Imagem enviada da biblioteca' : 'Documento enviado da biblioteca');
+    } catch (error) {
+      setNewMessage(caption);
+      console.error('Erro ao enviar mídia da biblioteca:', error);
+      toast.error('Não foi possível enviar a mídia da biblioteca', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+      throw error;
+    } finally {
+      setSendingMessage(false);
+    }
+  };
+
   /** TF7 E3 — atualizar lista do servidor (force GET + rewrite cache). */
   const handleRefreshInboxList = useCallback(
     async (opts?: { clearLocalCache?: boolean }) => {
@@ -4992,6 +5041,24 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                   ? 'Aguarde o envio da mensagem'
                   : undefined,
               searchAliases: ['anexo', 'arquivo', 'pdf', 'foto'],
+            },
+          ]
+        : []),
+      ...(!isPlatformScope && hasPermissionKey('chat.send_message')
+        ? [
+            {
+              id: 'media-library',
+              label: 'Biblioteca de mídias',
+              description: 'Escolher ou carregar da biblioteca',
+              icon: Images,
+              onSelect: () => setMediaPickerOpen(true),
+              disabled: sendingMessage || !selectedConversationId,
+              disabledReason: !selectedConversationId
+                ? 'Selecione uma conversa'
+                : sendingMessage
+                  ? 'Aguarde o envio da mensagem'
+                  : undefined,
+              searchAliases: ['biblioteca', 'midia', 'mídia', 'galeria', 'library'],
             },
           ]
         : []),
@@ -7263,6 +7330,16 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
           }
           scheduleOperationsPanelRefresh();
         }}
+      />
+
+      <MediaPickerDialog
+        open={mediaPickerOpen}
+        onOpenChange={setMediaPickerOpen}
+        title="Enviar da biblioteca"
+        description="Escolha uma imagem ou documento da Media Library, ou carregue um ficheiro novo."
+        accept="any"
+        confirmLabel="Enviar"
+        onSelect={sendChatLibraryAsset}
       />
 
       <AlertDialog open={meetNowConfirmOpen} onOpenChange={setMeetNowConfirmOpen}>

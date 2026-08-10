@@ -7,6 +7,7 @@ import {
   FileSignature,
   FileText,
   LayoutTemplate,
+  Images,
   ListTodo,
   Paperclip,
   Receipt,
@@ -36,6 +37,8 @@ export type FloatingComposerQuickCtx = {
   isMobile: boolean;
   canScheduleChatMessage: boolean;
   onAttachFile: () => void;
+  /** S33.1 — abrir Media Library picker */
+  onMediaLibrary?: () => void;
   onScheduleMessage: () => void;
   onTemplate: () => void;
   /** dispatchCompactAction no floating */
@@ -63,6 +66,18 @@ export function buildFloatingComposerQuickSections(
             description: 'Imagem ou documento',
             icon: Paperclip,
             onSelect: ctx.onAttachFile,
+          },
+        ]
+      : []),
+    ...(ctx.onMediaLibrary
+      ? [
+          {
+            id: 'media-library',
+            label: 'Biblioteca de mídias',
+            description: 'Escolher ou carregar da biblioteca',
+            icon: Images,
+            onSelect: ctx.onMediaLibrary,
+            searchAliases: ['biblioteca', 'midia', 'mídia', 'galeria'],
           },
         ]
       : []),

@@ -32,6 +32,14 @@ import {
 import { pickConditionHandle } from './conditionHelpers';
 import { computeInputTimeoutResumeAt } from './inputTimeout';
 import {
+  applyCapturedMediaVariables,
+  decideWaitInputCapture,
+  defaultWaitInputRejectMessage,
+  readWaitInputAccept,
+  readWaitInputMediaKinds,
+  type InboundMediaItem,
+} from './waitInputMedia';
+import {
   matchKanbanColumnTrigger,
   matchStartTrigger,
   matchTagTrigger,
@@ -152,7 +160,10 @@ export type RuntimeOutboundAction =
   | {
       type: 'send_media';
       mediaType: 'image' | 'document' | 'audio';
-      mediaUrl: string;
+      /** URL pública ou relativa; opcional se `assetId` estiver definido (S33.2). */
+      mediaUrl?: string;
+      /** S33.2 — Media Library asset (scopes library / product_image). */
+      assetId?: string;
       caption?: string;
       filename?: string;
     }
@@ -323,6 +334,13 @@ export function interpolateTemplate(text: string, variables: Record<string, unkn
   return text.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_m, key: string) => {
     const v = variables[key];
     if (v == null) return '';
+    if (typeof v === 'object') {
+      try {
+        return JSON.stringify(v);
+      } catch {
+        return '';
+      }
+    }
     return String(v);
   });
 }
@@ -423,6 +441,8 @@ export function processInboundStep(opts: {
   messageBody: string | null;
   /** ID de botão/lista (simulador / UazAPI). */
   interactiveReplyId?: string | null;
+  /** S32: mídia da mensagem inbound (simulador / chat_messages.media). */
+  inboundMedia?: InboundMediaItem[] | null;
   /** Se true, estamos iniciando (acabou de criar sessão no start). */
   justStarted?: boolean;
   /** Worker retomando após delay: avança a partir do nó delay → saída default. */
@@ -724,12 +744,38 @@ export function processInboundStep(opts: {
         return { session, actions, handled: true };
       }
     } else {
+      // wait_input (S32: accept text|media|any)
       const waitData = (waitNode.data || {}) as Record<string, unknown>;
-      maybePushUpdateContactFromWaitInput(
-        actions,
-        waitData,
-        String(session.variables[varName] ?? '')
-      );
+      const accept = readWaitInputAccept(waitData);
+      const mediaKinds = readWaitInputMediaKinds(waitData);
+      const decision = decideWaitInputCapture({
+        accept,
+        mediaKinds,
+        messageBody: opts.messageBody,
+        interactiveReplyId: opts.interactiveReplyId,
+        inboundMedia: opts.inboundMedia,
+      });
+
+      if (!decision.ok) {
+        delete session.variables[varName];
+        const rejectTpl =
+          String(waitData.invalid_message || '').trim() ||
+          defaultWaitInputRejectMessage(decision.reason);
+        const invalidMsg = interpolateTemplate(rejectTpl, session.variables).trim();
+        if (invalidMsg) actions.push({ type: 'send_text', text: invalidMsg });
+        session.status = 'waiting_input';
+        session.waitingVariable = varName;
+        session.resumeAt = computeInputTimeoutResumeAt(waitData);
+        return { session, actions, handled: true };
+      }
+
+      if (decision.mode === 'media') {
+        applyCapturedMediaVariables(session.variables, varName, decision.media);
+      } else {
+        session.variables[varName] = decision.value;
+        maybePushUpdateContactFromWaitInput(actions, waitData, decision.value);
+      }
+
       const next = outEdge(opts.graph, waitNode.id, 'default');
       if (!next) {
         session.status = 'error';
@@ -1096,6 +1142,7 @@ export function processInboundStep(opts: {
         const mode = String(data.send_mode || 'text') === 'media' ? 'media' : 'text';
         if (mode === 'media') {
           const mediaUrl = interpolateTemplate(String(data.media_url || ''), session.variables).trim();
+          const assetId = String(data.media_asset_id || '').trim();
           const rawMt = String(data.media_type || 'image');
           const mediaType =
             rawMt === 'document' || rawMt === 'audio' ? rawMt : ('image' as const);
@@ -1104,11 +1151,12 @@ export function processInboundStep(opts: {
               ? ''
               : interpolateTemplate(String(data.caption || ''), session.variables).trim();
           const filename = interpolateTemplate(String(data.filename || ''), session.variables).trim();
-          if (mediaUrl) {
+          if (assetId || mediaUrl) {
             actions.push({
               type: 'send_media',
               mediaType,
-              mediaUrl,
+              mediaUrl: mediaUrl || undefined,
+              assetId: assetId || undefined,
               caption: caption || undefined,
               filename: filename || undefined,
             });

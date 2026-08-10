@@ -264,9 +264,12 @@ const sendMessageSchema = z
     type: z.enum(['text', 'image', 'document']).optional(),
     text: z.string().optional(),
     caption: z.string().optional(),
-    /** Base64 cru (sem prefixo data:) ou URL pública para UazAPI */
+    /** Base64 cru (sem prefixo data:) ou URL pública / media v1 para UazAPI */
     fileBase64: z.string().optional(),
-    fileUrl: z.string().url().optional(),
+    /** URL absoluta, path relativo `/api/media/v1/raw?...`, ou data URI */
+    fileUrl: z.string().min(1).optional(),
+    /** S33.1 — asset da Media Library (resolvido no backend; ≠ flow_inbound_temp) */
+    assetId: z.string().uuid().optional(),
     mimeType: z.string().optional(),
     fileName: z.string().max(255).optional(),
     readChat: z.boolean().optional(),
@@ -282,10 +285,10 @@ const sendMessageSchema = z
       }
     }
     if (t === 'image' || t === 'document') {
-      if (!data.fileBase64?.trim() && !data.fileUrl?.trim()) {
+      if (!data.fileBase64?.trim() && !data.fileUrl?.trim() && !data.assetId?.trim()) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: 'Para type=image/document informe fileBase64 ou fileUrl',
+          message: 'Para type=image/document informe fileBase64, fileUrl ou assetId',
         });
       }
       if (data.fileBase64 && data.fileBase64.length > MAX_MEDIA_BASE64_CHARS) {
@@ -2125,6 +2128,14 @@ async function saveMessage(
             messageBody: bodyForInsert,
             inserted: true,
             interactiveReplyId: extractInteractiveReplyId(rawMeta) || null,
+            inboundMedia: mediaArr.length
+              ? mediaArr.map((m) => ({
+                  type: m.type,
+                  url: m.url ?? null,
+                  mimetype: m.mimetype ?? null,
+                  fileName: m.fileName ?? null,
+                }))
+              : null,
           });
           if (flowsHandled) return;
           await runChatbotPhase8Inbound({
@@ -9445,15 +9456,30 @@ export async function sendMessage(req: AuthRequest, res: Response) {
         (data.fileBase64
           ? `data:${data.mimeType || (msgType === 'document' ? 'application/pdf' : 'image/jpeg')};base64,${data.fileBase64}`
           : null);
-      if (!sourceFile) {
-        res.status(400).json({ error: 'Informe fileBase64 ou fileUrl para envio de mídia' });
+      if (!sourceFile && !data.assetId) {
+        res.status(400).json({ error: 'Informe fileBase64, fileUrl ou assetId para envio de mídia' });
         return;
       }
-      const resolvedMedia = await resolveOutgoingMediaPayload({
-        type: msgType,
-        fileUrl: sourceFile,
-        mimeType: data.mimeType || (msgType === 'document' ? 'application/pdf' : 'image/jpeg'),
-      });
+      let resolvedMedia: Awaited<ReturnType<typeof resolveOutgoingMediaPayload>>;
+      try {
+        resolvedMedia = await resolveOutgoingMediaPayload({
+          type: msgType,
+          fileUrl: sourceFile,
+          assetId: data.assetId ?? null,
+          tenantId: tenantId ?? null,
+          mimeType: data.mimeType || (msgType === 'document' ? 'application/pdf' : 'image/jpeg'),
+        });
+      } catch (mediaErr: unknown) {
+        const msg = mediaErr instanceof Error ? mediaErr.message : 'invalid_media';
+        const status =
+          msg === 'media_asset_not_found' || msg === 'media_asset_deleted'
+            ? 404
+            : msg === 'tenantId_required_for_assetId'
+              ? 400
+              : 400;
+        res.status(status).json({ error: `Não foi possível resolver a mídia: ${msg}` });
+        return;
+      }
       const providerFile =
         msgType === 'document' &&
         typeof resolvedMedia.fileForProvider === 'string' &&
@@ -10054,6 +10080,9 @@ export type KanbanAutomationOutboundMediaInput = {
   type: 'image' | 'document' | 'audio';
   fileUrl?: string | null;
   storagePath?: string | null;
+  /** S33.1/S33.2 — Media Library asset; exige tenantId. */
+  assetId?: string | null;
+  tenantId?: string | null;
   caption?: string | null;
   mimeType?: string | null;
   fileName?: string | null;
@@ -10314,6 +10343,8 @@ export async function sendKanbanAutomationOutboundMedia(
       fileUrl: input.fileUrl ?? null,
       storagePath: input.storagePath ?? null,
       mimeType: mime,
+      assetId: input.assetId ?? null,
+      tenantId: input.tenantId ?? null,
     });
   } catch (e: any) {
     return { ok: false, error: e?.message || 'invalid_or_missing_media_source' };

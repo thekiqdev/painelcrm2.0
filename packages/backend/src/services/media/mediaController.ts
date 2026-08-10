@@ -24,6 +24,12 @@ function contentTypeForFile(absPath: string): string {
   if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
   if (lower.endsWith('.pdf')) return 'application/pdf';
   if (lower.endsWith('.txt')) return 'text/plain; charset=utf-8';
+  if (lower.endsWith('.ogg')) return 'audio/ogg';
+  if (lower.endsWith('.mp3')) return 'audio/mpeg';
+  if (lower.endsWith('.m4a')) return 'audio/mp4';
+  if (lower.endsWith('.aac')) return 'audio/aac';
+  if (lower.endsWith('.mp4')) return 'video/mp4';
+  if (lower.endsWith('.webm')) return 'video/webm';
   return 'application/octet-stream';
 }
 
@@ -73,7 +79,23 @@ export async function getMediaRawBySignedKey(req: Request, res: Response): Promi
     return;
   }
 
-  const sigOk = verifyMediaSignature(storageKey, s);
+  const eRaw = String(req.query.e || '').trim();
+  let expiresAtUnix: number | null = null;
+  if (eRaw) {
+    const parsed = parseInt(eRaw, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      logMediaRawDiagnostic({
+        phase: 'invalid_expiry',
+        storageKeyPrefix: prefixKey(storageKey),
+        storageRoot: root,
+      });
+      res.status(400).type('text/plain').send('Parâmetro e inválido.');
+      return;
+    }
+    expiresAtUnix = parsed;
+  }
+
+  const sigOk = verifyMediaSignature(storageKey, s, expiresAtUnix);
   if (!sigOk) {
     logMediaRawDiagnostic({
       phase: 'bad_signature',
@@ -81,9 +103,48 @@ export async function getMediaRawBySignedKey(req: Request, res: Response): Promi
       signatureOk: false,
       signingSecretSource: getMediaSigningSecretSource(),
       storageRoot: root,
+      hasExpiry: expiresAtUnix != null,
     });
     res.status(400).type('text/plain').send('Assinatura inválida.');
     return;
+  }
+
+  // S32.1 / D32.8 — URL assinada com TTL: após expiry → 410
+  if (expiresAtUnix != null && Math.floor(Date.now() / 1000) > expiresAtUnix) {
+    logMediaRawDiagnostic({
+      phase: 'expired',
+      storageKeyPrefix: prefixKey(storageKey),
+      signatureOk: true,
+      expiresAtUnix,
+      storageRoot: root,
+    });
+    res.status(410).type('text/plain').send('URL de mídia expirada.');
+    return;
+  }
+
+  // Soft-delete: asset deleted/purged deixa de autorizar leitura
+  try {
+    const st = await pool.query<{ status: string; deleted_at: string | null }>(
+      `SELECT status, deleted_at::text
+       FROM public.media_assets
+       WHERE storage_key = $1
+       LIMIT 1`,
+      [storageKey]
+    );
+    const row = st.rows[0];
+    if (row && (row.deleted_at || row.status === 'deleted' || row.status === 'purged')) {
+      logMediaRawDiagnostic({
+        phase: 'asset_deleted',
+        storageKeyPrefix: prefixKey(storageKey),
+        signatureOk: true,
+        status: row.status,
+        storageRoot: root,
+      });
+      res.status(410).type('text/plain').send('Mídia removida.');
+      return;
+    }
+  } catch {
+    // Sem media_assets / falha de BD: segue leitura do disco (compat legado).
   }
 
   let absPath = '';

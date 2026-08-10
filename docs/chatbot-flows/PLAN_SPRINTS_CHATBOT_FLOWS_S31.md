@@ -7,7 +7,7 @@
 | **Base** | [`PLAN_SPRINTS_CHATBOT_FLOWS_S28.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S28.md) §9 |
 | **Nome** | **S31 — Gatilho por tag / coluna kanban + opt-out `parar`/`sair`** |
 | **Status** | **Feito** |
-| **Próximo** | Hardening S6 / candidatos de produto (fora deste PR) |
+| **Próximo** | **S32–S33.2 feitos** — [`PLAN_SPRINTS_CHATBOT_FLOWS_S32.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S32.md) |
 
 ---
 
@@ -111,4 +111,4 @@ Preview no canvas: `Tag: …` / `Kanban: coluna`.
 
 1. ~~Implementar S31.~~
 2. Smoke staging: tag na conversa + move de coluna + `parar` no WhatsApp.
-3. Próximo item de produto conforme backlog (ex. S6 hardening), em entrega separada.
+3. Próximo: **S32–S33.2 feitos** — [`PLAN_SPRINTS_CHATBOT_FLOWS_S32.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S32.md).

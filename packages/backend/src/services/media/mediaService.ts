@@ -7,7 +7,16 @@ import { assertPersistableMediaUrl } from './mediaGuards.js';
 import { buildMediaRawSignedRelativeUrl } from './mediaUrlSigner.js';
 import { pool } from '../../utils/db.js';
 
-const ACCEPTED_MIME_PREFIX = ['image/', 'application/pdf', 'text/plain'];
+const ACCEPTED_MIME_PREFIX = [
+  'image/',
+  'audio/',
+  'video/',
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument',
+  'application/vnd.ms-excel',
+  'text/plain',
+];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function bufferLooksLikeImage(buf: Buffer): boolean {
@@ -42,7 +51,7 @@ function inferImageMimeFromBuffer(buf: Buffer): string | null {
 function assertAllowedMimeType(mimeType: string): void {
   const mt = String(mimeType || '').toLowerCase().trim();
   if (!mt) throw new Error('mimeType obrigatório.');
-  const ok = ACCEPTED_MIME_PREFIX.some((x) => (x.endsWith('/') ? mt.startsWith(x) : mt === x));
+  const ok = ACCEPTED_MIME_PREFIX.some((x) => (x.endsWith('/') ? mt.startsWith(x) : mt === x || mt.startsWith(x)));
   if (!ok) throw new Error(`mimeType não permitido: ${mimeType}`);
 }
 
@@ -73,17 +82,21 @@ async function registerMediaAsset(input: {
   sourceUrl?: string | null;
   publicUrl: string;
   metadata?: Record<string, unknown>;
-}): Promise<void> {
+  createdBy?: string | null;
+}): Promise<string | null> {
   const tenantId = asUuidOrNull(input.tenantId);
-  if (!tenantId) return;
+  if (!tenantId) return null;
   const ownerId = asUuidOrNull(input.ownerId ?? null);
+  const createdBy = asUuidOrNull(input.createdBy ?? null);
   try {
-    await pool.query(
+    const r = await pool.query<{ id: string }>(
       `INSERT INTO public.media_assets (
         tenant_id, owner_type, owner_id, scope, storage_key, mime_type, size_bytes, checksum,
-        original_filename, source_url, public_url, status, metadata
-      ) VALUES ($1::uuid, $2, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, 'ready', $12::jsonb)
-      ON CONFLICT (storage_key) DO NOTHING`,
+        original_filename, source_url, public_url, status, metadata, created_by
+      ) VALUES ($1::uuid, $2, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, 'ready', $12::jsonb, $13::uuid)
+      ON CONFLICT (storage_key) DO UPDATE SET
+        updated_at = now()
+      RETURNING id::text`,
       [
         tenantId,
         input.ownerType,
@@ -97,10 +110,13 @@ async function registerMediaAsset(input: {
         input.sourceUrl ?? null,
         input.publicUrl,
         JSON.stringify(input.metadata ?? {}),
+        createdBy,
       ]
     );
+    return r.rows[0]?.id ?? null;
   } catch (e: unknown) {
     console.warn('[mediaService] registerMediaAsset skipped:', e instanceof Error ? e.message : e);
+    return null;
   }
 }
 
@@ -110,7 +126,10 @@ export async function saveFromBuffer(input: SaveMediaFromBufferInput): Promise<S
   if (!Buffer.isBuffer(input.buffer) || input.buffer.length === 0) {
     throw new Error('buffer inválido.');
   }
-  const max = getMediaMaxFileBytes();
+  const max =
+    typeof input.maxBytes === 'number' && Number.isFinite(input.maxBytes) && input.maxBytes > 0
+      ? input.maxBytes
+      : getMediaMaxFileBytes();
   if (input.buffer.length > max) {
     throw new Error(`Arquivo excede o limite de ${max} bytes.`);
   }
@@ -129,8 +148,9 @@ export async function saveFromBuffer(input: SaveMediaFromBufferInput): Promise<S
   const relativeUrl = buildMediaRawSignedRelativeUrl(storageKey);
   assertPersistableMediaUrl(relativeUrl);
   const shouldWriteAssetRecord = isMediaAssetsWriteEnabled() || input.writeAssetRecord === true;
+  let assetId: string | null = null;
   if (shouldWriteAssetRecord) {
-    await registerMediaAsset({
+    assetId = await registerMediaAsset({
       tenantId: input.tenantId,
       ownerType: input.ownerType,
       ownerId: input.ownerId,
@@ -143,6 +163,7 @@ export async function saveFromBuffer(input: SaveMediaFromBufferInput): Promise<S
       sourceUrl: input.sourceUrl,
       publicUrl: relativeUrl,
       metadata: input.metadata,
+      createdBy: input.createdBy,
     });
   }
 
@@ -152,6 +173,7 @@ export async function saveFromBuffer(input: SaveMediaFromBufferInput): Promise<S
     mimeType: input.mimeType,
     sizeBytes: input.buffer.length,
     checksum,
+    assetId,
   };
 }
 

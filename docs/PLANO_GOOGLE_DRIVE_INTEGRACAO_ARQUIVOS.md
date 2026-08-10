@@ -347,4 +347,10 @@ Implementação oficial da Fase 4 concluída com foco em upload simples no perfi
 
 ---
 
-*Última atualização: documento de planificação (Fase 1). Implementação nas fases seguintes.*
+## 15. Relação com Media Library / chatbot (ponteiro)
+
+Google Drive permanece **espelho/opcional**. Picker de mídia no chat/produtos/`send_message` e inbound de PDF em chatbot flows usam storage interno (`media_assets` / URLs assinadas) como caminho principal — ver [`chatbot-flows/PLAN_SPRINTS_CHATBOT_FLOWS_S32.md`](./chatbot-flows/PLAN_SPRINTS_CHATBOT_FLOWS_S32.md) (**S32–S33.2** feitos; sync Drive Media Library **não** implementado nesta fase — permanece opt-in/espelho se/quando for feito).
+
+---
+
+*Última atualização: documento de planificação (Fase 1). Implementação nas fases seguintes; ponteiro S32+.*

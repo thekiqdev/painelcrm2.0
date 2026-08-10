@@ -204,6 +204,13 @@ export async function runChatbotFlowsRuntimeInbound(opts: {
   inserted: boolean;
   /** ID de botão/lista UazAPI (S13). */
   interactiveReplyId?: string | null;
+  /** S32: mídia da mensagem que disparou o inbound. */
+  inboundMedia?: Array<{
+    type?: string | null;
+    url?: string | null;
+    mimetype?: string | null;
+    fileName?: string | null;
+  }> | null;
 }): Promise<boolean> {
   if (!opts.inserted) return false;
 
@@ -545,11 +552,69 @@ export async function runChatbotFlowsRuntimeInbound(opts: {
       snap.variables = mergeFlowVariableSeed(snap.variables, seed);
     }
 
+    // S32.1 — cópia temp + URL assinada antes de gravar variáveis / webhook_out
+    let inboundMediaForStep = opts.inboundMedia;
+    if (
+      snap.status === 'waiting_input' &&
+      sessionId &&
+      graph &&
+      opts.inboundMedia &&
+      opts.inboundMedia.length > 0
+    ) {
+      const { enrichInboundMediaForWaitInput, findWaitInputNodeData } = await import(
+        './flowInboundTempMedia.js'
+      );
+      const waitData = findWaitInputNodeData(graph, snap.currentNodeId);
+      if (waitData) {
+        const enriched = await enrichInboundMediaForWaitInput({
+          tenantId,
+          conversationId: opts.conversationId,
+          sessionId,
+          waitNodeData: waitData,
+          inboundMedia: opts.inboundMedia,
+        });
+        if (!enriched.ok) {
+          try {
+            const { sendKanbanAutomationOutboundText } = await import(
+              '../../controllers/chatController.js'
+            );
+            await sendKanbanAutomationOutboundText({
+              conversationId: opts.conversationId,
+              actorUserId: ownerUserId,
+              text: enriched.rejectMessage,
+            });
+          } catch (e) {
+            console.warn('[chatbot_flows_runtime] inbound_temp reject ack failed', e);
+          }
+          const varName = snap.waitingVariable || 'arquivo';
+          snap.variables = {
+            ...snap.variables,
+            [`${varName}._error`]: enriched.reason,
+          };
+          await persistSession(sessionId, snap, {
+            lastError: `flow_inbound_temp:${enriched.reason}`,
+          });
+          console.warn(
+            JSON.stringify({
+              event: 'chatbot_flows_runtime',
+              conversationId: opts.conversationId,
+              sessionId,
+              reason: 'flow_inbound_temp_failed',
+              error: enriched.reason,
+            })
+          );
+          return true;
+        }
+        inboundMediaForStep = enriched.inboundMedia;
+      }
+    }
+
     const result = processInboundStep({
       graph,
       session: snap,
       messageBody: opts.messageBody,
       interactiveReplyId: opts.interactiveReplyId,
+      inboundMedia: inboundMediaForStep,
       justStarted,
     });
 
@@ -678,7 +743,9 @@ async function applyRuntimeActions(opts: {
           conversationId,
           actorUserId: opts.ownerUserId,
           type: mediaType,
-          fileUrl: action.mediaUrl,
+          fileUrl: action.mediaUrl || null,
+          assetId: action.assetId || null,
+          tenantId: opts.tenantId,
           caption: mediaType === 'audio' ? null : action.caption || null,
           fileName: action.filename || null,
           mimeType:

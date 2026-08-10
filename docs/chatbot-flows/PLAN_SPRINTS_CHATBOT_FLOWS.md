@@ -9,7 +9,7 @@
 | **Escopo** | Multi-tenant (clientes do PainelCRM) |
 | **Princípio** | Isolar do `chat-core`; integrar só por eventos/APIs |
 | **Status** | S14–S21 · **S21** importer entregue |
-| **Continuação** | [`PLAN_SPRINTS_CHATBOT_FLOWS_S15.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S15.md) (S15–S21 — paridade operacional) |
+| **Continuação** | [`PLAN_SPRINTS_CHATBOT_FLOWS_S32.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S32.md) (**S32 · S32.1 · S33 · S33.1 · S33.2** feitos) · histórico S15–S21: [`PLAN_SPRINTS_CHATBOT_FLOWS_S15.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S15.md) |
 
 ---
 
@@ -576,4 +576,5 @@ Entrega antecipada de polish visual no editor (independente do hardening):
 4. **Fase vínculo CRM:** [`PLAN_SPRINTS_CHATBOT_FLOWS_S26.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S26.md) (**S26–S26.1** no código).  
 5. **Fase Webhook in (map + listen):** [`PLAN_SPRINTS_CHATBOT_FLOWS_S27.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S27.md) (**S27** · **S27.1** feitos).  
 6. **Fase Webhook estável + abrir conversa:** [`PLAN_SPRINTS_CHATBOT_FLOWS_S28.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S28.md) (**S28 · S28.1 · S29 · S29.1** feitos; **S30 skip**; **S31** tag/opt-out feito — [`PLAN_SPRINTS_CHATBOT_FLOWS_S31.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S31.md)) · detalhe S29/S29.1: [`PLAN_SPRINTS_CHATBOT_FLOWS_S29.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S29.md) · decisão S30: [`PLAN_SPRINTS_CHATBOT_FLOWS_S30.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S30.md).  
-7. Manter decisões **D1–D5**; D15.x · D22.x–D24.x · **D25.x** · **D26.x** · **D27.x** · **D28.x** · **D29.x** · **D30.x** · **D31.x**.
+7. **Fase mídia inbound + Media Library:** [`PLAN_SPRINTS_CHATBOT_FLOWS_S32.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S32.md) (**S32 · S32.1 · S33 · S33.1 · S33.2** feitos — captura + cópia temp + Media Library + picker composer/produtos/`send_message`; Drive sync opt-in adiado).
+8. Manter decisões **D1–D5**; D15.x · D22.x–D24.x · **D25.x** · **D26.x** · **D27.x** · **D28.x** · **D29.x** · **D30.x** · **D31.x** · **D32.x**.

@@ -108,3 +108,44 @@ export function getMediaAvatarWhatsappWorkerMaxFailures(): number {
   if (!Number.isFinite(n) || n <= 0) return 3;
   return Math.min(50, Math.max(1, n));
 }
+
+/** S32.1 — TTL da cópia temp do wait_input (horas). Default 48 (faixa D32.8: 24–72). */
+export function getFlowInboundTempTtlHours(): number {
+  const n = parseInt(process.env.FLOW_INBOUND_TEMP_TTL_HOURS || '', 10);
+  if (!Number.isFinite(n) || n <= 0) return 48;
+  return Math.min(168, Math.max(1, n));
+}
+
+/** S32.1 — tamanho máx. da cópia temp (bytes). Default 15 MB. */
+export function getFlowInboundTempMaxBytes(): number {
+  const n = parseInt(process.env.FLOW_INBOUND_TEMP_MAX_BYTES || '', 10);
+  if (!Number.isFinite(n) || n <= 0) return 15 * 1024 * 1024;
+  return Math.min(50 * 1024 * 1024, Math.max(64 * 1024, n));
+}
+
+export function getFlowInboundTempPurgePollMs(): number {
+  const n = parseInt(process.env.FLOW_INBOUND_TEMP_PURGE_POLL_MS || '', 10);
+  if (!Number.isFinite(n) || n <= 0) return 5 * 60 * 1000;
+  return Math.min(60 * 60 * 1000, Math.max(30_000, n));
+}
+
+/** S33 — quota: número máx. de assets ativos na Media Library por tenant. Default 500. */
+export function getMediaLibraryMaxCount(): number {
+  const n = parseInt(process.env.MEDIA_LIBRARY_MAX_COUNT || '', 10);
+  if (!Number.isFinite(n) || n <= 0) return 500;
+  return Math.min(50_000, Math.max(1, n));
+}
+
+/** S33 — quota: bytes totais máx. na Media Library por tenant. Default 500 MB. */
+export function getMediaLibraryMaxTotalBytes(): number {
+  const n = parseInt(process.env.MEDIA_LIBRARY_MAX_TOTAL_BYTES || '', 10);
+  if (!Number.isFinite(n) || n <= 0) return 500 * 1024 * 1024;
+  return Math.min(50 * 1024 * 1024 * 1024, Math.max(1024 * 1024, n));
+}
+
+/** S33 — tamanho máx. por ficheiro no upload da library. Default = MEDIA_MAX_FILE_BYTES. */
+export function getMediaLibraryMaxFileBytes(): number {
+  const n = parseInt(process.env.MEDIA_LIBRARY_MAX_FILE_BYTES || '', 10);
+  if (!Number.isFinite(n) || n <= 0) return getMediaMaxFileBytes();
+  return Math.min(100 * 1024 * 1024, Math.max(64 * 1024, n));
+}

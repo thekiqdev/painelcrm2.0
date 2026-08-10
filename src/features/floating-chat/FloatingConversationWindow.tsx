@@ -38,6 +38,8 @@ import { floatingAttendanceRowModel } from './attendanceUi';
 import { ChatAssigneePresence } from '@/components/chat/ChatAssigneePresence';
 import { Badge } from '@/components/ui/badge';
 import { ChatComposerDropZone } from '@/components/chat/ChatComposerDropZone';
+import { MediaPickerDialog } from '@/components/media/MediaPickerDialog';
+import type { MediaLibraryAsset } from '@/services/mediaLibrary';
 import { ChatComposerQuickActionsPanel } from '@/components/chat/ChatComposerQuickActionsPanel';
 import { chatScheduledMessagesQueryKey } from '@/components/chat/ChatScheduledMessagesStrip';
 import { ScheduleChatMessageDialog } from '@/components/chat/ScheduleChatMessageDialog';
@@ -126,6 +128,7 @@ export function FloatingConversationWindow({
   const queryClient = useQueryClient();
   const scrollRef = useRef<HTMLDivElement>(null);
   const attachComboInputRef = useRef<HTMLInputElement>(null);
+  const [mediaPickerOpen, setMediaPickerOpen] = useState(false);
   const floatingDraftRef = useRef('');
   const isMobile = useIsMobile();
   const [scheduleChatDlgOpen, setScheduleChatDlgOpen] = useState(false);
@@ -271,6 +274,30 @@ export function FloatingConversationWindow({
     else toast.error('Tipo de arquivo não suportado.');
   };
 
+  const sendFloatingLibraryAsset = async (asset: MediaLibraryAsset) => {
+    try {
+      const isImage = String(asset.mimeType || '').toLowerCase().startsWith('image/');
+      if (isImage) {
+        await chatService.sendImageMessage(conversationId, {
+          assetId: asset.id,
+          mimeType: asset.mimeType || 'image/jpeg',
+        });
+        toast.success('Imagem enviada da biblioteca');
+      } else {
+        await chatService.sendDocumentMessage(conversationId, {
+          assetId: asset.id,
+          mimeType: asset.mimeType || 'application/pdf',
+          fileName: asset.originalFilename || undefined,
+        });
+        toast.success('Documento enviado da biblioteca');
+      }
+      void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'messages', conversationId] });
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Falha ao enviar da biblioteca');
+      throw e;
+    }
+  };
+
   const { messages, isLoading, applyMessages } = useFloatingConversationMessages(conversationId);
   const loadMoreMessages = useLoadMoreMessages(conversationId);
   /** Único scroll container: virt + Load More + auto-scroll (Sprint TF1 — dual ref quebrava paint). */
@@ -384,6 +411,7 @@ export function FloatingConversationWindow({
         isMobile,
         canScheduleChatMessage: hasPermissionKey('chat.send_message'),
         onAttachFile: () => attachComboInputRef.current?.click(),
+        onMediaLibrary: () => setMediaPickerOpen(true),
         onScheduleMessage: () => setScheduleChatDlgOpen(true),
         onTemplate: () =>
           toast.info('Templates no floating entram na próxima etapa. Use o chat completo para modelos.'),
@@ -1050,6 +1078,15 @@ export function FloatingConversationWindow({
             queryKey: chatScheduledMessagesQueryKey(conversationId),
           });
         }}
+      />
+      <MediaPickerDialog
+        open={mediaPickerOpen}
+        onOpenChange={setMediaPickerOpen}
+        title="Enviar da biblioteca"
+        description="Escolha uma imagem ou documento da Media Library."
+        accept="any"
+        confirmLabel="Enviar"
+        onSelect={sendFloatingLibraryAsset}
       />
       <AlertDialog open={meetNowConfirmOpen} onOpenChange={setMeetNowConfirmOpen}>
         <AlertDialogContent>

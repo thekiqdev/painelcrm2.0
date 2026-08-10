@@ -3,24 +3,53 @@ import { getMediaSigningSecret } from './mediaConfig.js';
 
 export const MEDIA_RAW_SIGNED_PATH = '/api/media/v1/raw';
 
-export function signMediaStorageKey(storageKey: string): string {
-  const k = Buffer.from(storageKey, 'utf8').toString('base64url');
-  return createHmac('sha256', getMediaSigningSecret()).update(k).digest('base64url');
+function storageKeyToK(storageKey: string): string {
+  return Buffer.from(storageKey, 'utf8').toString('base64url');
 }
 
-export function verifyMediaSignature(storageKey: string, signature: string): boolean {
-  const k = Buffer.from(storageKey, 'utf8').toString('base64url');
-  const expected = createHmac('sha256', getMediaSigningSecret()).update(k).digest('base64url');
+function signPayload(payload: string): string {
+  return createHmac('sha256', getMediaSigningSecret()).update(payload).digest('base64url');
+}
+
+/**
+ * Assina storageKey. Com `expiresAtUnix`, o HMAC cobre `k.e` (TTL na URL — S32.1 / D32.8).
+ * Sem expiry: payload = k (compat legado).
+ */
+export function signMediaStorageKey(storageKey: string, expiresAtUnix?: number): string {
+  const k = storageKeyToK(storageKey);
+  if (expiresAtUnix != null && Number.isFinite(expiresAtUnix)) {
+    return signPayload(`${k}.${Math.floor(expiresAtUnix)}`);
+  }
+  return signPayload(k);
+}
+
+export function verifyMediaSignature(
+  storageKey: string,
+  signature: string,
+  expiresAtUnix?: number | null
+): boolean {
+  const expected = signMediaStorageKey(
+    storageKey,
+    expiresAtUnix != null && Number.isFinite(expiresAtUnix) ? Math.floor(expiresAtUnix) : undefined
+  );
   const a = Buffer.from(expected);
   const b = Buffer.from(signature || '');
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-export function buildMediaRawSignedRelativeUrl(storageKey: string): string {
-  const k = Buffer.from(storageKey, 'utf8').toString('base64url');
-  const s = signMediaStorageKey(storageKey);
-  const qs = new URLSearchParams({ k, s }).toString();
-  return `${MEDIA_RAW_SIGNED_PATH}?${qs}`;
+export function buildMediaRawSignedRelativeUrl(
+  storageKey: string,
+  opts?: { expiresAtUnix?: number }
+): string {
+  const k = storageKeyToK(storageKey);
+  const expiresAtUnix =
+    opts?.expiresAtUnix != null && Number.isFinite(opts.expiresAtUnix)
+      ? Math.floor(opts.expiresAtUnix)
+      : undefined;
+  const s = signMediaStorageKey(storageKey, expiresAtUnix);
+  const params = new URLSearchParams({ k, s });
+  if (expiresAtUnix != null) params.set('e', String(expiresAtUnix));
+  return `${MEDIA_RAW_SIGNED_PATH}?${params.toString()}`;
 }
 
 /**

@@ -9,12 +9,14 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Package, Wrench, ArrowLeft, Plus, X, Upload, FileText, Image as ImageIcon, Trash2, ChevronUp, ChevronDown } from "lucide-react";
+import { Package, Wrench, ArrowLeft, Plus, X, Upload, FileText, Image as ImageIcon, Trash2, ChevronUp, ChevronDown, Images } from "lucide-react";
 import { Product, ProductFormData, ProductVariation, VariationPrice } from "@/types/products";
 import { productsService } from "@/services/products";
 import { useToast } from "@/hooks/use-toast";
-import { uploadCatalogImageFile } from "@/services/catalogMediaUpload";
+import { uploadCatalogImageFile, normalizeCatalogMediaUrlForBrowser } from "@/services/catalogMediaUpload";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { MediaPickerDialog } from "@/components/media/MediaPickerDialog";
+import type { MediaLibraryAsset } from "@/services/mediaLibrary";
 
 // Variações predefinidas com cores reais
 const COLOR_MAP: Record<string, string> = {
@@ -93,6 +95,7 @@ const ProductForm = () => {
   const [customColorValue, setCustomColorValue] = useState('#000000');
   const productImagesInputRef = useRef<HTMLInputElement>(null);
   const [uploadingImages, setUploadingImages] = useState(false);
+  const [mediaPickerOpen, setMediaPickerOpen] = useState(false);
 
   useEffect(() => {
     if (isEditing && id) {
@@ -201,6 +204,29 @@ const ProductForm = () => {
   const removeImageAt = (idx: number) => {
     setFormData((prev) => ({ ...prev, images: prev.images.filter((_, i) => i !== idx) }));
   };
+
+  /** S33.1 — associa imagem da Media Library sem colar URL. */
+  const handlePickLibraryImage = (asset: MediaLibraryAsset) => {
+    if (formData.images.length >= MAX_PRODUCT_IMAGES) {
+      toast({
+        title: "Limite de imagens",
+        description: `Máximo ${MAX_PRODUCT_IMAGES} imagens por produto.`,
+        variant: "destructive",
+      });
+      throw new Error(`Máximo ${MAX_PRODUCT_IMAGES} imagens.`);
+    }
+    const url = asset.relativeUrl;
+    setFormData((prev) => ({
+      ...prev,
+      images: [...prev.images, url],
+    }));
+    toast({
+      title: "Imagem adicionada",
+      description: asset.originalFilename || "Selecionada da biblioteca.",
+    });
+  };
+
+  const productImagePreviewSrc = (url: string) => normalizeCatalogMediaUrlForBrowser(url);
 
   const moveImage = (idx: number, dir: -1 | 1) => {
     setFormData((prev) => {
@@ -777,6 +803,7 @@ const ProductForm = () => {
             </CardTitle>
             <p className="text-sm text-muted-foreground">
               A primeira imagem da lista é a principal na vitrine. JPG, PNG, WebP ou GIF até 5 MB cada.
+              Pode carregar ficheiros novos ou escolher da biblioteca de mídias (sem colar URL).
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -807,6 +834,16 @@ const ProductForm = () => {
                 <Upload className="h-4 w-4 mr-2" />
                 {uploadingImages ? "Enviando…" : "Adicionar imagens"}
               </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={uploadingImages || formData.images.length >= MAX_PRODUCT_IMAGES}
+                onClick={() => setMediaPickerOpen(true)}
+              >
+                <Images className="h-4 w-4 mr-2" />
+                Biblioteca de mídias
+              </Button>
               <span className="text-xs text-muted-foreground">
                 {formData.images.length}/{MAX_PRODUCT_IMAGES}
               </span>
@@ -819,7 +856,7 @@ const ProductForm = () => {
                     className="flex flex-wrap items-center gap-2 rounded-md border p-2"
                   >
                     <img
-                      src={url}
+                      src={productImagePreviewSrc(url)}
                       alt=""
                       className="h-16 w-16 object-cover rounded"
                     />
@@ -872,6 +909,16 @@ const ProductForm = () => {
             )}
           </CardContent>
         </Card>
+
+        <MediaPickerDialog
+          open={mediaPickerOpen}
+          onOpenChange={setMediaPickerOpen}
+          title="Imagem do produto"
+          description="Escolha uma imagem da Media Library ou carregue uma nova. Sem colar URL."
+          accept="image"
+          confirmLabel="Adicionar à galeria"
+          onSelect={handlePickLibraryImage}
+        />
 
         {/* Variações - Apenas para Produtos */}
         {isProduct && (

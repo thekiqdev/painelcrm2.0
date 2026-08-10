@@ -9,6 +9,12 @@ const EXT_BY_MIME: Record<string, string> = {
   'image/gif': 'gif',
   'application/pdf': 'pdf',
   'text/plain': 'txt',
+  'audio/ogg': 'ogg',
+  'audio/mpeg': 'mp3',
+  'audio/mp4': 'm4a',
+  'audio/aac': 'aac',
+  'video/mp4': 'mp4',
+  'video/webm': 'webm',
 };
 
 const ALLOWED_SCOPES = new Set<MediaScope>([
@@ -17,9 +23,11 @@ const ALLOWED_SCOPES = new Set<MediaScope>([
   'tenant_logo',
   'store_logo',
   'product_image',
+  'library',
   'chat_attachment',
   'contract_document',
   'invoice_document',
+  'flow_inbound_temp',
 ]);
 
 const ALLOWED_OWNER_TYPES = new Set<MediaOwnerType>([

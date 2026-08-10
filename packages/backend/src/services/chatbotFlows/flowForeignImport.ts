@@ -284,6 +284,8 @@ function mapNodeData(
     out.send_mode = sendMode;
     out.text = text;
     out.media_url = str(cleaned.media_url || cleaned.file_url || cleaned.url);
+    out.media_asset_id = str(cleaned.media_asset_id || cleaned.asset_id);
+    out.media_asset_label = str(cleaned.media_asset_label);
     out.media_type = ['image', 'document', 'audio'].includes(str(cleaned.media_type))
       ? str(cleaned.media_type)
       : 'image';
@@ -297,6 +299,21 @@ function mapNodeData(
     out.variable =
       str(cleaned.variable || cleaned.variable_name || cleaned.response_variable || 'answer') ||
       'answer';
+    const acceptRaw = str(cleaned.accept || cleaned.input_type || 'text').toLowerCase();
+    out.accept =
+      acceptRaw === 'media' || acceptRaw === 'file' || acceptRaw === 'document'
+        ? 'media'
+        : acceptRaw === 'any' || acceptRaw === 'both' || acceptRaw === 'all'
+          ? 'any'
+          : 'text';
+    if (Array.isArray(cleaned.media_kinds)) {
+      out.media_kinds = cleaned.media_kinds
+        .map((k) => str(k).toLowerCase())
+        .filter((k) => ['document', 'image', 'audio', 'video'].includes(k));
+    } else if (out.accept !== 'text') {
+      out.media_kinds = ['document', 'image'];
+    }
+    if (cleaned.invalid_message != null) out.invalid_message = str(cleaned.invalid_message);
     const timeoutOn =
       cleaned.timeout_enabled === true ||
       cleaned.inactivity_enabled === true ||

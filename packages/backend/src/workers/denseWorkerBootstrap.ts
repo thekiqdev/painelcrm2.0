@@ -17,6 +17,8 @@ import { processDueChatbotFlowDelaysBatch } from '../services/chatbotFlows/chatb
 import { startWhatsappAvatarCacheWorkerInterval } from '../services/whatsappAvatarCacheWorker.js';
 import { getChatAutomationWorkerPollMs } from '../config/chatAutomationEnv.js';
 import { getAnnouncementsSendPollMs } from '../config/announcementsWorkerEnv.js';
+import { getFlowInboundTempPurgePollMs } from '../services/media/mediaConfig.js';
+import { purgeExpiredFlowInboundTempMedia } from '../services/chatbotFlows/flowInboundTempMedia.js';
 
 export function isHttpSkipDenseWorkers(): boolean {
   return String(process.env.HTTP_SKIP_DENSE_WORKERS || '') === '1';
@@ -102,12 +104,28 @@ export function startDenseBackgroundWorkers(pool: Pool): DenseWorkerHandles {
 
   startWhatsappAvatarCacheWorkerInterval();
 
+  const flowInboundPurgeMs = getFlowInboundTempPurgePollMs();
+  timers.push(
+    setInterval(() => {
+      void purgeExpiredFlowInboundTempMedia(40)
+        .then((r) => {
+          if (r.scanned > 0) {
+            appLogger.info('flow-inbound-temp-purge', 'tick', r);
+          }
+        })
+        .catch((err) =>
+          appLogger.error('flow-inbound-temp-purge', 'batch error', { err: String(err) })
+        );
+    }, flowInboundPurgeMs),
+  );
+
   appLogger.boot('dense-workers', 'started', {
     kanbanPollMs,
     announcementsPollMs,
     chatAutomationMs,
     chatSchedMsgPollMs,
     chatbotDelayPollMs,
+    flowInboundPurgeMs,
   });
 
   return { timers };

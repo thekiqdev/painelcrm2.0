@@ -266,6 +266,10 @@ export const sendMessageDataSchema = z
     send_mode: z.enum(['text', 'media']).optional().default('text'),
     text: z.string().optional().default(''),
     media_url: z.string().optional().default(''),
+    /** S33.2 — asset da Media Library (scopes library / product_image). */
+    media_asset_id: z.string().uuid().optional().or(z.literal('')).default(''),
+    /** Label só UI (nome do ficheiro escolhido no picker). */
+    media_asset_label: z.string().optional().default(''),
     media_type: z.enum(['image', 'document', 'audio']).optional().default('image'),
     caption: z.string().optional().default(''),
     filename: z.string().optional().default(''),
@@ -280,12 +284,16 @@ export const sendMessageDataSchema = z
           path: ['text'],
         });
       }
-    } else if (!String(d.media_url || '').trim()) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'URL da mídia obrigatória',
-        path: ['media_url'],
-      });
+    } else {
+      const hasUrl = Boolean(String(d.media_url || '').trim());
+      const hasAsset = Boolean(String(d.media_asset_id || '').trim());
+      if (!hasUrl && !hasAsset) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Escolha um asset da biblioteca ou informe a URL da mídia',
+          path: ['media_asset_id'],
+        });
+      }
     }
   });
 
@@ -298,6 +306,15 @@ export const waitInputDataSchema = z
       .trim()
       .min(1, 'Nome da variável obrigatório')
       .regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/, 'Variável inválida'),
+    /** S32: o que o nó aceita do lead. Default text = compat. */
+    accept: z.enum(['text', 'media', 'any']).optional().default('text'),
+    /** S32: tipos de mídia permitidos quando accept=media|any. Default document+image. */
+    media_kinds: z
+      .array(z.enum(['document', 'image', 'audio', 'video']))
+      .optional()
+      .default(['document', 'image']),
+    /** S32: re-prompt quando a mensagem não casa com accept. */
+    invalid_message: z.string().optional().default(''),
     timeout_enabled: z.boolean().optional().default(false),
     timeout_amount: z.coerce.number().int().min(1).max(99999).optional().default(5),
     timeout_unit: z.enum(['seconds', 'minutes', 'hours', 'days']).optional().default('minutes'),

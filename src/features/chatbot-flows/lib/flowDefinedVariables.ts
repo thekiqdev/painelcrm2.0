@@ -49,11 +49,32 @@ export function collectFlowDefinedVariables(nodes: FlowNodeLike[]): FlowDefinedV
     const src = nodeTypeLabel(type);
 
     if (type === 'wait_input' || type === 'select_invoice' || type === 'select_ticket' || type === 'menu_choice') {
-      pushVar(out, data.variable || 'answer', {
-        label: String(data.variable || 'answer'),
+      const varName = String(data.variable || 'answer').trim() || 'answer';
+      pushVar(out, varName, {
+        label: varName,
         source: src,
         nodeId: n.id,
       });
+      if (type === 'wait_input') {
+        const accept = String(data.accept || 'text').trim().toLowerCase();
+        if (accept === 'media' || accept === 'any') {
+          pushVar(out, `${varName}.url`, {
+            label: `${varName}.url`,
+            source: `${src} · mídia`,
+            nodeId: n.id,
+          });
+          pushVar(out, `${varName}.nome`, {
+            label: `${varName}.nome`,
+            source: `${src} · mídia`,
+            nodeId: n.id,
+          });
+          pushVar(out, `${varName}.tipo`, {
+            label: `${varName}.tipo`,
+            source: `${src} · mídia`,
+            nodeId: n.id,
+          });
+        }
+      }
     }
 
     if (type === 'webhook_in') {
