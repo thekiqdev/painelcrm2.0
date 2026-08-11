@@ -355,3 +355,9 @@ Tratar **equipe** como sinónimo permanente de fila (só unificar copy).
 O produto já tem **filas de primeira classe** (`chat_queues`) e distribuição, mas o caminho feliz do Chat trata **equipe** como a “fila” do dia-a-dia — daí a confusão de copy e o chip **Fila** não reflectir o que o utilizador acabou de fazer na transferência.
 
 A direcção recomendada é: **Fila como destino único**; **users ou equipe** só como configuração de quem atende; transfer + filtro + claim + auto-assign alinhados a esse modelo, em sprints S0–S4 acima.
+
+---
+
+## 10. Encerrar vs Fila (comportamento vigente)
+
+Após **Encerrar**, a conversa fica `closed` (assignee/queue/team limpos) e **não** entra no chip **Fila** nem na lista ativa **Todas** — só em **Encerradas**. Reopen legítimo: mensagem **inbound** (`closed` → `pending` ou `in_progress` se já houver assignee) ou **outbound** de agente (`closed` → `in_progress` + quem enviou; bot/sistema sem user → `pending`). Sync histórico não reabre. Predicados partilhados: `chatAttendanceListFilters.ts`.

@@ -19,6 +19,9 @@ import { buildKanbanDrawerTemplateContext } from '@/utils/kanbanDrawerTemplateCo
 import { chatAvatarUrlForImgSrc } from '@/lib/chatAvatarUrl';
 import { emitKanbanConversationUnread } from '@/lib/kanbanConversationUnreadBridge';
 import { useChatOutboundQueue } from '@/hooks/useChatOutboundQueue';
+import { sendChatLocalFileViaMediaLibrary } from '@/utils/sendChatLocalFileViaMediaLibrary';
+import { humanizeMediaUploadError } from '@/utils/humanizeMediaUploadError';
+import { validateChatOutgoingFileSize } from '@/utils/chatComposerOutgoingFile';
 
 const formatHour = (value?: string | null) => {
   if (!value) return '--:--';
@@ -162,22 +165,17 @@ export function ChatKanbanConversationDrawer({
       toast.error('Selecione uma imagem');
       return;
     }
+    const sizeOk = validateChatOutgoingFileSize(file);
+    if (!sizeOk.ok) {
+      toast.error(sizeOk.message);
+      return;
+    }
     const caption = newMessage.trim();
     newMessageRef.current = '';
     setNewMessage('');
     try {
       setMediaSending(true);
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const r = new FileReader();
-        r.onload = () => resolve(r.result as string);
-        r.onerror = () => reject(new Error('Falha ao ler arquivo'));
-        r.readAsDataURL(file);
-      });
-      const comma = dataUrl.indexOf(',');
-      const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
-      await chatService.sendImageMessage(conversationId, {
-        fileBase64: base64,
-        mimeType: file.type || 'image/jpeg',
+      await sendChatLocalFileViaMediaLibrary(conversationId, file, {
         ...(caption ? { caption } : {}),
       });
       await loadThread(conversationId, { silent: true });
@@ -186,7 +184,7 @@ export function ChatKanbanConversationDrawer({
       newMessageRef.current = caption;
       setNewMessage(caption);
       toast.error('Falha ao enviar imagem', {
-        description: err instanceof Error ? err.message : undefined,
+        description: humanizeMediaUploadError(err),
       });
     } finally {
       setMediaSending(false);

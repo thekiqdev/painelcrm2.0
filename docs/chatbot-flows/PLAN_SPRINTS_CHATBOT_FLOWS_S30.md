@@ -6,8 +6,8 @@
 | **Tipo** | Decisão de sprint (opcional / condicional) |
 | **Base** | [`PLAN_SPRINTS_CHATBOT_FLOWS_S28.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S28.md) §8 · [`PLAN_SPRINTS_CHATBOT_FLOWS_S29.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S29.md) |
 | **Nome** | **S30 — Send avançado** |
-| **Status** | **SKIP / N/A** (não implementar) |
-| **Próximo** | **S31 feito** ([`PLAN_SPRINTS_CHATBOT_FLOWS_S31.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S31.md)) |
+| **Status** | **SKIP / N/A** (não implementar neste sprint) |
+| **Próximo** | **S31 feito** · delay embutido / sequência reaberto como **S34** ([`PLAN_SPRINTS_CHATBOT_FLOWS_S34.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S34.md)) |
 
 ---
 
@@ -42,6 +42,7 @@ Caso contrário: **adiar / cancelar**.
 |----|----------|
 | **D30.1** | **S30 cancelado / skip** — não criar destino alternativo no send nem delay embutido |
 | **D30.2** | Reabrir S30 (ou sprint dedicado) **somente** se surgir requisito explícito: template Meta HSM, destino off-session, ou UX unificada send+delay com aceite de produto |
+| **D30.3** | **2026-08-11:** requisito de **sequência de mensagens + delay entre itens** no mesmo `send_message` → entregue em **S34** (não destino MSISDN; nó `delay` standalone mantido) |
 
 ---
 
@@ -80,3 +81,4 @@ webhook_in
 
 1. ~~Avaliar S30~~ → **skip** (D30.1).
 2. Enfileirar **S31** (gatilho tag/kanban · opt-out `parar`/`sair`) em entrega separada → **feito** ([`PLAN_SPRINTS_CHATBOT_FLOWS_S31.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S31.md)).
+3. Sequência send + delay embutido entre msgs → **S34 feito** ([`PLAN_SPRINTS_CHATBOT_FLOWS_S34.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S34.md)).

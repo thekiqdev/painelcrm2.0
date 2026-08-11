@@ -5,6 +5,10 @@ import {
   buildEffectiveLastMessageExpr as buildSharedEffectiveLastMessageExpr,
   isChatListLegacyMessagesMaxEnabled,
 } from '../chatSql/effectiveLastMessage.js';
+import {
+  sqlExcludeClosedArchived,
+  sqlQueueOrUnassignedAttendance,
+} from '../../utils/chatAttendanceListFilters.js';
 
 export type QueryBuildContext = {
   attendanceCols: boolean;
@@ -334,16 +338,10 @@ export function buildAggregatedConversationsQuery(
       params.push(request.userId);
       sql += ` AND c.assigned_to_user_id = $${params.length} AND c.attendance_status = 'in_progress'`;
     } else if (af === 'unassigned') {
-      sql += ` AND c.assigned_to_user_id IS NULL
-          AND (c.attendance_status IS NULL OR c.attendance_status IN ('pending', 'open'))
-          AND (c.attendance_status IS DISTINCT FROM 'closed')
-          AND (c.attendance_status IS DISTINCT FROM 'archived')`;
+      sql += ` AND ${sqlQueueOrUnassignedAttendance('c')}`;
       if (ctx.teamCols) sql += ` AND (c.assigned_team_id IS NULL)`;
     } else if (af === 'queue' || af === 'queued') {
-      sql += ` AND c.assigned_to_user_id IS NULL
-          AND (c.attendance_status IS NULL OR c.attendance_status IN ('pending', 'open'))
-          AND (c.attendance_status IS DISTINCT FROM 'closed')
-          AND (c.attendance_status IS DISTINCT FROM 'archived')`;
+      sql += ` AND ${sqlQueueOrUnassignedAttendance('c')}`;
       if (ctx.teamCols) sql += ` AND (c.assigned_team_id IS NULL)`;
     } else if (af === 'waiting' || af === 'waiting_customer') {
       sql += ` AND c.attendance_status = 'waiting_customer'`;
@@ -362,6 +360,9 @@ export function buildAggregatedConversationsQuery(
       } else {
         sql += ` AND FALSE`;
       }
+    } else {
+      /** Lista ativa default ("Todas"): exclui encerradas. */
+      sql += ` AND ${sqlExcludeClosedArchived('c')}`;
     }
   }
 

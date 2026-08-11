@@ -43,9 +43,10 @@ import { chatScheduledMessagesQueryKey } from '@/components/chat/ChatScheduledMe
 import { ScheduleChatMessageDialog } from '@/components/chat/ScheduleChatMessageDialog';
 import {
   classifyChatOutgoingFile,
-  inferDocumentMimeForSend,
   validateChatOutgoingFileSize,
 } from '@/utils/chatComposerOutgoingFile';
+import { sendChatLocalFileViaMediaLibrary } from '@/utils/sendChatLocalFileViaMediaLibrary';
+import { humanizeMediaUploadError } from '@/utils/humanizeMediaUploadError';
 import { buildFloatingComposerQuickSections } from './buildFloatingComposerQuickSections';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
@@ -236,15 +237,6 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
     }
   }, [conversationId, queryClient]);
 
-  const readFileAsDataUrl = useCallback((file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ''));
-      reader.onerror = () => reject(new Error('Falha ao ler ficheiro'));
-      reader.readAsDataURL(file);
-    });
-  }, []);
-
   const sendMobileImageFile = async (file: File) => {
     const sizeOk = validateChatOutgoingFileSize(file);
     if (!sizeOk.ok) {
@@ -256,17 +248,11 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
       return;
     }
     try {
-      const dataUrl = await readFileAsDataUrl(file);
-      const comma = dataUrl.indexOf(',');
-      const fileBase64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
-      await chatService.sendImageMessage(conversationId, {
-        fileBase64,
-        mimeType: file.type || 'image/jpeg',
-      });
+      await sendChatLocalFileViaMediaLibrary(conversationId, file);
       void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'messages', conversationId] });
       toast.success('Imagem enviada');
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Falha ao enviar imagem');
+      toast.error(humanizeMediaUploadError(e, { fallback: 'Falha ao enviar imagem' }));
     }
   };
 
@@ -281,18 +267,11 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
       return;
     }
     try {
-      const dataUrl = await readFileAsDataUrl(file);
-      const comma = dataUrl.indexOf(',');
-      const fileBase64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
-      await chatService.sendDocumentMessage(conversationId, {
-        fileBase64,
-        mimeType: inferDocumentMimeForSend(file),
-        fileName: file.name,
-      });
+      await sendChatLocalFileViaMediaLibrary(conversationId, file);
       void queryClient.invalidateQueries({ queryKey: ['floating-chat', 'messages', conversationId] });
       toast.success('Documento enviado');
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Falha ao enviar documento');
+      toast.error(humanizeMediaUploadError(e, { fallback: 'Falha ao enviar documento' }));
     }
   };
 

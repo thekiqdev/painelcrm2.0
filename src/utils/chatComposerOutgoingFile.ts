@@ -1,4 +1,4 @@
-/** ~10MB binário em base64 no backend (~14M chars); margem no cliente */
+/** Limite de ficheiro no composer (~10 MB). Upload vai à Media Library (multipart), não em JSON base64. */
 export const CHAT_OUTGOING_FILE_MAX_BYTES = 10 * 1024 * 1024;
 
 const IMAGE_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif']);

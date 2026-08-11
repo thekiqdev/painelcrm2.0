@@ -1,6 +1,10 @@
 /**
  * Valores permitidos por `chat_conversations_attendance_status_check` (Fase 5 profissional).
  * Ver database/init/185_chat_engine_phase5_professional.sql
+ *
+ * Regra de produto (lista): após Encerrar, conversa some da Fila e da lista ativa ("Todas");
+ * só reaparece com nova mensagem (inbound → pending/in_progress; outbound agente → inicia de novo).
+ * Chip Encerradas continua a listar `closed`/`archived`.
  */
 export const CHAT_CONVERSATION_ATTENDANCE_STATUSES = [
   'open',

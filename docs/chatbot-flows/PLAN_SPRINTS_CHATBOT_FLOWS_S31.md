@@ -7,7 +7,7 @@
 | **Base** | [`PLAN_SPRINTS_CHATBOT_FLOWS_S28.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S28.md) §9 |
 | **Nome** | **S31 — Gatilho por tag / coluna kanban + opt-out `parar`/`sair`** |
 | **Status** | **Feito** |
-| **Próximo** | **S32–S33.2 feitos** — [`PLAN_SPRINTS_CHATBOT_FLOWS_S32.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S32.md) |
+| **Próximo** | **S32–S33.2 feitos** — [`PLAN_SPRINTS_CHATBOT_FLOWS_S32.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S32.md) · **S34 feito** — [`PLAN_SPRINTS_CHATBOT_FLOWS_S34.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S34.md) |
 
 ---
 

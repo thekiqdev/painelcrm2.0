@@ -291,6 +291,38 @@ function mapNodeData(
       : 'image';
     out.caption = str(cleaned.caption);
     out.filename = str(cleaned.filename || cleaned.file_name);
+    if (Array.isArray(cleaned.messages) && cleaned.messages.length > 0) {
+      out.messages = cleaned.messages.slice(0, 20).map((row, i) => {
+        const r = row && typeof row === 'object' ? (row as Record<string, unknown>) : {};
+        const mode = str(r.send_mode || 'text') === 'media' ? 'media' : 'text';
+        const mt = str(r.media_type || 'image');
+        const delayRaw =
+          r.delay_after && typeof r.delay_after === 'object'
+            ? (r.delay_after as Record<string, unknown>)
+            : null;
+        const unitRaw = str(delayRaw?.unit || 'seconds');
+        return {
+          id: str(r.id || `msg_${i + 1}`) || `msg_${i + 1}`,
+          send_mode: mode,
+          text: str(r.text || r.content || r.message || ''),
+          media_url: str(r.media_url || r.file_url || r.url || ''),
+          media_asset_id: str(r.media_asset_id || r.asset_id || ''),
+          media_asset_label: str(r.media_asset_label || ''),
+          media_type: ['image', 'document', 'audio'].includes(mt) ? mt : 'image',
+          caption: str(r.caption || ''),
+          filename: str(r.filename || r.file_name || ''),
+          ...(delayRaw
+            ? {
+                delay_after: {
+                  amount: Math.max(0, Math.round(Number(delayRaw.amount) || 0)),
+                  unit:
+                    unitRaw === 'minutes' || unitRaw === 'hours' ? unitRaw : 'seconds',
+                },
+              }
+            : {}),
+        };
+      });
+    }
   }
 
   if (toType === 'wait_input') {

@@ -9,7 +9,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { NODE_LABELS, generateInboundWebhookToken, buildInboundWebhookPath, readSetVariableAssignments, type EssentialNodeType } from '../lib/nodeCatalog';
+import { Copy, Plus, RefreshCw, Trash2, Radio, Loader2, Images, ChevronUp, ChevronDown } from 'lucide-react';
+import { VariableTextField } from './VariableTextField';
+import { MediaPickerDialog, type MediaPickerAccept } from '@/components/media/MediaPickerDialog';
+import type { MediaLibraryAsset } from '@/services/mediaLibrary';
+import { NODE_LABELS, generateInboundWebhookToken, buildInboundWebhookPath, readSetVariableAssignments, resolveSendMessageItems, SEND_MESSAGE_MAX_ITEMS, type EssentialNodeType } from '../lib/nodeCatalog';
 import {
   ARROW_COLORS,
   EDITOR_ONLY_LABELS,
@@ -20,10 +24,6 @@ import {
 } from '../lib/canvasAnnotations';
 import type { FlowKanbanColumnMeta, FlowSelectOption } from '../hooks/useFlowCrmOptions';
 import { Button } from '@/components/ui/button';
-import { Copy, Plus, RefreshCw, Trash2, Radio, Loader2, Images } from 'lucide-react';
-import { VariableTextField } from './VariableTextField';
-import { MediaPickerDialog, type MediaPickerAccept } from '@/components/media/MediaPickerDialog';
-import type { MediaLibraryAsset } from '@/services/mediaLibrary';
 import { previewNormalizePhoneBr } from '../lib/ensureConversationPhone';
 import { readMenuOptionsForEditor, type MenuChoiceOption } from '../lib/menuChoiceHelpers';
 import {
@@ -2708,6 +2708,30 @@ function pickerAcceptForMediaType(mediaType: string): MediaPickerAccept {
   return 'any';
 }
 
+type EditorSendMessageItem = {
+  id: string;
+  send_mode: 'text' | 'media';
+  text: string;
+  media_url: string;
+  media_asset_id: string;
+  media_asset_label: string;
+  media_type: 'image' | 'document' | 'audio';
+  caption: string;
+  filename: string;
+  delay_after?: { amount: number; unit: 'seconds' | 'minutes' | 'hours' };
+};
+
+function newSendMessageItemId(existing: EditorSendMessageItem[]): string {
+  let i = existing.length + 1;
+  let id = `msg_${i}`;
+  const used = new Set(existing.map((o) => o.id));
+  while (used.has(id)) {
+    i += 1;
+    id = `msg_${i}`;
+  }
+  return id;
+}
+
 function SendMessageFields({
   data,
   onChange,
@@ -2717,167 +2741,361 @@ function SendMessageFields({
   onChange: (patch: Record<string, unknown>) => void;
   flowVariables?: FlowDefinedVariable[];
 }) {
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const mode = String(data.send_mode || 'text') === 'media' ? 'media' : 'text';
-  const mediaTypeRaw = String(data.media_type || 'image');
-  const mediaType =
-    mediaTypeRaw === 'document' || mediaTypeRaw === 'audio' ? mediaTypeRaw : 'image';
-  const assetId = String(data.media_asset_id || '').trim();
-  const assetLabel = String(data.media_asset_label || '').trim();
+  const [pickerIndex, setPickerIndex] = useState<number | null>(null);
+  const items: EditorSendMessageItem[] = resolveSendMessageItems(data).map((it) => ({
+    id: it.id === 'legacy' ? 'msg_1' : it.id,
+    send_mode: it.send_mode,
+    text: it.text,
+    media_url: it.media_url,
+    media_asset_id: it.media_asset_id,
+    media_asset_label: it.media_asset_label,
+    media_type: it.media_type,
+    caption: it.caption,
+    filename: it.filename,
+    delay_after: it.delay_after,
+  }));
+
+  const persist = (next: EditorSendMessageItem[]) => {
+    const first = next[0];
+    onChange({
+      messages: next,
+      send_mode: first?.send_mode || 'text',
+      text: first?.text || '',
+      media_url: first?.media_url || '',
+      media_asset_id: first?.media_asset_id || '',
+      media_asset_label: first?.media_asset_label || '',
+      media_type: first?.media_type || 'image',
+      caption: first?.caption || '',
+      filename: first?.filename || '',
+    });
+  };
+
+  const updateItem = (index: number, patch: Partial<EditorSendMessageItem>) => {
+    persist(items.map((it, i) => (i === index ? { ...it, ...patch } : it)));
+  };
+
+  const moveItem = (index: number, dir: -1 | 1) => {
+    const j = index + dir;
+    if (j < 0 || j >= items.length) return;
+    const next = items.slice();
+    const tmp = next[index];
+    next[index] = next[j];
+    next[j] = tmp;
+    persist(next);
+  };
 
   const handlePickAsset = (asset: MediaLibraryAsset) => {
+    if (pickerIndex == null) return;
     const nextType = mediaTypeFromMime(asset.mimeType);
-    onChange({
+    updateItem(pickerIndex, {
       media_asset_id: asset.id,
       media_asset_label: asset.originalFilename || asset.id,
       media_url: '',
       media_type: nextType,
-      filename: asset.originalFilename || String(data.filename || ''),
+      filename: asset.originalFilename || items[pickerIndex]?.filename || '',
     });
+    setPickerIndex(null);
   };
 
   return (
     <>
-      <div className="space-y-1.5">
-        <Label>Tipo de envio</Label>
-        <Select
-          value={mode}
-          onValueChange={(v) => onChange({ send_mode: v === 'media' ? 'media' : 'text' })}
+      <p className="text-[11px] text-muted-foreground">
+        Envie uma ou várias mensagens no mesmo nó, com espera opcional entre elas. O nó{' '}
+        <code className="text-[10px]">delay</code> separado continua disponível.
+      </p>
+      <div className="flex items-center justify-between gap-2">
+        <Label>
+          Mensagens ({items.length}/{SEND_MESSAGE_MAX_ITEMS})
+        </Label>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-7"
+          disabled={items.length >= SEND_MESSAGE_MAX_ITEMS}
+          onClick={() =>
+            persist([
+              ...items,
+              {
+                id: newSendMessageItemId(items),
+                send_mode: 'text',
+                text: '',
+                media_url: '',
+                media_asset_id: '',
+                media_asset_label: '',
+                media_type: 'image',
+                caption: '',
+                filename: '',
+                delay_after: { amount: 0, unit: 'seconds' },
+              },
+            ])
+          }
         >
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="text">Texto</SelectItem>
-            <SelectItem value="media">Mídia (imagem / documento / áudio)</SelectItem>
-          </SelectContent>
-        </Select>
+          <Plus className="mr-1 h-3.5 w-3.5" />
+          Mensagem
+        </Button>
       </div>
 
-      {mode === 'text' ? (
-        <VariableTextField
-          id="msg"
-          label="Mensagem"
-          rows={4}
-          value={String(data.text || '')}
-          onChange={(text) => onChange({ text })}
-          flowVariables={flowVariables}
-          placeholder="Olá {{contact.name}}! Como posso ajudar?"
-        />
-      ) : (
-        <>
-          <div className="space-y-1.5">
-            <Label>Tipo de mídia</Label>
-            <Select
-              value={mediaType}
-              onValueChange={(v) => onChange({ media_type: v })}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="image">Imagem</SelectItem>
-                <SelectItem value="document">Documento</SelectItem>
-                <SelectItem value="audio">Áudio</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+      <div className="space-y-3">
+        {items.map((item, index) => {
+          const mode = item.send_mode === 'media' ? 'media' : 'text';
+          const mediaType = item.media_type;
+          const assetId = item.media_asset_id.trim();
+          const assetLabel = item.media_asset_label.trim();
+          const delayAmount = Math.max(0, Number(item.delay_after?.amount) || 0);
+          const delayUnit = item.delay_after?.unit || 'seconds';
+          const isLast = index === items.length - 1;
 
-          <div className="space-y-2 rounded-md border border-border/60 bg-muted/20 p-3">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0 space-y-0.5">
-                <Label>Biblioteca de mídias</Label>
-                <p className="text-[11px] text-muted-foreground">
-                  Escolha um asset do tenant (Media Library). Google Drive não é necessário.
-                </p>
-              </div>
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                className="shrink-0"
-                onClick={() => setPickerOpen(true)}
-              >
-                <Images className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-                Escolher
-              </Button>
-            </div>
-            {assetId ? (
-              <div className="flex items-center justify-between gap-2 rounded-md bg-background/80 px-2.5 py-2 text-xs">
-                <span className="truncate font-medium" title={assetLabel || assetId}>
-                  {assetLabel || assetId.slice(0, 8)}
+          return (
+            <div key={item.id} className="space-y-2 rounded-lg border border-border/60 p-2.5">
+              <div className="flex items-center justify-between gap-1">
+                <span className="text-[11px] font-medium text-muted-foreground">
+                  #{index + 1}
                 </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 shrink-0 px-2 text-muted-foreground"
-                  onClick={() =>
-                    onChange({ media_asset_id: '', media_asset_label: '' })
+                <div className="flex items-center gap-0.5">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    disabled={index === 0}
+                    onClick={() => moveItem(index, -1)}
+                    aria-label="Mover para cima"
+                  >
+                    <ChevronUp className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    disabled={isLast}
+                    onClick={() => moveItem(index, 1)}
+                    aria-label="Mover para baixo"
+                  >
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-destructive"
+                    disabled={items.length <= 1}
+                    onClick={() => persist(items.filter((_, i) => i !== index))}
+                    aria-label="Remover mensagem"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label>Tipo de envio</Label>
+                <Select
+                  value={mode}
+                  onValueChange={(v) =>
+                    updateItem(index, { send_mode: v === 'media' ? 'media' : 'text' })
                   }
                 >
-                  Remover
-                </Button>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="text">Texto</SelectItem>
+                    <SelectItem value="media">Mídia (imagem / documento / áudio)</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-            ) : (
-              <p className="text-[11px] text-muted-foreground">Nenhum asset selecionado.</p>
-            )}
-          </div>
 
-          <VariableTextField
-            id="media-url"
-            label="URL da mídia (opcional se houver asset)"
-            rows={2}
-            value={String(data.media_url || '')}
-            onChange={(media_url) =>
-              onChange({
-                media_url,
-                ...(String(media_url || '').trim()
-                  ? { media_asset_id: '', media_asset_label: '' }
-                  : {}),
-              })
-            }
-            flowVariables={flowVariables}
-            placeholder="https://… ou {{vars}}"
-          />
-          {mediaType !== 'audio' ? (
-            <VariableTextField
-              id="media-caption"
-              label="Legenda (opcional)"
-              rows={2}
-              value={String(data.caption || '')}
-              onChange={(caption) => onChange({ caption })}
-              flowVariables={flowVariables}
-              placeholder="Texto junto da mídia"
-            />
-          ) : null}
-          {mediaType === 'document' || mediaType === 'audio' ? (
-            <div className="space-y-1.5">
-              <Label htmlFor="media-filename">Nome do arquivo (opcional)</Label>
-              <Input
-                id="media-filename"
-                value={String(data.filename || '')}
-                onChange={(e) => onChange({ filename: e.target.value })}
-                placeholder={mediaType === 'audio' ? 'mensagem.mp3' : 'proposta.pdf'}
-              />
+              {mode === 'text' ? (
+                <VariableTextField
+                  id={`msg-${item.id}`}
+                  label="Mensagem"
+                  rows={3}
+                  value={item.text}
+                  onChange={(text) => updateItem(index, { text })}
+                  flowVariables={flowVariables}
+                  placeholder="Olá {{contact.name}}! Como posso ajudar?"
+                />
+              ) : (
+                <>
+                  <div className="space-y-1.5">
+                    <Label>Tipo de mídia</Label>
+                    <Select
+                      value={mediaType}
+                      onValueChange={(v) =>
+                        updateItem(index, {
+                          media_type:
+                            v === 'document' || v === 'audio' ? v : 'image',
+                        })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="image">Imagem</SelectItem>
+                        <SelectItem value="document">Documento</SelectItem>
+                        <SelectItem value="audio">Áudio</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2 rounded-md border border-border/60 bg-muted/20 p-2.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 space-y-0.5">
+                        <Label>Biblioteca de mídias</Label>
+                        <p className="text-[11px] text-muted-foreground">
+                          Asset do tenant (Media Library).
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        className="shrink-0"
+                        onClick={() => setPickerIndex(index)}
+                      >
+                        <Images className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                        Escolher
+                      </Button>
+                    </div>
+                    {assetId ? (
+                      <div className="flex items-center justify-between gap-2 rounded-md bg-background/80 px-2.5 py-2 text-xs">
+                        <span className="truncate font-medium" title={assetLabel || assetId}>
+                          {assetLabel || assetId.slice(0, 8)}
+                        </span>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 shrink-0 px-2 text-muted-foreground"
+                          onClick={() =>
+                            updateItem(index, { media_asset_id: '', media_asset_label: '' })
+                          }
+                        >
+                          Remover
+                        </Button>
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-muted-foreground">Nenhum asset selecionado.</p>
+                    )}
+                  </div>
+
+                  <VariableTextField
+                    id={`media-url-${item.id}`}
+                    label="URL da mídia (opcional se houver asset)"
+                    rows={2}
+                    value={item.media_url}
+                    onChange={(media_url) =>
+                      updateItem(index, {
+                        media_url,
+                        ...(String(media_url || '').trim()
+                          ? { media_asset_id: '', media_asset_label: '' }
+                          : {}),
+                      })
+                    }
+                    flowVariables={flowVariables}
+                    placeholder="https://… ou {{vars}}"
+                  />
+                  {mediaType !== 'audio' ? (
+                    <VariableTextField
+                      id={`media-caption-${item.id}`}
+                      label="Legenda (opcional)"
+                      rows={2}
+                      value={item.caption}
+                      onChange={(caption) => updateItem(index, { caption })}
+                      flowVariables={flowVariables}
+                      placeholder="Texto junto da mídia"
+                    />
+                  ) : null}
+                  {mediaType === 'document' || mediaType === 'audio' ? (
+                    <div className="space-y-1.5">
+                      <Label htmlFor={`media-filename-${item.id}`}>Nome do arquivo (opcional)</Label>
+                      <Input
+                        id={`media-filename-${item.id}`}
+                        value={item.filename}
+                        onChange={(e) => updateItem(index, { filename: e.target.value })}
+                        placeholder={mediaType === 'audio' ? 'mensagem.mp3' : 'proposta.pdf'}
+                      />
+                    </div>
+                  ) : null}
+                </>
+              )}
+
+              {!isLast ? (
+                <div className="grid grid-cols-[1fr_1fr] items-end gap-2 border-t border-border/50 pt-2">
+                  <div className="min-w-0 space-y-1">
+                    <Label className="block truncate text-xs" title="Espera antes da próxima">
+                      Espera
+                    </Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={99999}
+                      className="h-8"
+                      value={delayAmount}
+                      onChange={(e) =>
+                        updateItem(index, {
+                          delay_after: {
+                            amount: Math.max(0, Number(e.target.value) || 0),
+                            unit: delayUnit,
+                          },
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="min-w-0 space-y-1">
+                    <Label className="block truncate text-xs" title="Unidade de tempo">
+                      Unidade
+                    </Label>
+                    <Select
+                      value={delayUnit}
+                      onValueChange={(v) =>
+                        updateItem(index, {
+                          delay_after: {
+                            amount: delayAmount,
+                            unit:
+                              v === 'minutes' || v === 'hours' ? v : 'seconds',
+                          },
+                        })
+                      }
+                    >
+                      <SelectTrigger className="h-8">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="seconds">Segundos</SelectItem>
+                        <SelectItem value="minutes">Minutos</SelectItem>
+                        <SelectItem value="hours">Horas</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              ) : null}
             </div>
-          ) : null}
-          <p className="text-[11px] text-muted-foreground">
-            Preferir a biblioteca (URL assinada / storage interno). URL pública continua válida.
-            Áudio não leva legenda. Se o envio falhar, o fluxo continua (não trava a sessão).
-          </p>
+          );
+        })}
+      </div>
 
-          <MediaPickerDialog
-            open={pickerOpen}
-            onOpenChange={setPickerOpen}
-            title="Mídia do nó send_message"
-            description="Selecione ou carregue um ficheiro da Media Library para enviar no fluxo."
-            accept={pickerAcceptForMediaType(mediaType)}
-            confirmLabel="Usar neste nó"
-            onSelect={handlePickAsset}
-          />
-        </>
-      )}
+      <p className="text-[11px] text-muted-foreground">
+        Preferir a biblioteca (URL assinada / storage interno). Áudio não leva legenda. Se o envio
+        falhar, o fluxo continua.
+      </p>
+
+      <MediaPickerDialog
+        open={pickerIndex != null}
+        onOpenChange={(open) => {
+          if (!open) setPickerIndex(null);
+        }}
+        title="Mídia do nó send_message"
+        description="Selecione ou carregue um ficheiro da Media Library para enviar no fluxo."
+        accept={pickerAcceptForMediaType(
+          pickerIndex != null ? items[pickerIndex]?.media_type || 'image' : 'image'
+        )}
+        confirmLabel="Usar nesta mensagem"
+        onSelect={handlePickAsset}
+      />
     </>
   );
 }

@@ -55,11 +55,25 @@ export async function applyChatPhase6MessageStatus(
   }
 
   if (direction === 'outgoing' && settings.auto_status_from_agent) {
+    /** Outgoing em closed = iniciar de novo (não manter encerrada). archived permanece. */
     await pool.query(
       `UPDATE chat_conversations SET
          attendance_status = CASE
-           WHEN attendance_status IN ('closed', 'archived') THEN attendance_status
+           WHEN attendance_status = 'archived' THEN attendance_status
+           WHEN attendance_status = 'closed' THEN
+             CASE
+               WHEN assigned_to_user_id IS NOT NULL THEN 'waiting_customer'
+               ELSE 'pending'
+             END
            ELSE 'waiting_customer'
+         END,
+         closed_at = CASE
+           WHEN attendance_status = 'closed' THEN NULL
+           ELSE closed_at
+         END,
+         closed_by = CASE
+           WHEN attendance_status = 'closed' THEN NULL
+           ELSE closed_by
          END,
          updated_at = now()
        WHERE id = $1`,

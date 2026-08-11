@@ -7,6 +7,10 @@ import {
   hasChatPhase5SlaColumns,
 } from '../utils/chatAttendanceSchema.js';
 import {
+  sqlExcludeClosedArchived,
+  sqlQueueOrUnassignedAttendance,
+} from '../utils/chatAttendanceListFilters.js';
+import {
   applyChatPhase6MessageStatus,
   runInboundChatRoutingAsync,
 } from '../services/chatInboundAutomationHooks.js';
@@ -1874,6 +1878,16 @@ async function saveMessage(
     clientMessageId?: string | null;
     /** Provider para `chat_messages.provider` (padrão UazAPI). */
     messageProvider?: 'whatsapp_uazapi' | 'whatsapp_official';
+    /**
+     * Agente autenticado no envio (painel / automação com actor).
+     * Em conversa `closed`, outgoing com actor → `in_progress` + assignee; sem actor → `pending`.
+     */
+    actorUserId?: string | null;
+    /**
+     * Se false, não reabre atendimento em outgoing (ex.: sync histórico).
+     * Default: reabre quando a mensagem é nova e não é skipUnread (sync).
+     */
+    reopenAttendanceOnOutgoing?: boolean;
   }
 ): Promise<{ rowId: string | null; inserted: boolean }> {
   const saveId = randomUUID().substring(0, 8);
@@ -2058,12 +2072,20 @@ async function saveMessage(
     if (conversationResult.rowCount === 0) {
       console.warn(`[SaveMessage ${saveId}] Conversation not found for update`, { conversationId });
     } else {
-      if (await hasChatPhase5SlaColumns()) {
+      const actorUserId =
+        typeof payload.actorUserId === 'string' && payload.actorUserId.trim().length > 0
+          ? payload.actorUserId.trim()
+          : null;
+      const allowOutgoingReopen =
+        inserted &&
+        payload.skipUnreadUpdate !== true &&
+        payload.reopenAttendanceOnOutgoing !== false;
+
+      if (await hasAttendanceColumns()) {
         try {
           if (direction === 'incoming') {
             await pool.query(
               `UPDATE chat_conversations SET
-                 last_customer_message_at = now(),
                  attendance_status = CASE
                    WHEN attendance_status = 'archived' THEN attendance_status
                    WHEN assigned_to_user_id IS NOT NULL THEN 'in_progress'
@@ -2078,6 +2100,52 @@ async function saveMessage(
                    WHEN attendance_status = 'closed' THEN NULL
                    ELSE closed_by
                  END,
+                 updated_at = now()
+               WHERE id = $1`,
+              [conversationId]
+            );
+          } else if (direction === 'outgoing' && allowOutgoingReopen) {
+            /** Closed → inicia de novo: agente autenticado assume; senão volta à Fila (pending). */
+            await pool.query(
+              `UPDATE chat_conversations SET
+                 attendance_status = CASE
+                   WHEN attendance_status = 'archived' THEN attendance_status
+                   WHEN attendance_status = 'closed' AND $2::uuid IS NOT NULL THEN 'in_progress'
+                   WHEN attendance_status = 'closed' THEN 'pending'
+                   ELSE attendance_status
+                 END,
+                 assigned_to_user_id = CASE
+                   WHEN attendance_status = 'closed' AND $2::uuid IS NOT NULL THEN $2::uuid
+                   ELSE assigned_to_user_id
+                 END,
+                 assigned_at = CASE
+                   WHEN attendance_status = 'closed' AND $2::uuid IS NOT NULL THEN now()
+                   ELSE assigned_at
+                 END,
+                 closed_at = CASE
+                   WHEN attendance_status = 'closed' THEN NULL
+                   ELSE closed_at
+                 END,
+                 closed_by = CASE
+                   WHEN attendance_status = 'closed' THEN NULL
+                   ELSE closed_by
+                 END,
+                 updated_at = now()
+               WHERE id = $1`,
+              [conversationId, actorUserId]
+            );
+          }
+        } catch (attErr: unknown) {
+          console.warn('[SaveMessage] attendance status update skipped', attErr);
+        }
+      }
+
+      if (await hasChatPhase5SlaColumns()) {
+        try {
+          if (direction === 'incoming') {
+            await pool.query(
+              `UPDATE chat_conversations SET
+                 last_customer_message_at = now(),
                  updated_at = now()
                WHERE id = $1`,
               [conversationId]
@@ -4061,6 +4129,7 @@ async function performSyncConversationMessagesForConversation(
       sentAt,
       metadata: { ...msgRec, ...groupMeta },
       skipUnreadUpdate: true,
+      reopenAttendanceOnOutgoing: false,
     });
     saved += 1;
     existingExternalIds.add(extIdStr);
@@ -6674,19 +6743,13 @@ export async function getConversations(req: AuthRequest, res: Response) {
         query += ` AND c.assigned_to_user_id = $${params.length} AND c.attendance_status = 'in_progress'`;
         paramIndex++;
       } else if (attendanceFilter === 'unassigned') {
-        query += ` AND c.assigned_to_user_id IS NULL
-          AND (c.attendance_status IS NULL OR c.attendance_status IN ('pending', 'open'))
-          AND (c.attendance_status IS DISTINCT FROM 'closed')
-          AND (c.attendance_status IS DISTINCT FROM 'archived')`;
+        query += ` AND ${sqlQueueOrUnassignedAttendance('c')}`;
         if (teamCols) {
           query += ` AND (c.assigned_team_id IS NULL)`;
         }
       } else if (attendanceFilter === 'queue' || attendanceFilter === 'queued') {
-        /** Fila geral: sem operador e sem fila de equipe */
-        query += ` AND c.assigned_to_user_id IS NULL
-          AND (c.attendance_status IS NULL OR c.attendance_status IN ('pending', 'open'))
-          AND (c.attendance_status IS DISTINCT FROM 'closed')
-          AND (c.attendance_status IS DISTINCT FROM 'archived')`;
+        /** Fila geral: sem operador e sem fila de equipe — nunca closed/archived */
+        query += ` AND ${sqlQueueOrUnassignedAttendance('c')}`;
         if (teamCols) {
           query += ` AND (c.assigned_team_id IS NULL)`;
         }
@@ -6709,6 +6772,9 @@ export async function getConversations(req: AuthRequest, res: Response) {
         } else {
           query += ` AND FALSE`;
         }
+      } else {
+        /** Lista ativa default ("Todas"): exclui encerradas — só o chip Encerradas as lista. */
+        query += ` AND ${sqlExcludeClosedArchived('c')}`;
       }
     } else if (attendanceFilter && attendanceFilter.length > 0 && attendanceFilter !== 'wa_archived') {
       console.warn(
@@ -7153,10 +7219,8 @@ export async function getConversationAttendanceCounts(req: AuthRequest, res: Res
         : `0::int AS team,`;
       selectCounts = `
       COUNT(*) FILTER (
-        WHERE c.assigned_to_user_id IS NULL
+        WHERE ${sqlQueueOrUnassignedAttendance('c')}
           ${queueTeamExcl}
-          AND (c.attendance_status IS NULL OR c.attendance_status IN ('pending', 'open'))
-          AND (c.attendance_status IS DISTINCT FROM 'closed')
           AND COALESCE(c.wa_archived, false) = false
       )::int AS queue,
       COUNT(*) FILTER (
@@ -7165,11 +7229,8 @@ export async function getConversationAttendanceCounts(req: AuthRequest, res: Res
       )::int AS mine,
       ${teamInboxCount}
       COUNT(*) FILTER (
-        WHERE c.assigned_to_user_id IS NULL
+        WHERE ${sqlQueueOrUnassignedAttendance('c')}
           ${unassTeamExcl}
-          AND (c.attendance_status IS NULL OR c.attendance_status IN ('pending', 'open'))
-          AND (c.attendance_status IS DISTINCT FROM 'closed')
-          AND (c.attendance_status IS DISTINCT FROM 'archived')
           AND COALESCE(c.wa_archived, false) = false
       )::int AS unassigned,
       COUNT(*) FILTER (
@@ -9503,6 +9564,7 @@ export async function sendMessage(req: AuthRequest, res: Response) {
         messageKind: msgType,
         status: 'queued',
         sentAt: new Date(),
+        actorUserId: userId,
         metadata: { source: 'send/media', track_id: localTrackId, provisional: true },
         ...(replyContext
           ? {
@@ -9671,6 +9733,7 @@ export async function sendMessage(req: AuthRequest, res: Response) {
       sentAt: new Date(),
             clientMessageId: data.clientMessageId ?? null,
             messageProvider: 'whatsapp_official',
+            actorUserId: userId,
             metadata: {
               source: 'send/text/whatsapp_official',
               track_id: localTrackId,
@@ -9785,6 +9848,7 @@ export async function sendMessage(req: AuthRequest, res: Response) {
         status: 'queued',
         sentAt: new Date(),
         clientMessageId: data.clientMessageId ?? null,
+        actorUserId: userId,
         metadata: {
           source: 'send/text',
           track_id: localTrackId,
@@ -10157,6 +10221,7 @@ export async function sendKanbanAutomationOutboundText(
       messageKind: 'text',
       status: 'queued',
       sentAt: new Date(),
+      actorUserId: input.actorUserId,
       metadata: metaBase,
     });
     const savedRowId = saveResult.rowId;
@@ -10408,6 +10473,7 @@ export async function sendKanbanAutomationOutboundMedia(
       messageKind,
       status: 'queued',
       sentAt: new Date(),
+      actorUserId: input.actorUserId,
       metadata: metaBase,
     });
     const savedRowId = saveResult.rowId;

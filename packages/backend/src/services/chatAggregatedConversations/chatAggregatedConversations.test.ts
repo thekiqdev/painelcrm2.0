@@ -331,6 +331,30 @@ describe('chatAggregatedConversations F4.1 UazAPI hotfix', () => {
     expect(scope.filter).toBe('uazapi');
   });
 
+  it('default attendance filter excludes closed/archived', () => {
+    const built = buildAggregatedConversationsQuery(baseRequest({ attendanceFilter: '' }), queryCtx);
+    expect(built.sql).toContain("NOT IN ('closed', 'archived')");
+    expect(built.sql).not.toMatch(/attendance_status IN \('closed', 'archived'\)/);
+  });
+
+  it('queue filter never includes closed/archived', () => {
+    const built = buildAggregatedConversationsQuery(
+      baseRequest({ attendanceFilter: 'queue' }),
+      queryCtx,
+    );
+    expect(built.sql).toContain("IS DISTINCT FROM 'closed'");
+    expect(built.sql).toContain("IS DISTINCT FROM 'archived'");
+    expect(built.sql).toContain("IN ('pending', 'open')");
+  });
+
+  it('closed filter lists only closed/archived', () => {
+    const built = buildAggregatedConversationsQuery(
+      baseRequest({ attendanceFilter: 'closed' }),
+      queryCtx,
+    );
+    expect(built.sql).toContain("attendance_status IN ('closed', 'archived')");
+  });
+
   it('ignores includeWhatsAppOfficial=1 and filters UazAPI by instanceIds', () => {
     const built = buildAggregatedConversationsQuery(
       baseRequest({ includeWhatsAppOfficial: true, channelOrigin: 'all' }),

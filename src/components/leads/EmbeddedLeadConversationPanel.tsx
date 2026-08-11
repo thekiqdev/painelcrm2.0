@@ -28,9 +28,10 @@ import { findChatConversationById } from "@/repositories/chatConversationsReposi
 import { ensureChatInstances, filterConnectedChatInstances } from "@/features/chat-core/runtime";
 import {
   classifyChatOutgoingFile,
-  inferDocumentMimeForSend,
   validateChatOutgoingFileSize,
 } from "@/utils/chatComposerOutgoingFile";
+import { sendChatLocalFileViaMediaLibrary } from "@/utils/sendChatLocalFileViaMediaLibrary";
+import { humanizeMediaUploadError } from "@/utils/humanizeMediaUploadError";
 import { chatCommercialGates } from "@/utils/chatCommercialGates";
 import { cn } from "@/lib/utils";
 
@@ -265,15 +266,6 @@ export function EmbeddedLeadConversationPanel({
     [conversation?.instance_id, currentConversationId, messages.length, queryClient],
   );
 
-  const readFileAsDataUrl = useCallback((file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ""));
-      reader.onerror = () => reject(new Error("Falha ao ler ficheiro"));
-      reader.readAsDataURL(file);
-    });
-  }, []);
-
   const sendEmbedImageFile = useCallback(
     async (file: File) => {
       if (!currentConversationId) return;
@@ -287,20 +279,14 @@ export function EmbeddedLeadConversationPanel({
         return;
       }
       try {
-        const dataUrl = await readFileAsDataUrl(file);
-        const comma = dataUrl.indexOf(",");
-        const fileBase64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
-        await chatService.sendImageMessage(currentConversationId, {
-          fileBase64,
-          mimeType: file.type || "image/jpeg",
-        });
+        await sendChatLocalFileViaMediaLibrary(currentConversationId, file);
         void queryClient.invalidateQueries({ queryKey: messagesQueryKey });
         toast.success("Imagem enviada");
       } catch (e: unknown) {
-        toast.error(e instanceof Error ? e.message : "Falha ao enviar imagem");
+        toast.error(humanizeMediaUploadError(e, { fallback: "Falha ao enviar imagem" }));
       }
     },
-    [currentConversationId, messagesQueryKey, queryClient, readFileAsDataUrl],
+    [currentConversationId, messagesQueryKey, queryClient],
   );
 
   const sendEmbedDocumentFile = useCallback(
@@ -316,21 +302,14 @@ export function EmbeddedLeadConversationPanel({
         return;
       }
       try {
-        const dataUrl = await readFileAsDataUrl(file);
-        const comma = dataUrl.indexOf(",");
-        const fileBase64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
-        await chatService.sendDocumentMessage(currentConversationId, {
-          fileBase64,
-          mimeType: inferDocumentMimeForSend(file),
-          fileName: file.name,
-        });
+        await sendChatLocalFileViaMediaLibrary(currentConversationId, file);
         void queryClient.invalidateQueries({ queryKey: messagesQueryKey });
         toast.success("Documento enviado");
       } catch (e: unknown) {
-        toast.error(e instanceof Error ? e.message : "Falha ao enviar documento");
+        toast.error(humanizeMediaUploadError(e, { fallback: "Falha ao enviar documento" }));
       }
     },
-    [currentConversationId, messagesQueryKey, queryClient, readFileAsDataUrl],
+    [currentConversationId, messagesQueryKey, queryClient],
   );
 
   const handleAttachComboChange = async (ev: ChangeEvent<HTMLInputElement>) => {

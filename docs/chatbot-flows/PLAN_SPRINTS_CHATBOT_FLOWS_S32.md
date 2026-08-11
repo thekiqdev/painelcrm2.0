@@ -9,7 +9,7 @@
 | **Escopo** | Capturar PDF/mídia no `wait_input` → variáveis estáveis → `webhook_out` no contrato da parceira; biblioteca tenant para produtos/composer (sem URL manual) |
 | **Princípio** | Inbound do bot ≠ library permanente; URL UazAPI **não** é contrato estável; Drive = espelho opcional |
 | **Status** | **S32 · S32.1 · S33 · S33.1 · S33.2 feitos** (épico mídia inbound + library) |
-| **Próximo** | — (S32+ completo; Drive sync opt-in adiado — ver aceite S33.2) |
+| **Próximo** | **S34 feito** — sequência em `send_message` ([`PLAN_SPRINTS_CHATBOT_FLOWS_S34.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S34.md)); Drive sync opt-in adiado — ver aceite S33.2 |
 
 ---
 
@@ -338,3 +338,4 @@ No chat, agente escolhe/faz upload de mídia em vez de colar URL; produtos/itens
 4. ~~**S33.1** picker no composer + produtos.~~
 5. ~~**S33.2** picker no `send_message` (Drive sync skip parcial / opt-in documentado).~~
 6. Épico S32+ completo. Sync Drive Media Library (se desejado) fica no plano Drive, não bloqueia picker.
+7. **S34** — sequência de mensagens + `delay_after` no `send_message` ([`PLAN_SPRINTS_CHATBOT_FLOWS_S34.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S34.md)).

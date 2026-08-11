@@ -47,7 +47,13 @@ import {
   type StartTriggerKanbanColumn,
   type StartTriggerTag,
 } from './flowStartTrigger';
-import { readSetVariableAssignments } from './nodeCatalog';
+import {
+  readSetVariableAssignments,
+  resolveSendMessageItems,
+  SEND_MESSAGE_CURSOR_KEY,
+  SEND_MESSAGE_MAX_BURST,
+  SEND_MESSAGE_NODE_KEY,
+} from './nodeCatalog';
 
 const INVOICE_ASSIST_RETRIES_KEY = 'invoice._assist_retries';
 const INVOICE_ASSIST_CHOICE_VAR = 'answer';
@@ -786,20 +792,25 @@ export function processInboundStep(opts: {
     }
   } else if (opts.resumeFromDelay) {
     const delayNode = nodeById(opts.graph, session.currentNodeId);
-    if (!delayNode || delayNode.type !== 'delay') {
+    if (delayNode?.type === 'delay') {
+      const next = outEdge(opts.graph, delayNode.id, 'default');
+      if (!next) {
+        session.status = 'error';
+        actions.push({ type: 'error', message: 'delay sem saída' });
+        return { session, actions, handled: true };
+      }
+      session.status = 'active';
+      session.resumeAt = null;
+      session.currentNodeId = next.target;
+    } else if (delayNode?.type === 'send_message') {
+      // S34: delay entre itens da sequência — retoma no mesmo nó
+      session.status = 'active';
+      session.resumeAt = null;
+    } else {
       session.status = 'error';
       actions.push({ type: 'error', message: 'Sessão delay inválida' });
       return { session, actions, handled: true };
     }
-    const next = outEdge(opts.graph, delayNode.id, 'default');
-    if (!next) {
-      session.status = 'error';
-      actions.push({ type: 'error', message: 'delay sem saída' });
-      return { session, actions, handled: true };
-    }
-    session.status = 'active';
-    session.resumeAt = null;
-    session.currentNodeId = next.target;
   } else if (opts.resumeFromHttp) {
     const httpNode = nodeById(opts.graph, session.currentNodeId);
     if (
@@ -1139,32 +1150,71 @@ export function processInboundStep(opts: {
         continue;
       }
       case 'send_message': {
-        const mode = String(data.send_mode || 'text') === 'media' ? 'media' : 'text';
-        if (mode === 'media') {
-          const mediaUrl = interpolateTemplate(String(data.media_url || ''), session.variables).trim();
-          const assetId = String(data.media_asset_id || '').trim();
-          const rawMt = String(data.media_type || 'image');
-          const mediaType =
-            rawMt === 'document' || rawMt === 'audio' ? rawMt : ('image' as const);
-          const caption =
-            mediaType === 'audio'
-              ? ''
-              : interpolateTemplate(String(data.caption || ''), session.variables).trim();
-          const filename = interpolateTemplate(String(data.filename || ''), session.variables).trim();
-          if (assetId || mediaUrl) {
-            actions.push({
-              type: 'send_media',
-              mediaType,
-              mediaUrl: mediaUrl || undefined,
-              assetId: assetId || undefined,
-              caption: caption || undefined,
-              filename: filename || undefined,
-            });
-          }
-        } else {
-          const text = interpolateTemplate(String(data.text || ''), session.variables).trim();
-          if (text) actions.push({ type: 'send_text', text });
+        const items = resolveSendMessageItems(data);
+        const cursorNode = String(session.variables[SEND_MESSAGE_NODE_KEY] || '');
+        let idx =
+          cursorNode === node.id
+            ? Math.max(0, Math.floor(Number(session.variables[SEND_MESSAGE_CURSOR_KEY]) || 0))
+            : 0;
+        if (cursorNode !== node.id) {
+          session.variables[SEND_MESSAGE_NODE_KEY] = node.id;
+          session.variables[SEND_MESSAGE_CURSOR_KEY] = 0;
+          idx = 0;
         }
+
+        let burst = 0;
+        while (idx < items.length) {
+          const item = items[idx];
+          if (item.send_mode === 'media') {
+            const mediaUrl = interpolateTemplate(item.media_url, session.variables).trim();
+            const assetId = item.media_asset_id.trim();
+            const mediaType = item.media_type;
+            const caption =
+              mediaType === 'audio'
+                ? ''
+                : interpolateTemplate(item.caption, session.variables).trim();
+            const filename = interpolateTemplate(item.filename, session.variables).trim();
+            if (assetId || mediaUrl) {
+              actions.push({
+                type: 'send_media',
+                mediaType,
+                mediaUrl: mediaUrl || undefined,
+                assetId: assetId || undefined,
+                caption: caption || undefined,
+                filename: filename || undefined,
+              });
+            }
+          } else {
+            const text = interpolateTemplate(item.text, session.variables).trim();
+            if (text) actions.push({ type: 'send_text', text });
+          }
+
+          idx += 1;
+          session.variables[SEND_MESSAGE_CURSOR_KEY] = idx;
+          burst += 1;
+
+          if (idx >= items.length) break;
+
+          const delayAmount = Math.max(0, Number(item.delay_after?.amount) || 0);
+          if (delayAmount > 0) {
+            const unitRaw = String(item.delay_after?.unit || 'seconds');
+            const unit =
+              unitRaw === 'minutes' || unitRaw === 'hours'
+                ? unitRaw
+                : ('seconds' as const);
+            actions.push({ type: 'delay', amount: delayAmount, unit });
+            session.status = 'waiting_delay';
+            return { session, actions, handled: true };
+          }
+          if (burst >= SEND_MESSAGE_MAX_BURST) {
+            actions.push({ type: 'delay', amount: 1, unit: 'seconds' });
+            session.status = 'waiting_delay';
+            return { session, actions, handled: true };
+          }
+        }
+
+        delete session.variables[SEND_MESSAGE_CURSOR_KEY];
+        delete session.variables[SEND_MESSAGE_NODE_KEY];
         const next = outEdge(opts.graph, node.id, 'default');
         if (!next) {
           session.status = 'error';

@@ -303,6 +303,71 @@ export const startDataSchema = z
     }
   });
 
+/** S34 — teto de mensagens por nó `send_message`. */
+export const SEND_MESSAGE_MAX_ITEMS = 20;
+/** S34 — máx. envios sem pause na mesma passagem do runtime. */
+export const SEND_MESSAGE_MAX_BURST = 10;
+/** Cursor interno da sequência (sessão). */
+export const SEND_MESSAGE_CURSOR_KEY = '_send_message.cursor';
+export const SEND_MESSAGE_NODE_KEY = '_send_message.node_id';
+
+const sendMessageDelayAfterSchema = z
+  .object({
+    amount: z.coerce.number().int().min(0).max(99999).default(0),
+    unit: z.enum(['seconds', 'minutes', 'hours']).default('seconds'),
+  })
+  .optional();
+
+function refineSendMessagePayload(
+  d: {
+    send_mode?: string;
+    text?: string;
+    media_url?: string;
+    media_asset_id?: string;
+  },
+  ctx: z.RefinementCtx,
+  pathPrefix: (string | number)[] = []
+): void {
+  const mode = d.send_mode === 'media' ? 'media' : 'text';
+  if (mode === 'text') {
+    if (!String(d.text || '').trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Texto da mensagem obrigatório',
+        path: [...pathPrefix, 'text'],
+      });
+    }
+  } else {
+    const hasUrl = Boolean(String(d.media_url || '').trim());
+    const hasAsset = Boolean(String(d.media_asset_id || '').trim());
+    if (!hasUrl && !hasAsset) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Escolha um asset da biblioteca ou informe a URL da mídia',
+        path: [...pathPrefix, 'media_asset_id'],
+      });
+    }
+  }
+}
+
+export const sendMessageItemSchema = z
+  .object({
+    id: z.string().min(1),
+    send_mode: z.enum(['text', 'media']).optional().default('text'),
+    text: z.string().optional().default(''),
+    media_url: z.string().optional().default(''),
+    media_asset_id: z.string().uuid().optional().or(z.literal('')).default(''),
+    media_asset_label: z.string().optional().default(''),
+    media_type: z.enum(['image', 'document', 'audio']).optional().default('image'),
+    caption: z.string().optional().default(''),
+    filename: z.string().optional().default(''),
+    /** Espera antes da PRÓXIMA mensagem (S34). */
+    delay_after: sendMessageDelayAfterSchema,
+  })
+  .superRefine((d, ctx) => refineSendMessagePayload(d, ctx));
+
+export type SendMessageItem = z.infer<typeof sendMessageItemSchema>;
+
 export const sendMessageDataSchema = z
   .object({
     label: z.string().optional(),
@@ -316,29 +381,90 @@ export const sendMessageDataSchema = z
     media_type: z.enum(['image', 'document', 'audio']).optional().default('image'),
     caption: z.string().optional().default(''),
     filename: z.string().optional().default(''),
+    /** S34 — sequência opcional; sem array = comportamento legado (campos root). */
+    messages: z.array(sendMessageItemSchema).max(SEND_MESSAGE_MAX_ITEMS).optional(),
   })
   .superRefine((d, ctx) => {
-    const mode = d.send_mode === 'media' ? 'media' : 'text';
-    if (mode === 'text') {
-      if (!String(d.text || '').trim()) {
+    const msgs = Array.isArray(d.messages) ? d.messages : [];
+    if (msgs.length > 0) {
+      if (msgs.length > SEND_MESSAGE_MAX_ITEMS) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: 'Texto da mensagem obrigatório',
-          path: ['text'],
+          message: `Máximo de ${SEND_MESSAGE_MAX_ITEMS} mensagens por nó`,
+          path: ['messages'],
         });
       }
-    } else {
-      const hasUrl = Boolean(String(d.media_url || '').trim());
-      const hasAsset = Boolean(String(d.media_asset_id || '').trim());
-      if (!hasUrl && !hasAsset) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: 'Escolha um asset da biblioteca ou informe a URL da mídia',
-          path: ['media_asset_id'],
-        });
-      }
+      return;
     }
+    refineSendMessagePayload(d, ctx);
   });
+
+/** Resolve lista efetiva de envio (legado root ou `messages[]`). */
+export function resolveSendMessageItems(
+  data: Record<string, unknown>
+): Array<{
+  id: string;
+  send_mode: 'text' | 'media';
+  text: string;
+  media_url: string;
+  media_asset_id: string;
+  media_asset_label: string;
+  media_type: 'image' | 'document' | 'audio';
+  caption: string;
+  filename: string;
+  delay_after?: { amount: number; unit: 'seconds' | 'minutes' | 'hours' };
+}> {
+  const raw = Array.isArray(data.messages) ? data.messages : [];
+  if (raw.length > 0) {
+    return raw.slice(0, SEND_MESSAGE_MAX_ITEMS).map((row, i) => {
+      const r = row && typeof row === 'object' ? (row as Record<string, unknown>) : {};
+      const mt = String(r.media_type || 'image');
+      const mediaType =
+        mt === 'document' || mt === 'audio' ? mt : ('image' as const);
+      const delayRaw =
+        r.delay_after && typeof r.delay_after === 'object'
+          ? (r.delay_after as Record<string, unknown>)
+          : null;
+      const delayUnitRaw = String(delayRaw?.unit || 'seconds');
+      const delayUnit =
+        delayUnitRaw === 'minutes' || delayUnitRaw === 'hours'
+          ? delayUnitRaw
+          : ('seconds' as const);
+      return {
+        id: String(r.id || `m${i + 1}`),
+        send_mode: String(r.send_mode || 'text') === 'media' ? ('media' as const) : ('text' as const),
+        text: String(r.text || ''),
+        media_url: String(r.media_url || ''),
+        media_asset_id: String(r.media_asset_id || ''),
+        media_asset_label: String(r.media_asset_label || ''),
+        media_type: mediaType,
+        caption: String(r.caption || ''),
+        filename: String(r.filename || ''),
+        delay_after: delayRaw
+          ? {
+              amount: Math.max(0, Math.min(99999, Math.round(Number(delayRaw.amount) || 0))),
+              unit: delayUnit,
+            }
+          : undefined,
+      };
+    });
+  }
+  const mt = String(data.media_type || 'image');
+  const mediaType = mt === 'document' || mt === 'audio' ? mt : ('image' as const);
+  return [
+    {
+      id: 'legacy',
+      send_mode: String(data.send_mode || 'text') === 'media' ? ('media' as const) : ('text' as const),
+      text: String(data.text || ''),
+      media_url: String(data.media_url || ''),
+      media_asset_id: String(data.media_asset_id || ''),
+      media_asset_label: String(data.media_asset_label || ''),
+      media_type: mediaType,
+      caption: String(data.caption || ''),
+      filename: String(data.filename || ''),
+    },
+  ];
+}
 
 export const waitInputDataSchema = z
   .object({
@@ -1082,6 +1208,15 @@ export function defaultDataForType(type: EssentialNodeType): Record<string, unkn
 
 export function nodePreview(type: string, data: Record<string, unknown>): string {
   if (type === 'send_message') {
+    const items = resolveSendMessageItems(data);
+    if (items.length > 1) {
+      const first = items[0];
+      const head =
+        first.send_mode === 'media'
+          ? `[mídia: ${first.media_type}]`
+          : (first.text || '').trim().slice(0, 28);
+      return `${items.length} msgs · ${head}`.trim().slice(0, 48);
+    }
     if (String(data.send_mode || 'text') === 'media') {
       const mt = String(data.media_type || 'image');
       const cap = String(

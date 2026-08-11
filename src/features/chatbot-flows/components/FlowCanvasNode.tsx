@@ -8,6 +8,7 @@ import {
   defaultDataForType,
   generateInboundWebhookToken,
   nodePreview,
+  resolveSendMessageItems,
   type EssentialNodeType,
   type GraphValidationIssue,
 } from '../lib/nodeCatalog';
@@ -95,6 +96,8 @@ function FlowNodeInner({ id, data, type, selected }: NodeProps & { data: FlowNod
   const preview = nodePreview(t, data);
   const visual = getNodeVisual(t);
   const Icon = visual.Icon;
+  const sendMsgCount =
+    t === 'send_message' ? resolveSendMessageItems(data as Record<string, unknown>).length : 0;
   const nodeIssues = data.validationIssues || [];
   const showValidation = Boolean(data.invalid && nodeIssues.length > 0);
   const popoverOpen = validation?.openIssueNodeId === id;
@@ -350,6 +353,11 @@ function FlowNodeInner({ id, data, type, selected }: NodeProps & { data: FlowNod
       </div>
 
       <div className="rounded-b-xl bg-background px-3 py-2.5">
+        {sendMsgCount > 1 ? (
+          <span className="mb-1 inline-flex rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-800 dark:bg-sky-950 dark:text-sky-200">
+            {sendMsgCount} msgs
+          </span>
+        ) : null}
         <p className="line-clamp-3 text-[12px] leading-snug text-foreground/90">{preview}</p>
         {formatTimeoutHint(data as Record<string, unknown>) &&
         (t === 'wait_input' || t === 'menu_choice') ? (

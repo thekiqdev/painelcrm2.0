@@ -1,5 +1,6 @@
 import { apiClient, getApiUrl } from '@/integrations/api/client';
 import { normalizeCatalogMediaUrlForBrowser } from '@/services/catalogMediaUpload';
+import { humanizeMediaUploadError } from '@/utils/humanizeMediaUploadError';
 
 export type MediaLibraryQuota = {
   usedCount: number;
@@ -70,7 +71,14 @@ export async function uploadMediaLibraryFile(file: File): Promise<MediaLibraryAs
     form,
   );
   if (res.error || !res.data?.ok || !res.data.asset) {
-    throw new Error(res.error || res.data?.error || 'Erro no upload.');
+    const status =
+      typeof res.details?.status === 'number' ? (res.details.status as number) : undefined;
+    throw new Error(
+      humanizeMediaUploadError(res.error || res.data?.error || 'Erro no upload.', {
+        status,
+        fallback: 'Erro no upload.',
+      }),
+    );
   }
   return res.data.asset;
 }

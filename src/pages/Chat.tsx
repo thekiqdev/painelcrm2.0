@@ -338,9 +338,10 @@ import {
 } from '@/components/chat/ChatScheduledMessagesStrip';
 import {
   classifyChatOutgoingFile,
-  inferDocumentMimeForSend,
   validateChatOutgoingFileSize,
 } from '@/utils/chatComposerOutgoingFile';
+import { sendChatLocalFileViaMediaLibrary } from '@/utils/sendChatLocalFileViaMediaLibrary';
+import { humanizeMediaUploadError } from '@/utils/humanizeMediaUploadError';
 import { useChatOutboundQueue } from '@/hooks/useChatOutboundQueue';
 import { getMyTenantUsers, type TenantUser } from '@/services/tenantLimits';
 import { teamsService, type Team } from '@/services/teams';
@@ -1196,12 +1197,18 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
   }, [chatCoreStoreReadEnabled, chatLoadMore.loadMore]);
 
   const conversationsViewRaw = chatCoreStoreReadEnabled ? chatStoreList.conversations : conversations;
-  /** MB-003/039 — archived only visible when Arquivadas filter is active (incl. groups). */
+  /** MB-003/039 — archived only when Arquivadas; encerradas só no chip Encerradas (não Fila/Todas/Minhas). */
   const conversationsView = useMemo(() => {
     if (chatAttendanceFilter === 'wa_archived') {
       return conversationsViewRaw.filter((c) => Boolean(c.wa_archived));
     }
-    return conversationsViewRaw.filter((c) => !c.wa_archived);
+    const withoutWaArchived = conversationsViewRaw.filter((c) => !c.wa_archived);
+    const isClosedOrArchived = (c: (typeof withoutWaArchived)[number]) =>
+      c.attendance_status === 'closed' || c.attendance_status === 'archived';
+    if (chatAttendanceFilter === 'closed') {
+      return withoutWaArchived.filter(isClosedOrArchived);
+    }
+    return withoutWaArchived.filter((c) => !isClosedOrArchived(c));
   }, [conversationsViewRaw, chatAttendanceFilter]);
   const messagesView = chatCoreStoreReadEnabled ? chatStoreMessages.messages : messages;
   const loadingConversationsView = chatCoreStoreReadEnabled
@@ -3675,17 +3682,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     setNewMessage('');
     try {
       setSendingMessage(true);
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const r = new FileReader();
-        r.onload = () => resolve(r.result as string);
-        r.onerror = () => reject(new Error('Falha ao ler arquivo'));
-        r.readAsDataURL(file);
-      });
-      const comma = dataUrl.indexOf(',');
-      const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
-      await chatService.sendImageMessage(selectedConversationId, {
-        fileBase64: base64,
-        mimeType: file.type || 'image/jpeg',
+      await sendChatLocalFileViaMediaLibrary(selectedConversationId, file, {
         caption: caption || undefined,
       });
       await loadMessages(selectedConversationId, { silent: true });
@@ -3698,7 +3695,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       setNewMessage(caption);
       console.error('Erro ao enviar imagem:', error);
       toast.error('Não foi possível enviar a imagem', {
-        description: error instanceof Error ? error.message : undefined,
+        description: humanizeMediaUploadError(error),
       });
     } finally {
       setSendingMessage(false);
@@ -3720,19 +3717,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     setNewMessage('');
     try {
       setSendingMessage(true);
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const r = new FileReader();
-        r.onload = () => resolve(r.result as string);
-        r.onerror = () => reject(new Error('Falha ao ler arquivo'));
-        r.readAsDataURL(file);
-      });
-      const comma = dataUrl.indexOf(',');
-      const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
-      const mimeType = inferDocumentMimeForSend(file);
-      await chatService.sendDocumentMessage(selectedConversationId, {
-        fileBase64: base64,
-        mimeType,
-        fileName: file.name,
+      await sendChatLocalFileViaMediaLibrary(selectedConversationId, file, {
         caption: caption || undefined,
       });
       await loadMessages(selectedConversationId, { silent: true });
@@ -3745,7 +3730,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       setNewMessage(caption);
       console.error('Erro ao enviar documento:', error);
       toast.error('Não foi possível enviar o documento', {
-        description: error instanceof Error ? error.message : undefined,
+        description: humanizeMediaUploadError(error),
       });
     } finally {
       setSendingMessage(false);
@@ -3799,7 +3784,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       setNewMessage(caption);
       console.error('Erro ao enviar mídia da biblioteca:', error);
       toast.error('Não foi possível enviar a mídia da biblioteca', {
-        description: error instanceof Error ? error.message : undefined,
+        description: humanizeMediaUploadError(error),
       });
       throw error;
     } finally {
@@ -4908,12 +4893,39 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
         assignee_display: null,
         assignee_avatar_url: null,
       });
+      if (enabledInstanceIds.size > 0) {
+        try {
+          const scope =
+            user?.tenant_id && chatInboxScope === 'tenant' ? ('tenant' as const) : ('owner' as const);
+          const c = await fetchChatAttendanceCounts(
+            { instanceIds: Array.from(enabledInstanceIds), inboxScope: scope },
+            { force: true, reason: 'manual' },
+          );
+          setAttendanceCounts({
+            queue: c.queue,
+            team: c.team,
+            mine: c.mine,
+            unassigned: c.unassigned,
+            closed: c.closed,
+            wa_archived: c.wa_archived ?? 0,
+            unread: c.unread,
+          });
+        } catch {
+          /* ignore */
+        }
+      }
     } catch (error) {
       toast.error('Não foi possível encerrar', {
         description: error instanceof Error ? error.message : undefined,
       });
     }
-  }, [selectedConversationId, mergeAttendanceFromPayload]);
+  }, [
+    selectedConversationId,
+    mergeAttendanceFromPayload,
+    enabledInstanceIds,
+    user?.tenant_id,
+    chatInboxScope,
+  ]);
 
   const [waArchiveBusy, setWaArchiveBusy] = useState(false);
   const handleToggleWaArchive = useCallback(async () => {

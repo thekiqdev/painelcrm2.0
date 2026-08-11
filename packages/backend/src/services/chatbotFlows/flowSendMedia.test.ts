@@ -227,3 +227,185 @@ describe('S33.2 send_message media_asset_id', () => {
     expect(media.mediaUrl).toBeUndefined();
   });
 });
+
+describe('S34 send_message sequence', () => {
+  it('schema aceita messages[] e legado root', () => {
+    expect(
+      sendMessageDataSchema.safeParse({
+        text: 'Olá',
+      }).success
+    ).toBe(true);
+    expect(
+      sendMessageDataSchema.safeParse({
+        messages: [
+          { id: 'a', send_mode: 'text', text: 'um' },
+          {
+            id: 'b',
+            send_mode: 'media',
+            media_type: 'image',
+            media_url: 'https://cdn.example/x.jpg',
+            delay_after: { amount: 5, unit: 'seconds' },
+          },
+        ],
+      }).success
+    ).toBe(true);
+    expect(
+      sendMessageDataSchema.safeParse({
+        messages: [{ id: 'a', send_mode: 'text', text: '' }],
+      }).success
+    ).toBe(false);
+  });
+
+  it('envia sequência na ordem sem delay', () => {
+    const g: RuntimeGraph = {
+      nodes: [
+        { id: 'start', type: 'start', data: { trigger: { type: 'first_message' } } },
+        {
+          id: 'm',
+          type: 'send_message',
+          data: {
+            messages: [
+              { id: 'a', send_mode: 'text', text: 'um' },
+              { id: 'b', send_mode: 'text', text: 'dois {{name}}' },
+              {
+                id: 'c',
+                send_mode: 'media',
+                media_type: 'image',
+                media_url: 'https://cdn.example/{{slug}}.jpg',
+                caption: 'cap',
+              },
+            ],
+          },
+        },
+        { id: 'end', type: 'end', data: {} },
+      ],
+      edges: [
+        { id: 'a', source: 'start', target: 'm', sourceHandle: 'default' },
+        { id: 'b', source: 'm', target: 'end', sourceHandle: 'default' },
+      ],
+    };
+    const r = processInboundStep({
+      graph: g,
+      session: {
+        status: 'active',
+        currentNodeId: null,
+        variables: { name: 'Ana', slug: 'foto' },
+        waitingVariable: null,
+      },
+      messageBody: 'x',
+      justStarted: true,
+    });
+    const texts = r.actions.filter((a) => a.type === 'send_text').map((a) => (a as { text: string }).text);
+    expect(texts).toEqual(['um', 'dois Ana']);
+    expect(r.actions.find((a) => a.type === 'send_media')).toMatchObject({
+      type: 'send_media',
+      mediaUrl: 'https://cdn.example/foto.jpg',
+      caption: 'cap',
+    });
+    expect(r.session.status).toBe('ended');
+    expect(r.session.variables['_send_message.cursor']).toBeUndefined();
+  });
+
+  it('delay_after pausa e resumeFromDelay continua no mesmo nó', () => {
+    const g: RuntimeGraph = {
+      nodes: [
+        { id: 'start', type: 'start', data: { trigger: { type: 'first_message' } } },
+        {
+          id: 'm',
+          type: 'send_message',
+          data: {
+            messages: [
+              {
+                id: 'a',
+                send_mode: 'text',
+                text: 'antes',
+                delay_after: { amount: 3, unit: 'seconds' },
+              },
+              { id: 'b', send_mode: 'text', text: 'depois' },
+            ],
+          },
+        },
+        { id: 'end', type: 'end', data: {} },
+      ],
+      edges: [
+        { id: 'a', source: 'start', target: 'm', sourceHandle: 'default' },
+        { id: 'b', source: 'm', target: 'end', sourceHandle: 'default' },
+      ],
+    };
+    const r1 = processInboundStep({
+      graph: g,
+      session: {
+        status: 'active',
+        currentNodeId: null,
+        variables: {},
+        waitingVariable: null,
+      },
+      messageBody: 'x',
+      justStarted: true,
+    });
+    expect(r1.session.status).toBe('waiting_delay');
+    expect(r1.session.currentNodeId).toBe('m');
+    expect(r1.actions.some((a) => a.type === 'send_text' && a.text === 'antes')).toBe(true);
+    expect(r1.actions.some((a) => a.type === 'send_text' && a.text === 'depois')).toBe(false);
+    expect(r1.actions.find((a) => a.type === 'delay')).toMatchObject({
+      type: 'delay',
+      amount: 3,
+      unit: 'seconds',
+    });
+
+    const r2 = processInboundStep({
+      graph: g,
+      session: r1.session,
+      messageBody: null,
+      resumeFromDelay: true,
+    });
+    expect(r2.actions.some((a) => a.type === 'send_text' && a.text === 'depois')).toBe(true);
+    expect(r2.session.status).toBe('ended');
+    expect(r2.session.variables['_send_message.cursor']).toBeUndefined();
+  });
+
+  it('burst sem delay_after respeita teto e retoma', () => {
+    const msgs = Array.from({ length: 12 }, (_, i) => ({
+      id: `m${i}`,
+      send_mode: 'text' as const,
+      text: `t${i}`,
+    }));
+    const g: RuntimeGraph = {
+      nodes: [
+        { id: 'start', type: 'start', data: { trigger: { type: 'first_message' } } },
+        { id: 'm', type: 'send_message', data: { messages: msgs } },
+        { id: 'end', type: 'end', data: {} },
+      ],
+      edges: [
+        { id: 'a', source: 'start', target: 'm', sourceHandle: 'default' },
+        { id: 'b', source: 'm', target: 'end', sourceHandle: 'default' },
+      ],
+    };
+    const r1 = processInboundStep({
+      graph: g,
+      session: {
+        status: 'active',
+        currentNodeId: null,
+        variables: {},
+        waitingVariable: null,
+      },
+      messageBody: 'x',
+      justStarted: true,
+    });
+    expect(r1.session.status).toBe('waiting_delay');
+    expect(r1.actions.filter((a) => a.type === 'send_text')).toHaveLength(10);
+    expect(r1.actions.find((a) => a.type === 'delay')).toMatchObject({
+      amount: 1,
+      unit: 'seconds',
+    });
+
+    const r2 = processInboundStep({
+      graph: g,
+      session: r1.session,
+      messageBody: null,
+      resumeFromDelay: true,
+    });
+    expect(r2.actions.filter((a) => a.type === 'send_text')).toHaveLength(2);
+    expect(r2.session.status).toBe('ended');
+  });
+});
