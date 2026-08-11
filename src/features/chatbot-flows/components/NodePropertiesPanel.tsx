@@ -1818,7 +1818,8 @@ export function NodePropertiesPanel({
             <HttpIntegrationTestSection kind="http_request" data={data} onChange={onChange} />
             <p className="text-[11px] text-muted-foreground">
               Saídas: <span className="text-emerald-600">ok</span> (2xx) e{' '}
-              <span className="text-rose-600">erro</span> (timeout/5xx/rede).
+              <span className="text-rose-600">erro</span> (4xx/5xx/timeout/rede). Variáveis
+              mapeadas ficam disponíveis nos dois caminhos.
             </p>
           </>
         ) : null}
@@ -2638,7 +2639,7 @@ function WebhookInFields({
 
         {sampleJson != null && typeof sampleJson === 'object' ? (
           <div className="space-y-1.5">
-            <Label className="text-[11px]">Árvore — clique para mapear</Label>
+            <Label className="text-[11px]">Árvore — copie o valor ou fixe para mapear</Label>
             <HttpJsonSampleTree value={sampleJson} onPickPath={(p) => startPick(p)} />
             {pickPath != null ? (
               <div className="space-y-1.5 rounded-md border bg-background p-2">

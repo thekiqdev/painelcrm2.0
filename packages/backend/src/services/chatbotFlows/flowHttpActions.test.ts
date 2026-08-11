@@ -1,8 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   assertSafePublicHttpUrl,
+  buildHttpResponseMapped,
   buildWebhookOutBody,
+  executeFlowHttpRequest,
   getByDotPath,
+  isHttpSuccessStatus,
 } from './flowHttpActions.js';
 import { sanitizeGraph } from './flowPortability.js';
 
@@ -23,6 +26,94 @@ describe('getByDotPath', () => {
   it('resolve paths simples', () => {
     expect(getByDotPath({ data: { id: 9 } }, 'data.id')).toBe(9);
     expect(getByDotPath({ items: [{ n: 'a' }] }, 'items.0.n')).toBe('a');
+  });
+});
+
+describe('buildHttpResponseMapped / isHttpSuccessStatus', () => {
+  it('trata 201 como sucesso (2xx)', () => {
+    expect(isHttpSuccessStatus(201)).toBe(true);
+    expect(isHttpSuccessStatus(200)).toBe(true);
+    expect(isHttpSuccessStatus(400)).toBe(false);
+    expect(isHttpSuccessStatus(500)).toBe(false);
+  });
+
+  it('mapeia status/body/paths em qualquer status', () => {
+    const mapped = buildHttpResponseMapped({
+      status: 400,
+      bodyText: '{"error":"bad","code":"E1"}',
+      bodyJson: { error: 'bad', code: 'E1' },
+      statusVariable: 'http_status',
+      responseVariable: 'http_body',
+      responseMap: [{ path: 'code', variable: 'err_code' }],
+    });
+    expect(mapped.http_status).toBe('400');
+    expect(mapped.err_code).toBe('E1');
+    expect(mapped.http_body).toContain('bad');
+  });
+});
+
+describe('executeFlowHttpRequest — map em qualquer status', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function mockFetch(status: number, body: unknown) {
+    const bodyText = typeof body === 'string' ? body : JSON.stringify(body);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        status,
+        text: async () => bodyText,
+      })
+    );
+  }
+
+  const mapOpts = {
+    method: 'GET',
+    url: 'https://example.com/api',
+    timeoutMs: 5000,
+    variables: {},
+    statusVariable: 'http_status',
+    responseVariable: 'http_body',
+    responseMap: [{ path: 'id', variable: 'ext_id' }],
+  };
+
+  it('201 → ok:true e mapped preenchido', async () => {
+    mockFetch(201, { id: 'created-1', ok: true });
+    const res = await executeFlowHttpRequest(mapOpts);
+    expect(res.ok).toBe(true);
+    expect(res.status).toBe(201);
+    expect(res.mapped.http_status).toBe('201');
+    expect(res.mapped.ext_id).toBe('created-1');
+    expect(res.mapped.http_body).toContain('created-1');
+  });
+
+  it('400 → ok:false e mapped preenchido', async () => {
+    mockFetch(400, { id: null, error: 'invalid', detail: { reason: 'x' } });
+    const res = await executeFlowHttpRequest({
+      ...mapOpts,
+      responseMap: [
+        { path: 'error', variable: 'api_error' },
+        { path: 'detail.reason', variable: 'api_reason' },
+      ],
+    });
+    expect(res.ok).toBe(false);
+    expect(res.status).toBe(400);
+    expect(res.error).toBe('HTTP 400');
+    expect(res.mapped.http_status).toBe('400');
+    expect(res.mapped.api_error).toBe('invalid');
+    expect(res.mapped.api_reason).toBe('x');
+    expect(res.mapped.http_body).toContain('invalid');
+  });
+
+  it('500 → ok:false e mapped preenchido', async () => {
+    mockFetch(500, { message: 'boom', id: 'srv' });
+    const res = await executeFlowHttpRequest(mapOpts);
+    expect(res.ok).toBe(false);
+    expect(res.status).toBe(500);
+    expect(res.mapped.http_status).toBe('500');
+    expect(res.mapped.ext_id).toBe('srv');
+    expect(res.mapped.http_body).toContain('boom');
   });
 });
 

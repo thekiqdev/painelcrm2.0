@@ -1,7 +1,11 @@
-import { ChevronRight } from 'lucide-react';
-import { useState } from 'react';
+import { Check, ChevronRight, Copy, Pin } from 'lucide-react';
+import { useState, type MouseEvent } from 'react';
 import { cn } from '@/lib/utils';
-import { formatSampleValue } from '../lib/httpTestHelpers';
+import {
+  formatSampleRowCopy,
+  formatSampleValue,
+  serializeSampleValue,
+} from '../lib/httpTestHelpers';
 
 type Props = {
   value: unknown;
@@ -14,25 +18,75 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 }
 
+function RowActions({
+  path,
+  value,
+  onPickPath,
+}: {
+  path: string;
+  value: unknown;
+  onPickPath: (path: string, value: unknown) => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const pickKey = path || 'body';
+
+  const handleCopy = (e: MouseEvent) => {
+    e.stopPropagation();
+    const text = formatSampleRowCopy(path, value);
+    void navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    });
+  };
+
+  const handlePin = (e: MouseEvent) => {
+    e.stopPropagation();
+    onPickPath(pickKey, value);
+  };
+
+  return (
+    <span className="flex shrink-0 items-center gap-0.5">
+      <button
+        type="button"
+        className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+        title="Copiar valor completo"
+        aria-label="Copiar valor completo"
+        onClick={handleCopy}
+      >
+        {copied ? <Check className="h-3 w-3 text-emerald-600" /> : <Copy className="h-3 w-3" />}
+      </button>
+      <button
+        type="button"
+        className="inline-flex h-5 w-5 items-center justify-center rounded text-violet-600 hover:bg-violet-50 dark:hover:bg-violet-950/40"
+        title={path ? `Fixar / mapear ${path}` : 'Fixar / mapear body'}
+        aria-label="Fixar para criar variável"
+        onClick={handlePin}
+      >
+        <Pin className="h-3 w-3" />
+      </button>
+    </span>
+  );
+}
+
 function JsonNode({ value, path = '', onPickPath, depth = 0 }: Props) {
   const [open, setOpen] = useState(depth < 2);
   const expandable = isPlainObject(value) || Array.isArray(value);
+  const fullValue = serializeSampleValue(value);
+  const preview = formatSampleValue(value);
+  const leafLabel = path ? path.split('.').pop()! : 'body';
 
   if (!expandable) {
     return (
-      <button
-        type="button"
-        className="flex w-full items-start gap-1 rounded px-1.5 py-0.5 text-left hover:bg-violet-50 dark:hover:bg-violet-950/40"
-        onClick={() => onPickPath(path || 'body', value)}
-        title={path ? `Criar variável a partir de ${path}` : 'Criar variável com o body'}
-      >
-        <span className="shrink-0 font-mono text-[11px] text-violet-700 dark:text-violet-300">
-          {path ? path.split('.').pop() : 'body'}
+      <div className="flex w-full items-start gap-1 rounded px-1 py-0.5 hover:bg-violet-50/80 dark:hover:bg-violet-950/30">
+        <RowActions path={path} value={value} onPickPath={onPickPath} />
+        <span
+          className="min-w-0 flex-1 truncate font-mono text-[11px] text-left"
+          title={fullValue.length > 60 ? fullValue : undefined}
+        >
+          <span className="text-violet-700 dark:text-violet-300">{leafLabel}</span>
+          <span className="text-muted-foreground"> = {preview}</span>
         </span>
-        <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">
-          {formatSampleValue(value)}
-        </span>
-      </button>
+      </div>
     );
   }
 
@@ -43,28 +97,21 @@ function JsonNode({ value, path = '', onPickPath, depth = 0 }: Props) {
   return (
     <div className={cn(depth > 0 && 'ml-2 border-l border-border/60 pl-1.5')}>
       {path ? (
-        <div className="flex w-full items-center gap-0.5 rounded px-1 py-0.5">
+        <div className="flex w-full items-center gap-1 rounded px-1 py-0.5 hover:bg-muted/40">
+          <RowActions path={path} value={value} onPickPath={onPickPath} />
           <button
             type="button"
-            className="flex min-w-0 flex-1 items-center gap-0.5 text-left hover:bg-muted/60"
+            className="flex min-w-0 flex-1 items-center gap-0.5 text-left"
             onClick={() => setOpen((o) => !o)}
+            title={fullValue.length > 60 ? fullValue : undefined}
           >
             <ChevronRight
               className={cn('h-3 w-3 shrink-0 transition-transform', open && 'rotate-90')}
             />
-            <span className="truncate font-mono text-[11px] font-medium">
-              {path.split('.').pop()}
-            </span>
+            <span className="truncate font-mono text-[11px] font-medium">{leafLabel}</span>
             <span className="text-[10px] text-muted-foreground">
               {Array.isArray(value) ? `[${value.length}]` : `{${entries.length}}`}
             </span>
-          </button>
-          <button
-            type="button"
-            className="shrink-0 px-1 text-[10px] text-violet-600 hover:underline"
-            onClick={() => onPickPath(path, value)}
-          >
-            mapear
           </button>
         </div>
       ) : null}

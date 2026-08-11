@@ -828,7 +828,8 @@ export function sessionVariablesForHttpTest(
   return out;
 }
 
-/** Usa sample `last_test_*` do nó HTTP/webhook (S14). */
+/** Usa sample `last_test_*` do nó HTTP/webhook (S14).
+ * Mapeia sempre (qualquer status); `ok` só escolhe a saída default|error. */
 export function resolveHttpWithLastSample(
   graph: RuntimeGraph,
   state: FlowSimulationState
@@ -840,7 +841,8 @@ export function resolveHttpWithLastSample(
   if (!hasLastHttpSample(data)) return state;
 
   const mapped = buildMappedFromLastSample(data);
-  const ok = data.last_test_ok !== false && Number(data.last_test_status) >= 200 && Number(data.last_test_status) < 300;
+  const status = Number(data.last_test_status) || 0;
+  const ok = status >= 200 && status < 300;
   return resumeWaitingHttp(graph, state, {
     ok,
     mapped,

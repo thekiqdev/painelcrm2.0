@@ -506,6 +506,7 @@ Entrega antecipada de polish visual no editor (independente do hardening):
 - [x] Clique no campo cria map path → variável
 - [x] Publish/export remove `last_test_*`
 - [x] ▶ Testar pode seguir com a última resposta mapeada
+- [x] **Map aplica em qualquer status** (200/201/4xx/5xx): `response_map` / `status_variable` / `response_variable` e sample Fixar/última resposta funcionam independentemente do código; roteamento continua 2xx→`default`, demais→`error` (vars nos dois caminhos)
 
 ---
 

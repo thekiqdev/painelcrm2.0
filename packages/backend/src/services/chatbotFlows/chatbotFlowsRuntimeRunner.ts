@@ -878,6 +878,7 @@ async function applyRuntimeActions(opts: {
           statusVariable: action.statusVariable,
           responseMap: action.responseMap,
         });
+        // mappedVariables sempre — inclusive quando ok:false (4xx/5xx).
         httpResume = { ok: httpRes.ok, mappedVariables: httpRes.mapped };
         if (!httpRes.ok) {
           console.warn('[chatbot_flows_runtime] http_request failed', httpRes.error || httpRes.status);

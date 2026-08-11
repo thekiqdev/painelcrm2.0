@@ -10,6 +10,7 @@ import {
 import { buildMockFlowVariableSeed } from '../lib/mockVariableSeed';
 import {
   formatSampleValue,
+  hasLastHttpSample,
   LAST_TEST_BODY_MAX,
   parseLastTestBodyJson,
   suggestVarNameFromPath,
@@ -46,6 +47,10 @@ function uniqueVarName(base: string, existing: ResponseMapRow[]): string {
   return `${base}_${i}`;
 }
 
+function hasMappedPreview(raw: unknown): raw is Record<string, unknown> {
+  return Boolean(raw) && typeof raw === 'object' && Object.keys(raw as object).length > 0;
+}
+
 export function HttpIntegrationTestSection({ kind, data, onChange }: Props) {
   const [testing, setTesting] = useState(false);
   const [pickPath, setPickPath] = useState<string | null>(null);
@@ -53,7 +58,10 @@ export function HttpIntegrationTestSection({ kind, data, onChange }: Props) {
   const mapRows = normalizeMap(data.response_map);
   const sampleJson = parseLastTestBodyJson(data);
   const hasSample = Boolean(data.last_test_at);
+  const hasBodySample = hasLastHttpSample(data);
+  const mappedPreview = hasMappedPreview(data.last_test_mapped) ? data.last_test_mapped : null;
 
+  /** Persiste sample + mapped em qualquer status (2xx ou erro) — mapear ≠ sucesso do request. */
   const persistResult = (result: ChatbotFlowIntegrationTestResult) => {
     const bodyText = (result.body_text || '').slice(0, LAST_TEST_BODY_MAX);
     onChange({
@@ -197,16 +205,28 @@ export function HttpIntegrationTestSection({ kind, data, onChange }: Props) {
           {data.last_test_error ? (
             <p className="text-[11px] text-rose-600">{String(data.last_test_error)}</p>
           ) : null}
+          <p className="text-[11px] text-muted-foreground">
+            Mapear campos (Fixar) funciona em qualquer status; o badge OK/Erro só indica a saída do
+            nó (2xx → ok, demais → erro).
+          </p>
 
           {kind === 'http_request' ? (
             <>
-              <Label className="text-[11px]">Última resposta — clique para criar variável</Label>
-              {sampleJson != null ? (
-                <HttpJsonSampleTree value={sampleJson} onPickPath={(p) => startPick(p)} />
+              {hasBodySample ? (
+                <>
+                  <Label className="text-[11px]">
+                    Última resposta — copie o valor ou fixe para criar variável
+                  </Label>
+                  {sampleJson != null ? (
+                    <HttpJsonSampleTree value={sampleJson} onPickPath={(p) => startPick(p)} />
+                  ) : (
+                    <pre className="max-h-32 overflow-auto rounded-md border bg-muted/20 p-2 font-mono text-[10px] whitespace-pre-wrap">
+                      {String(data.last_test_body || '(vazio)')}
+                    </pre>
+                  )}
+                </>
               ) : (
-                <pre className="max-h-32 overflow-auto rounded-md border bg-muted/20 p-2 font-mono text-[10px] whitespace-pre-wrap">
-                  {String(data.last_test_body || '(vazio)')}
-                </pre>
+                <p className="text-[11px] text-muted-foreground">Sem body nesta resposta.</p>
               )}
 
               {pickPath != null ? (
@@ -269,7 +289,7 @@ export function HttpIntegrationTestSection({ kind, data, onChange }: Props) {
           </div>
           {mapRows.length === 0 ? (
             <p className="text-[11px] text-muted-foreground">
-              Nenhuma ainda. Teste a API e clique num campo da resposta.
+              Nenhuma ainda. Teste a API (mesmo com 4xx/5xx) e use Fixar num campo da resposta.
             </p>
           ) : (
             mapRows.map((row, i) => (
@@ -306,12 +326,10 @@ export function HttpIntegrationTestSection({ kind, data, onChange }: Props) {
               </div>
             ))
           )}
-          {data.last_test_mapped &&
-          typeof data.last_test_mapped === 'object' &&
-          Object.keys(data.last_test_mapped as object).length > 0 ? (
+          {mappedPreview ? (
             <div className="rounded-md border bg-muted/10 p-2 text-[10px] text-muted-foreground">
               <p className="mb-1 font-medium text-foreground">Valores do último teste</p>
-              {Object.entries(data.last_test_mapped as Record<string, unknown>).map(([k, v]) => (
+              {Object.entries(mappedPreview).map(([k, v]) => (
                 <div key={k} className="font-mono">
                   {`{{${k}}}`} = {formatSampleValue(v)}
                 </div>

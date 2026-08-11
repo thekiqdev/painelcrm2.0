@@ -35,16 +35,27 @@ export function suggestVarNameFromPath(path: string): string {
   return base || 'value';
 }
 
-export function formatSampleValue(v: unknown): string {
+/** Valor completo para clipboard / tooltip (sem truncar). */
+export function serializeSampleValue(v: unknown): string {
   if (v == null) return 'null';
-  if (typeof v === 'string') return v.length > 60 ? `${v.slice(0, 60)}…` : v;
+  if (typeof v === 'string') return v;
   if (typeof v === 'number' || typeof v === 'boolean') return String(v);
   try {
-    const s = JSON.stringify(v);
-    return s.length > 60 ? `${s.slice(0, 60)}…` : s;
+    return JSON.stringify(v);
   } catch {
     return String(v);
   }
+}
+
+export function formatSampleValue(v: unknown): string {
+  const s = serializeSampleValue(v);
+  return s.length > 60 ? `${s.slice(0, 60)}…` : s;
+}
+
+/** Linha completa para copiar: `path = valor` (valor sem truncar). */
+export function formatSampleRowCopy(path: string, value: unknown): string {
+  const label = path.trim() || 'body';
+  return `${label} = ${serializeSampleValue(value)}`;
 }
 
 export function applyHttpResponseMap(opts: {
@@ -55,6 +66,7 @@ export function applyHttpResponseMap(opts: {
   responseVariable?: string;
   responseMap?: Array<{ path: string; variable: string }>;
 }): Record<string, string> {
+  // Independente do status: mapear ≠ sucesso do request (2xx).
   const mapped: Record<string, string> = {};
   if (opts.statusVariable) mapped[opts.statusVariable] = String(opts.status);
   if (opts.responseVariable) {

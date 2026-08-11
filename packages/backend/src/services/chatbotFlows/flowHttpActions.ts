@@ -100,6 +100,37 @@ export type FlowHttpRequestResult = {
   mapped: Record<string, string>;
 };
 
+/**
+ * Monta status/response/response_map → variáveis.
+ * Aplica em **qualquer** status HTTP (2xx, 4xx, 5xx…); `ok` (2xx) só decide a saída do nó.
+ */
+export function buildHttpResponseMapped(opts: {
+  status: number;
+  bodyText: string;
+  bodyJson: unknown;
+  statusVariable?: string;
+  responseVariable?: string;
+  responseMap?: Array<{ path: string; variable: string }>;
+}): Record<string, string> {
+  const mapped: Record<string, string> = {};
+  if (opts.statusVariable) mapped[opts.statusVariable] = String(opts.status);
+  if (opts.responseVariable) {
+    mapped[opts.responseVariable] =
+      opts.bodyJson != null ? JSON.stringify(opts.bodyJson) : opts.bodyText.slice(0, 8000);
+  }
+  for (const m of opts.responseMap || []) {
+    const variable = String(m.variable || '').trim();
+    if (!variable) continue;
+    const v = getByDotPath(opts.bodyJson, m.path);
+    mapped[variable] = v == null ? '' : typeof v === 'string' ? v : JSON.stringify(v);
+  }
+  return mapped;
+}
+
+export function isHttpSuccessStatus(status: number): boolean {
+  return status >= 200 && status < 300;
+}
+
 export async function executeFlowHttpRequest(opts: {
   method: string;
   url: string;
@@ -124,6 +155,12 @@ export async function executeFlowHttpRequest(opts: {
     headers['Content-Type'] = 'application/json';
   }
 
+  const mapOpts = {
+    statusVariable: opts.statusVariable,
+    responseVariable: opts.responseVariable,
+    responseMap: opts.responseMap,
+  };
+
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), Math.max(500, Math.min(30_000, opts.timeoutMs || 10_000)));
   try {
@@ -142,20 +179,14 @@ export async function executeFlowHttpRequest(opts: {
       bodyJson = null;
     }
 
-    const mapped: Record<string, string> = {};
-    if (opts.statusVariable) mapped[opts.statusVariable] = String(res.status);
-    if (opts.responseVariable) {
-      mapped[opts.responseVariable] =
-        bodyJson != null ? JSON.stringify(bodyJson) : bodyText.slice(0, 8000);
-    }
-    for (const m of opts.responseMap || []) {
-      const v = getByDotPath(bodyJson, m.path);
-      if (m.variable) {
-        mapped[m.variable] = v == null ? '' : typeof v === 'string' ? v : JSON.stringify(v);
-      }
-    }
-
-    const ok = res.status >= 200 && res.status < 300;
+    // Mapear sempre (antes de ok) — 4xx/5xx também preenchem variáveis.
+    const mapped = buildHttpResponseMapped({
+      status: res.status,
+      bodyText,
+      bodyJson,
+      ...mapOpts,
+    });
+    const ok = isHttpSuccessStatus(res.status);
     return {
       ok,
       status: res.status,
@@ -171,7 +202,12 @@ export async function executeFlowHttpRequest(opts: {
       status: 0,
       bodyText: '',
       bodyJson: null,
-      mapped: opts.statusVariable ? { [opts.statusVariable]: '0' } : {},
+      mapped: buildHttpResponseMapped({
+        status: 0,
+        bodyText: '',
+        bodyJson: null,
+        ...mapOpts,
+      }),
       error: msg,
     };
   } finally {

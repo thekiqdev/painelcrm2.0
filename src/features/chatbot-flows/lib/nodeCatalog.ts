@@ -188,6 +188,7 @@ export const httpRequestDataSchema = z.object({
       .regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/)
       .optional()
   ),
+  /** Path→var aplica em qualquer status HTTP; 2xx→saída default, demais→error. */
   response_map: z.array(httpResponseMapSchema).optional().default([]),
 });
 
