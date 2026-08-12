@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -50,8 +49,14 @@ import {
   Lock,
   Gift,
   Calendar,
+  ChevronDown,
+  ZoomIn,
+  X,
 } from 'lucide-react';
-import LandingLayout from '@/landingpage/components/LandingLayout';
+import { CheckoutAppShell } from '@/components/checkout/CheckoutAppShell';
+import { CheckoutCompactStepper } from '@/components/checkout/CheckoutCompactStepper';
+import { CheckoutShellHeader } from '@/components/checkout/CheckoutShellHeader';
+import { CompanyLogoUpload } from '@/components/onboarding/wizard/company-step/CompanyLogoUpload';
 import { LANDING_CHECKOUT_PREFILL_KEY } from '@/lib/landingCheckoutPrefill';
 import {
   formatMoneyBRL,
@@ -69,6 +74,8 @@ import {
   createEmptyInlineCreditCardForm,
   type InlineCreditCardFormState,
 } from '@/components/payments/InlineCreditCardPaymentForm';
+import { uploadCatalogImageFile } from '@/services/catalogMediaUpload';
+import { putMyTenantCompany } from '@/services/tenantCompany';
 
 const checkoutResumeEnabled = import.meta.env.VITE_CHECKOUT_RESUME_V1 === 'true';
 /** Só desliga o CTA de trial no checkout se explicitamente false (padrão: trial por plano ativo). */
@@ -295,17 +302,6 @@ const BENEFIT_ICON_MAP: Record<string, React.ComponentType<{ className?: string 
   Calendar,
 };
 
-const BENEFITS_PER_COLUMN = 3;
-
-/** Agrupa benefícios em colunas de no máximo 3 itens (1–3 → 1 coluna, 4–6 → 2, 7–9 → 3…). */
-function chunkPlanBenefits<T>(items: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) {
-    out.push(items.slice(i, i + size));
-  }
-  return out;
-}
-
 type PersistedCheckout = CheckoutLocationState & {
   wizard_step?: number;
   /** Timestamp de gravação (ms). Usado para invalidar contexto velho via TTL. */
@@ -376,15 +372,16 @@ function effectivePaymentDisplayMethod(
 
 const STEP_DEFS = [
   { id: 1, title: 'Plano', icon: LayoutGrid },
-  { id: 2, title: 'Empresa e admin', icon: Building2 },
-  { id: 3, title: 'Resumo', icon: ClipboardList },
-  { id: 4, title: 'Pagamento', icon: CreditCard },
+  { id: 2, title: 'Empresa', icon: Building2 },
+  { id: 3, title: 'Administrador', icon: Users },
+  { id: 4, title: 'Resumo', icon: ClipboardList },
+  { id: 5, title: 'Pagamento', icon: CreditCard },
 ];
 
-/** Stepper dedicado ao modo assentos adicionais (sem Plano / Empresa). */
+/** Stepper dedicado ao modo assentos adicionais (sem Plano / Empresa / Admin). */
 const SEAT_ADDON_STEP_DEFS = [
-  { id: 3, title: 'Resumo de assentos', icon: Users },
-  { id: 4, title: 'Pagamento', icon: CreditCard },
+  { id: 4, title: 'Resumo de assentos', icon: Users },
+  { id: 5, title: 'Pagamento', icon: CreditCard },
 ];
 
 function persistCheckout(ctx: PersistedCheckout | null) {
@@ -496,6 +493,22 @@ export default function PlanCheckout() {
   const [identityCheckLoading, setIdentityCheckLoading] = useState(false);
   /** Plano veio da landing/session inicial — etapa 1 do stepper é ocultada e começamos na 2. */
   const [enteredWithPlanFromContext, setEnteredWithPlanFromContext] = useState(false);
+  /** S2: benefícios do plano expandíveis (fechado por padrão para caber no viewport). */
+  const [planBenefitsOpen, setPlanBenefitsOpen] = useState(false);
+  /** Logos da empresa no checkout (preview local; upload após login). */
+  const [logoLightFile, setLogoLightFile] = useState<File | null>(null);
+  const [logoDarkFile, setLogoDarkFile] = useState<File | null>(null);
+  const [logoLightPreview, setLogoLightPreview] = useState<string | null>(null);
+  const [logoDarkPreview, setLogoDarkPreview] = useState<string | null>(null);
+  const [uploadingLogo, setUploadingLogo] = useState<'light' | 'dark' | 'flush' | null>(null);
+  const flushPendingCompanyLogoRef = useRef<() => Promise<void>>(async () => {});
+  const logoLightPreviewRef = useRef<string | null>(null);
+  const logoDarkPreviewRef = useRef<string | null>(null);
+  logoLightPreviewRef.current = logoLightPreview;
+  logoDarkPreviewRef.current = logoDarkPreview;
+  /** S4: QR PIX ampliado (tap). */
+  const [pixQrEnlarged, setPixQrEnlarged] = useState(false);
+  const stepTitleRef = useRef<HTMLHeadingElement>(null);
   const [result, setResult] = useState<PurchaseResult | null>(null);
   const [planCardForm, setPlanCardForm] = useState<InlineCreditCardFormState>(() => createEmptyInlineCreditCardForm());
   const [payingPlanCard, setPayingPlanCard] = useState(false);
@@ -666,12 +679,12 @@ export default function PlanCheckout() {
       setResumePaymentOnly(true);
       setEnteredWithPlanFromContext(true);
       setResumeContextError(null);
-      setStep(4);
+      setStep(5);
       persistCheckout({
         plan: mappedPlan,
         billingInterval: resolvedInterval,
         usersCount: Math.max(1, d.users_count || 1),
-        wizard_step: 4,
+        wizard_step: 5,
       });
     })();
     return () => {
@@ -726,12 +739,12 @@ export default function PlanCheckout() {
       setResumePaymentOnly(true);
       setEnteredWithPlanFromContext(true);
       setResumeContextError(null);
-      setStep(4);
+      setStep(5);
       persistCheckout({
         plan: st.plan,
         billingInterval: st.billingInterval ?? 'monthly',
         usersCount: Math.max(1, st.usersCount ?? 1),
-        wizard_step: 4,
+        wizard_step: 5,
       });
     })();
     return () => {
@@ -837,7 +850,7 @@ export default function PlanCheckout() {
       setBillingInterval(bi);
       setUsersCount(Math.max(1, uc));
       setEnteredWithPlanFromContext(!seatLikeFlow);
-      setStep(seatLikeFlow ? 3 : 4);
+      setStep(seatLikeFlow ? 4 : 5);
       if (isSeatBilling && !isSeatAddonMode) {
         navigate(`/checkout?mode=seat_addon&billing_id=${encodeURIComponent(fid)}`, { replace: true, state: {} });
       } else {
@@ -859,7 +872,7 @@ export default function PlanCheckout() {
         focusBillingId: fid,
         checkoutMode: seatLikeFlow ? 'seat_addon' : undefined,
         seatAddonQuote: quoteFromNav ?? undefined,
-        wizard_step: seatLikeFlow ? 3 : 4,
+        wizard_step: seatLikeFlow ? 4 : 5,
       });
     })();
 
@@ -884,7 +897,7 @@ export default function PlanCheckout() {
 
   /** Logado: reapresenta cobrança já gerada (GET) sem novo POST — alinhado ao fluxo maduro de faturas. */
   useEffect(() => {
-    if (step !== 4) return;
+    if (step !== 5) return;
     /** seat_addon: nunca hidratar pelo pending genérico (intervalo/usuários) — sobrescreveria a fatura correta. */
     if (seatAddonBillingContextActive) return;
     if (!plan?.id || !user?.tenant_id) return;
@@ -934,7 +947,7 @@ export default function PlanCheckout() {
   ]);
 
   useEffect(() => {
-    if (step !== 4 || !plan) return;
+    if (step !== 5 || !plan) return;
     const docDigits = billingCpf.replace(/\D/g, '');
     setPlanCardForm((f) => ({
       ...f,
@@ -1101,6 +1114,7 @@ export default function PlanCheckout() {
         const pwd = checkoutPasswordRef.current;
         const path = await signIn(email, pwd);
         if (path !== '/login') {
+          await flushPendingCompanyLogoRef.current();
           navigateToSignupSuccess(navigate, '/dashboard');
           return;
         }
@@ -1161,8 +1175,34 @@ export default function PlanCheckout() {
     seatAddonBillingIdQuery,
   ]);
 
+  /** S4 a11y: foca o título do passo ao mudar de etapa (sem rolar a página). */
+  useEffect(() => {
+    const el = stepTitleRef.current;
+    if (!el) return;
+    el.focus({ preventScroll: true });
+  }, [step, paymentConfirmed, isResumeMode, isRenewMode, resumeContextLoading, resumeContextError, authLoading, resumePaymentOnly]);
+
+  /** S4: fecha QR ampliado ao sair do passo pagamento / mudar método. */
+  useEffect(() => {
+    if (step !== 5 || paymentConfirmed) setPixQrEnlarged(false);
+  }, [step, paymentConfirmed, paymentMethod]);
+
+  useEffect(() => {
+    if (!pixQrEnlarged) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPixQrEnlarged(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [pixQrEnlarged]);
+
   useEffect(() => {
     if (seatAddonBillingContextActive || seatAddonFlowActive) {
+      setPixAutomatic(null);
+      return;
+    }
+    /** Checkout anônimo: endpoint exige JWT — evita 401 no console. */
+    if (!user?.tenant_id) {
       setPixAutomatic(null);
       return;
     }
@@ -1178,7 +1218,7 @@ export default function PlanCheckout() {
     return () => {
       cancelled = true;
     };
-  }, [seatAddonBillingContextActive, seatAddonFlowActive, result?.billing_id]);
+  }, [seatAddonBillingContextActive, seatAddonFlowActive, result?.billing_id, user?.tenant_id]);
 
   const pixAutoBillingReason = result?.billing_reason ?? (isRenewMode ? 'plan_renewal' : 'plan_purchase');
   const pixAutoDefaultOn =
@@ -1227,10 +1267,19 @@ export default function PlanCheckout() {
     enableFn: enablePixAutoOnce,
   });
 
-  const validateStep2 = (): boolean => {
+  const validateCompanyStep = (): boolean => {
     if (isCheckoutUpgrade) return true;
     if (!company.company_name?.trim()) {
       toast.error('Informe o nome da empresa.');
+      return false;
+    }
+    return true;
+  };
+
+  const validateAdminStep = (): boolean => {
+    if (isCheckoutUpgrade) return true;
+    if (!company.responsible_name?.trim()) {
+      toast.error('Informe o nome do administrador.');
       return false;
     }
     if (!company.email?.trim()) {
@@ -1240,10 +1289,6 @@ export default function PlanCheckout() {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(company.email.trim())) {
       toast.error('E-mail inválido.');
-      return false;
-    }
-    if (!company.responsible_name?.trim()) {
-      toast.error('Informe o nome do administrador.');
       return false;
     }
     const wa = adminWhatsapp.replace(/\D/g, '');
@@ -1262,6 +1307,80 @@ export default function PlanCheckout() {
     return true;
   };
 
+  /** Compat: valida empresa + admin (trial / upgrade). */
+  const validateStep2 = (): boolean => validateCompanyStep() && validateAdminStep();
+
+  const revokeLogoPreview = (url: string | null) => {
+    if (url?.startsWith('blob:')) URL.revokeObjectURL(url);
+  };
+
+  const handleCompanyLogoPick = (file: File | null, variant: 'light' | 'dark') => {
+    const setFile = variant === 'light' ? setLogoLightFile : setLogoDarkFile;
+    const setPreview = variant === 'light' ? setLogoLightPreview : setLogoDarkPreview;
+    const prevPreview = variant === 'light' ? logoLightPreview : logoDarkPreview;
+    revokeLogoPreview(prevPreview);
+
+    if (!file) {
+      setFile(null);
+      setPreview(null);
+      return;
+    }
+    if (!file.type.startsWith('image/')) {
+      toast.error('Envie uma imagem (PNG, JPG ou WebP).');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('Logo deve ter no máximo 5 MB.');
+      return;
+    }
+    setFile(file);
+    setPreview(URL.createObjectURL(file));
+  };
+
+  const flushPendingCompanyLogo = useCallback(async () => {
+    if (!logoLightFile && !logoDarkFile) return;
+    setUploadingLogo('flush');
+    try {
+      let lightUrl: string | null = null;
+      let darkUrl: string | null = null;
+      if (logoLightFile) {
+        lightUrl = await uploadCatalogImageFile(logoLightFile, 'tenant_logo_light');
+      }
+      if (logoDarkFile) {
+        darkUrl = await uploadCatalogImageFile(logoDarkFile, 'tenant_logo_dark');
+      }
+      /** Se só um lado foi enviado, replica no outro até o usuário ajustar em Configurações. */
+      const resolvedLight = lightUrl ?? darkUrl;
+      const resolvedDark = darkUrl ?? lightUrl;
+      const put = await putMyTenantCompany({
+        ...(resolvedLight ? { logo_light_url: resolvedLight } : {}),
+        ...(resolvedDark ? { logo_dark_url: resolvedDark } : {}),
+        ...(company.company_name.trim() ? { name: company.company_name.trim() } : {}),
+      });
+      if (put.error) {
+        console.warn('[PlanCheckout] logo put', put.error);
+        toast.message('Conta criada. Você pode enviar o logo depois em Configurações.');
+        return;
+      }
+      setLogoLightFile(null);
+      setLogoDarkFile(null);
+    } catch (e) {
+      console.warn('[PlanCheckout] logo upload', e);
+      toast.message('Conta criada. Você pode enviar o logo depois em Configurações.');
+    } finally {
+      setUploadingLogo(null);
+    }
+  }, [logoLightFile, logoDarkFile, company.company_name]);
+
+  flushPendingCompanyLogoRef.current = flushPendingCompanyLogo;
+
+  useEffect(() => {
+    return () => {
+      revokeLogoPreview(logoLightPreviewRef.current);
+      revokeLogoPreview(logoDarkPreviewRef.current);
+    };
+  }, []);
+
   const handleNext = async () => {
     if (step === 1) {
       if (!plan) {
@@ -1273,11 +1392,20 @@ export default function PlanCheckout() {
     }
     if (step === 2) {
       if (isCheckoutUpgrade) {
-        if (!validateStep2()) return;
-        setStep(3);
+        setStep(4);
         return;
       }
-      if (!validateStep2()) return;
+      if (!validateCompanyStep()) return;
+      setStep(3);
+      return;
+    }
+    if (step === 3) {
+      if (isCheckoutUpgrade) {
+        setStep(4);
+        return;
+      }
+      if (!validateAdminStep()) return;
+      checkoutPasswordRef.current = password;
       setIdentityCheckLoading(true);
       try {
         const res = await apiClient.post<{ ok?: boolean }>('/api/plan-purchase/validate-admin', {
@@ -1288,14 +1416,14 @@ export default function PlanCheckout() {
           toastFromPlanPurchaseCode(res.code, res.error);
           return;
         }
-        setStep(3);
+        setStep(4);
       } finally {
         setIdentityCheckLoading(false);
       }
       return;
     }
-    if (step < 4) {
-      if (step === 3) {
+    if (step < 5) {
+      if (step === 4) {
         blockAutoHydrateRef.current = false;
       }
       setStep(step + 1);
@@ -1315,17 +1443,25 @@ export default function PlanCheckout() {
   const handleStartTrial = async () => {
     if (!plan) return;
     if (!validateStep2()) return;
+    const pwd = (password || checkoutPasswordRef.current || '').trim();
+    if (pwd.length < 6) {
+      toast.error('Informe a senha do administrador (mínimo 6 caracteres) para continuar no trial.');
+      setStep(3);
+      return;
+    }
     setLoading(true);
     try {
       const docDigits = billingCpf.replace(/\D/g, '');
+      const existingTenantId = result?.tenant_id?.trim() || undefined;
       const body = withMarketingAttribution({
         plan_id: plan.id,
         billing_interval: billingInterval,
         company_name: company.company_name.trim(),
         email: company.email.trim(),
         responsible_name: company.responsible_name.trim(),
-        password,
+        password: pwd,
         whatsapp: adminWhatsapp.trim(),
+        ...(existingTenantId ? { tenant_id: existingTenantId } : {}),
         ...(isCustom ? { users_count: usersCount } : {}),
         ...(docDigits ? { cpf_cnpj: docDigits } : {}),
         ...(company.phone?.trim() ? { phone: company.phone.trim() } : {}),
@@ -1334,6 +1470,12 @@ export default function PlanCheckout() {
       const res = await apiClient.post<TrialSignupResponse>('/api/plan-purchase/complete-signup-trial', body);
       if (res.error) {
         toastFromPlanPurchaseCode(res.code, res.error);
+        if (
+          res.code === 'EMAIL_ALREADY_REGISTERED_USE_LOGIN' ||
+          res.code === 'WHATSAPP_ALREADY_REGISTERED_USE_LOGIN'
+        ) {
+          setStep(3);
+        }
         return;
       }
       if (res.data?.token && res.data.user) {
@@ -1342,7 +1484,9 @@ export default function PlanCheckout() {
           registration_complete: true,
         });
         await refreshUser();
+        await flushPendingCompanyLogo();
         persistCheckout(null);
+        setResult(null);
         toast.success(`Bem-vindo! Seu trial de ${effectiveCheckoutTrialDays(plan)} dias começou.`);
         navigateToSignupSuccess(navigate, '/dashboard');
       }
@@ -1352,15 +1496,15 @@ export default function PlanCheckout() {
   };
 
   const handleBack = () => {
-    if (step === 4 && resumePaymentOnly) {
+    if (step === 5 && resumePaymentOnly) {
       navigate(isRenewMode ? '/meu-plano' : '/dashboard', { replace: true });
       return;
     }
-    if (seatAddonFlowActive && step === 4 && !paymentConfirmed) {
+    if (seatAddonFlowActive && step === 5 && !paymentConfirmed) {
       navigate('/meu-plano', { replace: true });
       return;
     }
-    if (seatAddonFlowActive && step === 3) {
+    if (seatAddonFlowActive && step === 4) {
       navigate('/meu-plano', { replace: true });
       return;
     }
@@ -1378,6 +1522,10 @@ export default function PlanCheckout() {
     }
     if (step === 2 && !enteredWithPlanFromContext) {
       setStep(1);
+      return;
+    }
+    if (isCheckoutUpgrade && (step === 3 || step === 4)) {
+      setStep(2);
       return;
     }
     if (step > 1) setStep(step - 1);
@@ -1422,7 +1570,7 @@ export default function PlanCheckout() {
     try {
       const ok = await ensureFreshSeatAddonPreviewBeforePay();
       if (!ok) return;
-      setStep(4);
+      setStep(5);
     } finally {
       setSeatAddonPayPrimingLoading(false);
     }
@@ -1476,7 +1624,7 @@ export default function PlanCheckout() {
           toastFromPlanPurchaseCode(prep.code, prep.error);
           if (prep.field === 'cpf_cnpj') {
             setCpfCnpjError(prep.error);
-            setStep(4);
+            setStep(5);
           }
           return;
         }
@@ -1504,18 +1652,22 @@ export default function PlanCheckout() {
     }
 
     setLoading(true);
+    const existingTenantId = result?.tenant_id?.trim() || undefined;
     const body = withMarketingAttribution({
       plan_id: plan.id,
       billing_interval: billingInterval,
       payment_method: method,
       ...(isCustom ? { users_count: usersCount } : {}),
+      /** Reuso após 1ª cobrança (troca PIX↔cartão↔boleto) — evita EMAIL_ALREADY_REGISTERED. */
+      ...(existingTenantId ? { tenant_id: existingTenantId } : {}),
       ...(!isCheckoutUpgrade
         ? {
             company_name: company.company_name.trim(),
             email: company.email.trim(),
             responsible_name: company.responsible_name.trim(),
             cpf_cnpj: docDigits,
-            password,
+            /** Senha só na 1ª criação; reuso de tenant não precisa reenviar. */
+            ...(!existingTenantId ? { password } : {}),
             whatsapp: adminWhatsapp.trim(),
             ...(company.phone?.trim() ? { phone: company.phone.trim() } : {}),
           }
@@ -1534,10 +1686,18 @@ export default function PlanCheckout() {
       toastFromPlanPurchaseCode(res.code, res.error);
       if (res.field === 'cpf_cnpj') {
         setCpfCnpjError(res.error);
-        setStep(4);
+        setStep(5);
       }
-      if (res.code === 'EMAIL_ALREADY_REGISTERED_USE_LOGIN' || res.code === 'WHATSAPP_ALREADY_REGISTERED_USE_LOGIN') {
-        setStep(2);
+      /**
+       * Só volta ao cadastro se ainda não há tenant nesta sessão.
+       * Com tenant_id já criado, o erro de e-mail é inconsistente — permanece no pagamento.
+       */
+      if (
+        !existingTenantId &&
+        (res.code === 'EMAIL_ALREADY_REGISTERED_USE_LOGIN' ||
+          res.code === 'WHATSAPP_ALREADY_REGISTERED_USE_LOGIN')
+      ) {
+        setStep(3);
       }
       return;
     }
@@ -1599,6 +1759,7 @@ export default function PlanCheckout() {
             const pwd = checkoutPasswordRef.current;
             const path = await signIn(email, pwd);
             if (path !== '/login') {
+              await flushPendingCompanyLogoRef.current();
               navigateToSignupSuccess(navigate, '/dashboard');
               return;
             }
@@ -1668,20 +1829,29 @@ export default function PlanCheckout() {
       return SEAT_ADDON_STEP_DEFS;
     }
     return STEP_DEFS.filter((s) => {
-      if ((isResumeMode || (isRenewMode && resumePaymentOnly)) && s.id < 4) return false;
+      if ((isResumeMode || (isRenewMode && resumePaymentOnly)) && s.id < 5) return false;
       if (s.id === 1 && skipPlanStep) return false;
+      /** Upgrade logado: pula cadastro de administrador. */
+      if (isCheckoutUpgrade && s.id === 3) return false;
       return true;
     });
-  }, [seatAddonBillingContextActive, isResumeMode, isRenewMode, resumePaymentOnly, skipPlanStep]);
+  }, [
+    seatAddonBillingContextActive,
+    isResumeMode,
+    isRenewMode,
+    resumePaymentOnly,
+    skipPlanStep,
+    isCheckoutUpgrade,
+  ]);
 
   const displayStepIndex = (s: number) => {
     if (seatAddonBillingContextActive) {
-      if (s === 3) return 0;
-      if (s === 4) return 1;
+      if (s === 4) return 0;
+      if (s === 5) return 1;
       return 0;
     }
     if (isResumeMode || isRenewMode || resumePaymentOnly) {
-      if (s <= 3) return 0;
+      if (s <= 4) return 0;
       return s - 1;
     }
     if (!skipPlanStep) return s;
@@ -1691,266 +1861,279 @@ export default function PlanCheckout() {
   const renderPlanPicker = () => {
     const hasSelection = !!plan;
     const planCount = plansCatalog.length;
+    const BENEFITS_PREVIEW = 4;
 
     const selectPlanFromRow = (p: PublicPlanRow) => {
       setPlan(mapPublicPlanRowToCheckout(p));
       setBillingInterval('monthly');
       setUsersCount(1);
+      setPlanBenefitsOpen(false);
     };
 
+    const benefits = Array.isArray(plan?.benefits) ? plan!.benefits : [];
+    const visibleBenefits = planBenefitsOpen ? benefits : benefits.slice(0, BENEFITS_PREVIEW);
+    const hasMoreBenefits = benefits.length > BENEFITS_PREVIEW;
+
     return (
-    <div className="space-y-6">
-      {/* Linha de cards: selecionado expande (~77–80%); demais recolhem no desktop */}
-      <div>
-        {plansLoading ? (
-          <div className="flex justify-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-          </div>
-        ) : plansCatalog.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Nenhum plano disponível no momento.</p>
-        ) : (
-          <div
-            className={cn(
-              'flex w-full flex-col gap-3',
-              planCount > 1 && 'lg:flex-row lg:items-stretch lg:gap-2'
-            )}
-          >
-            {plansCatalog.map((p) => {
-              const selected = plan?.id === p.id;
-              const collapsed = hasSelection && !selected;
-              const trialBadge = freeAccessDaysBadge(p.is_free, p.free_access_days);
-              const previewCents = getCheckoutListPriceCents(p, { usersCount: 1, billingInterval: 'monthly' });
-              const periodShort = p.plan_type === 'custom' ? 'mês' : p.billing_interval === 'yearly' ? 'ano' : 'mês';
-              const selectable = !selected;
+      <div className="space-y-3">
+        <div>
+          {plansLoading ? (
+            <div className="flex justify-center py-8">
+              <Loader2 className="h-7 w-7 animate-spin text-muted-foreground" />
+            </div>
+          ) : plansCatalog.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Nenhum plano disponível no momento.</p>
+          ) : (
+            <div
+              className={cn(
+                'flex w-full flex-col gap-2',
+                planCount > 1 && 'lg:flex-row lg:items-stretch lg:gap-2'
+              )}
+            >
+              {plansCatalog.map((p) => {
+                const selected = plan?.id === p.id;
+                const collapsed = hasSelection && !selected;
+                const trialBadge = freeAccessDaysBadge(p.is_free, p.free_access_days);
+                const previewCents = getCheckoutListPriceCents(p, {
+                  usersCount: 1,
+                  billingInterval: 'monthly',
+                });
+                const periodShort =
+                  p.plan_type === 'custom' ? 'mês' : p.billing_interval === 'yearly' ? 'ano' : 'mês';
+                const selectable = !selected;
+                const rowTrial =
+                  selected && plan ? freeAccessDaysBadge(plan.is_free, plan.free_access_days) : null;
 
-              const rowTrial = selected && plan ? freeAccessDaysBadge(plan.is_free, plan.free_access_days) : null;
-
-              return (
-                <div
-                  key={p.id}
-                  role={selectable ? 'button' : undefined}
-                  tabIndex={selectable ? 0 : undefined}
-                  onKeyDown={(e) => {
-                    if (!selectable) return;
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      selectPlanFromRow(p);
-                    }
-                  }}
-                  onClick={() => {
-                    if (!selected) selectPlanFromRow(p);
-                  }}
-                  className={cn(
-                    'min-w-0 rounded-xl border-2 text-left transition-all duration-300 ease-out',
-                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
-                    selected
-                      ? 'border-primary bg-primary/[0.07] shadow-md ring-2 ring-primary/20 lg:z-[1]'
-                      : 'cursor-pointer border-border bg-card hover:border-primary/45',
-                    collapsed &&
-                      'lg:max-w-[min(24%,13.5rem)] lg:shrink-0 lg:basis-[min(24%,13.5rem)] lg:opacity-[0.88] hover:opacity-100',
-                    !hasSelection && planCount === 1 && 'mx-auto w-full max-w-xl',
-                    !hasSelection && planCount === 2 && 'w-full lg:flex-1',
-                    !hasSelection && planCount >= 3 && 'w-full lg:min-w-[12rem] lg:flex-1',
-                    hasSelection && selected && 'w-full lg:min-w-0 lg:max-w-[80%] lg:flex-[1_1_77%]',
-                    hasSelection && selected && planCount > 1 && 'order-first lg:order-none'
-                  )}
-                >
-                  {collapsed ? (
-                    <div className="flex flex-col gap-1.5 p-4 sm:p-4 lg:px-3 lg:py-3">
-                      <div className="font-semibold text-foreground lg:text-sm lg:leading-snug">{p.name}</div>
-                      {trialBadge && (
-                        <span className="w-fit rounded-full bg-primary/12 px-2 py-0.5 text-[10px] font-medium text-primary lg:hidden">
-                          {trialBadge}
-                        </span>
-                      )}
-                      <div className="text-base font-bold tabular-nums text-primary lg:text-sm">
-                        {formatVitrinePriceLabel(previewCents)}
-                        <span className="font-normal text-muted-foreground">/{periodShort}</span>
-                      </div>
-                      <p className="text-[11px] text-muted-foreground lg:hidden">Toque para selecionar</p>
-                    </div>
-                  ) : selected && plan ? (
-                    <div className="space-y-4 p-4 sm:p-5">
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <h3 className="text-lg font-semibold leading-tight text-foreground">{plan.name}</h3>
-                          {plan.description && (
-                            <p className="mt-1.5 text-sm text-muted-foreground line-clamp-2">{plan.description}</p>
-                          )}
-                        </div>
-                        {rowTrial ? (
-                          <span className="shrink-0 rounded-full bg-primary/15 px-2.5 py-1 text-xs font-medium text-primary">
-                            {rowTrial}
-                          </span>
-                        ) : null}
-                      </div>
-
-                      <div>
-                        <p className="mb-0.5 text-[11px] font-medium text-muted-foreground">Preço</p>
-                        <p className="text-2xl font-bold tabular-nums tracking-tight text-foreground sm:text-3xl">
-                          {formatVitrinePriceLabel(getCheckoutListPriceCents(plan, { usersCount, billingInterval }))}
-                          <span className="text-lg font-semibold text-muted-foreground sm:text-xl"> /{periodLabel}</span>
-                        </p>
-                      </div>
-
-                      <div className="grid gap-4 border-t border-border/60 pt-4 sm:grid-cols-2 sm:gap-6">
-                        <div>
-                          <p className="mb-2 text-xs font-medium text-muted-foreground">Período de cobrança</p>
-                          {hasIntervalSelector ? (
-                            <div className="flex max-w-[17rem] items-center gap-1">
-                              <button
-                                type="button"
-                                aria-label="Intervalo anterior"
-                                onClick={() => {
-                                  const prev = BILLING_INTERVALS[Math.max(0, intervalIdx - 1)];
-                                  if (prev) setBillingInterval(prev.key);
-                                }}
-                                disabled={!canPrevInterval}
-                                className="rounded-md border border-border bg-muted/40 p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
-                              >
-                                <ChevronLeft className="h-4 w-4" />
-                              </button>
-                              <span className="min-w-[7rem] flex-1 text-center text-sm font-semibold">{intervalLabel}</span>
-                              <button
-                                type="button"
-                                aria-label="Próximo intervalo"
-                                onClick={() => {
-                                  const next = BILLING_INTERVALS[Math.min(BILLING_INTERVALS.length - 1, intervalIdx + 1)];
-                                  if (next) setBillingInterval(next.key);
-                                }}
-                                disabled={!canNextInterval}
-                                className="rounded-md border border-border bg-muted/40 p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
-                              >
-                                <ChevronRight className="h-4 w-4" />
-                              </button>
-                            </div>
-                          ) : (
-                            <p className="text-sm font-medium text-foreground">{intervalLabel}</p>
-                          )}
-                        </div>
-                        <div>
-                          <p className="mb-2 text-xs font-medium text-muted-foreground">Quantidade de usuários</p>
-                          {isCustom ? (
-                            <div className="flex w-fit items-center gap-1 rounded-lg border border-border bg-muted/40 p-1">
-                              <button
-                                type="button"
-                                aria-label="Menos um usuário"
-                                onClick={() => setUsersCount((c) => Math.max(1, c - 1))}
-                                disabled={usersCount <= 1}
-                                className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
-                              >
-                                <Minus className="h-4 w-4" />
-                              </button>
-                              <span className="min-w-[2.25rem] text-center text-sm font-semibold tabular-nums">{usersCount}</span>
-                              <button
-                                type="button"
-                                aria-label="Mais um usuário"
-                                onClick={() => setUsersCount((c) => c + 1)}
-                                className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                              >
-                                <Plus className="h-4 w-4" />
-                              </button>
-                            </div>
-                          ) : (
-                            <p className="text-sm font-medium text-muted-foreground">Definido pelo plano</p>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="min-h-[8.5rem] p-4 sm:p-5">
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div className="font-semibold text-foreground">{p.name}</div>
+                return (
+                  <div
+                    key={p.id}
+                    role={selectable ? 'button' : undefined}
+                    tabIndex={selectable ? 0 : undefined}
+                    onKeyDown={(e) => {
+                      if (!selectable) return;
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        selectPlanFromRow(p);
+                      }
+                    }}
+                    onClick={() => {
+                      if (!selected) selectPlanFromRow(p);
+                    }}
+                    className={cn(
+                      'min-w-0 rounded-lg border-2 text-left transition-all duration-300 ease-out',
+                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
+                      selected
+                        ? 'border-primary bg-primary/[0.07] shadow-sm ring-1 ring-primary/20 lg:z-[1]'
+                        : 'cursor-pointer border-border bg-card hover:border-primary/45',
+                      collapsed &&
+                        'lg:max-w-[min(22%,12rem)] lg:shrink-0 lg:basis-[min(22%,12rem)] lg:opacity-[0.88] hover:opacity-100',
+                      !hasSelection && planCount === 1 && 'mx-auto w-full max-w-xl',
+                      !hasSelection && planCount === 2 && 'w-full lg:flex-1',
+                      !hasSelection && planCount >= 3 && 'w-full lg:min-w-[11rem] lg:flex-1',
+                      hasSelection && selected && 'w-full lg:min-w-0 lg:max-w-[82%] lg:flex-[1_1_78%]',
+                      hasSelection && selected && planCount > 1 && 'order-first lg:order-none'
+                    )}
+                  >
+                    {collapsed ? (
+                      <div className="flex flex-col gap-1 p-3 lg:px-2.5 lg:py-2.5">
+                        <div className="text-sm font-semibold leading-snug text-foreground">{p.name}</div>
                         {trialBadge && (
-                          <span className="shrink-0 rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-medium text-primary">
+                          <span className="w-fit rounded-full bg-primary/12 px-1.5 py-0.5 text-[10px] font-medium text-primary lg:hidden">
                             {trialBadge}
                           </span>
                         )}
+                        <div className="text-sm font-bold tabular-nums text-primary">
+                          {formatVitrinePriceLabel(previewCents)}
+                          <span className="font-normal text-muted-foreground">/{periodShort}</span>
+                        </div>
                       </div>
-                      {p.description && <p className="mt-1 text-sm text-muted-foreground line-clamp-2">{p.description}</p>}
-                      <p className="mt-3 font-display text-xl font-bold text-primary">
-                        {formatVitrinePriceLabel(previewCents)}
-                        <span className="text-sm font-normal text-muted-foreground"> /{periodShort}</span>
-                      </p>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+                    ) : selected && plan ? (
+                      <div className="space-y-3 p-3 sm:p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <h3 className="text-base font-semibold leading-tight text-foreground sm:text-lg">
+                              {plan.name}
+                            </h3>
+                            {plan.description && (
+                              <p className="mt-1 text-xs text-muted-foreground line-clamp-1 sm:text-sm sm:line-clamp-2">
+                                {plan.description}
+                              </p>
+                            )}
+                          </div>
+                          {rowTrial ? (
+                            <span className="shrink-0 rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-medium text-primary">
+                              {rowTrial}
+                            </span>
+                          ) : null}
+                        </div>
+
+                        <p className="text-xl font-bold tabular-nums tracking-tight text-foreground sm:text-2xl">
+                          {formatVitrinePriceLabel(
+                            getCheckoutListPriceCents(plan, { usersCount, billingInterval })
+                          )}
+                          <span className="text-base font-semibold text-muted-foreground"> /{periodLabel}</span>
+                        </p>
+
+                        <div className="grid gap-3 border-t border-border/60 pt-3 sm:grid-cols-2 sm:gap-4">
+                          <div>
+                            <p className="mb-1 text-[11px] font-medium text-muted-foreground">Período</p>
+                            {hasIntervalSelector ? (
+                              <div className="flex max-w-[16rem] items-center gap-1">
+                                <button
+                                  type="button"
+                                  aria-label="Intervalo anterior"
+                                  onClick={() => {
+                                    const prev = BILLING_INTERVALS[Math.max(0, intervalIdx - 1)];
+                                    if (prev) setBillingInterval(prev.key);
+                                  }}
+                                  disabled={!canPrevInterval}
+                                  className="rounded-md border border-border bg-muted/40 p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+                                >
+                                  <ChevronLeft className="h-4 w-4" />
+                                </button>
+                                <span className="min-w-[6.5rem] flex-1 text-center text-sm font-semibold">
+                                  {intervalLabel}
+                                </span>
+                                <button
+                                  type="button"
+                                  aria-label="Próximo intervalo"
+                                  onClick={() => {
+                                    const next =
+                                      BILLING_INTERVALS[
+                                        Math.min(BILLING_INTERVALS.length - 1, intervalIdx + 1)
+                                      ];
+                                    if (next) setBillingInterval(next.key);
+                                  }}
+                                  disabled={!canNextInterval}
+                                  className="rounded-md border border-border bg-muted/40 p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+                                >
+                                  <ChevronRight className="h-4 w-4" />
+                                </button>
+                              </div>
+                            ) : (
+                              <p className="text-sm font-medium text-foreground">{intervalLabel}</p>
+                            )}
+                          </div>
+                          <div>
+                            <p className="mb-1 text-[11px] font-medium text-muted-foreground">Usuários</p>
+                            {isCustom ? (
+                              <div className="flex w-fit items-center gap-1 rounded-lg border border-border bg-muted/40 p-0.5">
+                                <button
+                                  type="button"
+                                  aria-label="Menos um usuário"
+                                  onClick={() => setUsersCount((c) => Math.max(1, c - 1))}
+                                  disabled={usersCount <= 1}
+                                  className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+                                >
+                                  <Minus className="h-4 w-4" />
+                                </button>
+                                <span className="min-w-[2rem] text-center text-sm font-semibold tabular-nums">
+                                  {usersCount}
+                                </span>
+                                <button
+                                  type="button"
+                                  aria-label="Mais um usuário"
+                                  onClick={() => setUsersCount((c) => c + 1)}
+                                  className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                >
+                                  <Plus className="h-4 w-4" />
+                                </button>
+                              </div>
+                            ) : (
+                              <p className="text-sm font-medium text-muted-foreground">Definido pelo plano</p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-3 sm:p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-1.5">
+                          <div className="text-sm font-semibold text-foreground sm:text-base">{p.name}</div>
+                          {trialBadge && (
+                            <span className="shrink-0 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-medium text-primary">
+                              {trialBadge}
+                            </span>
+                          )}
+                        </div>
+                        {p.description && (
+                          <p className="mt-0.5 text-xs text-muted-foreground line-clamp-1">{p.description}</p>
+                        )}
+                        <p className="mt-2 text-lg font-bold text-primary">
+                          {formatVitrinePriceLabel(previewCents)}
+                          <span className="text-xs font-normal text-muted-foreground"> /{periodShort}</span>
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {plan && (
+          <div className="rounded-lg border border-border/70 bg-muted/10 px-3 py-2.5 sm:px-4">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                O que inclui
+              </p>
+              {hasMoreBenefits ? (
+                <button
+                  type="button"
+                  onClick={() => setPlanBenefitsOpen((o) => !o)}
+                  className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                  aria-expanded={planBenefitsOpen}
+                >
+                  {planBenefitsOpen ? 'Ocultar' : `Ver todos (${benefits.length})`}
+                  <ChevronDown
+                    className={cn('h-3.5 w-3.5 transition-transform', planBenefitsOpen && 'rotate-180')}
+                  />
+                </button>
+              ) : null}
+            </div>
+            {benefits.length > 0 ? (
+              <ul className="m-0 grid list-none grid-cols-1 gap-x-6 gap-y-1.5 p-0 sm:grid-cols-2">
+                {visibleBenefits.map((b, i) => {
+                  const IconC = b.icon ? BENEFIT_ICON_MAP[b.icon] ?? Check : Check;
+                  return (
+                    <li key={i} className="flex items-start gap-2 text-xs text-foreground sm:text-sm">
+                      <IconC className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+                      <span className="leading-snug">{b.label}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Detalhes do plano seguem no contrato e no pós-contratação.
+              </p>
+            )}
           </div>
         )}
       </div>
-
-      {/* Abaixo da linha: somente benefícios */}
-      {plan && (
-        <div className="rounded-lg border border-border bg-muted/15 px-4 py-4 sm:px-5">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">O que este plano inclui</p>
-          {Array.isArray(plan.benefits) && plan.benefits.length > 0 ? (
-            (() => {
-              const columns = chunkPlanBenefits(plan.benefits, BENEFITS_PER_COLUMN);
-              return (
-                <div
-                  className={cn(
-                    'grid gap-x-8 gap-y-4',
-                    'grid-cols-1',
-                    columns.length >= 2 && 'md:grid-cols-2',
-                    columns.length === 2 && 'lg:grid-cols-2',
-                    columns.length >= 3 && 'lg:grid-cols-3'
-                  )}
-                >
-                  {columns.map((col, colIdx) => (
-                    <ul key={colIdx} className="m-0 list-none space-y-2.5 p-0">
-                      {col.map((b, i) => {
-                        const IconC = b.icon ? BENEFIT_ICON_MAP[b.icon] ?? Check : Check;
-                        return (
-                          <li key={`${colIdx}-${i}`} className="flex items-start gap-2.5 text-sm text-foreground">
-                            <IconC className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                            <span className="leading-snug">{b.label}</span>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  ))}
-                </div>
-              );
-            })()
-          ) : (
-            <p className="text-sm text-muted-foreground">Nenhum benefício listado para este plano. Os detalhes seguem no contrato e no pós-contratação.</p>
-          )}
-        </div>
-      )}
-
-      <div className="flex flex-wrap justify-end gap-2 border-t border-border/50 pt-4">
-        <Button type="button" variant="outline" onClick={handleBack} disabled={plansLoading}>
-          Voltar
-        </Button>
-        <Button type="button" onClick={() => void handleNext()} disabled={!plan || plansLoading}>
-          Continuar
-        </Button>
-      </div>
-    </div>
     );
   };
 
   const renderCompanyStep = () => {
     if (authLoading) {
       return (
-        <div className="flex flex-col items-center justify-center gap-3 py-12 text-muted-foreground text-sm">
+        <div className="flex flex-col items-center justify-center gap-3 py-12 text-sm text-muted-foreground">
           <Loader2 className="h-8 w-8 animate-spin" />
           <span>Verificando sessão…</span>
         </div>
       );
     }
 
-    return (
-      <form
-        onSubmit={async (e) => {
-          e.preventDefault();
-          await handleNext();
-        }}
-        className="space-y-6"
-      >
-        {isCheckoutUpgrade ? (
+    if (isCheckoutUpgrade) {
+      return (
+        <form
+          id="checkout-company-form"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            await handleNext();
+          }}
+          className="space-y-4"
+        >
           <div>
             <Label htmlFor="phone">Telefone (opcional)</Label>
             <Input
@@ -1961,342 +2144,336 @@ export default function PlanCheckout() {
               inputMode="tel"
             />
           </div>
-        ) : (
-          <div className="grid gap-6 lg:grid-cols-2 lg:gap-8">
-            <div className="space-y-4 min-w-0">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Empresa</p>
-              <div>
-                <Label htmlFor="company_name">Nome da empresa *</Label>
-                <Input
-                  id="company_name"
-                  value={company.company_name}
-                  onChange={(e) => setCompany((c) => ({ ...c, company_name: e.target.value }))}
-                  placeholder="Razão social ou nome fantasia"
-                  required
-                  autoComplete="organization"
-                />
-              </div>
-              <div>
-                <Label htmlFor="email">E-mail *</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={company.email}
-                  onChange={(e) => setCompany((c) => ({ ...c, email: e.target.value }))}
-                  placeholder="email@empresa.com"
-                  required
-                  autoComplete="email"
-                />
-              </div>
-              <div>
-                <Label htmlFor="admin_whatsapp">WhatsApp *</Label>
-                <Input
-                  id="admin_whatsapp"
-                  value={adminWhatsapp}
-                  onChange={(e) => setAdminWhatsapp(formatPhoneBrDigits(e.target.value))}
-                  placeholder="(11) 99999-9999"
-                  inputMode="tel"
-                  autoComplete="tel"
-                  required
-                />
-                <p className="mt-1 text-xs text-muted-foreground">
-                  DDD + número; unicidade na plataforma (normalizado no envio).
-                </p>
-              </div>
+          <p className="text-xs text-muted-foreground">
+            Conta já autenticada — avance para o resumo e pagamento.
+          </p>
+        </form>
+      );
+    }
+
+    return (
+      <form
+        id="checkout-company-form"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          await handleNext();
+        }}
+        className="space-y-3 sm:space-y-4"
+      >
+        <div className="space-y-1">
+          <Label htmlFor="company_name" className="text-sm text-muted-foreground">
+            Nome da empresa *
+          </Label>
+          <Input
+            id="company_name"
+            value={company.company_name}
+            onChange={(e) => setCompany((c) => ({ ...c, company_name: e.target.value }))}
+            placeholder="Razão social ou nome fantasia"
+            required
+            autoComplete="organization"
+            className="h-10 sm:h-11"
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <Label className="text-sm text-muted-foreground">Logos (opcional)</Label>
+          <div className="grid w-full min-w-0 grid-cols-2 gap-2 sm:gap-3">
+            <div className="min-w-0 space-y-1">
+              <Label className="text-xs text-muted-foreground sm:text-sm">Fundo escuro</Label>
+              <CompanyLogoUpload
+                logoUrl={logoDarkPreview}
+                uploading={uploadingLogo === 'dark' || uploadingLogo === 'flush'}
+                acceptedTypes={['image/png', 'image/jpeg', 'image/jpg', 'image/webp']}
+                onUpload={(file) => handleCompanyLogoPick(file, 'dark')}
+                compact
+              />
+              {logoDarkPreview ? (
+                <button
+                  type="button"
+                  className="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                  onClick={() => handleCompanyLogoPick(null, 'dark')}
+                >
+                  Remover
+                </button>
+              ) : null}
             </div>
-            <div className="space-y-4 min-w-0">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Administrador</p>
-              <div>
-                <Label htmlFor="responsible_name">Nome do administrador *</Label>
-                <Input
-                  id="responsible_name"
-                  value={company.responsible_name}
-                  onChange={(e) => setCompany((c) => ({ ...c, responsible_name: e.target.value }))}
-                  placeholder="Nome completo"
-                  required
-                  autoComplete="name"
-                />
-              </div>
-              <p className="text-xs font-medium text-muted-foreground pt-1">Senha de acesso ao painel</p>
-              <div className="grid gap-4 lg:grid-cols-2">
-                <div>
-                  <Label htmlFor="password">Senha *</Label>
-                  <Input
-                    id="password"
-                    type="password"
-                    name="new-password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    autoComplete="new-password"
-                    required
-                    minLength={6}
-                    className="border-input"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="password_confirm">Confirmar senha *</Label>
-                  <Input
-                    id="password_confirm"
-                    type="password"
-                    name="confirm-new-password"
-                    value={passwordConfirm}
-                    onChange={(e) => setPasswordConfirm(e.target.value)}
-                    autoComplete="new-password"
-                    required
-                    minLength={6}
-                    className="border-input"
-                  />
-                </div>
-              </div>
+            <div className="min-w-0 space-y-1">
+              <Label className="text-xs text-muted-foreground sm:text-sm">Fundo claro</Label>
+              <CompanyLogoUpload
+                logoUrl={logoLightPreview}
+                uploading={uploadingLogo === 'light' || uploadingLogo === 'flush'}
+                acceptedTypes={['image/png', 'image/jpeg', 'image/jpg', 'image/webp']}
+                onUpload={(file) => handleCompanyLogoPick(file, 'light')}
+                surface="light"
+                compact
+              />
+              {logoLightPreview ? (
+                <button
+                  type="button"
+                  className="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                  onClick={() => handleCompanyLogoPick(null, 'light')}
+                >
+                  Remover
+                </button>
+              ) : null}
             </div>
           </div>
-        )}
-        <div className="flex justify-end gap-2 pt-2 border-t border-border/40">
-          {step > 1 && (
-            <Button type="button" variant="outline" onClick={handleBack} disabled={identityCheckLoading}>
-              Voltar
-            </Button>
-          )}
-          <Button type="submit" disabled={identityCheckLoading}>
-            {identityCheckLoading ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Validando…
-              </>
-            ) : (
-              'Continuar'
-            )}
-          </Button>
         </div>
       </form>
     );
   };
 
-  const seatAddonIntervalLabel =
-    seatAddonQuote &&
-    (BILLING_INTERVALS.find((i) => i.key === seatAddonQuote.billing_interval)?.label ??
-      seatAddonQuote.billing_interval);
-
-  const renderSummary = () => {
-    if (seatAddonBillingContextActive) {
-      if (seatAddonQuote) {
+  const renderAdminStep = () => {
+    if (authLoading) {
       return (
-        <div className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            Você está adicionando assentos à sua conta ativa. O valor de hoje é proporcional aos dias restantes do
-            ciclo; na renovação passa a valer o novo total.
-          </p>
-          <div className="rounded-lg border bg-muted/20 px-4 py-3 text-sm space-y-2">
-            <div className="flex justify-between gap-2">
-              <span className="text-muted-foreground">Plano</span>
-              <span className="font-medium text-right">{plan?.name}</span>
-            </div>
-            <div className="flex justify-between gap-2">
-              <span className="text-muted-foreground">Assentos hoje</span>
-              <span className="font-medium">{seatAddonQuote.current_contracted}</span>
-            </div>
-            <div className="flex justify-between gap-2">
-              <span className="text-muted-foreground">Novos assentos</span>
-              <span className="font-medium">+{seatAddonQuote.additional_seats}</span>
-            </div>
-            <div className="flex justify-between gap-2">
-              <span className="text-muted-foreground">Total após pagamento</span>
-              <span className="font-semibold">{seatAddonQuote.new_total} assentos</span>
-            </div>
-            <div className="flex justify-between gap-2">
-              <span className="text-muted-foreground">Valor por usuário ({seatAddonIntervalLabel})</span>
-              <span className="font-medium">{formatPrice(seatAddonQuote.price_per_user_full_period_cents)}</span>
-            </div>
-            <div className="flex justify-between gap-2">
-              <span className="text-muted-foreground">Dias restantes no ciclo</span>
-              <span className="font-medium">{seatAddonQuote.remaining_period_days}</span>
-            </div>
-            <div className="flex justify-between gap-2 border-t pt-2 mt-2">
-              <span className="text-muted-foreground">A pagar agora (pró-rata)</span>
-              <span className="font-semibold text-lg">{formatPrice(seatAddonQuote.amount_cents_now)}</span>
-            </div>
-            <div className="flex justify-between gap-2">
-              <span className="text-muted-foreground">Novo valor por período (próximos ciclos)</span>
-              <span className="font-medium">{formatPrice(seatAddonQuote.new_recurring_period_cents)}</span>
-            </div>
-            <p className="text-xs text-muted-foreground pt-1">
-              Ciclo de referência: {seatAddonQuote.period_start} → {seatAddonQuote.period_end}
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2 justify-end">
-            <Button variant="outline" onClick={() => navigate('/meu-plano', { replace: true })}>
-              Cancelar
-            </Button>
-            <Button
-              type="button"
-              disabled={seatAddonPayPrimingLoading}
-              onClick={() => void handleSeatAddonGoToPayment()}
-            >
-              {seatAddonPayPrimingLoading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Atualizando valores…
-                </>
-              ) : (
-                'Ir para pagamento'
-              )}
-            </Button>
-          </div>
-        </div>
-      );
-      }
-      return (
-        <div className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            Pagamento de <strong>assentos adicionais</strong> na sua conta. Na próxima etapa você escolhe PIX, boleto ou
-            cartão.
-          </p>
-          {result ? (
-            <p className="text-sm font-medium">
-              Valor desta cobrança: {formatPrice(result.amount_cents)}
-            </p>
-          ) : (
-            <p className="text-sm text-muted-foreground flex items-center gap-2">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Carregando dados da cobrança…
-            </p>
-          )}
-          <div className="flex flex-wrap gap-2 justify-end">
-            <Button variant="outline" onClick={() => navigate('/meu-plano', { replace: true })}>
-              Cancelar
-            </Button>
-            <Button
-              type="button"
-              disabled={!result || seatAddonPayPrimingLoading}
-              onClick={() => void handleSeatAddonGoToPayment()}
-            >
-              {seatAddonPayPrimingLoading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Atualizando valores…
-                </>
-              ) : (
-                'Ir para pagamento'
-              )}
-            </Button>
-          </div>
+        <div className="flex flex-col items-center justify-center gap-3 py-12 text-sm text-muted-foreground">
+          <Loader2 className="h-8 w-8 animate-spin" />
+          <span>Verificando sessão…</span>
         </div>
       );
     }
 
     return (
-    <div className="space-y-4">
-      <div className="grid gap-4 sm:grid-cols-2 sm:gap-6">
-        <dl className="space-y-2 text-sm">
+      <form
+        id="checkout-admin-form"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          await handleNext();
+        }}
+        className="space-y-5"
+      >
+        <section className="space-y-3">
+          <div className="space-y-0.5">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Perfil
+            </p>
+            <p className="text-xs text-muted-foreground">Dados de contato do administrador.</p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="sm:col-span-2">
+              <Label htmlFor="responsible_name">Nome do administrador *</Label>
+              <Input
+                id="responsible_name"
+                value={company.responsible_name}
+                onChange={(e) => setCompany((c) => ({ ...c, responsible_name: e.target.value }))}
+                placeholder="Nome completo"
+                required
+                autoComplete="name"
+              />
+            </div>
+            <div>
+              <Label htmlFor="email">E-mail *</Label>
+              <Input
+                id="email"
+                type="email"
+                value={company.email}
+                onChange={(e) => setCompany((c) => ({ ...c, email: e.target.value }))}
+                placeholder="email@empresa.com"
+                required
+                autoComplete="email"
+              />
+            </div>
+            <div>
+              <Label htmlFor="admin_whatsapp" title="DDD + número; unicidade na plataforma">
+                WhatsApp *
+              </Label>
+              <Input
+                id="admin_whatsapp"
+                value={adminWhatsapp}
+                onChange={(e) => setAdminWhatsapp(formatPhoneBrDigits(e.target.value))}
+                placeholder="(11) 99999-9999"
+                inputMode="tel"
+                autoComplete="tel"
+                required
+              />
+            </div>
+          </div>
+        </section>
+
+        <section className="space-y-3 border-t border-border/60 pt-4">
+          <div className="space-y-0.5">
+            <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              <Lock className="h-3 w-3" aria-hidden />
+              Segurança
+            </p>
+            <p className="text-xs text-muted-foreground">Senha de acesso ao painel.</p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <Label htmlFor="password">Senha *</Label>
+              <Input
+                id="password"
+                type="password"
+                name="new-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="new-password"
+                required
+                minLength={6}
+              />
+            </div>
+            <div>
+              <Label htmlFor="password_confirm">Confirmar senha *</Label>
+              <Input
+                id="password_confirm"
+                type="password"
+                name="confirm-new-password"
+                value={passwordConfirm}
+                onChange={(e) => setPasswordConfirm(e.target.value)}
+                autoComplete="new-password"
+                required
+                minLength={6}
+              />
+            </div>
+          </div>
+        </section>
+      </form>
+    );
+  };
+
+  const renderSummary = () => {
+    if (seatAddonBillingContextActive) {
+      if (seatAddonQuote) {
+        return (
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground sm:text-sm">
+              Valor de hoje é pró-rata dos dias restantes; na renovação vale o novo total.
+            </p>
+            <div className="space-y-1.5 rounded-lg border bg-muted/20 px-3 py-2.5 text-sm">
+              <div className="flex justify-between gap-2">
+                <span className="text-muted-foreground">Plano</span>
+                <span className="font-medium text-right">{plan?.name}</span>
+              </div>
+              <div className="flex justify-between gap-2">
+                <span className="text-muted-foreground">Assentos</span>
+                <span className="font-medium">
+                  {seatAddonQuote.current_contracted} → {seatAddonQuote.new_total} (+
+                  {seatAddonQuote.additional_seats})
+                </span>
+              </div>
+              <div className="flex justify-between gap-2">
+                <span className="text-muted-foreground">Dias restantes</span>
+                <span className="font-medium">{seatAddonQuote.remaining_period_days}</span>
+              </div>
+              <div className="mt-1.5 flex justify-between gap-2 border-t pt-2">
+                <span className="text-muted-foreground">A pagar agora</span>
+                <span className="text-base font-semibold">
+                  {formatPrice(seatAddonQuote.amount_cents_now)}
+                </span>
+              </div>
+              <div className="flex justify-between gap-2">
+                <span className="text-muted-foreground">Próximos ciclos</span>
+                <span className="font-medium">
+                  {formatPrice(seatAddonQuote.new_recurring_period_cents)}
+                </span>
+              </div>
+              <p className="pt-0.5 text-[11px] text-muted-foreground">
+                Ciclo: {seatAddonQuote.period_start} → {seatAddonQuote.period_end}
+              </p>
+            </div>
+          </div>
+        );
+      }
+      return (
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Pagamento de <strong>assentos adicionais</strong>. Na próxima etapa você escolhe o método.
+          </p>
+          {result ? (
+            <p className="text-sm font-medium">Valor: {formatPrice(result.amount_cents)}</p>
+          ) : (
+            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Carregando cobrança…
+            </p>
+          )}
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-3">
+        <div className="space-y-1.5 rounded-lg border bg-muted/20 px-3 py-2.5 text-sm">
           <div className="flex justify-between gap-2">
-            <dt className="text-muted-foreground shrink-0">Plano</dt>
-            <dd className="font-medium text-right">{plan?.name}</dd>
+            <span className="text-muted-foreground">Plano</span>
+            <span className="font-medium text-right">{plan?.name}</span>
           </div>
           <div className="flex justify-between gap-2">
-            <dt className="text-muted-foreground shrink-0">Intervalo</dt>
-            <dd className="font-medium text-right">{intervalLabel}</dd>
+            <span className="text-muted-foreground">Intervalo</span>
+            <span className="font-medium text-right">{intervalLabel}</span>
           </div>
           {isCustom && (
             <div className="flex justify-between gap-2">
-              <dt className="text-muted-foreground shrink-0">Usuários</dt>
-              <dd className="font-medium text-right">{usersCount}</dd>
+              <span className="text-muted-foreground">Usuários</span>
+              <span className="font-medium text-right">{usersCount}</span>
             </div>
           )}
-        </dl>
-        <dl className="space-y-2 text-sm">
           <div className="flex justify-between gap-2">
-            <dt className="text-muted-foreground shrink-0">Empresa</dt>
-            <dd className="font-medium text-right truncate max-w-[60%]" title={company.company_name}>
+            <span className="text-muted-foreground">Empresa</span>
+            <span className="max-w-[65%] truncate text-right font-medium" title={company.company_name}>
               {company.company_name || '—'}
-            </dd>
+            </span>
           </div>
           <div className="flex justify-between gap-2">
-            <dt className="text-muted-foreground shrink-0">Administrador</dt>
-            <dd className="font-medium text-right truncate max-w-[60%]" title={company.responsible_name}>
+            <span className="text-muted-foreground">Admin</span>
+            <span
+              className="max-w-[65%] truncate text-right font-medium"
+              title={company.responsible_name}
+            >
               {company.responsible_name || '—'}
-            </dd>
+            </span>
           </div>
           <div className="flex justify-between gap-2">
-            <dt className="text-muted-foreground shrink-0">E-mail</dt>
-            <dd className="font-medium text-right break-all max-w-[65%]">{company.email || '—'}</dd>
+            <span className="text-muted-foreground">E-mail</span>
+            <span className="max-w-[65%] break-all text-right font-medium">{company.email || '—'}</span>
           </div>
           {!isCheckoutUpgrade && (
             <div className="flex justify-between gap-2">
-              <dt className="text-muted-foreground shrink-0">WhatsApp</dt>
-              <dd className="font-medium text-right">{adminWhatsapp || '—'}</dd>
+              <span className="text-muted-foreground">WhatsApp</span>
+              <span className="font-medium text-right">{adminWhatsapp || '—'}</span>
             </div>
           )}
-        </dl>
-      </div>
-      <div className="flex justify-between text-base font-semibold pt-3 border-t">
-        <span>Valor total</span>
-        <span>{formatPrice(amountCents)}</span>
-      </div>
-      {showTrialOnSummary && plan && (
-        <div className="rounded-2xl border-2 border-primary/45 bg-gradient-to-b from-primary/[0.14] via-primary/[0.06] to-transparent p-4 shadow-[0_10px_50px_-15px_hsl(var(--primary)/0.45)] sm:p-5">
-          <p className="mb-4 text-center text-sm leading-relaxed text-muted-foreground">
-            Período de avaliação de{' '}
-            <strong className="text-foreground">{effectiveCheckoutTrialDays(plan)} dias</strong> sem cobrança agora.
-            Quando o período terminar, você poderá concluir o pagamento pelo painel.
-          </p>
-          <Button
-            type="button"
-            size="lg"
-            disabled={loading}
-            onClick={() => void handleStartTrial()}
-            className={cn(
-              'h-14 w-full text-base font-bold shadow-xl transition-all sm:h-16 sm:text-lg',
-              'bg-gradient-to-r from-primary to-[hsl(220_88%_48%)] text-primary-foreground hover:opacity-[0.96]',
-              'hover:shadow-2xl hover:shadow-primary/25 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
-            )}
-          >
-            {loading ? (
-              <>
-                <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                Abrindo trial…
-              </>
-            ) : (
-              <>
-                <Gift className="mr-2 h-5 w-5 shrink-0 sm:h-6 sm:w-6" />
-                Testar {effectiveCheckoutTrialDays(plan)} dias grátis
-              </>
-            )}
-          </Button>
-          <p className="mt-3 text-center text-xs text-muted-foreground">Sem cobrança neste passo · você escolhe quando pagar</p>
+          <div className="mt-1.5 flex justify-between gap-2 border-t pt-2 text-base font-semibold">
+            <span>Valor total</span>
+            <span>{formatPrice(amountCents)}</span>
+          </div>
         </div>
-      )}
-      <div className="flex flex-wrap items-center gap-2 justify-between sm:justify-end">
-        <Button variant="outline" onClick={handleBack}>
-          Voltar
-        </Button>
-        <div className="flex flex-wrap gap-2">
-          {showTrialOnSummary ? (
+
+        {showTrialOnSummary && plan && (
+          <div className="rounded-xl border border-primary/40 bg-primary/[0.08] p-3 sm:p-4">
+            <p className="mb-2.5 text-center text-xs leading-snug text-muted-foreground sm:text-sm">
+              Avaliação de{' '}
+              <strong className="text-foreground">{effectiveCheckoutTrialDays(plan)} dias</strong> sem
+              cobrança agora.
+            </p>
             <Button
               type="button"
-              variant="outline"
-              size="sm"
-              className="text-muted-foreground"
-              onClick={() => {
-                blockAutoHydrateRef.current = false;
-                setStep(4);
-              }}
+              size="lg"
+              disabled={loading}
+              onClick={() => void handleStartTrial()}
+              className={cn(
+                'h-11 w-full text-sm font-bold sm:h-12 sm:text-base',
+                'bg-gradient-to-r from-primary to-[hsl(220_88%_48%)] text-primary-foreground hover:opacity-[0.96]'
+              )}
             >
-              Pagar agora (opcional)
+              {loading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Abrindo trial…
+                </>
+              ) : (
+                <>
+                  <Gift className="mr-2 h-4 w-4 shrink-0" />
+                  Testar {effectiveCheckoutTrialDays(plan)} dias grátis
+                </>
+              )}
             </Button>
-          ) : (
-            <Button
-              type="button"
-              onClick={() => {
-                blockAutoHydrateRef.current = false;
-                setStep(4);
-              }}
-            >
-              Ir para pagamento
-            </Button>
-          )}
-        </div>
+            <p className="mt-2 text-center text-[11px] text-muted-foreground">
+              Sem cobrança neste passo · você escolhe quando pagar
+            </p>
+          </div>
+        )}
       </div>
-    </div>
     );
   };
 
@@ -2310,85 +2487,61 @@ export default function PlanCheckout() {
       isValidCpfOrCnpj(billingDocDigits);
     const methodLocked = loading || paymentConfirmed;
     const displayPm = effectivePaymentDisplayMethod(result, paymentMethod);
-    const canGenerate =
-      !hasChargeReady &&
-      !paymentConfirmed &&
-      (paymentMethod !== 'PIX' || isValidCpfOrCnpj(billingDocDigits));
+    const displayAmountCents = seatAddonBillingContextActive
+      ? (seatAddonPayNowCents ?? result?.amount_cents ?? 0)
+      : (result?.amount_cents ?? seatAddonQuote?.amount_cents_now ?? amountCents);
+    const accountLabel = company.company_name?.trim() || company.email?.trim() || null;
+
     return (
-      <div className="space-y-4">
+      <div className="space-y-3">
+        {/* Resumo financeiro único */}
         {plan && (
-          <div className="rounded-lg border bg-muted/25 px-4 py-3 text-sm space-y-1.5">
-            <div className="flex flex-wrap items-center gap-2">
-              <p className="font-semibold text-foreground">
-                {seatAddonBillingContextActive ? 'Assentos adicionais' : plan.name}
-              </p>
-              {!seatAddonBillingContextActive && payTrialBadge && (
-                <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-medium text-primary">
-                  {payTrialBadge}
+          <div className="rounded-lg border bg-muted/20 px-3 py-2 text-sm">
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <span className="font-semibold text-foreground">
+                  {seatAddonBillingContextActive ? 'Assentos adicionais' : plan.name}
                 </span>
-              )}
+                {!seatAddonBillingContextActive && payTrialBadge ? (
+                  <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-medium text-primary">
+                    {payTrialBadge}
+                  </span>
+                ) : null}
+              </div>
+              <span className="shrink-0 text-base font-semibold tabular-nums text-foreground">
+                {formatPrice(displayAmountCents)}
+                {!seatAddonBillingContextActive ? (
+                  <span className="text-xs font-normal text-muted-foreground"> / {periodLabel}</span>
+                ) : null}
+              </span>
             </div>
-            <p className="text-muted-foreground">
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">
               {seatAddonBillingContextActive ? (
-                seatAddonPayNowCents != null ? (
+                seatAddonQuote ? (
                   <>
-                    <span className="font-medium text-foreground">{formatPrice(seatAddonPayNowCents)}</span>
-                    <span className="text-muted-foreground/80"> — a pagar agora (pró-rata dos assentos extras)</span>
-                    {seatAddonQuote ? (
-                      <span className="block mt-1 text-xs text-muted-foreground">
-                        A partir da próxima renovação ({seatAddonIntervalLabel ?? 'período'}):{' '}
-                        <span className="font-medium text-foreground">
-                          {formatPrice(seatAddonQuote.new_recurring_period_cents)}
-                        </span>{' '}
-                        com {seatAddonQuote.new_total} assentos contratados
-                      </span>
-                    ) : null}
+                    Pró-rata · renovação {formatPrice(seatAddonQuote.new_recurring_period_cents)} (
+                    {seatAddonQuote.new_total} assentos)
+                    {accountLabel ? ` · ${accountLabel}` : null}
                   </>
                 ) : (
-                  <span className="text-sm">Carregando valor proporcional…</span>
+                  'Carregando valor proporcional…'
                 )
               ) : (
                 <>
-                  {formatPrice(amountCents)} <span className="text-muted-foreground/80">/ {periodLabel}</span>
-                  {isCustom && (
-                    <>
-                      {' · '}
-                      {intervalLabel}
-                      {usersCount > 0 && ` · ${usersCount} usuário${usersCount !== 1 ? 's' : ''}`}
-                    </>
-                  )}
+                  {isCustom
+                    ? `${intervalLabel}${usersCount > 0 ? ` · ${usersCount} usuário${usersCount !== 1 ? 's' : ''}` : ''}`
+                    : intervalLabel}
+                  {accountLabel ? ` · ${accountLabel}` : null}
                 </>
               )}
             </p>
           </div>
         )}
-        {!seatAddonBillingContextActive && (
-          <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm">
-            <span className="text-muted-foreground">Empresa: </span>
-            <span className="font-medium">{company.company_name || '—'}</span>
-          </div>
-        )}
-        {seatAddonBillingContextActive && (company.company_name?.trim() || company.email?.trim()) && (
-          <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm space-y-1">
-            {company.company_name?.trim() ? (
-              <p className="mb-0">
-                <span className="text-muted-foreground">Conta: </span>
-                <span className="font-medium">{company.company_name}</span>
-              </p>
-            ) : null}
-            {company.email?.trim() ? (
-              <p className="mb-0">
-                <span className="text-muted-foreground">E-mail: </span>
-                <span className="font-medium">{company.email}</span>
-              </p>
-            ) : null}
-          </div>
-        )}
 
         {!paymentConfirmed && (
-          <div>
+          <div className="space-y-2">
             {!seatAddonBillingContextActive && pixAutomatic?.available ? (
-              <div className="mb-4">
+              <div className="rounded-md border border-border/50 px-2 py-1.5">
                 <PixAutomaticConsentSwitch
                   state={{
                     available: true,
@@ -2460,48 +2613,55 @@ export default function PlanCheckout() {
                 />
               </div>
             ) : null}
-            <Label className="text-sm font-medium">Forma de pagamento</Label>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {seatAddonBillingContextActive
-                ? hasChargeReady
-                  ? 'Troque o método se precisar; o valor continua sendo só o proporcional desta cobrança de assentos.'
-                  : 'Escolha o método para ver os dados de pagamento.'
-                : hasChargeReady
-                  ? 'Troque o método se precisar; geramos ou reutilizamos a cobrança compatível com o mesmo contexto.'
-                  : 'Escolha o método e clique em Gerar cobrança para ver os dados de pagamento na própria tela.'}
-            </p>
-            <div className="mt-2 grid gap-2 sm:grid-cols-3">
-              {PAYMENT_METHODS.map((pm) => {
-                const Icon = pm.icon;
-                const isSelected = paymentMethod === pm.value;
-                const busy = loading && hasChargeReady && isSelected;
-                return (
-                  <button
-                    key={pm.value}
-                    type="button"
-                    disabled={methodLocked}
-                    onClick={() =>
-                      hasChargeReady ? void runPlanPayment(pm.value) : setPaymentMethod(pm.value)
-                    }
-                    className={`flex flex-col items-center gap-2 rounded-lg border-2 p-3 sm:p-4 text-left transition-colors disabled:opacity-60 ${
-                      isSelected
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-border bg-card hover:border-primary/50 hover:bg-muted/50'
-                    }`}
-                  >
-                    <div className={`rounded-full p-2 ${isSelected ? 'bg-primary/20' : 'bg-muted'}`}>
-                      {busy ? <Loader2 className="h-6 w-6 animate-spin" /> : <Icon className="h-6 w-6" />}
-                    </div>
-                    <span className="text-sm font-semibold">{pm.label}</span>
-                    <span className="text-center text-[11px] leading-tight text-muted-foreground">{pm.description}</span>
-                  </button>
-                );
-              })}
+
+            <div>
+              <Label className="text-xs font-medium sm:text-sm">Forma de pagamento</Label>
+              <div className="mt-1.5 grid grid-cols-3 gap-1.5 sm:gap-2">
+                {PAYMENT_METHODS.map((pm) => {
+                  const Icon = pm.icon;
+                  const isSelected = paymentMethod === pm.value;
+                  const busy = loading && hasChargeReady && isSelected;
+                  return (
+                    <button
+                      key={pm.value}
+                      type="button"
+                      disabled={methodLocked}
+                      title={pm.description}
+                      onClick={() =>
+                        hasChargeReady ? void runPlanPayment(pm.value) : setPaymentMethod(pm.value)
+                      }
+                      className={cn(
+                        'flex flex-col items-center gap-1 rounded-lg border-2 px-1.5 py-2 text-center transition-colors disabled:opacity-60 sm:flex-row sm:justify-center sm:gap-2 sm:px-3 sm:py-2.5',
+                        isSelected
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-border bg-card hover:border-primary/50 hover:bg-muted/50'
+                      )}
+                    >
+                      {busy ? (
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                      ) : (
+                        <Icon className="h-5 w-5 shrink-0" />
+                      )}
+                      <span className="text-[11px] font-semibold leading-tight sm:text-sm">{pm.label}</span>
+                      <span className="sr-only">{pm.description}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {hasChargeReady ? (
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Troque o método se precisar — geramos ou reutilizamos a cobrança.
+                </p>
+              ) : (
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Escolha o método e use <strong className="text-foreground">Gerar cobrança</strong> abaixo.
+                </p>
+              )}
             </div>
           </div>
         )}
 
-        <div className="rounded-lg border bg-card p-4 space-y-4">
+        <div className="space-y-3 rounded-lg border border-border/60 bg-card/50 p-3 sm:p-4">
           {!paymentConfirmed && !hasChargeReady && (
             <div>
               <Label htmlFor="billing_cpf_cnpj">
@@ -2509,10 +2669,8 @@ export default function PlanCheckout() {
                 {paymentMethod === 'PIX' ? ' *' : ''}
               </Label>
               {resumeBillingDocLocked && (
-                <p className="mb-1.5 text-xs text-muted-foreground">
-                  {seatAddonBillingContextActive
-                    ? 'CPF/CNPJ já cadastrado na sua conta. Use "Alterar documento" só se precisar corrigir.'
-                    : 'Documento já cadastrado na conta. Use "Alterar documento" só se precisar corrigir.'}
+                <p className="mb-1 text-[11px] text-muted-foreground">
+                  Documento da conta. Use “Alterar” só se precisar corrigir.
                 </p>
               )}
               <Input
@@ -2529,64 +2687,48 @@ export default function PlanCheckout() {
                 inputMode="numeric"
                 aria-invalid={!!cpfCnpjError}
                 className={
-                  cpfCnpjError ? 'border-destructive' : resumeBillingDocLocked ? 'bg-muted/50 text-muted-foreground' : undefined
+                  cpfCnpjError
+                    ? 'border-destructive'
+                    : resumeBillingDocLocked
+                      ? 'bg-muted/50 text-muted-foreground'
+                      : undefined
                 }
               />
               {resumeBillingDocLocked && (
                 <Button
                   type="button"
                   variant="link"
-                  className="mt-1 h-auto p-0 text-xs"
+                  className="mt-0.5 h-auto p-0 text-xs"
                   onClick={() => setResumeBillingDocUnlocked(true)}
                 >
                   Alterar documento
                 </Button>
               )}
               {cpfCnpjError ? (
-                <p className="mt-1.5 text-sm text-destructive" role="alert">
+                <p className="mt-1 text-sm text-destructive" role="alert">
                   {cpfCnpjError}
                 </p>
               ) : (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Obrigatório para PIX; pode ser exigido pelo provedor nos demais métodos.
-                </p>
+                <p className="mt-1 text-[11px] text-muted-foreground">Obrigatório para PIX.</p>
               )}
             </div>
           )}
 
-          {!paymentConfirmed && !hasChargeReady && (
-            <Button
-              type="button"
-              className="w-full"
-              disabled={!canGenerate || loading}
-              onClick={() => void runPlanPayment(paymentMethod)}
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Gerando cobrança…
-                </>
-              ) : (
-                'Gerar cobrança'
-              )}
-            </Button>
-          )}
-
           {loading && result && (
-            <p className="text-xs text-muted-foreground flex items-center gap-2">
-              <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+            <p className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
               Atualizando dados de pagamento…
             </p>
           )}
 
           {paymentConfirmed && plan && (
-            <div className="py-6 flex flex-col items-center justify-center gap-4 text-center">
-              <div className="rounded-full bg-green-500/20 p-4">
-                <Check className="h-12 w-12 text-green-600" />
+            <div className="flex flex-col items-center justify-center gap-3 py-8 text-center">
+              <div className="rounded-full bg-green-500/20 p-3">
+                <Check className="h-10 w-10 text-green-600" />
               </div>
               <div>
-                <p className="text-lg font-semibold text-foreground">Pagamento confirmado!</p>
-                <p className="text-sm text-muted-foreground mt-1">Abrindo o painel…</p>
+                <p className="text-base font-semibold text-foreground">Pagamento confirmado!</p>
+                <p className="mt-0.5 text-sm text-muted-foreground">Abrindo o painel…</p>
               </div>
             </div>
           )}
@@ -2596,330 +2738,585 @@ export default function PlanCheckout() {
             plan &&
             displayPm === 'PIX' &&
             hasRenderablePayloadForMethod(result, 'PIX') && (
-            <div className="space-y-4">
-              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                <span className="font-medium text-foreground">
-                  {seatAddonBillingContextActive ? 'Assentos adicionais' : plan.name}
-                </span>
-                <span className="text-muted-foreground">
-                  {seatAddonBillingContextActive ? (
-                    <>{formatPrice(result.amount_cents)} — proporcional neste ciclo</>
-                  ) : (
-                    <>
-                      {formatPrice(result.amount_cents)} / {periodLabel}
-                    </>
-                  )}
-                </span>
-              </div>
-              <div className="flex items-center gap-2 rounded-lg border bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200">
-                <span className="text-lg" aria-hidden>
-                  🟡
-                </span>
-                <span className="font-medium">Aguardando confirmação do pagamento...</span>
-              </div>
-              {result.pix_qr_code && (
-                <div className="space-y-2">
-                  <p className="text-sm font-medium text-foreground">Escaneie o QR Code</p>
-                  <div className="flex justify-center rounded-xl border bg-white p-4 dark:bg-muted/30">
-                    <img
-                      src={result.pix_qr_code}
-                      alt="QR Code PIX"
-                      className="h-56 w-56 min-h-[224px] min-w-[224px] object-contain"
-                    />
-                  </div>
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-800 dark:text-amber-200 sm:text-sm">
+                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+                  <span className="font-medium">Aguardando confirmação do PIX…</span>
                 </div>
-              )}
-              {result.pix_copy_paste && (
-                <div className="space-y-2">
-                  <div className="flex gap-2">
-                    <Input readOnly value={result.pix_copy_paste} className="font-mono text-xs" />
-                    <Button
+
+                <div className="grid gap-3 sm:grid-cols-[auto_1fr] sm:items-start sm:gap-4">
+                  {result.pix_qr_code ? (
+                    <button
                       type="button"
-                      variant="outline"
-                      size="icon"
-                      className="shrink-0"
-                      onClick={() => copyToClipboard(result.pix_copy_paste!)}
+                      onClick={() => setPixQrEnlarged(true)}
+                      className="group relative mx-auto w-fit rounded-lg border bg-white p-2 dark:bg-muted/30 sm:mx-0"
+                      aria-label="Ampliar QR Code PIX"
                     >
-                      <Copy className="h-4 w-4" />
-                    </Button>
+                      <img
+                        src={result.pix_qr_code}
+                        alt="QR Code PIX"
+                        className="h-40 w-40 object-contain sm:h-[10.5rem] sm:w-[10.5rem]"
+                      />
+                      <span className="absolute bottom-1.5 right-1.5 inline-flex items-center gap-0.5 rounded bg-background/90 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground shadow-sm">
+                        <ZoomIn className="h-3 w-3" aria-hidden />
+                        Ampliar
+                      </span>
+                    </button>
+                  ) : null}
+                  <div className="min-w-0 space-y-2">
+                    <p className="text-xs font-medium text-foreground sm:text-sm">
+                      {seatAddonBillingContextActive ? (
+                        <>
+                          {formatPrice(result.amount_cents)} — proporcional neste ciclo
+                        </>
+                      ) : (
+                        <>
+                          {formatPrice(result.amount_cents)} / {periodLabel}
+                        </>
+                      )}
+                    </p>
+                    {result.pix_copy_paste ? (
+                      <div className="space-y-1">
+                        <Label className="text-[11px] text-muted-foreground">Pix copia e cola</Label>
+                        <div className="flex gap-2">
+                          <Input
+                            readOnly
+                            value={result.pix_copy_paste}
+                            className="h-9 font-mono text-[11px]"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="h-9 w-9 shrink-0"
+                            onClick={() => copyToClipboard(result.pix_copy_paste!)}
+                          >
+                            <Copy className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    ) : null}
+                    <p className="text-[11px] text-muted-foreground">
+                      Após o pagamento o acesso é liberado automaticamente.
+                    </p>
                   </div>
                 </div>
-              )}
-              <p className="text-center text-sm text-muted-foreground">
-                Após o pagamento seu acesso será liberado automaticamente.
-              </p>
-              <Button
-                variant="ghost"
-                className="w-full text-muted-foreground"
-                onClick={() => (isCheckoutUpgrade ? navigate('/meu-plano') : navigate('/landing'))}
-              >
-                Concluir depois
-              </Button>
-            </div>
-          )}
+              </div>
+            )}
 
           {!paymentConfirmed &&
             result &&
             plan &&
             displayPm === 'BOLETO' &&
             hasRenderablePayloadForMethod(result, 'BOLETO') && (
-            <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">
-                {seatAddonBillingContextActive ? (
-                  <>
-                    Assentos adicionais — <strong>{formatPrice(result.amount_cents)}</strong> proporcional neste ciclo
-                    <span className="block text-xs mt-1">Fatura {result.invoice_number ?? result.billing_id}</span>
-                  </>
-                ) : (
-                  <>
-                    Fatura <strong>{result.invoice_number ?? result.billing_id}</strong> —{' '}
-                    {formatPrice(result.amount_cents)}
-                  </>
-                )}
-              </p>
-              <p className="text-sm font-medium">Aguardando pagamento do boleto</p>
-              {result.bank_slip_digitable_line?.trim() && (
-                <div className="space-y-1.5">
-                  <Label className="text-xs text-muted-foreground">Linha digitável</Label>
-                  <div className="flex gap-2">
-                    <Input readOnly value={result.bank_slip_digitable_line} className="font-mono text-xs" />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="shrink-0"
-                      onClick={() => copyToClipboard(result.bank_slip_digitable_line!)}
-                    >
-                      <Copy className="h-4 w-4" />
-                    </Button>
-                  </div>
+              <div className="space-y-2.5">
+                <div className="flex items-center gap-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-800 dark:text-amber-200">
+                  <span className="font-medium">Aguardando pagamento do boleto</span>
                 </div>
-              )}
-              <div className="flex flex-wrap gap-2">
-                {result.bank_slip_url && (
-                  <Button variant="outline" size="sm" className="gap-2" asChild>
-                    <a href={result.bank_slip_url} target="_blank" rel="noopener noreferrer">
-                      PDF do boleto
-                      <ExternalLink className="h-4 w-4" />
-                    </a>
-                  </Button>
+                <p className="text-xs text-muted-foreground sm:text-sm">
+                  {seatAddonBillingContextActive ? (
+                    <>
+                      {formatPrice(result.amount_cents)} pró-rata · Fatura{' '}
+                      {result.invoice_number ?? result.billing_id}
+                    </>
+                  ) : (
+                    <>
+                      Fatura <strong>{result.invoice_number ?? result.billing_id}</strong> —{' '}
+                      {formatPrice(result.amount_cents)}
+                    </>
+                  )}
+                </p>
+                {result.bank_slip_digitable_line?.trim() && (
+                  <div className="space-y-1">
+                    <Label className="text-[11px] text-muted-foreground">Linha digitável</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        readOnly
+                        value={result.bank_slip_digitable_line}
+                        className="h-9 font-mono text-[11px]"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="h-9 w-9 shrink-0"
+                        onClick={() => copyToClipboard(result.bank_slip_digitable_line!)}
+                      >
+                        <Copy className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
                 )}
-                {result.invoice_url && (
-                  <Button variant="ghost" size="sm" className="gap-2 text-muted-foreground" asChild>
-                    <a href={result.invoice_url} target="_blank" rel="noopener noreferrer">
-                      Abrir fatura no site do pagamento
-                      <ExternalLink className="h-4 w-4" />
-                    </a>
-                  </Button>
-                )}
+                <div className="flex flex-wrap gap-2">
+                  {result.bank_slip_url && (
+                    <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" asChild>
+                      <a href={result.bank_slip_url} target="_blank" rel="noopener noreferrer">
+                        PDF do boleto
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </a>
+                    </Button>
+                  )}
+                  {result.invoice_url && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 gap-1.5 text-xs text-muted-foreground"
+                      asChild
+                    >
+                      <a href={result.invoice_url} target="_blank" rel="noopener noreferrer">
+                        Abrir fatura
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </a>
+                    </Button>
+                  )}
+                </div>
               </div>
-              <Button className="w-full" onClick={() => (isCheckoutUpgrade ? navigate('/meu-plano') : navigate('/landing'))}>
-                Concluir
-              </Button>
-            </div>
-          )}
+            )}
 
           {!paymentConfirmed &&
             result &&
             plan &&
             displayPm === 'CREDIT_CARD' &&
             hasRenderablePayloadForMethod(result, 'CREDIT_CARD') && (
-            <div className="space-y-4">
-              <p className="text-sm text-muted-foreground">
-                {seatAddonBillingContextActive ? (
-                  <>
-                    Assentos adicionais — <strong>{formatPrice(result.amount_cents)}</strong> proporcional neste ciclo
-                    <span className="block text-xs mt-1">Fatura {result.invoice_number ?? result.billing_id}</span>
-                  </>
-                ) : (
-                  <>
-                    Fatura <strong>{result.invoice_number ?? result.billing_id}</strong> —{' '}
-                    {formatPrice(result.amount_cents)}
-                  </>
-                )}
-              </p>
-              <div className="flex items-center gap-2 rounded-lg border bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200">
-                <span className="text-lg" aria-hidden>
-                  🟡
-                </span>
-                <span className="font-medium">Preencha os dados do cartão abaixo (mesmo fluxo seguro das faturas).</span>
+              <div className="space-y-3">
+                <p className="text-xs text-muted-foreground sm:text-sm">
+                  {seatAddonBillingContextActive ? (
+                    <>
+                      {formatPrice(result.amount_cents)} pró-rata · Fatura{' '}
+                      {result.invoice_number ?? result.billing_id}
+                    </>
+                  ) : (
+                    <>
+                      Fatura <strong>{result.invoice_number ?? result.billing_id}</strong> —{' '}
+                      {formatPrice(result.amount_cents)}
+                    </>
+                  )}
+                </p>
+                <p className="rounded-md border border-amber-500/25 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-800 dark:text-amber-200">
+                  Preencha o cartão abaixo (mesmo fluxo seguro das faturas).
+                </p>
+                <InlineCreditCardPaymentForm
+                  fieldIdPrefix="plan_checkout_"
+                  form={planCardForm}
+                  setForm={setPlanCardForm}
+                  onSubmit={handlePlanPayWithCard}
+                  paying={payingPlanCard}
+                  emphasizeSubmit
+                  showHostedCheckoutFallback={false}
+                />
               </div>
-              <InlineCreditCardPaymentForm
-                fieldIdPrefix="plan_checkout_"
-                form={planCardForm}
-                setForm={setPlanCardForm}
-                onSubmit={handlePlanPayWithCard}
-                paying={payingPlanCard}
-                emphasizeSubmit
-                showHostedCheckoutFallback={false}
-              />
-            </div>
-          )}
-        </div>
-
-        <p className="text-base font-semibold">
-          {formatPrice(
-            seatAddonBillingContextActive
-              ? (seatAddonPayNowCents ?? result?.amount_cents ?? 0)
-              : (result?.amount_cents ?? (seatAddonQuote?.amount_cents_now ?? amountCents))
-          )}
-        </p>
-        <div className="flex gap-2 justify-end">
-          {seatAddonBillingContextActive && !paymentConfirmed ? (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => navigate('/meu-plano', { replace: true })}
-              disabled={loading}
-            >
-              Cancelar — Meu plano
-            </Button>
-          ) : (
-            <Button variant="outline" onClick={handleBack} disabled={loading}>
-              Voltar
-            </Button>
-          )}
+            )}
         </div>
       </div>
     );
   };
 
   const currentStepTitle =
-    step === 4 && paymentConfirmed
+    step === 5 && paymentConfirmed
       ? 'Pagamento confirmado'
-      : seatAddonBillingContextActive && step === 3
+      : seatAddonBillingContextActive && step === 4
         ? 'Resumo — assentos adicionais'
         : STEP_DEFS[step - 1]?.title ?? '';
   const checkoutDisplayPm = effectivePaymentDisplayMethod(result, paymentMethod);
-  const currentStepDesc =
-    step === 1
-      ? 'Compare os planos e selecione um. Ajuste intervalo e usuários (se aplicável) antes de continuar.'
-      : step === 2
-      ? 'Dados da empresa e do administrador.'
-      : step === 3
-        ? seatAddonBillingContextActive
-          ? 'Confira os valores da contratação incremental antes de pagar.'
-          : 'Confira antes de pagar.'
-        : step === 4
-          ? paymentConfirmed
-            ? 'Pagamento confirmado.'
-            : result && checkoutDisplayPm === 'PIX' && (result.pix_qr_code || result.pix_copy_paste)
-              ? 'Aguardando confirmação do PIX.'
-              : 'Escolha o método e conclua o pagamento abaixo.'
-          : '';
-
   /** Bloqueia passos 1–3 até sessão + checkout-context concluírem (evita disputa com fluxo normal). */
   const showResumeBlockingLoader =
     (isResumeMode || isRenewMode) &&
     !resumeContextError &&
     (authLoading || resumeContextLoading || !resumePaymentOnly);
 
-  const hubContextError = resumeContextError && (isResumeMode || isRenewMode);
+  const hubContextError = !!(resumeContextError && (isResumeMode || isRenewMode));
+
+  const currentStepDesc = showResumeBlockingLoader
+    ? ''
+    : hubContextError
+      ? ''
+      : isResumeMode || (isRenewMode && resumePaymentOnly)
+        ? paymentConfirmed
+          ? 'Pagamento confirmado.'
+          : result && checkoutDisplayPm === 'PIX' && (result.pix_qr_code || result.pix_copy_paste)
+            ? 'Aguardando confirmação do PIX.'
+            : 'Conclua o pagamento da sua conta.'
+          : step === 1
+          ? 'Selecione o plano e ajuste intervalo/usuários.'
+          : step === 2
+            ? isCheckoutUpgrade
+              ? 'Confirme o telefone (opcional) e continue.'
+              : 'Nome da empresa e logos opcionais (claro/escuro).'
+            : step === 3
+              ? 'Dados de acesso do administrador.'
+              : step === 4
+                ? seatAddonBillingContextActive
+                  ? 'Confira os valores antes de pagar.'
+                  : 'Confira antes de pagar.'
+                : step === 5
+                  ? paymentConfirmed
+                    ? 'Pagamento confirmado.'
+                    : result && checkoutDisplayPm === 'PIX' && (result.pix_qr_code || result.pix_copy_paste)
+                      ? 'Aguardando confirmação do PIX.'
+                      : 'Escolha o método e conclua o pagamento.'
+                  : '';
+
+  const shellTitle = isResumeMode
+    ? 'Retomada — pagamento'
+    : isRenewMode
+      ? 'Renovação — pagamento'
+      : seatAddonBillingContextActive
+        ? 'Assentos adicionais'
+        : plan
+          ? `Checkout — ${plan.name}`
+          : 'Checkout — escolha seu plano';
+
+  const stepperActiveIndex = Math.max(
+    0,
+    visibleSteps.findIndex((s) => displayStepIndex(s.id) === displayStepIndex(step))
+  );
+
+  const billingDocDigitsForPay = billingCpf.replace(/\D/g, '');
+  const canGenerateCharge =
+    step === 5 &&
+    !hasChargeReady &&
+    !paymentConfirmed &&
+    (paymentMethod !== 'PIX' || isValidCpfOrCnpj(billingDocDigitsForPay));
+
+  const waitingPixPayload =
+    step === 5 &&
+    !paymentConfirmed &&
+    !!result &&
+    checkoutDisplayPm === 'PIX' &&
+    hasRenderablePayloadForMethod(result, 'PIX');
+
+  const waitingBoletoPayload =
+    step === 5 &&
+    !paymentConfirmed &&
+    !!result &&
+    checkoutDisplayPm === 'BOLETO' &&
+    hasRenderablePayloadForMethod(result, 'BOLETO');
+
+  const hideShellFooter = showResumeBlockingLoader || !!hubContextError || paymentConfirmed;
+
+  const renderFooterActions = () => {
+    const backBtn = (
+      <Button
+        type="button"
+        variant="outline"
+        onClick={handleBack}
+        disabled={loading || identityCheckLoading || plansLoading}
+      >
+        Voltar
+      </Button>
+    );
+
+    if (step === 1) {
+      return (
+        <div className="flex w-full flex-wrap items-center justify-between gap-2">
+          {backBtn}
+          <Button type="button" onClick={() => void handleNext()} disabled={!plan || plansLoading} className="motion-safe:active:scale-[0.98]">
+            Continuar
+          </Button>
+        </div>
+      );
+    }
+
+    if (step === 2) {
+      return (
+        <div className="flex w-full flex-wrap items-center justify-between gap-2">
+          {backBtn}
+          <Button type="submit" form="checkout-company-form" disabled={authLoading}>
+            Continuar
+          </Button>
+        </div>
+      );
+    }
+
+    if (step === 3) {
+      return (
+        <div className="flex w-full flex-wrap items-center justify-between gap-2">
+          {backBtn}
+          <Button type="submit" form="checkout-admin-form" disabled={identityCheckLoading || authLoading}>
+            {identityCheckLoading ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Validando…
+              </>
+            ) : (
+              'Continuar'
+            )}
+          </Button>
+        </div>
+      );
+    }
+
+    if (step === 4 && seatAddonBillingContextActive) {
+      return (
+        <div className="flex w-full flex-wrap items-center justify-between gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => navigate('/meu-plano', { replace: true })}
+            disabled={seatAddonPayPrimingLoading}
+          >
+            Cancelar
+          </Button>
+          <Button
+            type="button"
+            disabled={(!seatAddonQuote && !result) || seatAddonPayPrimingLoading}
+            onClick={() => void handleSeatAddonGoToPayment()}
+          >
+            {seatAddonPayPrimingLoading ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Atualizando…
+              </>
+            ) : (
+              'Ir para pagamento'
+            )}
+          </Button>
+        </div>
+      );
+    }
+
+    if (step === 4) {
+      return (
+        <div className="flex w-full flex-wrap items-center justify-between gap-2">
+          {backBtn}
+          {showTrialOnSummary ? (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                blockAutoHydrateRef.current = false;
+                setStep(5);
+              }}
+            >
+              Pagar agora (opcional)
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              onClick={() => {
+                blockAutoHydrateRef.current = false;
+                setStep(5);
+              }}
+            >
+              Ir para pagamento
+            </Button>
+          )}
+        </div>
+      );
+    }
+
+    if (step === 5) {
+      const leaveCheckout = () => {
+        if (!isCheckoutUpgrade && plan && planHasCheckoutTrial(plan)) {
+          void handleStartTrial();
+          return;
+        }
+        if (isCheckoutUpgrade) {
+          navigate('/meu-plano');
+          return;
+        }
+        navigate('/landing');
+      };
+      const left =
+        seatAddonBillingContextActive && !paymentConfirmed ? (
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => navigate('/meu-plano', { replace: true })}
+            disabled={loading}
+          >
+            Cancelar — Meu plano
+          </Button>
+        ) : (
+          backBtn
+        );
+
+      if (!hasChargeReady && !paymentConfirmed) {
+        return (
+          <div className="flex w-full flex-wrap items-center justify-between gap-2">
+            {left}
+            <Button
+              type="button"
+              disabled={!canGenerateCharge || loading}
+              onClick={() => void runPlanPayment(paymentMethod)}
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Gerando…
+                </>
+              ) : (
+                'Gerar cobrança'
+              )}
+            </Button>
+          </div>
+        );
+      }
+
+      if (waitingPixPayload || waitingBoletoPayload) {
+        const deferIsTrial = !isCheckoutUpgrade && !!plan && planHasCheckoutTrial(plan);
+        return (
+          <div className="flex w-full flex-wrap items-center justify-between gap-2">
+            {left}
+            <Button type="button" variant="secondary" onClick={leaveCheckout} disabled={loading}>
+              {loading && deferIsTrial ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Ativando trial…
+                </>
+              ) : waitingBoletoPayload && !deferIsTrial ? (
+                'Concluir'
+              ) : deferIsTrial ? (
+                `Concluir depois · trial ${effectiveCheckoutTrialDays(plan!)} dias`
+              ) : (
+                'Concluir depois'
+              )}
+            </Button>
+          </div>
+        );
+      }
+
+      return (
+        <div className="flex w-full flex-wrap items-center justify-between gap-2">
+          {left}
+          <span className="text-xs text-muted-foreground sm:text-sm">Complete o pagamento acima</span>
+        </div>
+      );
+    }
+
+    return null;
+  };
 
   return (
-    <LandingLayout>
-      <div className="py-6 bg-muted/30">
-        <div className="container mx-auto px-4 max-w-5xl">
-          <div className="mb-6 text-center sm:text-left">
-            <h1 className="text-2xl font-bold">
-              {isResumeMode
-                ? 'Retomada — conclua o pagamento'
-                : isRenewMode
-                  ? 'Renovação — conclua o pagamento'
-                  : seatAddonBillingContextActive
-                    ? 'Checkout — assentos adicionais'
-                    : plan
-                      ? `Checkout — ${plan.name}`
-                      : 'Checkout — escolha seu plano'}
-            </h1>
-            {step === 1 && !isResumeMode && !isRenewMode && (
-              <p className="text-sm text-muted-foreground mt-1">Contratação em etapas: plano, dados e pagamento.</p>
-            )}
+    <CheckoutAppShell
+      header={<CheckoutShellHeader title={shellTitle} isLoggedIn={!!user} />}
+      stepper={
+        !showResumeBlockingLoader && !hubContextError ? (
+          <CheckoutCompactStepper steps={visibleSteps} activeIndex={stepperActiveIndex} />
+        ) : undefined
+      }
+      hideFooter={hideShellFooter}
+      footerActions={renderFooterActions()}
+    >
+      <div className="mb-3">
+        <h2
+          ref={stepTitleRef}
+          tabIndex={-1}
+          className="rounded-sm text-lg font-semibold leading-tight text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+        >
+          {showResumeBlockingLoader
+            ? 'Preparando pagamento'
+            : hubContextError
+              ? isRenewMode
+                ? 'Renovação indisponível'
+                : 'Retomada indisponível'
+              : currentStepTitle}
+        </h2>
+        {!showResumeBlockingLoader && !hubContextError && currentStepDesc ? (
+          <p className="mt-0.5 text-sm text-muted-foreground">{currentStepDesc}</p>
+        ) : null}
+        {showResumeBlockingLoader ? (
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            Carregando dados da sua conta para gerar a cobrança.
+          </p>
+        ) : null}
+        {hubContextError ? (
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            Tente novamente mais tarde ou use outro caminho no painel.
+          </p>
+        ) : null}
+      </div>
+
+      <div
+        key={
+          showResumeBlockingLoader
+            ? 'loading'
+            : hubContextError
+              ? 'error'
+              : paymentConfirmed
+                ? 'paid'
+                : `step-${step}`
+        }
+        className={cn(
+          'rounded-xl border border-border/60 bg-card/40 p-4 shadow-sm sm:p-5',
+          'motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-200'
+        )}
+      >
+        {showResumeBlockingLoader ? (
+          <div
+            className="flex min-h-[40vh] flex-col items-center justify-center gap-3 py-12 text-muted-foreground"
+            role="status"
+            aria-live="polite"
+          >
+            <Loader2 className="h-10 w-10 animate-spin" />
+            <p className="text-sm">
+              {authLoading ? 'Verificando sessão…' : 'Carregando dados da sua conta…'}
+            </p>
           </div>
-
-          <div className="mx-auto w-full max-w-5xl">
-            {!showResumeBlockingLoader && !hubContextError && (
-            <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 mb-4">
-              {visibleSteps.map((s, i) => {
-                const Icon = s.icon;
-                const logical = displayStepIndex(s.id);
-                const active = displayStepIndex(step) === logical;
-                const done = displayStepIndex(step) > logical;
-                return (
-                  <span key={s.id} className="inline-flex items-center gap-2">
-                    <div
-                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs sm:text-sm ${
-                        active ? 'bg-primary text-primary-foreground' : done ? 'bg-primary/20 text-primary' : 'bg-muted text-muted-foreground'
-                      }`}
-                    >
-                      <Icon className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
-                      <span className="hidden sm:inline">{s.title}</span>
-                    </div>
-                    {i < visibleSteps.length - 1 && <ChevronRight className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-muted-foreground shrink-0" />}
-                  </span>
-                );
-              })}
+        ) : hubContextError ? (
+          <div className="flex min-h-[40vh] flex-col items-center justify-center gap-4 px-4 py-12 text-center">
+            <p className="max-w-md text-sm text-destructive" role="alert">
+              {resumeContextError}
+            </p>
+            <p className="max-w-md text-xs text-muted-foreground">
+              Não foi possível continuar o pagamento com os dados atuais. Volte ao hub comercial ou entre em contato
+              com o suporte.
+            </p>
+            <div className="flex flex-wrap justify-center gap-2">
+              <Button type="button" variant="default" onClick={() => navigate('/meu-plano')}>
+                Voltar ao Meu plano
+              </Button>
+              {!isRenewMode ? (
+                <Button type="button" variant="outline" onClick={() => navigate('/dashboard')}>
+                  Ir ao painel
+                </Button>
+              ) : null}
             </div>
-            )}
+          </div>
+        ) : (
+          <>
+            {step === 1 && renderPlanPicker()}
+            {step === 2 && renderCompanyStep()}
+            {step === 3 && renderAdminStep()}
+            {step === 4 && renderSummary()}
+            {step === 5 && renderPayment()}
+          </>
+        )}
+      </div>
 
-            <Card className="shadow-sm">
-              <CardHeader className="space-y-1 pb-3">
-                <CardTitle className="text-lg">
-                  {showResumeBlockingLoader
-                    ? 'Preparando pagamento'
-                    : hubContextError
-                      ? isRenewMode
-                        ? 'Renovação indisponível'
-                        : 'Retomada indisponível'
-                      : currentStepTitle}
-                </CardTitle>
-                <CardDescription className="text-sm">
-                  {showResumeBlockingLoader
-                    ? 'Carregando dados da sua conta para gerar a cobrança.'
-                    : hubContextError
-                      ? 'Tente novamente mais tarde ou use outro caminho no painel.'
-                      : currentStepDesc}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4 pt-0">
-                {showResumeBlockingLoader ? (
-                  <div className="flex flex-col items-center justify-center gap-3 py-16 text-muted-foreground">
-                    <Loader2 className="h-10 w-10 animate-spin" />
-                    <p className="text-sm">
-                      {authLoading ? 'Verificando sessão…' : 'Carregando dados da sua conta…'}
-                    </p>
-                  </div>
-                ) : hubContextError ? (
-                  <div className="flex flex-col items-center justify-center gap-4 py-12 px-4 text-center">
-                    <p className="text-sm text-destructive max-w-md">{resumeContextError}</p>
-                    <p className="text-xs text-muted-foreground max-w-md">
-                      Não foi possível continuar o pagamento com os dados atuais. Volte ao hub comercial ou entre em
-                      contato com o suporte.
-                    </p>
-                    <div className="flex flex-wrap justify-center gap-2">
-                      <Button type="button" variant="default" onClick={() => navigate('/meu-plano')}>
-                        Voltar ao Meu plano
-                      </Button>
-                      {!isRenewMode ? (
-                        <Button type="button" variant="outline" onClick={() => navigate('/dashboard')}>
-                          Ir ao painel
-                        </Button>
-                      ) : null}
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    {step === 1 && renderPlanPicker()}
-                    {step === 2 && renderCompanyStep()}
-                    {step === 3 && renderSummary()}
-                    {step === 4 && renderPayment()}
-                  </>
-                )}
-              </CardContent>
-            </Card>
+      {pixQrEnlarged && result?.pix_qr_code ? (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-150"
+          role="dialog"
+          aria-modal="true"
+          aria-label="QR Code PIX ampliado"
+          onClick={() => setPixQrEnlarged(false)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setPixQrEnlarged(false);
+          }}
+        >
+          <div
+            className="relative rounded-xl bg-white p-4 shadow-xl dark:bg-muted"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="absolute -right-2 -top-2 h-8 w-8 rounded-full bg-background shadow"
+              onClick={() => setPixQrEnlarged(false)}
+              aria-label="Fechar QR ampliado"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+            <img
+              src={result.pix_qr_code}
+              alt="QR Code PIX ampliado"
+              className="h-64 w-64 object-contain sm:h-72 sm:w-72"
+            />
           </div>
         </div>
-      </div>
-    </LandingLayout>
+      ) : null}
+    </CheckoutAppShell>
   );
 }

@@ -40,7 +40,24 @@ export function resolveTenantLogoUrl(theme: string | undefined, row: TenantBrand
   return null;
 }
 
-/** Indica se há imagem de marca para o tema (texto da empresa não deve duplicar ao lado). */
+/** Indica se há imagem de marca para o tema. */
 export function hasTenantLogoForTheme(theme: string | undefined, row: TenantBrandUrls | null | undefined): boolean {
   return resolveTenantLogoUrl(theme, row) != null;
+}
+
+/**
+ * Como a logo deve aparecer na barra / marca:
+ * - `wordmark` (horizontal): só a imagem
+ * - `icon` (~1:1): ícone + nome da empresa
+ */
+export type TenantLogoPresentation = 'wordmark' | 'icon';
+
+/** Largura/altura ≤ este valor → tratado como ícone. Acima → wordmark horizontal. */
+export const LOGO_ICON_MAX_ASPECT = 1.35;
+
+export function classifyLogoAspect(width: number, height: number): TenantLogoPresentation {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return 'wordmark';
+  }
+  return width / height <= LOGO_ICON_MAX_ASPECT ? 'icon' : 'wordmark';
 }

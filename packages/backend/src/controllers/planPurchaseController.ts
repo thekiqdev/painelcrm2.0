@@ -30,6 +30,7 @@ import {
   TrialAlreadyConsumedError,
 } from '../services/trialSignupGuardService.js';
 import { generateToken } from '../utils/jwt.js';
+import { comparePassword } from '../utils/bcrypt.js';
 import { notifySuperAdminsNewTenant } from '../services/superadminNotificationsService.js';
 import {
   schedulePublishPlatformAccountCreated,
@@ -632,6 +633,8 @@ export async function postPlanCheckoutPreparePayment(req: AuthRequest, res: Resp
 /**
  * POST /api/plan-purchase/complete-signup-trial — conclui cadastro com trial (sem subscribePlan).
  * Protegido por CHECKOUT_TRIAL_V1. Não gera cobrança; login imediato via JWT na resposta.
+ * Com `tenant_id` (após plan-purchase / “Concluir depois”): converte `payment_pending` → `trial`,
+ * cancela faturas SaaS abertas e emite JWT.
  */
 export async function postCompleteSignupTrial(req: AuthRequest, res: Response): Promise<void> {
   if (!isCheckoutTrialV1Enabled()) {
@@ -693,9 +696,181 @@ export async function postCompleteSignupTrial(req: AuthRequest, res: Response): 
   }
 
   const usersCount = body.users_count ?? null;
+  const emailNorm = normalizeEmailForUniqueness(body.email!);
+
+  /** Reuso: “Concluir depois” após plan-purchase — tenant payment_pending → trial + JWT. */
+  if (body.tenant_id) {
+    try {
+      const planMetaRow = await pool.query<{
+        trial_days: number | null;
+        is_free: boolean | null;
+        plan_type: string | null;
+        free_access_days: number | null;
+      }>(
+        `SELECT trial_days, is_free, plan_type, free_access_days FROM plans WHERE id = $1 AND is_active = true`,
+        [body.plan_id]
+      );
+      if (planMetaRow.rows.length === 0) {
+        jsonError(res, 400, 'Plano não encontrado ou inativo.', 'INVALID_CHECKOUT_CONTEXT');
+        return;
+      }
+      const reuseTrialDays = effectiveCheckoutTrialDays(planMetaRow.rows[0]);
+      if (reuseTrialDays < 1) {
+        jsonError(res, 400, 'Este plano não oferece período de trial no checkout.', 'PLAN_HAS_NO_TRIAL');
+        return;
+      }
+
+      const tenantRow = await pool.query<{
+        id: string;
+        status: string;
+        plan_id: string;
+        has_used_trial: boolean | null;
+        trial_ends_at: string | null;
+      }>(
+        `SELECT id, status, plan_id, has_used_trial, trial_ends_at
+         FROM tenants WHERE id = $1`,
+        [body.tenant_id]
+      );
+      const tenant = tenantRow.rows[0];
+      if (!tenant) {
+        jsonError(res, 400, 'Conta de checkout não encontrada.', 'INVALID_CHECKOUT_CONTEXT');
+        return;
+      }
+      if (tenant.plan_id !== body.plan_id) {
+        jsonError(res, 400, 'Plano não corresponde a esta conta.', 'INVALID_CHECKOUT_CONTEXT');
+        return;
+      }
+
+      const admin = await pool.query<{
+        id: string;
+        email: string;
+        password_hash: string | null;
+      }>(
+        `SELECT id, email, password_hash
+         FROM users
+         WHERE tenant_id = $1
+         ORDER BY created_at ASC
+         LIMIT 1`,
+        [tenant.id]
+      );
+      const user = admin.rows[0];
+      if (!user?.password_hash) {
+        jsonError(res, 400, 'Conta sem senha. Refaça o checkout ou use login.', 'INVALID_CHECKOUT_CONTEXT');
+        return;
+      }
+      if (normalizeEmailForUniqueness(user.email) !== emailNorm) {
+        jsonError(
+          res,
+          400,
+          'Os dados informados não correspondem a esta conta. Confirme o e-mail ou faça login.',
+          'CHECKOUT_TENANT_IDENTITY_MISMATCH'
+        );
+        return;
+      }
+      const pwdOk = await comparePassword(pwd, user.password_hash);
+      if (!pwdOk) {
+        jsonError(res, 401, 'Senha incorreta.', 'INVALID_CHECKOUT_CONTEXT');
+        return;
+      }
+
+      const nowMs = Date.now();
+      const trialStillOpen =
+        tenant.status === 'trial' &&
+        (tenant.trial_ends_at == null || new Date(tenant.trial_ends_at).getTime() >= nowMs);
+
+      if (trialStillOpen) {
+        const token = generateToken({ userId: user.id, email: user.email });
+        res.status(200).json({
+          token,
+          tenant_id: tenant.id,
+          user: {
+            id: user.id,
+            email: user.email,
+            tenant_id: tenant.id,
+            registration_complete: true,
+          },
+        });
+        return;
+      }
+
+      if (tenant.status !== 'payment_pending') {
+        jsonError(
+          res,
+          400,
+          'Esta conta não pode iniciar trial neste estado. Faça login ou conclua o pagamento.',
+          'INVALID_CHECKOUT_CONTEXT'
+        );
+        return;
+      }
+
+      if (tenant.has_used_trial) {
+        jsonError(
+          res,
+          409,
+          'Trial já utilizado para estes dados. Faça login ou conclua o pagamento na retomada.',
+          'TRIAL_ALREADY_CONSUMED'
+        );
+        return;
+      }
+
+      const reuseClient = await pool.connect();
+      try {
+        await reuseClient.query('BEGIN');
+        await reuseClient.query(
+          `UPDATE tenant_billing
+           SET status = 'cancelled', updated_at = now()
+           WHERE tenant_id = $1
+             AND status = ANY($2::text[])
+             AND COALESCE(billing_reason, 'plan_purchase') IN ('plan_purchase', 'plan_upgrade')`,
+          [tenant.id, ['pending', 'waiting_payment', 'processing', 'overdue']]
+        );
+        await reuseClient.query(
+          `UPDATE tenants
+           SET status = 'trial',
+               trial_ends_at = now() + ($1::int * interval '1 day'),
+               has_used_trial = true,
+               trial_consumed_at = now(),
+               onboarding_completed = true,
+               suspension_reason = NULL,
+               suspended_at = NULL,
+               updated_at = now()
+           WHERE id = $2`,
+          [reuseTrialDays, tenant.id]
+        );
+        await reuseClient.query('COMMIT');
+      } catch (e) {
+        try {
+          await reuseClient.query('ROLLBACK');
+        } catch {
+          /* ignore */
+        }
+        throw e;
+      } finally {
+        reuseClient.release();
+      }
+
+      schedulePublishPlatformTrialStarted(tenant.id);
+      const token = generateToken({ userId: user.id, email: user.email });
+      res.status(201).json({
+        token,
+        tenant_id: tenant.id,
+        user: {
+          id: user.id,
+          email: user.email,
+          tenant_id: tenant.id,
+          registration_complete: true,
+        },
+      });
+      return;
+    } catch (err) {
+      console.error('postCompleteSignupTrial reuse payment_pending error:', err);
+      res.status(500).json({ error: 'Internal server error' });
+      return;
+    }
+  }
 
   try {
-    await assertAdminEmailAvailableForCheckout(normalizeEmailForUniqueness(body.email!));
+    await assertAdminEmailAvailableForCheckout(emailNorm);
     await assertAdminWhatsappAvailableForCheckout(whatsappDigits);
   } catch (err) {
     const code = (err as Error & { code?: string }).code;

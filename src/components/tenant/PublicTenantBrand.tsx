@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useTheme } from 'next-themes';
 import { FileText } from 'lucide-react';
 import { resolveTenantLogoUrl, type TenantBrandUrls } from '@/utils/tenantBranding';
+import { useLogoPresentation } from '@/hooks/useLogoPresentation';
 import { cn } from '@/lib/utils';
 
 export type PublicTenantBrandingInput = TenantBrandUrls & { name?: string | null };
@@ -18,7 +19,8 @@ type Props = {
 
 /**
  * Marca da empresa em páginas públicas: imagem conforme tema (claro/escuro + fallbacks)
- * ou apenas texto quando não houver logo.
+ * ou texto quando não houver logo.
+ * Logo ~1:1 → ícone + nome; horizontal → só a imagem.
  */
 export function PublicTenantBrandMark({
   branding,
@@ -32,6 +34,8 @@ export function PublicTenantBrandMark({
   const url = resolveTenantLogoUrl(resolvedTheme, branding);
   const name = branding.name?.trim() || '';
   const [logoFailed, setLogoFailed] = useState(false);
+  const presentation = useLogoPresentation(url && !logoFailed ? url : null);
+  const showNameBesideLogo = presentation === 'icon' && !!name;
 
   useEffect(() => {
     setLogoFailed(false);
@@ -39,16 +43,22 @@ export function PublicTenantBrandMark({
 
   if (url && !logoFailed) {
     return (
-      <div className={cn('flex min-w-0 shrink-0 items-center', className)}>
+      <div className={cn('flex min-w-0 shrink-0 items-center gap-2', className)}>
         <img
           src={url}
           alt=""
           className={cn(
-            'h-11 max-h-11 w-auto max-w-[180px] object-contain object-left',
+            'object-contain object-left',
+            showNameBesideLogo
+              ? 'h-11 w-11 shrink-0 rounded-md'
+              : 'h-11 max-h-11 w-auto max-w-[180px]',
             imgClassName
           )}
           onError={() => setLogoFailed(true)}
         />
+        {showNameBesideLogo ? (
+          <span className={cn('truncate font-semibold text-foreground', textClassName)}>{name}</span>
+        ) : null}
       </div>
     );
   }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Logo } from '@/components/Logo';
 import { useTenantBrand } from '@/contexts/TenantBrandContext';
+import { useLogoPresentation } from '@/hooks/useLogoPresentation';
 import { cn } from '@/lib/utils';
 
 type TenantSidebarMarkProps = {
@@ -9,11 +10,18 @@ type TenantSidebarMarkProps = {
   className?: string;
 };
 
-/** Bloco superior da sidebar: só a logo quando existir; caso contrário fallback textual (nome da empresa ou PainelCRM). */
+/**
+ * Bloco superior da sidebar:
+ * - logo horizontal (wordmark) → só a imagem
+ * - logo ~1:1 (ícone) → ícone + nome da empresa
+ * - sem logo → fallback textual (PainelCRM / nome)
+ */
 export function TenantSidebarMark({ collapsed, className }: TenantSidebarMarkProps) {
   const { resolvedLogoUrl, company, loading } = useTenantBrand();
   const textFallback = company?.name?.trim() || 'PainelCRM';
   const [logoLoadFailed, setLogoLoadFailed] = useState(false);
+  const presentation = useLogoPresentation(resolvedLogoUrl && !logoLoadFailed ? resolvedLogoUrl : null);
+  const showIconWithName = presentation === 'icon' && !collapsed;
 
   useEffect(() => {
     setLogoLoadFailed(false);
@@ -37,7 +45,7 @@ export function TenantSidebarMark({ collapsed, className }: TenantSidebarMarkPro
     return (
       <div
         className={cn(
-          'mb-6 flex min-w-0 items-center pb-2',
+          'mb-6 flex min-w-0 items-center gap-2 pb-2 sm:gap-3',
           collapsed ? 'justify-center' : 'justify-start px-4',
           className,
         )}
@@ -46,11 +54,20 @@ export function TenantSidebarMark({ collapsed, className }: TenantSidebarMarkPro
           src={resolvedLogoUrl}
           alt=""
           className={cn(
-            'w-auto object-contain object-left',
-            collapsed ? 'max-h-9 max-w-9' : 'max-h-10 max-w-[min(200px,100%)]',
+            'object-contain object-left',
+            showIconWithName
+              ? 'h-9 w-9 shrink-0 rounded-md'
+              : collapsed
+                ? 'max-h-9 max-w-9 w-auto'
+                : 'max-h-10 w-auto max-w-[min(200px,100%)]',
           )}
           onError={() => setLogoLoadFailed(true)}
         />
+        {showIconWithName ? (
+          <h1 className="truncate text-base font-bold text-sidebar-foreground sm:text-lg">
+            {textFallback}
+          </h1>
+        ) : null}
       </div>
     );
   }

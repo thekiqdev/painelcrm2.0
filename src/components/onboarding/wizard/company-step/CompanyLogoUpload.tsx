@@ -8,6 +8,8 @@ type Props = {
   onUpload: (file: File) => void;
   hint?: string;
   surface?: 'dark' | 'light';
+  /** Altura menor (ex.: checkout mobile sem scroll). */
+  compact?: boolean;
 };
 
 export function CompanyLogoUpload({
@@ -17,14 +19,16 @@ export function CompanyLogoUpload({
   onUpload,
   hint,
   surface = 'dark',
+  compact = false,
 }: Props) {
   const isLight = surface === 'light';
 
   return (
-    <div className="min-w-0 w-full space-y-1.5">
+    <div className={cn('min-w-0 w-full', hint ? 'space-y-1.5' : 'space-y-0')}>
       <label
         className={cn(
-          'group relative flex h-[68px] w-full min-w-0 cursor-pointer items-center justify-center overflow-hidden rounded-xl border-2 border-dashed transition-all lg:h-[72px]',
+          'group relative flex w-full min-w-0 cursor-pointer items-center justify-center overflow-hidden rounded-xl border-2 border-dashed transition-all',
+          compact ? 'h-14' : 'h-[68px] lg:h-[72px]',
           logoUrl
             ? isLight
               ? 'border-primary/30 bg-white'
@@ -41,11 +45,11 @@ export function CompanyLogoUpload({
         ) : (
           <div
             className={cn(
-              'flex flex-col items-center gap-1',
+              'flex flex-col items-center gap-0.5',
               isLight ? 'text-[hsl(228,20%,42%)]' : 'text-muted-foreground',
             )}
           >
-            <Upload className="h-5 w-5 group-hover:text-primary/80" />
+            <Upload className={cn(compact ? 'h-4 w-4' : 'h-5 w-5', 'group-hover:text-primary/80')} />
             <span className="text-[10px]">Enviar logo</span>
           </div>
         )}
