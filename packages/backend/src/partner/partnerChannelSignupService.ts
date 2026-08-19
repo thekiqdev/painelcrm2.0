@@ -6,7 +6,7 @@
 import type { PoolClient } from 'pg';
 import { pool } from '../utils/db.js';
 import { createTenantAdminUser } from '../services/tenantAdminService.js';
-import { createInvoice, ensureTenantBillingInlinePayToken, type BillingInterval } from '../services/invoiceService.js';
+import { createInvoice, ensureTenantBillingInlinePayToken, getInvoiceById, type BillingInterval } from '../services/invoiceService.js';
 import {
   prepareSaasCheckoutPaymentMethodForBilling,
   type PlanCheckoutPendingPayload,
@@ -433,6 +433,22 @@ async function preparePaidPayload(
   };
 }
 
+/** Cobrança criada/reutilizada sem preparar método (FE escolhe PIX/boleto/cartão depois). */
+function buildChargeOnlyPaidResult(
+  tenantId: string,
+  billing: { id: string; amount_cents: number; invoice_number?: string | null; status?: string },
+  sellPlanId: string
+): PartnerChannelPaidResult {
+  return {
+    tenant_id: tenantId,
+    billing_id: billing.id,
+    invoice_number: billing.invoice_number ?? null,
+    amount_cents: billing.amount_cents,
+    status: billing.status ?? 'pending',
+    partner_sell_plan_id: sellPlanId,
+  };
+}
+
 /**
  * Signup pago: customer_tenant payment_pending + fatura no preço do sell plan + prepare payment.
  */
@@ -492,15 +508,28 @@ export async function signupPartnerChannelPaid(
     await ensureTenantBillingDocumentForPayment(row.id, input.cpf_cnpj);
 
     let billingId: string | null = null;
-    const open = await pool.query<{ id: string }>(
-      `SELECT id FROM tenant_billing
+    let billingSnapshot: {
+      id: string;
+      amount_cents: number;
+      invoice_number: string | null;
+      status: string;
+    } | null = null;
+    const open = await pool.query<{
+      id: string;
+      amount_cents: number;
+      invoice_number: string | null;
+      status: string;
+    }>(
+      `SELECT id, amount_cents, invoice_number, status
+       FROM tenant_billing
        WHERE tenant_id = $1
          AND status IN ('pending', 'waiting_payment', 'processing', 'overdue')
        ORDER BY created_at DESC
        LIMIT 1`,
       [row.id]
     );
-    billingId = open.rows[0]?.id ?? null;
+    billingSnapshot = open.rows[0] ?? null;
+    billingId = billingSnapshot?.id ?? null;
 
     if (!billingId) {
       const due = new Date();
@@ -518,6 +547,7 @@ export async function signupPartnerChannelPaid(
         plan_price_snapshot: sell.price_cents,
       });
       billingId = billing.id;
+      billingSnapshot = billing;
       schedulePublishPlatformBillingChargeCreated(billing.id);
     }
 
@@ -527,13 +557,14 @@ export async function signupPartnerChannelPaid(
     );
 
     if (!shouldPreparePayment) {
-      return {
-        tenant_id: row.id,
-        billing_id: billingId!,
-        amount_cents: sell.price_cents,
-        partner_sell_plan_id: sell.id,
-        status: 'pending',
-      };
+      if (!billingSnapshot) {
+        const loaded = await getInvoiceById(billingId!);
+        if (!loaded) {
+          throw new PartnerAdminError('Cobrança não encontrada', 'INVALID_CHECKOUT_CONTEXT', 400);
+        }
+        billingSnapshot = loaded;
+      }
+      return buildChargeOnlyPaidResult(row.id, billingSnapshot, sell.id);
     }
 
     return preparePaidPayload(row.id, billingId!, paymentMethod!, sell.id);
@@ -634,13 +665,7 @@ export async function signupPartnerChannelPaid(
   schedulePublishPlatformBillingChargeCreated(billing.id);
 
   if (!shouldPreparePayment) {
-    return {
-      tenant_id: tenantId,
-      billing_id: billing.id,
-      amount_cents: billing.amount_cents,
-      partner_sell_plan_id: sell.id,
-      status: 'pending',
-    };
+    return buildChargeOnlyPaidResult(tenantId, billing, sell.id);
   }
 
   return preparePaidPayload(tenantId, billing.id, paymentMethod!, sell.id);
