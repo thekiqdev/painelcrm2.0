@@ -5,20 +5,29 @@ WORKDIR /app
 
 # Copy package files and install ALL dependencies (including devDependencies for tsc)
 COPY packages/backend/package*.json ./
-RUN npm ci
+
+# Uma única instalação (evita 2x npm ci) + retries para ECONNRESET em CI/Easypanel
+RUN npm config set fetch-retries 5 \
+  && npm config set fetch-retry-mintimeout 20000 \
+  && npm config set fetch-retry-maxtimeout 120000 \
+  && npm config set maxsockets 3 \
+  && (npm ci || (sleep 15 && npm ci) || (sleep 30 && npm ci))
 
 # Copy source and build TypeScript
 COPY packages/backend/ ./
-RUN npm run build
+RUN npm run build \
+  && npm prune --omit=dev
 
 # ---- Production stage ----
 FROM node:20-alpine
 
 WORKDIR /app
 
-# Install production dependencies only
+ENV NODE_ENV=production
+
+# Reutiliza node_modules já instalados no builder (sem segundo npm ci na rede)
 COPY packages/backend/package*.json ./
-RUN npm ci --omit=dev
+COPY --from=builder /app/node_modules ./node_modules
 
 # Copy compiled output from builder
 COPY --from=builder /app/dist ./dist
