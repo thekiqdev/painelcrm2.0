@@ -19,6 +19,7 @@ import {
   isProvisionalOperationalName,
   isProvisionalOperationalSlug,
 } from '../../acquisition/tenantOperationalSlug.js';
+import { resolveTransactionalBrandName } from '../../partner/partnerBrandResolver.js';
 
 export type { TenantAdminNotifyRow } from './platformTenantAdminForNotify.js';
 export { loadPrimaryTenantAdminForNotify } from './platformTenantAdminForNotify.js';
@@ -27,8 +28,8 @@ function feBase(): string {
   return String(process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
 }
 
-function platformPublicName(): string {
-  return (process.env.APP_PUBLIC_NAME || 'PainelCRM').trim() || 'PainelCRM';
+async function platformPublicName(tenantId?: string | null): Promise<string> {
+  return resolveTransactionalBrandName({ tenantId: tenantId ?? null });
 }
 
 function formatBrlFromCents(cents: number): string {
@@ -98,7 +99,7 @@ export async function publishPlatformAccountCreated(tenantId: string): Promise<v
     entityId: tenantId,
     idempotencyBaseKey: `platform:tenant:${tenantId}:account_created`,
     mergeContext: {
-      'platform.name': platformPublicName(),
+      'platform.name': await platformPublicName(tenantId),
       'platform.support_link': buildPlatformSupportLink(),
       'tenant.name': official.name,
       'tenant.admin_name': adminDisplayName(admin),
@@ -130,7 +131,7 @@ export async function publishPlatformBillingChargeCreated(billingId: string): Pr
     entityId: billingId,
     idempotencyBaseKey: `platform:tenant_billing:${billingId}:charge_created`,
     mergeContext: {
-      'platform.name': platformPublicName(),
+      'platform.name': await platformPublicName(row.tenant_id),
       'tenant.name': admin.tenant_name,
       'tenant.admin_name': adminDisplayName(admin),
       'billing.amount': formatBrlFromCents(row.amount_cents),
@@ -164,7 +165,7 @@ export async function publishPlatformBillingChargeOverdue(billingId: string): Pr
     entityId: billingId,
     idempotencyBaseKey: `platform:tenant_billing:${billingId}:charge_overdue`,
     mergeContext: {
-      'platform.name': platformPublicName(),
+      'platform.name': await platformPublicName(row.tenant_id),
       'platform.support_link': buildPlatformSupportLink(),
       'tenant.name': admin.tenant_name,
       'tenant.admin_name': adminDisplayName(admin),
@@ -215,7 +216,7 @@ export async function publishPlatformBillingPaymentConfirmed(billingId: string):
     entityId: billingId,
     idempotencyBaseKey: `platform:tenant_billing:${billingId}:payment_confirmed`,
     mergeContext: {
-      'platform.name': platformPublicName(),
+      'platform.name': await platformPublicName(row.tenant_id),
       'platform.support_link': buildPlatformSupportLink(),
       'tenant.name': admin.tenant_name,
       'tenant.admin_name': adminDisplayName(admin),
@@ -252,7 +253,7 @@ export async function publishPlatformPlanActivated(params: { tenantId: string; b
     entityId: params.tenantId,
     idempotencyBaseKey: `platform:tenant:${params.tenantId}:plan_activated:${params.billingId}`,
     mergeContext: {
-      'platform.name': platformPublicName(),
+      'platform.name': await platformPublicName(params.tenantId),
       'platform.support_link': buildPlatformSupportLink(),
       'tenant.name': admin.tenant_name,
       'tenant.admin_name': adminDisplayName(admin),
@@ -293,7 +294,7 @@ export async function publishPlatformTrialStarted(tenantId: string): Promise<voi
     entityId: tenantId,
     idempotencyBaseKey: `platform:tenant:${tenantId}:trial_started:${endsKey}`,
     mergeContext: {
-      'platform.name': platformPublicName(),
+      'platform.name': await platformPublicName(tenantId),
       'platform.support_link': buildPlatformSupportLink(),
       'tenant.name': official.name,
       'tenant.admin_name': adminDisplayName(admin),
@@ -320,7 +321,7 @@ export async function publishPlatformTrialEnded(tenantId: string): Promise<void>
     entityId: tenantId,
     idempotencyBaseKey: `platform:tenant:${tenantId}:trial_ended:${endsKey}`,
     mergeContext: {
-      'platform.name': platformPublicName(),
+      'platform.name': await platformPublicName(tenantId),
       'platform.support_link': buildPlatformSupportLink(),
       'tenant.name': admin.tenant_name,
       'tenant.admin_name': adminDisplayName(admin),
@@ -351,7 +352,7 @@ export async function publishPlatformTrialExpiring(tenantId: string, daysLeft: n
     entityId: tenantId,
     idempotencyBaseKey: `platform:tenant:${tenantId}:trial_expiring:${endsKey}`,
     mergeContext: {
-      'platform.name': platformPublicName(),
+      'platform.name': await platformPublicName(tenantId),
       'platform.support_link': buildPlatformSupportLink(),
       'tenant.name': admin.tenant_name,
       'tenant.admin_name': adminDisplayName(admin),

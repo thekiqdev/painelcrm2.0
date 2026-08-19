@@ -2899,7 +2899,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
         editable: true,
       });
       const cpfVal = currentClient?.cpf_cnpj?.trim() || leadCpf || null;
-      if (kind === 'client' || cpfVal) {
+      if (kind === 'client' || kind === 'lead') {
         profileFields.push({
           key: 'cpf_cnpj',
           label: 'CPF/CNPJ',

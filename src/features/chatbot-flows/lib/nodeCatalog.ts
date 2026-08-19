@@ -490,6 +490,8 @@ export const waitInputDataSchema = z
     timeout_unit: z.enum(['seconds', 'minutes', 'hours', 'days']).optional().default('minutes'),
     /** S20: persiste a resposta no cliente/lead vinculado à conversa. */
     save_to_contact: z.boolean().optional().default(false),
+    /** S35: se save_to_contact e não há vínculo, cria/vincula lead. Default true. */
+    ensure_lead: z.boolean().optional().default(true),
     contact_field: z
       .enum(['name', 'email', 'phone', 'company', 'cpf_cnpj'])
       .optional()
@@ -1012,6 +1014,7 @@ export function defaultDataForType(type: EssentialNodeType): Record<string, unkn
         media_kinds: ['document', 'image'],
         invalid_message: '',
         save_to_contact: false,
+        ensure_lead: true,
         contact_field: 'name',
       };
     case 'condition':

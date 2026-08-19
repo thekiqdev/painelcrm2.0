@@ -59,8 +59,10 @@ const NAMESPACE_ORDER = [
   'onboarding',
   'meta_readiness',
   'platform',
+  'partner',
   'billing_recovery',
   'billing2',
+  'crm',
 ] as const;
 
 function formatWhen(iso?: string): string {

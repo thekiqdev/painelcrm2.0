@@ -21,6 +21,7 @@ const leadFormSchema = z.object({
   company: z.string().optional(),
   email: z.string().email({ message: "E-mail inválido" }).optional().or(z.literal("")),
   phone: z.string().optional(),
+  cpf_cnpj: z.string().optional(),
   status: z.string(),
   source: z.string(),
 });
@@ -47,6 +48,7 @@ const LeadAddDialog: React.FC<LeadAddDialogProps> = ({
       company: "",
       email: "",
       phone: "",
+      cpf_cnpj: "",
       status: "Novo",
       source: "Direto",
     },

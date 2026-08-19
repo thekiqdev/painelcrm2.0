@@ -5,6 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from '@/components/ui/sonner';
 import {
   getPostAuthHomePath,
+  isPartnerChannelUser,
   isSuperAdminPlatformUser,
   isTenantCrmPath,
 } from '@/utils/superAdminRedirect';
@@ -30,6 +31,7 @@ const AuthGuard: React.FC<AuthGuardProps> = ({
     if (loading) return;
 
     const superAdminPlatform = isSuperAdminPlatformUser(user ?? undefined);
+    const partnerChannel = isPartnerChannelUser(user ?? undefined);
 
     if (process.env.NODE_ENV === 'development') {
       console.log('AuthGuard check:', {
@@ -45,6 +47,7 @@ const AuthGuard: React.FC<AuthGuardProps> = ({
     const isRegisterStepsPage = location.pathname === '/register/steps';
     const isRegisterPage = location.pathname === '/register';
     const isLoginPage = location.pathname === '/login' || location.pathname === '/';
+    const isPartnerHome = location.pathname === '/partner' || location.pathname.startsWith('/partner/');
     
     // Ignorar verificações de autenticação para a página de registro
     if (isRegisterPage) {
@@ -59,6 +62,17 @@ const AuthGuard: React.FC<AuthGuardProps> = ({
       !location.pathname.startsWith('/superadmin')
     ) {
       navigate('/superadmin', { replace: true });
+      return;
+    }
+
+    if (
+      requireAuth &&
+      user &&
+      partnerChannel &&
+      !isPartnerHome &&
+      (isTenantCrmPath(location.pathname) || location.pathname.startsWith('/onboarding'))
+    ) {
+      navigate('/partner', { replace: true });
       return;
     }
 
@@ -81,7 +95,8 @@ const AuthGuard: React.FC<AuthGuardProps> = ({
       user &&
       !registrationComplete &&
       !isRegisterStepsPage &&
-      !superAdminPlatform
+      !superAdminPlatform &&
+      !partnerChannel
     ) {
       console.log('Registration not complete, redirecting to registration steps');
       toast.info('Por favor, complete seu cadastro primeiro');
@@ -91,6 +106,11 @@ const AuthGuard: React.FC<AuthGuardProps> = ({
 
     if (user && superAdminPlatform && isRegisterStepsPage) {
       navigate('/superadmin', { replace: true });
+      return;
+    }
+
+    if (user && partnerChannel && isRegisterStepsPage) {
+      navigate('/partner', { replace: true });
       return;
     }
     
@@ -107,11 +127,13 @@ const AuthGuard: React.FC<AuthGuardProps> = ({
       return;
     }
 
-    const isOnboardingPage = location.pathname === '/onboarding';
+    const isOnboardingPage =
+      location.pathname === '/onboarding' || location.pathname.startsWith('/onboarding/');
     /** Fase 1 checkout: onboarding de rota não é obrigatório; ativação leve fica no dashboard. */
     const needsLegacyOnboarding =
       import.meta.env.VITE_FORCE_LEGACY_ONBOARDING_ROUTE === 'true' &&
       !superAdminPlatform &&
+      !partnerChannel &&
       user?.tenant_status === 'active' &&
       user?.onboarding_completed === false;
     if (requireAuth && user && needsLegacyOnboarding && !isOnboardingPage) {
@@ -121,6 +143,11 @@ const AuthGuard: React.FC<AuthGuardProps> = ({
 
     if (user && superAdminPlatform && isOnboardingPage) {
       navigate('/superadmin', { replace: true });
+      return;
+    }
+
+    if (user && partnerChannel && isOnboardingPage) {
+      navigate('/partner', { replace: true });
       return;
     }
 

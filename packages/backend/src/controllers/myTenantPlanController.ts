@@ -1019,6 +1019,40 @@ export async function getMyTenantPlan(req: AuthRequest, res: Response): Promise<
         plan.max_whatsapp_instances_scheduled_next_cycle ?? null,
       pending_seat_addon_billing,
       pending_instance_addon_billing,
+      ...(await (async () => {
+        const {
+          getPartnerChannelTenantContext,
+          getPartnerSellPlanOverlay,
+          applyPartnerCommercialOverlay,
+        } = await import('../partner/partnerChannelCustomerPlans.js');
+        const channelCtx = await getPartnerChannelTenantContext(ctx.tenantId);
+        if (
+          !channelCtx ||
+          channelCtx.account_type !== 'customer_tenant' ||
+          !channelCtx.partner_id
+        ) {
+          return {};
+        }
+        const base: {
+          channel: 'partner';
+          partner_id: string;
+          partner_sell_plan_id: string | null;
+          partner_commercial: boolean;
+        } = {
+          channel: 'partner',
+          partner_id: channelCtx.partner_id,
+          partner_sell_plan_id: channelCtx.partner_sell_plan_id,
+          partner_commercial: false,
+        };
+        const overlay = await getPartnerSellPlanOverlay(ctx.tenantId);
+        if (!overlay) return base;
+        applyPartnerCommercialOverlay(plan as Record<string, unknown>, overlay);
+        return {
+          ...base,
+          partner_sell_plan_id: overlay.partner_sell_plan_id,
+          partner_commercial: true,
+        };
+      })()),
     });
   } catch (error: any) {
     console.error('getMyTenantPlan error:', error);
@@ -1584,5 +1618,69 @@ export async function getMyPermissionsHandler(req: AuthRequest, res: Response): 
   } catch (error: any) {
     console.error('getMyPermissions error:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/** GET /api/me/tenant/available-plans — catálogo do canal Partner ou null (FE usa /api/plans). */
+export async function getMyTenantAvailablePlans(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const ctx = await getMyTenantAndPrimary(req);
+    if (!ctx || ctx.primaryUserId !== req.userId) {
+      res.status(403).json({ error: 'Apenas o administrador da conta pode acessar os planos' });
+      return;
+    }
+    const { listChannelAvailablePlans } = await import('../partner/partnerChannelCustomerPlans.js');
+    const channel = await listChannelAvailablePlans(ctx.tenantId);
+    if (!channel) {
+      res.json({ channel: 'platform', plans: null });
+      return;
+    }
+    res.json(channel);
+  } catch (error: any) {
+    console.error('getMyTenantAvailablePlans error:', error);
+    res.status(500).json({ error: error.message || 'Internal server error' });
+  }
+}
+
+const partnerSellCheckoutSchema = z.object({
+  sell_plan_id: z.string().uuid(),
+  prefer_trial: z.boolean().optional(),
+});
+
+/** POST /api/me/tenant/partner-sell-plan/checkout — upgrade/downgrade no canal Partner. */
+export async function postMyTenantPartnerSellPlanCheckout(
+  req: AuthRequest,
+  res: Response
+): Promise<void> {
+  try {
+    const ctx = await getMyTenantAndPrimary(req);
+    if (!ctx || ctx.primaryUserId !== req.userId) {
+      res.status(403).json({ error: 'Apenas o administrador da conta pode alterar o plano' });
+      return;
+    }
+    const body = partnerSellCheckoutSchema.parse(req.body || {});
+    const { checkoutPartnerSellPlanForCustomer } = await import(
+      '../partner/partnerChannelCustomerPlans.js'
+    );
+    const { PartnerAdminError } = await import('../partner/partnerAdminService.js');
+    try {
+      const result = await checkoutPartnerSellPlanForCustomer(ctx.tenantId, body.sell_plan_id, {
+        preferTrial: body.prefer_trial,
+      });
+      res.json(result);
+    } catch (err) {
+      if (err instanceof PartnerAdminError) {
+        res.status(err.status).json({ error: err.message, code: err.code });
+        return;
+      }
+      throw err;
+    }
+  } catch (error: any) {
+    if (error?.name === 'ZodError') {
+      res.status(400).json({ error: 'Payload inválido', details: error.flatten?.() });
+      return;
+    }
+    console.error('postMyTenantPartnerSellPlanCheckout error:', error);
+    res.status(500).json({ error: error.message || 'Internal server error' });
   }
 }

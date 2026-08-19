@@ -21,6 +21,7 @@ import { payTenantBillingWithCard, PayWithCardError } from '../services/customer
 import { isValidCpfOrCnpj, onlyDigits } from '../utils/cpfCnpj.js';
 import { yyyyMmDdFromDbDateValue } from '../utils/calendarDateBr.js';
 import { ASAAS_CPF_CNPJ_USER_MESSAGE } from '../services/subscriptionService.js';
+import { resolveTransactionalBrandName } from '../partner/partnerBrandResolver.js';
 
 function billingReasonLabel(reason: string): string {
   switch (reason) {
@@ -187,7 +188,10 @@ export async function getPublicSaasBillingSummary(req: Request, res: Response): 
 
     res.json({
       ok: true,
-      platform_name: (process.env.APP_PUBLIC_NAME || 'PainelCRM').trim() || 'PainelCRM',
+      platform_name: await resolveTransactionalBrandName({
+        tenantId: row.tenant_id,
+        host: req.get('x-forwarded-host') || req.get('host'),
+      }),
       platform_invoice_url,
       platform_support_url,
       gateway_fallback_url: gatewayFallback || null,

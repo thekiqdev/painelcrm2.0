@@ -601,7 +601,16 @@ export async function runtimeUpdateContact(opts: {
   conversationId: string;
   field: ContactPersistField;
   value: string;
-}): Promise<{ ok: boolean; entity?: 'client' | 'lead'; reason?: string }> {
+  /** S35 — default true. */
+  ensureLead?: boolean;
+  actorUserId?: string;
+}): Promise<{
+  ok: boolean;
+  entity?: 'client' | 'lead';
+  reason?: string;
+  clientId?: string | null;
+  leadId?: string | null;
+}> {
   const raw = String(opts.value || '').trim();
   if (!raw) return { ok: false, reason: 'empty_value' };
 
@@ -616,6 +625,41 @@ export async function runtimeUpdateContact(opts: {
   );
   const row = conv.rows[0];
   if (!row) return { ok: false, reason: 'conversation_not_found' };
+
+  let clientId = row.client_id;
+  let leadId = row.lead_id;
+
+  if (!clientId && !leadId && opts.ensureLead !== false && opts.actorUserId) {
+    try {
+      const { runtimeCrmConvert } = await import('./flowCrmConvertActions.js');
+      const convRes = await runtimeCrmConvert({
+        tenantId: opts.tenantId,
+        conversationId: opts.conversationId,
+        actorUserId: opts.actorUserId,
+        mode: 'to_lead',
+      });
+      if (convRes.ok) {
+        const again = await pool.query<{
+          client_id: string | null;
+          lead_id: string | null;
+        }>(
+          `SELECT client_id, lead_id FROM chat_conversations
+           WHERE id = $1::uuid AND tenant_id = $2::uuid
+           LIMIT 1`,
+          [opts.conversationId, opts.tenantId]
+        );
+        clientId = again.rows[0]?.client_id ?? null;
+        leadId = again.rows[0]?.lead_id ?? null;
+      } else {
+        console.warn(
+          '[chatbot_flows_runtime] ensure_lead skipped',
+          convRes.mapped['crm.convert_error'] || convRes.outHandle
+        );
+      }
+    } catch (e) {
+      console.warn('[chatbot_flows_runtime] ensure_lead failed', e);
+    }
+  }
 
   let value = raw;
   if (opts.field === 'cpf_cnpj') {
@@ -633,7 +677,7 @@ export async function runtimeUpdateContact(opts: {
   const allowedCols = new Set(['name', 'email', 'phone', 'company', 'cpf_cnpj']);
   if (!allowedCols.has(opts.field)) return { ok: false, reason: 'invalid_field' };
 
-  if (row.client_id) {
+  if (clientId) {
     const r = await pool.query(
       `UPDATE clients c
        SET ${opts.field} = $1, updated_at = now()
@@ -642,17 +686,15 @@ export async function runtimeUpdateContact(opts: {
          AND c.user_id = u.id
          AND u.tenant_id = $3::uuid
        RETURNING c.id`,
-      [value, row.client_id, opts.tenantId]
+      [value, clientId, opts.tenantId]
     );
-    if (r.rowCount && r.rows[0]) return { ok: true, entity: 'client' };
-    return { ok: false, reason: 'client_update_failed' };
+    if (r.rowCount && r.rows[0]) {
+      return { ok: true, entity: 'client', clientId, leadId };
+    }
+    return { ok: false, reason: 'client_update_failed', clientId, leadId };
   }
 
-  if (row.lead_id) {
-    if (opts.field === 'cpf_cnpj') {
-      // leads não têm cpf_cnpj no schema HTTP; evita SQL em coluna inexistente
-      return { ok: false, reason: 'cpf_cnpj_requires_client' };
-    }
+  if (leadId) {
     const r = await pool.query(
       `UPDATE leads l
        SET ${opts.field} = $1, updated_at = now()
@@ -661,11 +703,13 @@ export async function runtimeUpdateContact(opts: {
          AND l.user_id = u.id
          AND u.tenant_id = $3::uuid
        RETURNING l.id`,
-      [value, row.lead_id, opts.tenantId]
+      [value, leadId, opts.tenantId]
     );
-    if (r.rowCount && r.rows[0]) return { ok: true, entity: 'lead' };
-    return { ok: false, reason: 'lead_update_failed' };
+    if (r.rowCount && r.rows[0]) {
+      return { ok: true, entity: 'lead', clientId, leadId };
+    }
+    return { ok: false, reason: 'lead_update_failed', clientId, leadId };
   }
 
-  return { ok: false, reason: 'no_crm_entity' };
+  return { ok: false, reason: 'no_crm_entity', clientId, leadId };
 }

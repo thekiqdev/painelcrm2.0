@@ -82,6 +82,9 @@ const sampleLead = {
   tenant_id: null,
   correlation_id: 'corr-1',
   metadata_json: {},
+  partner_id: null,
+  seller_user_id: null,
+  seller_referral_code: null,
   created_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),
 };

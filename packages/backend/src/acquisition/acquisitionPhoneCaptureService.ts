@@ -27,6 +27,9 @@ export async function captureAcquisitionPhoneContact(input: {
   leadId?: string;
   correlationId: string;
   source?: string;
+  partnerId?: string | null;
+  sellerUserId?: string | null;
+  sellerReferralCode?: string | null;
 }): Promise<{ ok: boolean; lead?: AcquisitionLeadRow; reason?: string }> {
   const phoneDigits = normalizeWhatsappDigits(input.phone);
   if (!phoneDigits || phoneDigits.length < 10) {
@@ -58,6 +61,16 @@ export async function captureAcquisitionPhoneContact(input: {
       updated ??
       lead;
 
+    if (input.partnerId || input.sellerUserId) {
+      const { applyPartnerAttributionToLead } = await import('./acquisitionLeadRepository.js');
+      await applyPartnerAttributionToLead(lead.id, {
+        partner_id: input.partnerId ?? null,
+        seller_user_id: input.sellerUserId ?? null,
+        seller_referral_code: input.sellerReferralCode ?? null,
+      });
+      lead = (await findAcquisitionLeadById(lead.id)) ?? lead;
+    }
+
     if (previousStage !== QUALIFIED_STAGE) {
       void publishAcquisitionStageChanged(lead, previousStage);
     }
@@ -78,6 +91,9 @@ export async function captureAcquisitionPhoneContact(input: {
     correlationId: input.correlationId,
     source: input.source ?? 'web',
     stage: QUALIFIED_STAGE,
+    partnerId: input.partnerId ?? null,
+    sellerUserId: input.sellerUserId ?? null,
+    sellerReferralCode: input.sellerReferralCode ?? null,
     metadata: {
       operational_tags: ['novo'],
       phone_capture_at: new Date().toISOString(),

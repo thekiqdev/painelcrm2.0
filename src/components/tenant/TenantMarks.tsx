@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Logo } from '@/components/Logo';
 import { useTenantBrand } from '@/contexts/TenantBrandContext';
+import { usePartnerBrand } from '@/contexts/PartnerBrandContext';
 import { useLogoPresentation } from '@/hooks/useLogoPresentation';
 import { cn } from '@/lib/utils';
 
@@ -18,7 +19,9 @@ type TenantSidebarMarkProps = {
  */
 export function TenantSidebarMark({ collapsed, className }: TenantSidebarMarkProps) {
   const { resolvedLogoUrl, company, loading } = useTenantBrand();
-  const textFallback = company?.name?.trim() || 'PainelCRM';
+  const { displayName: partnerOrPlatformName, isPartnerHost } = usePartnerBrand();
+  const textFallback =
+    company?.name?.trim() || (isPartnerHost ? partnerOrPlatformName : 'PainelCRM');
   const [logoLoadFailed, setLogoLoadFailed] = useState(false);
   const presentation = useLogoPresentation(resolvedLogoUrl && !logoLoadFailed ? resolvedLogoUrl : null);
   const showIconWithName = presentation === 'icon' && !collapsed;

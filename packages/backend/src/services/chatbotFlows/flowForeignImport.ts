@@ -382,6 +382,7 @@ function mapNodeData(
     out.save_to_contact = save;
     if (mappedField) out.contact_field = mappedField;
     else if (save) out.contact_field = 'name';
+    if (save) out.ensure_lead = cleaned.ensure_lead === false ? false : true;
     if (cleaned.custom_field_id && !mappedField) {
       relinkFields.push('custom_field');
       out.custom_field_id = '';

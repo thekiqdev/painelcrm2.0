@@ -787,12 +787,23 @@ async function applyRuntimeActions(opts: {
           conversationId,
           field: action.field,
           value: action.value,
+          ensureLead: action.ensureLead !== false,
+          actorUserId: opts.ownerUserId,
         });
         if (!r.ok) {
-          // S20: sem cliente/lead ou valor inválido — não trava o flow
+          // S20/S35: sem cliente/lead ou valor inválido — não trava o flow
           console.warn('[chatbot_flows_runtime] update_contact skipped', r.reason);
-        } else if (action.field === 'name' || action.field === 'email' || action.field === 'phone') {
+          opts.result.session.variables['contact.update_skipped'] = r.reason || 'unknown';
+        } else {
           opts.result.session.variables[`contact.${action.field}`] = action.value;
+          if (r.leadId) {
+            opts.result.session.variables['lead.id'] = r.leadId;
+            opts.result.session.variables.lead_id = r.leadId;
+          }
+          if (r.clientId) {
+            opts.result.session.variables['client.id'] = r.clientId;
+            opts.result.session.variables.client_id = r.clientId;
+          }
         }
       } else if (action.type === 'resolve_conversation') {
         if (action.closeAttendance !== false) {

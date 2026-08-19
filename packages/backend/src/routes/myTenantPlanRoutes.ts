@@ -16,6 +16,16 @@ const router = Router();
 // Plano atual: acessível com trial expirado / retomada (não passa pelo gate comercial do CRM)
 router.get('/plan', ...tenantAuthCommercialHub, myTenantPlanController.getMyTenantPlan);
 router.put('/plan', ...tenantAuthCommercialHub, myTenantPlanController.putMyTenantPlan);
+router.get(
+  '/available-plans',
+  ...tenantAuthCommercialHub,
+  myTenantPlanController.getMyTenantAvailablePlans
+);
+router.post(
+  '/partner-sell-plan/checkout',
+  ...tenantAuthCommercialHub,
+  myTenantPlanController.postMyTenantPartnerSellPlanCheckout
+);
 router.post('/seat-addon/preview', ...tenantAuthCommercialHub, myTenantPlanController.postSeatAddonPreview);
 router.post('/seat-addon/checkout', ...tenantAuthCommercialHub, myTenantPlanController.postSeatAddonCheckout);
 router.post('/instance-addon/preview', ...tenantAuthCommercialHub, myTenantPlanController.postInstanceAddonPreview);

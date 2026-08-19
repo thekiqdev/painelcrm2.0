@@ -68,6 +68,7 @@ const leadFormSchema = z.object({
   company: z.string().optional(),
   email: z.string().email({ message: "E-mail inválido" }).optional().or(z.literal("")),
   phone: z.string().optional(),
+  cpf_cnpj: z.string().optional(),
   status: z.string(),
   source: z.string(),
 });
@@ -368,6 +369,7 @@ const Leads = () => {
         company: values.company || null,
         email: values.email || null,
         phone: values.phone || null,
+        cpf_cnpj: values.cpf_cnpj?.replace(/\D/g, "") || null,
       };
 
       const response = await apiClient.patch(`/api/leads/${selectedLead.id}`, leadData);
@@ -408,6 +410,10 @@ const Leads = () => {
       
       if (values.phone && values.phone.trim()) {
         leadData.phone = values.phone.trim();
+      }
+
+      if (values.cpf_cnpj && values.cpf_cnpj.replace(/\D/g, "").trim()) {
+        leadData.cpf_cnpj = values.cpf_cnpj.replace(/\D/g, "");
       }
       
       if (values.status && values.status.trim()) {
@@ -525,6 +531,7 @@ const Leads = () => {
         company: selectedLead.company || undefined,
         email: selectedLead.email || undefined,
         phone: selectedLead.phone || undefined,
+        cpf_cnpj: selectedLead.cpf_cnpj || undefined,
         notes: selectedLead.notes || undefined,
         status: "Ativo"
       });

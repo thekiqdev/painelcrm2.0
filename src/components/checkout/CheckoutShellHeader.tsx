@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Logo } from '@/components/Logo';
 import { Button } from '@/components/ui/button';
+import { usePartnerBrand } from '@/contexts/PartnerBrandContext';
 
 type Props = {
   title: string;
@@ -9,16 +10,26 @@ type Props = {
 };
 
 /**
- * Header compacto do checkout (D2) — sem âncoras de marketing.
+ * Header compacto do checkout (D2) — marca Partner por Host ou Platform.
  */
 export function CheckoutShellHeader({ title, isLoggedIn }: Props) {
+  const { displayName, logoUrl } = usePartnerBrand();
+
   return (
     <div className="mx-auto flex h-12 w-full max-w-5xl items-center justify-between gap-3 px-4 sm:h-14 sm:px-6">
       <div className="flex min-w-0 items-center gap-2.5">
-        <Link to="/" className="flex shrink-0 items-center gap-2" aria-label="PainelCRM — início">
-          <Logo size="sm" />
+        <Link
+          to="/"
+          className="flex shrink-0 items-center gap-2"
+          aria-label={`${displayName} — início`}
+        >
+          {logoUrl ? (
+            <img src={logoUrl} alt="" className="h-8 w-auto max-w-[120px] object-contain" />
+          ) : (
+            <Logo size="sm" />
+          )}
           <span className="font-display hidden text-base font-bold text-foreground sm:inline">
-            PainelCRM
+            {displayName}
           </span>
         </Link>
         <span className="hidden h-4 w-px shrink-0 bg-border sm:block" aria-hidden />

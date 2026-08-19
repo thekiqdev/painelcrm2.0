@@ -181,6 +181,8 @@ export type RuntimeOutboundAction =
       type: 'update_contact';
       field: 'name' | 'email' | 'phone' | 'company' | 'cpf_cnpj';
       value: string;
+      /** S35 — default true: cria/vincula lead se a conversa não tiver CRM. */
+      ensureLead?: boolean;
     }
   | { type: 'add_tag'; tagLabel?: string; tagId?: string }
   | {
@@ -362,6 +364,7 @@ function maybePushUpdateContactFromWaitInput(
     type: 'update_contact',
     field: field as 'name' | 'email' | 'phone' | 'company' | 'cpf_cnpj',
     value,
+    ensureLead: waitNodeData.ensure_lead !== false,
   });
 }
 

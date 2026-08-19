@@ -143,8 +143,35 @@ export async function provisionWorkspaceFromSession(
   }
 
   const usersCount = session.users_count;
-  const client = await pool.connect();
   const correlationId = input.correlationId ?? session.correlation_id;
+
+  const partnerId =
+    lead.partner_id ||
+    (typeof lead.metadata_json.partner_id === 'string' ? lead.metadata_json.partner_id : null) ||
+    (typeof sessionMeta.partner_id === 'string' ? sessionMeta.partner_id : null) ||
+    null;
+  const sellerUserId =
+    lead.seller_user_id ||
+    (typeof lead.metadata_json.seller_user_id === 'string'
+      ? lead.metadata_json.seller_user_id
+      : null) ||
+    null;
+
+  if (partnerId) {
+    const { assertPartnerPoolAllowsNewUser } = await import('../partner/partnerLicenseService.js');
+    const { PartnerAdminError } = await import('../partner/partnerAdminService.js');
+    try {
+      await assertPartnerPoolAllowsNewUser(partnerId, 1);
+    } catch (err) {
+      if (err instanceof PartnerAdminError) {
+        return { ok: false, reason: err.message, code: err.code };
+      }
+      throw err;
+    }
+  }
+
+  const accountType = partnerId ? 'customer_tenant' : 'platform_customer';
+  const client = await pool.connect();
 
   try {
     await client.query('BEGIN');
@@ -166,7 +193,8 @@ export async function provisionWorkspaceFromSession(
       `INSERT INTO tenants (
          name, slug, plan_id, status, created_via,
          billing_email, billing_phone, cpf_cnpj, responsible_name,
-         trial_ends_at, has_used_trial, trial_consumed_at, onboarding_completed
+         trial_ends_at, has_used_trial, trial_consumed_at, onboarding_completed,
+         account_type, partner_id, seller_user_id
        )
        VALUES (
          $1, $2, $3, $4::text, 'registration',
@@ -174,7 +202,8 @@ export async function provisionWorkspaceFromSession(
          CASE WHEN $4::text = 'trial' THEN now() + ($9::int * interval '1 day') ELSE NULL END,
          CASE WHEN $4::text = 'trial' THEN true ELSE false END,
          CASE WHEN $4::text = 'trial' THEN now() ELSE NULL END,
-         false
+         false,
+         $10, $11, $12
        )
        RETURNING id`,
       [
@@ -187,6 +216,9 @@ export async function provisionWorkspaceFromSession(
         cpfDigits,
         responsibleName,
         trialDays,
+        accountType,
+        partnerId,
+        sellerUserId,
       ],
     );
     const tenantId = inserted.rows[0]!.id;
@@ -211,6 +243,12 @@ export async function provisionWorkspaceFromSession(
     );
 
     await client.query('COMMIT');
+
+    if (partnerId) {
+      void import('../partner/partnerLicenseService.js').then((m) =>
+        m.refreshPartnerUsedSeatsCache(partnerId)
+      );
+    }
 
     try {
       await ensureTenantOperationalBootstrap({ tenantId, adminUserId: userId });

@@ -492,5 +492,27 @@ export const MIGRATION_ORDER = [
   '316_chatbot_flow_sessions_orphan.sql',
   /** Chatbot Flows S29.1 — idempotência ensure_conversation */
   '317_chatbot_flow_ensure_idempotency.sql',
+  /** M5 S1 — Partner channel foundation */
+  '318_partner_channel_s1.sql',
+  /** M5 S2.1 — Partner flags no Super Admin Feature Flags */
+  '319_partner_feature_flags_admin.sql',
+  /** M5 S3 — partner sell plans */
+  '320_partner_sell_plans.sql',
+  /** M5 S4 — acquisition partner/seller attribution */
+  '321_partner_acquisition_attribution.sql',
+  /** M5 S5 — commission rules + ledger + payouts */
+  '322_partner_commission_s5.sql',
+  /** M5 S6 — partner suspension + customer migration D15 */
+  '323_partner_suspension_migration_s6.sql',
+  /** M5 — partner tenants skip SaaS onboarding */
+  '324_partner_onboarding_skip.sql',
+  /** M5 — created_via partner (manual customer) */
+  '325_partner_created_via.sql',
+  /** M5 — customer ↔ partner sell plan */
+  '326_partner_customer_sell_plan.sql',
+  /** M5 — trial_days em partner_sell_plans */
+  '327_partner_sell_plan_trial.sql',
+  /** Chatbot Flows S36 — CPF/CNPJ no lead */
+  '328_leads_cpf_cnpj.sql',
   'create-admin-user.sql',
 ];

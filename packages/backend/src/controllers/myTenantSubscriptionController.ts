@@ -56,7 +56,44 @@ export async function getMySubscription(req: AuthRequest, res: Response): Promis
     }
     await ensureUsableSaasSubscriptionForActivePaidTenant(tenantId);
     const subscription = await getActiveSaasSubscriptionByTenantAutoRepair(tenantId);
+
+    const { resolvePartnerCommercialAmountCents, getPartnerChannelTenantContext } = await import(
+      '../partner/partnerChannelCustomerPlans.js'
+    );
+    const channelCtx = await getPartnerChannelTenantContext(tenantId);
+    const isPartnerCustomer =
+      channelCtx?.account_type === 'customer_tenant' && Boolean(channelCtx.partner_id);
+    const partnerCommercial = isPartnerCustomer
+      ? await resolvePartnerCommercialAmountCents(tenantId)
+      : null;
+
     if (!subscription) {
+      if (partnerCommercial) {
+        res.status(200).json({
+          subscription: {
+            id: null,
+            plan_id: channelCtx?.partner_sell_plan_id ?? null,
+            plan_name: partnerCommercial.plan_name,
+            plan_slug: null,
+            plan_type: 'standard',
+            amount_cents: partnerCommercial.amount_cents,
+            billing_interval: partnerCommercial.billing_interval,
+            status: 'active',
+            next_billing_date: null,
+            current_period_start: null,
+            current_period_end: null,
+            cancel_at_period_end: false,
+            users_count: null,
+            days_until_next_billing: null,
+            renewal_overdue: false,
+            will_cancel_at_period_end: false,
+            pix_automatic: null,
+            channel: 'partner',
+            partner_commercial: true,
+          },
+        });
+        return;
+      }
       res.status(200).json({ subscription: null });
       return;
     }
@@ -85,24 +122,30 @@ export async function getMySubscription(req: AuthRequest, res: Response): Promis
     res.status(200).json({
       subscription: {
         id: subscription.id,
-        plan_id: subscription.plan_id,
-        plan_name: pl?.name ?? null,
-        plan_slug: pl?.slug ?? null,
-        plan_type: pl?.plan_type ?? null,
-        amount_cents: subscription.amount_cents,
-        billing_interval: subscription.billing_interval,
+        plan_id: partnerCommercial
+          ? (channelCtx?.partner_sell_plan_id ?? subscription.plan_id)
+          : subscription.plan_id,
+        plan_name: partnerCommercial?.plan_name ?? pl?.name ?? null,
+        plan_slug: partnerCommercial ? null : (pl?.slug ?? null),
+        plan_type: partnerCommercial ? 'standard' : (pl?.plan_type ?? null),
+        amount_cents: partnerCommercial?.amount_cents ?? subscription.amount_cents,
+        billing_interval: partnerCommercial?.billing_interval ?? subscription.billing_interval,
         status: subscription.status,
         next_billing_date: subscription.next_billing_date,
         current_period_start: subscription.current_period_start,
         current_period_end: subscription.current_period_end,
         cancel_at_period_end: subscription.cancel_at_period_end,
         users_count: subscription.users_count,
-        /** Negativo = data de próxima cobrança já passou (referência da assinatura; conferir faturas no gateway). */
         days_until_next_billing: daysUntil,
         renewal_overdue: renewalOverdue,
         will_cancel_at_period_end:
           subscription.status === 'active' && subscription.cancel_at_period_end === true,
         pix_automatic,
+        ...(partnerCommercial
+          ? { channel: 'partner' as const, partner_commercial: true }
+          : isPartnerCustomer
+            ? { channel: 'partner' as const, partner_commercial: false }
+            : {}),
       },
     });
   } catch (e) {

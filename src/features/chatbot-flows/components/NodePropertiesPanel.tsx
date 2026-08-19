@@ -3224,41 +3224,57 @@ function WaitInputContactFields({
 }) {
   const enabled = data.save_to_contact === true;
   const field = String(data.contact_field || 'name');
+  const skipEnsureLead = data.ensure_lead === false;
   return (
     <div className="space-y-3 rounded-md border border-border/60 p-3">
       <div className="flex items-center justify-between gap-3">
         <div className="space-y-0.5">
           <Label htmlFor="save-contact">Gravar no contato (CRM)</Label>
           <p className="text-[11px] text-muted-foreground">
-            Atualiza cliente ou lead vinculado à conversa. Sem vínculo, só a variável de sessão.
+            Grava no cliente ou lead da conversa. Se ainda não houver vínculo, cadastra um lead e os
+            próximos campos atualizam o mesmo cadastro.
           </p>
         </div>
         <Switch
           id="save-contact"
           checked={enabled}
-          onCheckedChange={(v) => onChange({ save_to_contact: v })}
+          onCheckedChange={(v) =>
+            onChange(v ? { save_to_contact: true, ensure_lead: skipEnsureLead ? false : true } : { save_to_contact: false })
+          }
         />
       </div>
       {enabled ? (
-        <div className="space-y-1.5">
-          <Label>Campo do cadastro</Label>
-          <Select
-            value={
-              ['name', 'email', 'phone', 'company', 'cpf_cnpj'].includes(field) ? field : 'name'
-            }
-            onValueChange={(v) => onChange({ contact_field: v })}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="name">Nome</SelectItem>
-              <SelectItem value="email">E-mail</SelectItem>
-              <SelectItem value="phone">Telefone</SelectItem>
-              <SelectItem value="company">Empresa</SelectItem>
-              <SelectItem value="cpf_cnpj">CPF/CNPJ (só cliente)</SelectItem>
-            </SelectContent>
-          </Select>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label>Campo do cadastro</Label>
+            <Select
+              value={
+                ['name', 'email', 'phone', 'company', 'cpf_cnpj'].includes(field) ? field : 'name'
+              }
+              onValueChange={(v) => onChange({ contact_field: v })}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="name">Nome</SelectItem>
+                <SelectItem value="email">E-mail</SelectItem>
+                <SelectItem value="phone">Telefone</SelectItem>
+                <SelectItem value="company">Empresa</SelectItem>
+                <SelectItem value="cpf_cnpj">CPF/CNPJ</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <Label htmlFor="skip-ensure-lead" className="font-normal">
+              Só gravar se já existir cadastro
+            </Label>
+            <Switch
+              id="skip-ensure-lead"
+              checked={skipEnsureLead}
+              onCheckedChange={(v) => onChange({ ensure_lead: !v })}
+            />
+          </div>
         </div>
       ) : null}
     </div>

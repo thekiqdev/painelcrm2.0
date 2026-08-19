@@ -486,8 +486,9 @@ async function convertToClient(
       company: string | null;
       notes: string | null;
       source: string | null;
+      cpf_cnpj: string | null;
     }>(
-      `SELECT l.id, l.user_id, l.name, l.email, l.phone, l.company, l.notes, l.source
+      `SELECT l.id, l.user_id, l.name, l.email, l.phone, l.company, l.notes, l.source, l.cpf_cnpj
        FROM leads l
        INNER JOIN users u ON u.id = l.user_id
        WHERE l.id = $1::uuid AND u.tenant_id = $2::uuid
@@ -533,8 +534,8 @@ async function convertToClient(
     if (!clientId) {
       const ins = await client.query<{ id: string }>(
         `INSERT INTO clients (
-          user_id, name, email, phone, company, status, source, notes, funnel_stage
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULL)
+          user_id, name, email, phone, company, status, source, notes, funnel_stage, cpf_cnpj
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULL,$9)
         RETURNING id`,
         [
           lead.user_id,
@@ -545,6 +546,7 @@ async function convertToClient(
           'Ativo',
           (lead.source || FLOW_CLIENT_SOURCE).trim().slice(0, 120),
           lead.notes ? lead.notes.slice(0, 2000) : null,
+          lead.cpf_cnpj?.replace(/\D/g, '') || null,
         ]
       );
       clientId = ins.rows[0]?.id ?? null;

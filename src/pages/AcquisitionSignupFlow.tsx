@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { apiClient } from '@/integrations/api/client';
 import { toast } from '@/components/ui/sonner';
 import { useAuth } from '@/contexts/AuthContext';
@@ -64,6 +64,9 @@ export default function AcquisitionSignupFlowPage() {
   const navigate = useNavigate();
   const { setTokenAndUser, refreshUser, user } = useAuth();
   const [params] = useSearchParams();
+  const routeParams = useParams<{ partnerSlug?: string; sellerId?: string }>();
+  const partnerSlugFromPath = routeParams.partnerSlug?.trim() || '';
+  const sellerIdFromPath = routeParams.sellerId?.trim() || '';
   const [loading, setLoading] = useState(false);
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [leadSnapshot, setLeadSnapshot] = useState<SignupWizardLeadSnapshot | null>(null);
@@ -94,6 +97,46 @@ export default function AcquisitionSignupFlowPage() {
   const urlStep = params.get('step');
   const urlPlanId = params.get('plan');
   const urlLeadId = params.get('lead') ?? '';
+  const sellerRef = useMemo(() => {
+    const fromUrl = params.get('ref')?.trim();
+    if (fromUrl) {
+      try {
+        sessionStorage.setItem('partner_seller_ref', fromUrl);
+      } catch {
+        /* ignore */
+      }
+      return fromUrl;
+    }
+    try {
+      return sessionStorage.getItem('partner_seller_ref')?.trim() || undefined;
+    } catch {
+      return undefined;
+    }
+  }, [params]);
+
+  const partnerChannel = useMemo(() => {
+    if (partnerSlugFromPath) {
+      try {
+        sessionStorage.setItem('partner_channel_slug', partnerSlugFromPath);
+        if (sellerIdFromPath) {
+          sessionStorage.setItem('partner_seller_user_id', sellerIdFromPath);
+        }
+      } catch {
+        /* ignore */
+      }
+      return {
+        slug: partnerSlugFromPath,
+        sellerUserId: sellerIdFromPath || undefined,
+      };
+    }
+    try {
+      const slug = sessionStorage.getItem('partner_channel_slug')?.trim() || '';
+      const sellerUserId = sessionStorage.getItem('partner_seller_user_id')?.trim() || undefined;
+      return slug ? { slug, sellerUserId } : null;
+    } catch {
+      return null;
+    }
+  }, [partnerSlugFromPath, sellerIdFromPath]);
 
   const wizardStep = useMemo(
     () =>
@@ -170,7 +213,29 @@ export default function AcquisitionSignupFlowPage() {
 
   useEffect(() => {
     let cancelled = false;
-    apiClient.get<PublicAcquisitionPlan[]>('/api/plans').then((res) => {
+    const load = async () => {
+      if (partnerChannel?.slug) {
+        const brandRes = await apiClient.get<{
+          platform?: boolean;
+          plans?: PublicAcquisitionPlan[] | null;
+        }>(`/api/public/partner-brand?slug=${encodeURIComponent(partnerChannel.slug)}`);
+        if (cancelled) return;
+        if (brandRes.data?.plans?.length) {
+          const channelPlans = brandRes.data.plans.map((p) => ({
+            ...p,
+            is_default: false,
+            trial_days: (p as { trial_days?: number }).trial_days ?? p.free_access_days ?? 0,
+          }));
+          setPlans(channelPlans);
+          setForm((f) => {
+            if (f.plan_id) return f;
+            return { ...f, plan_id: channelPlans[0].id };
+          });
+          setPlansLoading(false);
+          return;
+        }
+      }
+      const res = await apiClient.get<PublicAcquisitionPlan[]>('/api/plans');
       if (cancelled) return;
       if (res.data?.length) {
         setPlans(res.data);
@@ -181,11 +246,12 @@ export default function AcquisitionSignupFlowPage() {
         });
       }
       setPlansLoading(false);
-    });
+    };
+    void load();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [partnerChannel?.slug]);
 
   useEffect(() => {
     const planFromUrl = params.get('plan');
@@ -375,6 +441,11 @@ export default function AcquisitionSignupFlowPage() {
         phone: form.lead_phone.replace(/\D/g, ''),
         lead_id: leadId || urlLeadId || undefined,
         phone_verification_id: phoneVerificationId,
+        ...(sellerRef ? { ref: sellerRef } : {}),
+        ...(partnerChannel?.slug ? { partner_slug: partnerChannel.slug } : {}),
+        ...(partnerChannel?.sellerUserId
+          ? { seller_user_id: partnerChannel.sellerUserId }
+          : {}),
       },
     );
     if (captureRes.error || !captureRes.data?.ok) {
@@ -436,6 +507,14 @@ export default function AcquisitionSignupFlowPage() {
       phone: form.lead_phone.replace(/\D/g, ''),
       plan_id: form.plan_id || undefined,
       step: apiStep,
+      ...(sellerRef ? { ref: sellerRef } : {}),
+      ...(partnerChannel?.slug ? { partner_slug: partnerChannel.slug } : {}),
+      ...(partnerChannel?.sellerUserId
+        ? { seller_user_id: partnerChannel.sellerUserId }
+        : {}),
+      ...(partnerChannel?.slug && form.plan_id
+        ? { partner_sell_plan_id: form.plan_id }
+        : {}),
       utm: {
         flow: 'lead_first_v1',
         onboarding_version: 'activation_only_v1',

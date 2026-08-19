@@ -199,7 +199,7 @@ export function FlowTestPanel({
               ) : sim?.pendingHttpKind === 'crm_convert' ? (
                 <>
                   <Button className="flex-1" size="sm" onClick={() => onHttpResolve(true)}>
-                    Converter (sujeito Testar)
+                    Continuar (lead fictício)
                   </Button>
                   <Button
                     className="flex-1"

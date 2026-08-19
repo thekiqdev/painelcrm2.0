@@ -43,6 +43,10 @@ interface User {
   plan_expired?: boolean;
   /** Estado da empresa no plano (active, trial, payment_pending, suspended). */
   tenant_status?: string | null;
+  /** Tipo de conta do tenant (ex.: partner, customer_tenant). */
+  account_type?: string | null;
+  /** Membership ativa no canal Partner (partner_admin | partner_seller). */
+  partner_membership_role?: string | null;
   /** Se false e tenant_status === 'active', redirecionar para /onboarding. */
   onboarding_completed?: boolean;
   /** Fase 2: trial expirou ou suspenso por trial — retomar pagamento no /checkout. */

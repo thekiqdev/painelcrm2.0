@@ -49,6 +49,7 @@ import LeadStickyNotesTab from "./tabs/LeadStickyNotesTab";
 import LeadProposalsTab from "./tabs/LeadProposalsTab";
 import { EmbeddedLeadConversationPanel } from "./EmbeddedLeadConversationPanel";
 import { cn } from "@/lib/utils";
+import { formatCpfCnpjDisplay } from "@/utils/cpfCnpj";
 
 function formatLeadLastTouch(iso?: string | null): string {
   if (!iso) return "Não informado";
@@ -583,6 +584,7 @@ const LeadDetailsDialog: React.FC<LeadDetailsDialogProps> = ({
                       <InfoField variant="row" label="Empresa" value={lead.company} />
                       <InfoField variant="row" label="E-mail" value={lead.email} />
                       <InfoField variant="row" label="Telefone" value={lead.phone} />
+                      <InfoField variant="row" label="CPF/CNPJ" value={formatCpfCnpjDisplay(lead.cpf_cnpj)} />
                       <InfoField variant="row" label="Origem" value={sourceLabel} />
                       <InfoField variant="row" label="Último contato" value={formatLeadLastTouch(lead.updated_at)} />
                       <InfoField variant="row" label="Status" value={lead.status} />
@@ -607,6 +609,7 @@ const LeadDetailsDialog: React.FC<LeadDetailsDialogProps> = ({
                         <InfoField label="Empresa" value={lead.company} />
                         <InfoField label="E-mail" value={lead.email} />
                         <InfoField label="Telefone / WhatsApp" value={lead.phone} />
+                        <InfoField label="CPF/CNPJ" value={formatCpfCnpjDisplay(lead.cpf_cnpj)} />
                         <InfoField label="Origem" value={sourceLabel} />
                         <InfoField label="Último contato" value={formatLeadLastTouch(lead.updated_at)} />
                         <InfoField label="Status" value={lead.status} />
@@ -635,6 +638,7 @@ const LeadDetailsDialog: React.FC<LeadDetailsDialogProps> = ({
                       <InfoField variant="row" label="Empresa" value={lead.company} />
                       <InfoField variant="row" label="E-mail" value={lead.email} />
                       <InfoField variant="row" label="Telefone" value={lead.phone} />
+                      <InfoField variant="row" label="CPF/CNPJ" value={formatCpfCnpjDisplay(lead.cpf_cnpj)} />
                       <InfoField variant="row" label="Origem" value={sourceLabel} />
                       <InfoField variant="row" label="Status" value={lead.status} />
                       <InfoField variant="row" label="Observações" value={lead.notes} />
@@ -644,7 +648,7 @@ const LeadDetailsDialog: React.FC<LeadDetailsDialogProps> = ({
                         <CardTitle className="text-sm">Campos adicionais em breve</CardTitle>
                       </CardHeader>
                       <CardContent className="flex flex-wrap gap-1.5 px-3 pb-1 pt-0 text-xs text-muted-foreground">
-                        {["CPF/CNPJ", "Endereço", "Valor potencial", "Interesse", "Campanha"].map((item) => (
+                        {["Endereço", "Valor potencial", "Interesse", "Campanha"].map((item) => (
                           <Badge key={item} variant="outline" className="font-normal">
                             {item}
                           </Badge>
@@ -662,6 +666,7 @@ const LeadDetailsDialog: React.FC<LeadDetailsDialogProps> = ({
                         <InfoField label="Empresa" value={lead.company} />
                         <InfoField label="E-mail" value={lead.email} />
                         <InfoField label="Telefone" value={lead.phone} />
+                        <InfoField label="CPF/CNPJ" value={formatCpfCnpjDisplay(lead.cpf_cnpj)} />
                         <InfoField label="Origem" value={sourceLabel} />
                         <InfoField label="Status" value={lead.status} />
                         <div className="sm:col-span-2">
@@ -674,7 +679,7 @@ const LeadDetailsDialog: React.FC<LeadDetailsDialogProps> = ({
                         <CardTitle className="text-base">Campos adicionais em breve</CardTitle>
                       </CardHeader>
                       <CardContent className="flex flex-wrap gap-2 text-sm text-muted-foreground">
-                        {["CPF/CNPJ", "Endereço", "Valor potencial", "Interesse", "Campanha"].map((item) => (
+                        {["Endereço", "Valor potencial", "Interesse", "Campanha"].map((item) => (
                           <Badge key={item} variant="outline" className="font-normal">
                             {item}
                           </Badge>

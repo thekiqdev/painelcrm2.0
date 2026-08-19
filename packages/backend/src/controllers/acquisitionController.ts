@@ -50,6 +50,11 @@ const signupStepSchema = z.object({
   plan_id: z.string().uuid().optional(),
   step: z.enum(['contact', 'plan', 'checkout']),
   utm: z.record(z.unknown()).optional(),
+  ref: z.string().min(1).optional(),
+  partner_id: z.string().uuid().optional(),
+  partner_slug: z.string().min(1).optional(),
+  seller_user_id: z.string().uuid().optional(),
+  partner_sell_plan_id: z.string().uuid().optional(),
 });
 
 export async function getAcquisitionConfig(_req: Request, res: Response): Promise<void> {
@@ -81,6 +86,11 @@ const contactCaptureSchema = z.object({
   lead_id: z.string().uuid().optional(),
   source: z.string().optional(),
   phone_verification_id: z.string().uuid(),
+  ref: z.string().min(1).optional(),
+  partner_id: z.string().uuid().optional(),
+  partner_slug: z.string().min(1).optional(),
+  seller_user_id: z.string().uuid().optional(),
+  partner_sell_plan_id: z.string().uuid().optional(),
 });
 
 const phoneSendCodeSchema = z.object({
@@ -139,12 +149,25 @@ export async function postContactCapture(req: Request, res: Response): Promise<v
       return;
     }
 
+    const { resolvePartnerAttribution } = await import('../partner/partnerAttribution.js');
+    const host = req.get('x-forwarded-host') || req.get('host') || null;
+    const attr = await resolvePartnerAttribution({
+      host,
+      partnerIdHint: body.partner_id,
+      partnerSlug: body.partner_slug,
+      sellerUserId: body.seller_user_id,
+      referralCode: body.ref,
+    });
+
     const result = await captureAcquisitionPhoneContact({
       name: body.name.trim(),
       phone: body.phone.trim(),
       leadId: body.lead_id,
       correlationId,
       source: body.source,
+      partnerId: attr.partner_id,
+      sellerUserId: attr.seller_user_id,
+      sellerReferralCode: attr.seller_referral_code,
     });
 
     if (!result.ok || !result.lead) {
@@ -487,15 +510,45 @@ export async function postSignupStep(req: Request, res: Response): Promise<void>
     const body = signupStepSchema.parse(req.body);
     const correlationId = getCorrelationId() ?? newAcquisitionCorrelationId();
 
+    const { resolvePartnerAttribution } = await import('../partner/partnerAttribution.js');
+    const host = req.get('x-forwarded-host') || req.get('host') || null;
+    const attr = await resolvePartnerAttribution({
+      host,
+      partnerIdHint: body.partner_id,
+      partnerSlug: body.partner_slug,
+      sellerUserId: body.seller_user_id,
+      referralCode: body.ref,
+    });
+
+    let planId = body.plan_id;
+    if (attr.partner_id && (body.partner_sell_plan_id || body.plan_id)) {
+      const { getPartnerSellPlan } = await import('../partner/partnerSellPlanService.js');
+      const { resolveDefaultPlanId } = await import('../partner/partnerRepository.js');
+      const sellId = body.partner_sell_plan_id || body.plan_id!;
+      const sell = await getPartnerSellPlan(attr.partner_id, sellId);
+      if (sell) {
+        planId = sell.source_platform_plan_id || (await resolveDefaultPlanId()) || planId;
+        // Guarda sell plan no UTM/metadata via utm merge
+        body.utm = {
+          ...(body.utm ?? {}),
+          partner_sell_plan_id: sell.id,
+          partner_sell_trial_days: sell.trial_days,
+        };
+      }
+    }
+
     const result = await orchestrateSignupStep({
       leadId: body.lead_id,
       name: body.name,
       email: body.email,
       phone: body.phone,
-      planId: body.plan_id,
+      planId,
       step: body.step,
       correlationId,
       utm: body.utm,
+      partnerId: attr.partner_id,
+      sellerUserId: attr.seller_user_id,
+      sellerReferralCode: attr.seller_referral_code,
     });
 
     if (!result.ok) {

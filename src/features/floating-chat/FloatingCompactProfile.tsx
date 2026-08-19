@@ -504,10 +504,13 @@ export function FloatingCompactProfile({
           editable: true,
         },
         { key: 'email', label: 'E-mail', value: lead.email?.trim() || null, editable: true },
+        {
+          key: 'cpf_cnpj',
+          label: 'CPF/CNPJ',
+          value: leadCpf || null,
+          editable: true,
+        },
       ];
-      if (leadCpf) {
-        rows.push({ key: 'cpf_cnpj', label: 'CPF/CNPJ', value: leadCpf, editable: true });
-      }
       rows.push(
         { key: 'company', label: 'Empresa', value: lead.company?.trim() || null, editable: true },
         { key: 'source', label: 'Origem', value: lead.source?.trim() || null, editable: true },

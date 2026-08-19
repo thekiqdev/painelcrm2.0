@@ -161,6 +161,7 @@ export async function publicApiPost<T>(endpoint: string, body: unknown): Promise
       return {
         error: (body.error as string) || (body.message as string) || 'Request failed',
         code: typeof body.code === 'string' ? body.code : undefined,
+        field: typeof body.field === 'string' ? body.field : undefined,
         details: { status: response.status, url, ...body },
       };
     }

@@ -40,6 +40,9 @@ export type AcquisitionLeadRow = {
   tenant_id: string | null;
   correlation_id: string;
   metadata_json: Record<string, unknown>;
+  partner_id: string | null;
+  seller_user_id: string | null;
+  seller_referral_code: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -55,6 +58,9 @@ export type CreateAcquisitionLeadInput = {
   correlationId: string;
   metadata?: Record<string, unknown>;
   stage?: AcquisitionLeadStage;
+  partnerId?: string | null;
+  sellerUserId?: string | null;
+  sellerReferralCode?: string | null;
 };
 
 export type RecoveryEligibility = {

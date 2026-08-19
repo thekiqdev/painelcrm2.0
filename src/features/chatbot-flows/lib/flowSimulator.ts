@@ -101,7 +101,9 @@ function describeAction(a: RuntimeOutboundAction): { detail: string; status: Sim
       return { detail: `${a.name} = ${a.value}`, status: 'ok' };
     case 'update_contact':
       return {
-        detail: `Contato.${a.field} = ${a.value.slice(0, 60)} (dry-run)`,
+        detail: `Contato.${a.field} = ${a.value.slice(0, 60)} (dry-run${
+          a.ensureLead === false ? '' : '; cria lead se não houver vínculo'
+        })`,
         status: 'ok',
       };
     case 'add_tag':
@@ -140,7 +142,7 @@ function describeAction(a: RuntimeOutboundAction): { detail: string; status: Sim
       };
     case 'crm_convert':
       return {
-        detail: `Converter CRM → ${a.mode === 'to_client' ? 'cliente' : 'lead'}`,
+        detail: `Converter CRM → ${a.mode === 'to_client' ? 'cliente' : 'lead'} (sim: dados fictícios)`,
         status: 'wait',
       };
     case 'send_menu':
@@ -394,8 +396,22 @@ function autoResumeIfNeeded(graph: RuntimeGraph, state: FlowSimulationState): Fl
     if (node?.type === 'ensure_conversation') {
       return autoResumeEnsureConversation(graph, state);
     }
+    if (node?.type === 'crm_convert') {
+      return autoResumeCrmConvert(graph, state);
+    }
   }
   return state;
+}
+
+/** S35: no Testar o convert não trava — segue ok com identidade fictícia. */
+function autoResumeCrmConvert(
+  graph: RuntimeGraph,
+  state: FlowSimulationState
+): FlowSimulationState {
+  if (state.session.status !== 'waiting_http') return state;
+  const node = graph.nodes.find((n) => n.id === state.session.currentNodeId);
+  if (node?.type !== 'crm_convert') return state;
+  return resolveHttpSimulation(graph, state, true);
 }
 
 export function createIdleSimulation(): FlowSimulationState {
@@ -606,8 +622,6 @@ export function resolveHttpSimulation(
     const mode = String(data.mode || 'to_lead') === 'to_client' ? 'to_client' : 'to_lead';
     const clientId = sub.kind === 'client' ? sub.clientId || sub.id : null;
     const leadId = sub.kind === 'lead' ? sub.id : null;
-    const phone = String(sub.phone || '').replace(/\D/g, '');
-    const hasIdentity = phone.length >= 8 || Boolean(sub.name);
     if (!ok) {
       outHandle = 'error';
       mapped = buildCrmConvertMapped({
@@ -619,11 +633,12 @@ export function resolveHttpSimulation(
       systemText = 'Converter CRM: erro (forçado)';
       logDetail = 'Seguiu saída error';
     } else {
+      // S35: Testar sempre tem identidade fictícia — não exige sujeito real.
       const outcome = classifyCrmConvertOutcome({
         mode,
         clientId,
         leadId,
-        hasIdentity: hasIdentity || Boolean(clientId || leadId),
+        hasIdentity: true,
       });
       outHandle = outcome.outHandle;
       const mockLeadId = leadId || (outcome.result === 'created' && mode === 'to_lead' ? 'sim-lead-1' : null);

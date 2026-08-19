@@ -37,6 +37,10 @@ function mapRow(row: Record<string, unknown>): AcquisitionLeadRow {
     tenant_id: row.tenant_id != null ? String(row.tenant_id) : null,
     correlation_id: String(row.correlation_id),
     metadata_json: (row.metadata_json ?? {}) as Record<string, unknown>,
+    partner_id: row.partner_id != null ? String(row.partner_id) : null,
+    seller_user_id: row.seller_user_id != null ? String(row.seller_user_id) : null,
+    seller_referral_code:
+      row.seller_referral_code != null ? String(row.seller_referral_code) : null,
     created_at: String(row.created_at),
     updated_at: String(row.updated_at),
   };
@@ -119,14 +123,33 @@ export async function insertAcquisitionLead(input: {
   correlationId: string;
   metadata?: Record<string, unknown>;
   stage?: AcquisitionLeadStage;
+  partnerId?: string | null;
+  sellerUserId?: string | null;
+  sellerReferralCode?: string | null;
 }): Promise<AcquisitionLeadRow | null> {
   if (!(await acquisitionLeadsTableExists())) return null;
+
+  const meta = {
+    ...(input.metadata ?? {}),
+    ...(input.partnerId
+      ? {
+          partner_id: input.partnerId,
+          seller_user_id: input.sellerUserId ?? null,
+          seller_referral_code: input.sellerReferralCode ?? null,
+        }
+      : {}),
+  };
 
   const r = await pool.query(
     `INSERT INTO acquisition_leads (
        name, email, phone, source, campaign, utm_json, selected_plan_id,
-       current_stage, correlation_id, metadata_json, updated_at
-     ) VALUES ($1, lower(trim($2)), $3, $4, $5, $6::jsonb, $7, $8::acquisition_lead_stage, $9, $10::jsonb, now())
+       current_stage, correlation_id, metadata_json, updated_at,
+       partner_id, seller_user_id, seller_referral_code
+     ) VALUES (
+       $1, lower(trim($2)), $3, $4, $5, $6::jsonb, $7,
+       $8::acquisition_lead_stage, $9, $10::jsonb, now(),
+       $11, $12, $13
+     )
      RETURNING *`,
     [
       input.name ?? null,
@@ -138,10 +161,45 @@ export async function insertAcquisitionLead(input: {
       input.selectedPlanId ?? null,
       input.stage ?? 'pre_signup',
       input.correlationId,
-      JSON.stringify(input.metadata ?? {}),
+      JSON.stringify(meta),
+      input.partnerId ?? null,
+      input.sellerUserId ?? null,
+      input.sellerReferralCode ?? null,
     ],
   );
   return r.rows[0] ? mapRow(r.rows[0]) : null;
+}
+
+/** First-touch: só preenche se ainda null. */
+export async function applyPartnerAttributionToLead(
+  leadId: string,
+  attr: {
+    partner_id: string | null;
+    seller_user_id: string | null;
+    seller_referral_code: string | null;
+  },
+): Promise<void> {
+  if (!attr.partner_id && !attr.seller_user_id) return;
+  await pool.query(
+    `UPDATE acquisition_leads
+     SET partner_id = COALESCE(partner_id, $2),
+         seller_user_id = COALESCE(seller_user_id, $3),
+         seller_referral_code = COALESCE(seller_referral_code, $4),
+         metadata_json = metadata_json || $5::jsonb,
+         updated_at = now()
+     WHERE id = $1`,
+    [
+      leadId,
+      attr.partner_id,
+      attr.seller_user_id,
+      attr.seller_referral_code,
+      JSON.stringify({
+        partner_id: attr.partner_id,
+        seller_user_id: attr.seller_user_id,
+        seller_referral_code: attr.seller_referral_code,
+      }),
+    ],
+  );
 }
 
 /** Reutiliza lead por e-mail — atualiza contato e último acesso. */

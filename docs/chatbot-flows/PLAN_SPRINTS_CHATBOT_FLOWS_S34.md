@@ -7,7 +7,7 @@
 | **Base** | [`PLAN_SPRINTS_CHATBOT_FLOWS.md`](./PLAN_SPRINTS_CHATBOT_FLOWS.md) · [`PLAN_SPRINTS_CHATBOT_FLOWS_S32.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S32.md) · [`PLAN_SPRINTS_CHATBOT_FLOWS_S30.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S30.md) |
 | **Nome** | **S34 — Sequência de mensagens no nó `send_message` + delay por mensagem** |
 | **Status** | **Feito** |
-| **Próximo** | — (produto: S6 hardening / outros itens) |
+| **Próximo** | **S35** ([`PLAN_SPRINTS_CHATBOT_FLOWS_S35.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S35.md)) |
 
 ---
 
@@ -119,4 +119,4 @@ messages?: Array<{
 
 1. Validar manualmente no editor: 3 msgs (texto + mídia + texto) com delay 5s entre 1→2.
 2. Publicar e testar no canal (worker `waiting_delay`).
-3. Itens seguintes de produto fora deste sprint (ex. S6 hardening).
+3. Próximo produto: **S36** — [`PLAN_SPRINTS_CHATBOT_FLOWS_S36.md`](./PLAN_SPRINTS_CHATBOT_FLOWS_S36.md).

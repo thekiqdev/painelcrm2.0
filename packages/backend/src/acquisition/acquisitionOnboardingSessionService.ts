@@ -83,12 +83,29 @@ export async function createOnboardingSession(input: {
     [input.leadId],
   );
 
+  const leadAttr = await pool.query<{
+    partner_id: string | null;
+    seller_user_id: string | null;
+    seller_referral_code: string | null;
+  }>(
+    `SELECT partner_id::text AS partner_id,
+            seller_user_id::text AS seller_user_id,
+            seller_referral_code
+     FROM acquisition_leads WHERE id = $1 LIMIT 1`,
+    [input.leadId],
+  );
+  const attr = leadAttr.rows[0];
+
   const token = newSessionToken();
   const r = await pool.query(
     `INSERT INTO acquisition_onboarding_sessions (
        session_token, acquisition_lead_id, activation_intent, plan_id, users_count,
-       correlation_id, metadata_json, status, resume_step
-     ) VALUES ($1, $2, $3::acquisition_activation_intent, $4, $5, $6, $7::jsonb, 'active', 1)
+       correlation_id, metadata_json, status, resume_step,
+       partner_id, seller_user_id, seller_referral_code
+     ) VALUES (
+       $1, $2, $3::acquisition_activation_intent, $4, $5, $6, $7::jsonb, 'active', 1,
+       $8, $9, $10
+     )
      RETURNING *`,
     [
       token,
@@ -98,6 +115,9 @@ export async function createOnboardingSession(input: {
       input.usersCount ?? null,
       input.correlationId,
       JSON.stringify(input.metadata ?? {}),
+      attr?.partner_id ?? null,
+      attr?.seller_user_id ?? null,
+      attr?.seller_referral_code ?? null,
     ],
   );
   return r.rows[0] ? mapSession(r.rows[0]) : null;

@@ -65,6 +65,16 @@ function firstQueryString(value: unknown): string | undefined {
   return undefined;
 }
 
+function normalizeCpfCnpj(value: string | null | undefined): string | null {
+  if (value == null || typeof value !== 'string') return null;
+  const digits = value.replace(/\D/g, '');
+  return digits.length === 0 ? null : digits;
+}
+
+function isValidCpfCnpjLength(digits: string): boolean {
+  return digits.length === 11 || digits.length === 14;
+}
+
 const leadSchema = z.object({
   name: z.string().min(1),
   email: z.union([z.string().email(), z.literal(""), z.null()]).optional(),
@@ -74,6 +84,7 @@ const leadSchema = z.object({
   status: z.union([z.string(), z.literal(""), z.null()]).optional(),
   notes: z.union([z.string(), z.literal(""), z.null()]).optional(),
   profile_id: z.string().uuid().optional().nullable(),
+  cpf_cnpj: z.string().optional().nullable(),
 });
 
 /** PATCH: aceita `migrated_client_id` para migrar conversas lead→cliente sem depender só do match por telefone. */
@@ -185,8 +196,11 @@ export async function getLeads(req: AuthRequest, res: Response): Promise<void> {
         OR COALESCE(l.email, '') ILIKE $${params.length + 1}
         OR COALESCE(l.company, '') ILIKE $${params.length + 1}
         OR COALESCE(l.phone, '') ILIKE $${params.length + 1}
+        OR COALESCE(l.cpf_cnpj, '') ILIKE $${params.length + 1}
+        OR regexp_replace(COALESCE(l.cpf_cnpj, ''), '\\D', '', 'g') LIKE $${params.length + 2}
       )`;
-      params.push(`%${qSearch}%`);
+      const qDigits = qSearch.replace(/\D/g, '');
+      params.push(`%${qSearch}%`, `%${qDigits || qSearch}%`);
     }
 
     query += ' ORDER BY l.created_at DESC';
@@ -328,6 +342,14 @@ export async function createLead(req: AuthRequest, res: Response): Promise<void>
     } else {
       cleanData.company = null;
     }
+
+    const rawCpfCnpj =
+      leadData.cpf_cnpj != null && typeof leadData.cpf_cnpj === 'string' ? leadData.cpf_cnpj.trim() : '';
+    cleanData.cpf_cnpj = normalizeCpfCnpj(rawCpfCnpj || null);
+    if (cleanData.cpf_cnpj !== null && !isValidCpfCnpjLength(cleanData.cpf_cnpj)) {
+      res.status(400).json({ error: 'CPF/CNPJ deve ter 11 (CPF) ou 14 (CNPJ) dígitos.' });
+      return;
+    }
     
     // Source is required, but we'll use a default if empty
     if (leadData.source && typeof leadData.source === 'string' && leadData.source.trim()) {
@@ -359,13 +381,13 @@ export async function createLead(req: AuthRequest, res: Response): Promise<void>
 
     const result = await pool.query(
       `INSERT INTO leads (
-        user_id, name, email, phone, company, source, status, notes, profile_id
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        user_id, name, email, phone, company, source, status, notes, profile_id, cpf_cnpj
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING *`,
       [
         userId, cleanData.name, cleanData.email, cleanData.phone,
         cleanData.company, cleanData.source, cleanData.status,
-        cleanData.notes, cleanData.profile_id
+        cleanData.notes, cleanData.profile_id, cleanData.cpf_cnpj
       ]
     );
 
@@ -404,14 +426,26 @@ export async function updateLead(req: AuthRequest, res: Response): Promise<void>
     const leadData = updateLeadBodySchema.parse(req.body);
     const { migrated_client_id, ...leadFields } = leadData;
 
+    if (leadFields.cpf_cnpj !== undefined) {
+      const normalizedCpfCnpj = normalizeCpfCnpj(leadFields.cpf_cnpj);
+      if (normalizedCpfCnpj !== null && !isValidCpfCnpjLength(normalizedCpfCnpj)) {
+        res.status(400).json({ error: 'CPF/CNPJ deve ter 11 (CPF) ou 14 (CNPJ) dígitos.' });
+        return;
+      }
+    }
+
     const updates: string[] = [];
     const values: any[] = [];
     let paramIndex = 1;
 
     Object.entries(leadFields).forEach(([key, value]) => {
       if (value !== undefined) {
+        let normalized: unknown = value;
+        if (key === 'cpf_cnpj') {
+          normalized = normalizeCpfCnpj(value as string);
+        }
         updates.push(`${key} = $${paramIndex}`);
-        values.push(value);
+        values.push(normalized);
         paramIndex++;
       }
     });

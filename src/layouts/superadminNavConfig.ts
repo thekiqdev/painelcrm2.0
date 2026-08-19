@@ -83,6 +83,11 @@ export const superAdminNavGroups: SuperAdminNavGroup[] = [
         to: "/superadmin/clients/new",
         icon: UserPlus,
       },
+      {
+        label: "Partners",
+        to: "/superadmin/partners",
+        icon: Building2,
+      },
     ],
   },
   {

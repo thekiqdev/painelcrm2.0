@@ -40,6 +40,7 @@ import { useFloatingChatOptional } from "@/features/floating-chat/floatingChatCo
 import { apiClient } from "@/integrations/api/client";
 
 import { formatBrazilianPhone, resolveEntityDisplayName } from "@/lib/formatters/phone";
+import { formatCpfCnpjDisplay } from "@/utils/cpfCnpj";
 
 import { cn } from "@/lib/utils";
 
@@ -98,6 +99,8 @@ export type LeadQuickViewData = {
   phone?: string | null;
 
   company?: string | null;
+
+  cpf_cnpj?: string | null;
 
   status?: string | null;
 
@@ -460,6 +463,8 @@ export function LeadQuickView({ leadId, onRequestClose, onOpenFullProfile }: Pro
   const summaryRows: SummaryRow[] = [
 
     { label: "E-mail", value: lead.email },
+
+    { label: "CPF/CNPJ", value: formatCpfCnpjDisplay(lead.cpf_cnpj) === "—" ? null : formatCpfCnpjDisplay(lead.cpf_cnpj) },
 
     { label: "Empresa", value: lead.company },
 

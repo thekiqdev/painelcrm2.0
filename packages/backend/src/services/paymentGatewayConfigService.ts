@@ -139,28 +139,74 @@ export async function listGateways(): Promise<PaymentGatewayListItem[]> {
  * Retorna a config ativa para o contexto (uso interno pelo gatewayProvider; inclui credentials).
  * Fase 3: considera apenas configs com status = 'active' (além de is_active).
  */
+/**
+ * M5 S4 — customer_tenant usa gateway do Partner pai; partner usa o próprio.
+ * platform_customer continua no gateway global (SaaS) / próprio (CRM).
+ */
+async function resolveChannelGatewayTenantId(tenantId: string): Promise<{
+  billingTenantId: string;
+  usePartnerTenantGateway: boolean;
+}> {
+  const r = await pool.query<{ account_type: string; partner_id: string | null }>(
+    `SELECT account_type, partner_id::text AS partner_id FROM tenants WHERE id = $1 LIMIT 1`,
+    [tenantId]
+  );
+  const t = r.rows[0];
+  if (!t) return { billingTenantId: tenantId, usePartnerTenantGateway: false };
+  if (t.account_type === 'customer_tenant' && t.partner_id) {
+    return { billingTenantId: t.partner_id, usePartnerTenantGateway: true };
+  }
+  if (t.account_type === 'partner') {
+    return { billingTenantId: tenantId, usePartnerTenantGateway: true };
+  }
+  return { billingTenantId: tenantId, usePartnerTenantGateway: false };
+}
+
+async function loadActiveTenantGateway(
+  billingTenantId: string
+): Promise<PaymentGatewayConfigRow | null> {
+  const r = await pool.query<
+    PaymentGatewayConfigRow & {
+      status?: string;
+      last_connection_test_at?: string | null;
+      last_connection_status?: string | null;
+    }
+  >(
+    `SELECT id, scope, tenant_id, gateway_key, is_active, display_name, credentials, options,
+            status, last_connection_test_at, last_connection_status,
+            enabled_payment_methods, default_payment_method
+     FROM payment_gateway_configs
+     WHERE scope = 'tenant' AND tenant_id = $1 AND is_active = true AND status = 'active'
+     LIMIT 1`,
+    [billingTenantId]
+  );
+  const row = r.rows[0];
+  if (!row) return null;
+  return {
+    ...row,
+    credentials: (row.credentials as Record<string, unknown>) ?? {},
+    options: (row.options as Record<string, unknown>) ?? {},
+  };
+}
+
 export async function getActiveConfig(
   billingType: BillingType,
   tenantId?: string
 ): Promise<PaymentGatewayConfigRow | null> {
   if (billingType === 'crm') {
     if (!tenantId) return null;
-    const r = await pool.query<PaymentGatewayConfigRow & { status?: string; last_connection_test_at?: string | null; last_connection_status?: string | null }>(
-      `SELECT id, scope, tenant_id, gateway_key, is_active, display_name, credentials, options,
-              status, last_connection_test_at, last_connection_status,
-              enabled_payment_methods, default_payment_method
-       FROM payment_gateway_configs
-       WHERE scope = 'tenant' AND tenant_id = $1 AND is_active = true AND status = 'active'
-       LIMIT 1`,
-      [tenantId]
-    );
-    const row = r.rows[0];
-    if (!row) return null;
-    return {
-      ...row,
-      credentials: (row.credentials as Record<string, unknown>) ?? {},
-      options: (row.options as Record<string, unknown>) ?? {},
-    };
+    const { billingTenantId } = await resolveChannelGatewayTenantId(tenantId);
+    return loadActiveTenantGateway(billingTenantId);
+  }
+
+  // SaaS: canal Partner cobra no gateway do Partner; venda direta = global
+  if (tenantId) {
+    const resolved = await resolveChannelGatewayTenantId(tenantId);
+    if (resolved.usePartnerTenantGateway) {
+      const partnerGw = await loadActiveTenantGateway(resolved.billingTenantId);
+      if (partnerGw) return partnerGw;
+      return null;
+    }
   }
 
   const r = await pool.query<PaymentGatewayConfigRow & { status?: string; last_connection_test_at?: string | null; last_connection_status?: string | null }>(

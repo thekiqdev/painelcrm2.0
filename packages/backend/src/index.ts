@@ -130,6 +130,8 @@ import {
 } from './config/whatsappOfficialCampaignEnv.js';
 import { refreshSystemFeatureFlagsFromPool } from './services/systemFeatureFlagsService.js';
 import { refreshPlatformFeatureFlagRegistry } from './platform/featureFlagRegistry.js';
+import partnerRoutes from './partner/partnerRoutes.js';
+import superadminPartnerRoutes from './partner/superadminPartnerRoutes.js';
 import { correlationIdMiddleware } from './middleware/correlationId.js';
 import {
   appLogger,
@@ -492,6 +494,8 @@ app.use('/api/announcements', authenticateToken, setCurrentTenant, announcements
 app.use('/api/superadmin', superadminRoutes);
 app.use('/api/superadmin/plans', plansRoutes);
 app.use('/api/superadmin/tenants', tenantsRoutes);
+app.use('/api/superadmin/partners', superadminPartnerRoutes);
+app.use('/api/partner', partnerRoutes);
 app.use('/api/superadmin/companies', superadminCompanyUsersRoutes);
 // Alias de compatibilidade: alguns provedores foram configurados com /api/webhooks/...
 app.use('/api/webhooks/uazapi', uazapiWebhookRoutes);

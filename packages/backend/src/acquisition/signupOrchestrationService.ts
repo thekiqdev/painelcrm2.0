@@ -48,6 +48,9 @@ export async function createPreSignupLead(
       correlationId: input.correlationId,
       metadata: input.metadata,
       stage: input.stage ?? 'contact_captured',
+      partnerId: input.partnerId ?? null,
+      sellerUserId: input.sellerUserId ?? null,
+      sellerReferralCode: input.sellerReferralCode ?? null,
     });
 
     if (!lead) return { ok: false, reason: 'table_unavailable' };
@@ -80,6 +83,9 @@ export async function orchestrateSignupStep(input: {
   step: 'contact' | 'plan' | 'checkout';
   correlationId: string;
   utm?: Record<string, unknown>;
+  partnerId?: string | null;
+  sellerUserId?: string | null;
+  sellerReferralCode?: string | null;
 }): Promise<{
   ok: boolean;
   lead?: AcquisitionLeadRow;
@@ -150,9 +156,22 @@ export async function orchestrateSignupStep(input: {
       utm: input.utm,
       selectedPlanId: input.planId,
       stage: 'contact_captured',
+      partnerId: input.partnerId,
+      sellerUserId: input.sellerUserId,
+      sellerReferralCode: input.sellerReferralCode,
     });
     if (!created.ok || !created.lead) return { ok: false, reason: created.reason };
     lead = created.lead;
+  } else if (input.partnerId || input.sellerUserId) {
+    const { applyPartnerAttributionToLead, findAcquisitionLeadById } = await import(
+      './acquisitionLeadRepository.js'
+    );
+    await applyPartnerAttributionToLead(lead.id, {
+      partner_id: input.partnerId ?? null,
+      seller_user_id: input.sellerUserId ?? null,
+      seller_referral_code: input.sellerReferralCode ?? null,
+    });
+    lead = (await findAcquisitionLeadById(lead.id)) ?? lead;
   }
 
   const previousStage = lead.current_stage;

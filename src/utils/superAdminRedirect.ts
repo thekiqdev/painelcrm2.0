@@ -11,6 +11,17 @@ export function isSuperAdminPlatformUser(user: {
   return tid == null || tid === '';
 }
 
+/** Admin ou seller do canal Partner (M5) — home em /partner, sem onboarding SaaS. */
+export function isPartnerChannelUser(user: {
+  account_type?: string | null;
+  partner_membership_role?: string | null;
+} | null | undefined): boolean {
+  if (!user) return false;
+  if (user.account_type === 'partner') return true;
+  const role = user.partner_membership_role;
+  return role === 'partner_admin' || role === 'partner_seller';
+}
+
 /** Destino após login ou quando já autenticado na tela de login. */
 export function getPostAuthHomePath(user: {
   is_super_admin?: boolean;
@@ -18,9 +29,12 @@ export function getPostAuthHomePath(user: {
   registration_complete?: boolean;
   onboarding_completed?: boolean;
   commercial_access_required?: boolean;
+  account_type?: string | null;
+  partner_membership_role?: string | null;
 } | null | undefined): string {
   if (!user) return '/login';
   if (isSuperAdminPlatformUser(user)) return '/superadmin';
+  if (isPartnerChannelUser(user)) return '/partner';
   if (user.tenant_id && user.onboarding_completed === false) {
     try {
       const sess = sessionStorage.getItem('acquisition_onboarding_session');

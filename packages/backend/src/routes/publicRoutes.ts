@@ -35,6 +35,12 @@ import {
   postPublicSaasBillingCancelPixAutomatic,
 } from '../controllers/publicSaasBillingController.js';
 import { getPublicLegalPage } from '../controllers/publicLegalController.js';
+import { publicGetPartnerBrand } from '../partner/partnerControllers.js';
+import {
+  publicPartnerChannelSignup,
+  publicPartnerChannelSignupTrial,
+  publicPartnerChannelValidateAdmin,
+} from '../partner/partnerChannelPublicController.js';
 import {
   getPublicAppointmentConfirmationByToken,
   getPublicAppointmentAvailabilityByToken,
@@ -56,6 +62,40 @@ import {
 } from '../controllers/signupFlowPublicController.js';
 
 const router = Router();
+
+const partnerChannelSignupLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_PUBLIC_PARTNER_CHANNEL_MAX || '40', 10),
+  message: { ok: false, error: 'Muitas tentativas. Aguarde.', code: 'rate_limited' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'development',
+});
+
+const partnerBrandPublicLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_PUBLIC_PARTNER_BRAND_MAX || '300', 10),
+  message: { ok: false, error: 'Muitas consultas. Aguarde.', code: 'rate_limited' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'development',
+});
+
+/** M5 S2 — marca white-label por Host / ?domain= */
+router.get('/partner-brand', partnerBrandPublicLimiter, publicGetPartnerBrand);
+
+/** M5 S7.2/S7.3 — checkout/cadastro do canal Partner (sem exclusive_signup). */
+router.post(
+  '/partner-channel/signup-trial',
+  partnerChannelSignupLimiter,
+  publicPartnerChannelSignupTrial
+);
+router.post('/partner-channel/signup', partnerChannelSignupLimiter, publicPartnerChannelSignup);
+router.post(
+  '/partner-channel/validate-admin',
+  partnerChannelSignupLimiter,
+  publicPartnerChannelValidateAdmin
+);
 
 const signupFlowPublicLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,

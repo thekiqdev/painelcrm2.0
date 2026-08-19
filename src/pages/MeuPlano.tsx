@@ -116,8 +116,11 @@ interface Plan {
   max_whatsapp_instances?: number | null;
   is_free?: boolean;
   free_access_days?: number | null;
+  trial_days?: number;
   benefits?: PlanBenefit[];
   interval_prices?: IntervalPrice[];
+  partner_sell_plan_id?: string;
+  channel?: 'partner';
 }
 
 interface PendingBillingSummary {
@@ -195,19 +198,22 @@ interface MyPlanResponse {
   max_whatsapp_instances_scheduled_next_cycle?: number | null;
   pending_seat_addon_billing?: PendingSeatAddonBilling | null;
   pending_instance_addon_billing?: PendingSeatAddonBilling | null;
+  channel?: 'partner';
+  partner_sell_plan_id?: string | null;
+  partner_commercial?: boolean;
 }
 
 /** Resposta de GET /api/me/tenant/subscription (Fase C hub comercial). */
 interface SaasSubscriptionPayload {
-  id: string;
-  plan_id: string;
+  id: string | null;
+  plan_id: string | null;
   plan_name: string | null;
   plan_slug: string | null;
   plan_type: string | null;
   amount_cents: number;
   billing_interval: string;
   status: string;
-  next_billing_date: string;
+  next_billing_date: string | null;
   current_period_start: string | null;
   current_period_end: string | null;
   cancel_at_period_end: boolean;
@@ -217,6 +223,8 @@ interface SaasSubscriptionPayload {
   will_cancel_at_period_end: boolean;
   /** Sprint C — SSOT Pix Automático */
   pix_automatic?: PixAutomaticPreference | null;
+  channel?: 'partner';
+  partner_commercial?: boolean;
 }
 
 interface TenantUsersLimitsPayload {
@@ -544,8 +552,9 @@ export default function MeuPlano() {
         whatsapp_instances?: TenantUsersLimitsPayload;
       }>('/api/me/tenant/limits'),
       apiClient.get<{ billings: CommercialBillingHubRow[] }>('/api/me/tenant/commercial-billings'),
+      apiClient.get<{ channel: string; plans: Plan[] | null }>('/api/me/tenant/available-plans'),
       apiClient.get<Plan[]>('/api/plans'),
-    ]).then(([resPlan, resSub, resLimits, resBill, resPlans]) => {
+    ]).then(([resPlan, resSub, resLimits, resBill, resAvail, resPlans]) => {
       if (cancelled) return;
       if (resPlan.details?.status === 403) {
         setPlanAccessDenied(true);
@@ -565,7 +574,11 @@ export default function MeuPlano() {
       else setLimitsUsers(null);
       if (resBill.data?.billings) setCommercialBillings(resBill.data.billings);
       else setCommercialBillings([]);
-      if (resPlans.data) setAllPlans(resPlans.data);
+      if (resAvail.data?.channel === 'partner' && Array.isArray(resAvail.data.plans)) {
+        setAllPlans(resAvail.data.plans);
+      } else if (resPlans.data) {
+        setAllPlans(resPlans.data);
+      }
       setLoading(false);
     });
     return () => {
@@ -975,12 +988,22 @@ export default function MeuPlano() {
               <p>
                 <span className="text-muted-foreground">Plano</span>
                 <br />
-                <span className="font-medium">{subscription.plan_name ?? '—'}</span>
+                <span className="font-medium">
+                  {(myPlan?.channel === 'partner' || myPlan?.partner_commercial
+                    ? myPlan.plan.name
+                    : null) ??
+                    subscription.plan_name ??
+                    '—'}
+                </span>
               </p>
               <p>
                 <span className="text-muted-foreground">Próxima cobrança</span>
                 <br />
-                <span className="font-medium">{formatDate(subscription.next_billing_date)}</span>
+                <span className="font-medium">
+                  {subscription.next_billing_date
+                    ? formatDate(subscription.next_billing_date)
+                    : '—'}
+                </span>
               </p>
               {subscription.will_cancel_at_period_end && (
                 <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-amber-950 dark:text-amber-100">
@@ -1083,9 +1106,20 @@ export default function MeuPlano() {
     canManage &&
     contractedWhatsapp != null &&
     contractedWhatsapp > instanceDowngradeFloor;
+  const isPartnerChannel =
+    myPlan.channel === 'partner' || Boolean(myPlan.partner_sell_plan_id) || plan.channel === 'partner';
+  /** Canal Partner: preço sempre do sell plan (já overlayado em plan.price_cents). */
   const currentPriceCents =
-    isCustom && priceRow ? priceRow.price_per_user_cents * contractedSeats : plan.price_cents;
-  const otherPlans = allPlans.filter((p) => p.id !== plan.id);
+    isPartnerChannel || myPlan.partner_commercial
+      ? plan.price_cents
+      : isCustom && priceRow
+        ? priceRow.price_per_user_cents * contractedSeats
+        : plan.price_cents;
+  const otherPlans = allPlans.filter((p) => {
+    const catalogId = p.partner_sell_plan_id || p.id;
+    const currentId = myPlan.partner_sell_plan_id || plan.partner_sell_plan_id || plan.id;
+    return catalogId !== currentId;
+  });
   const selectedIntervalKey = (INTERVALS[intervalIdx] ?? INTERVALS[0]).key;
   const planPeriodEnd = myPlan.plan_period_end;
   /** Primeira cobrança de plano já ativou a conta — hub não deve parecer trial/grátis nem negar ciclo pago. */
@@ -1231,8 +1265,13 @@ export default function MeuPlano() {
   })();
 
   const HeroIcon = hero.icon;
+  /** Canal Partner: preço comercial vem do sell plan (overlay), não da subscription SaaS. */
   const mainDisplayPriceCents =
-    subscription != null && subscription.amount_cents > 0 ? subscription.amount_cents : currentPriceCents;
+    isPartnerChannel || myPlan.partner_sell_plan_id
+      ? currentPriceCents
+      : subscription != null && subscription.amount_cents > 0
+        ? subscription.amount_cents
+        : currentPriceCents;
   const nextBillingLine =
     subscription?.next_billing_date != null ? formatDate(subscription.next_billing_date) : '—';
   const periodLineArrow =
@@ -1859,7 +1898,11 @@ export default function MeuPlano() {
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="text-xs text-muted-foreground">Valor previsto</span>
                     <span className="text-lg font-bold tabular-nums text-foreground">
-                      {formatPrice(subscription.amount_cents)}
+                      {formatPrice(
+                        isPartnerChannel || myPlan.partner_sell_plan_id
+                          ? currentPriceCents
+                          : subscription.amount_cents
+                      )}
                     </span>
                   </div>
                   <div className="flex items-baseline justify-between gap-2">
@@ -2458,7 +2501,33 @@ export default function MeuPlano() {
                             type="button"
                             className="h-11 w-full gap-2"
                       disabled={saving}
-                      onClick={() =>
+                      onClick={async () => {
+                        if (isPartnerChannel || p.channel === 'partner') {
+                          setSaving(true);
+                          const res = await apiClient.post<{
+                            mode: string;
+                            billing_id?: string;
+                            trial_ends_at?: string;
+                          }>('/api/me/tenant/partner-sell-plan/checkout', {
+                            sell_plan_id: p.partner_sell_plan_id || p.id,
+                          });
+                          setSaving(false);
+                          if (res.error) {
+                            toast.error(res.error);
+                            return;
+                          }
+                          if (res.data?.mode === 'checkout' && res.data.billing_id) {
+                            navigate(`/saas-billing/${res.data.billing_id}/pay`);
+                            return;
+                          }
+                          if (res.data?.mode === 'trial_activated') {
+                            toast.success('Teste grátis ativado');
+                          } else {
+                            toast.success('Plano atualizado');
+                          }
+                          await refreshAfterMutation();
+                          return;
+                        }
                         navigate('/checkout?mode=renew', {
                           state: {
                             plan: {
@@ -2473,8 +2542,8 @@ export default function MeuPlano() {
                             billingInterval: selectedIntervalKey,
                             usersCount: p.plan_type === 'custom' ? contractedSeats : undefined,
                           },
-                        })
-                      }
+                        });
+                      }}
                     >
                             {checkoutLabel}
                       <ArrowRight className="h-4 w-4" />

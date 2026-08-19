@@ -22,6 +22,7 @@ import {
   parseMarketingAttributionFromBody,
   persistTenantMarketingAttribution,
 } from '../services/marketingAttributionService.js';
+import { findPartnerMembershipForUser } from '../partner/partnerRepository.js';
 
 const registerSchema = z.object({
   email: z.string().email(),
@@ -503,6 +504,8 @@ export async function getMe(req: Request, res: Response): Promise<void> {
     let commercialAccessRequired = false;
     let tenantStatus: string | null = null;
     let onboardingCompleted = false;
+    let accountType: string | null = null;
+    let partnerMembershipRole: string | null = null;
     let trialEndsAt: string | null = null;
     let suspensionReason: string | null = null;
     let requiresCheckoutResume = false;
@@ -511,6 +514,7 @@ export async function getMe(req: Request, res: Response): Promise<void> {
       primary_user_id: string;
       status: string;
       onboarding_completed: boolean;
+      account_type: string | null;
       trial_ends_at: string | null;
       activated_billing_id: string | null;
       suspension_reason: string | null;
@@ -520,6 +524,7 @@ export async function getMe(req: Request, res: Response): Promise<void> {
         (SELECT u2.id FROM users u2 WHERE u2.tenant_id = u.tenant_id ORDER BY u2.created_at ASC LIMIT 1) AS primary_user_id,
         t.status,
         t.onboarding_completed,
+        t.account_type,
         t.trial_ends_at,
         t.activated_billing_id,
         t.suspension_reason,
@@ -532,6 +537,7 @@ export async function getMe(req: Request, res: Response): Promise<void> {
     if (tenantCheck.rows.length > 0) {
       const row = tenantCheck.rows[0];
       tenantStatus = row.status;
+      accountType = row.account_type ?? null;
       trialEndsAt = row.trial_ends_at;
       suspensionReason = row.suspension_reason;
       if (row.plan_period_end) {
@@ -590,6 +596,21 @@ export async function getMe(req: Request, res: Response): Promise<void> {
       }
     }
 
+    try {
+      const membership = await findPartnerMembershipForUser(userId as string);
+      if (membership) {
+        partnerMembershipRole = membership.role;
+        if (!accountType) accountType = 'partner';
+        // Canal Partner não usa onboarding SaaS de cliente.
+        onboardingCompleted = true;
+      } else if (accountType === 'partner') {
+        onboardingCompleted = true;
+      }
+    } catch (partnerLookupErr) {
+      // Tabelas partner podem não existir ainda em ambientes sem migração M5.
+      console.warn('[auth/me] partner membership lookup skipped:', partnerLookupErr);
+    }
+
     const tenantAdmin = await isTenantAdmin(userId);
 
     res.json({
@@ -614,6 +635,8 @@ export async function getMe(req: Request, res: Response): Promise<void> {
       can_manage_plan: canManagePlan,
       plan_expired: planExpired,
       tenant_status: tenantStatus,
+      account_type: accountType,
+      partner_membership_role: partnerMembershipRole,
       onboarding_completed: onboardingCompleted,
       trial_ends_at: trialEndsAt,
       suspension_reason: suspensionReason,

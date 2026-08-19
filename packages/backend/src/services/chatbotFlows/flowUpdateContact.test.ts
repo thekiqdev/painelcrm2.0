@@ -47,6 +47,7 @@ describe('S20 wait_input save_to_contact', () => {
       type: 'update_contact',
       field: 'name',
       value: 'Maria Silva',
+      ensureLead: true,
     });
     expect(r.session.status).toBe('ended');
   });
@@ -117,6 +118,49 @@ describe('S20 wait_input save_to_contact', () => {
       type: 'update_contact',
       field: 'cpf_cnpj',
       value: '529.982.247-25',
+      ensureLead: true,
+    });
+  });
+
+  it('respeita ensure_lead=false (opt-out S35)', () => {
+    const g: RuntimeGraph = {
+      ...graph,
+      nodes: graph.nodes.map((n) =>
+        n.id === 'q'
+          ? {
+              ...n,
+              data: {
+                prompt: 'x',
+                variable: 'a',
+                save_to_contact: true,
+                ensure_lead: false,
+                contact_field: 'name',
+              },
+            }
+          : n
+      ),
+    };
+    const waiting = processInboundStep({
+      graph: g,
+      session: {
+        status: 'active',
+        currentNodeId: null,
+        variables: {},
+        waitingVariable: null,
+      },
+      messageBody: 'x',
+      justStarted: true,
+    });
+    const r = processInboundStep({
+      graph: g,
+      session: waiting.session,
+      messageBody: 'Ana',
+    });
+    expect(r.actions.find((a) => a.type === 'update_contact')).toMatchObject({
+      type: 'update_contact',
+      field: 'name',
+      value: 'Ana',
+      ensureLead: false,
     });
   });
 });

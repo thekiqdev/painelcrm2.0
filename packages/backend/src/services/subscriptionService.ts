@@ -711,6 +711,11 @@ export async function activatePlanFromBilling(billingId: string): Promise<void> 
       { source: 'activatePlanFromBilling_plan_upgrade' },
     );
   }
+
+  // M5 S5 — accrual comissão canal (idempotente; no-op se não for customer_tenant+seller)
+  void import('../partner/partnerCommissionLedgerService.js').then((m) =>
+    m.maybeAccruePartnerCommissionForBilling(billingId)
+  );
 }
 
 export interface SubscribePlanResult {

@@ -5,6 +5,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AuthProvider } from "./contexts/AuthContext";
+import { PartnerBrandProvider } from "./contexts/PartnerBrandContext";
 import { ModulePermissionsProvider } from "./contexts/ModulePermissionsContext";
 import AuthLayout from "./layouts/AuthLayout";
 import AuthGuard from "./components/AuthGuard";
@@ -44,7 +45,8 @@ const ForgotPasswordWhatsapp = lazyWithReload(() => import("./pages/ForgotPasswo
 const AuthWhatsApp = lazyWithReload(() => import("./pages/AuthWhatsApp"));
 const Register = lazyWithReload(() => import("./pages/Register"));
 const TesteGratis = lazyWithReload(() => import("./pages/TesteGratis"));
-const AcquisitionSignupFlow = lazyWithReload(() => import("./pages/AcquisitionSignupFlow"));
+const PartnerChannelCheckout = lazyWithReload(() => import("./pages/partner/PartnerChannelCheckout"));
+const CadastroEntry = lazyWithReload(() => import("./pages/CadastroEntry"));
 const AcquisitionPremiumCheckout = lazyWithReload(() => import("./pages/AcquisitionPremiumCheckout"));
 const AcquisitionOperationalOnboarding = lazyWithReload(
   () => import("./pages/AcquisitionOperationalOnboarding"),
@@ -150,6 +152,22 @@ const SuperAdminClientCommercial = lazyWithReload(() => import("./pages/superadm
 const SuperAdminClientObservacoes = lazyWithReload(() => import("./pages/superadmin/SuperAdminClientObservacoes"));
 const SuperAdminClientLogs = lazyWithReload(() => import("./pages/superadmin/SuperAdminClientLogs"));
 const SuperAdminClientNew = lazyWithReload(() => import("./pages/superadmin/SuperAdminClientNew"));
+const SuperAdminPartners = lazyWithReload(() => import("./pages/superadmin/SuperAdminPartners"));
+const SuperAdminPartnerNew = lazyWithReload(() => import("./pages/superadmin/SuperAdminPartnerNew"));
+const SuperAdminPartnerDetail = lazyWithReload(() => import("./pages/superadmin/SuperAdminPartnerDetail"));
+const PartnerLayout = lazyWithReload(() => import("./pages/partner/PartnerLayout"));
+const PartnerOverviewPage = lazyWithReload(() => import("./pages/partner/PartnerOverviewPage"));
+const PartnerIdentityPage = lazyWithReload(() => import("./pages/partner/PartnerIdentityPage"));
+const PartnerBrandPage = lazyWithReload(() => import("./pages/partner/PartnerBrandPage"));
+const PartnerDomainPage = lazyWithReload(() => import("./pages/partner/PartnerDomainPage"));
+const PartnerSaleLinkPage = lazyWithReload(() => import("./pages/partner/PartnerSaleLinkPage"));
+const PartnerPlansPage = lazyWithReload(() => import("./pages/partner/PartnerPlansPage"));
+const PartnerCommissionsPage = lazyWithReload(() => import("./pages/partner/PartnerCommissionsPage"));
+const PartnerCustomersPage = lazyWithReload(() => import("./pages/partner/PartnerCustomersPage"));
+const PartnerSellersPage = lazyWithReload(() => import("./pages/partner/PartnerSellersPage"));
+const PartnerLicensesPage = lazyWithReload(() => import("./pages/partner/PartnerLicensesPage"));
+const PartnerGatewayPage = lazyWithReload(() => import("./pages/partner/PartnerGatewayPage"));
+const PartnerAdminGate = lazyWithReload(() => import("./pages/partner/PartnerAdminGate"));
 const SuperAdminFeatures = lazyWithReload(() => import("./pages/superadmin/SuperAdminFeatures"));
 const SuperAdminPlanFeatures = lazyWithReload(() => import("./pages/superadmin/SuperAdminPlanFeatures"));
 const SuperAdminTenantFeatures = lazyWithReload(() => import("./pages/superadmin/SuperAdminTenantFeatures"));
@@ -237,6 +255,7 @@ const App = () => (
     <TooltipProvider>
       <BrowserRouter>
         <ThemeProvider>
+        <PartnerBrandProvider>
         <AuthProvider>
           <ChatQueryPersistBridge />
           <ChatRouteTimingListener />
@@ -275,7 +294,23 @@ const App = () => (
               path="/cadastro"
               element={
                 <Suspense fallback={<LoadingFallback />}>
-                  <AcquisitionSignupFlow />
+                  <CadastroEntry />
+                </Suspense>
+              }
+            />
+            <Route
+              path="/:partnerSlug/cadastro"
+              element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <PartnerChannelCheckout />
+                </Suspense>
+              }
+            />
+            <Route
+              path="/:partnerSlug/:sellerId/cadastro"
+              element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <PartnerChannelCheckout />
                 </Suspense>
               }
             />
@@ -1039,6 +1074,86 @@ const App = () => (
               </AuthGuard>
             } />
             
+            {/* Partner channel (M5) — Painel do Revendedor */}
+            <Route
+              path="/partner"
+              element={
+                <AuthGuard requireAuth={true} redirectTo="/login">
+                  <Suspense fallback={<LoadingFallback />}>
+                    <PartnerLayout />
+                  </Suspense>
+                </AuthGuard>
+              }
+            >
+              <Route index element={<PartnerOverviewPage />} />
+              <Route path="sales/link" element={<PartnerSaleLinkPage />} />
+              <Route path="commissions" element={<PartnerCommissionsPage />} />
+              <Route
+                path="config/identity"
+                element={
+                  <PartnerAdminGate>
+                    <PartnerIdentityPage />
+                  </PartnerAdminGate>
+                }
+              />
+              <Route
+                path="config/brand"
+                element={
+                  <PartnerAdminGate>
+                    <PartnerBrandPage />
+                  </PartnerAdminGate>
+                }
+              />
+              <Route
+                path="config/domain"
+                element={
+                  <PartnerAdminGate>
+                    <PartnerDomainPage />
+                  </PartnerAdminGate>
+                }
+              />
+              <Route
+                path="plans"
+                element={
+                  <PartnerAdminGate>
+                    <PartnerPlansPage />
+                  </PartnerAdminGate>
+                }
+              />
+              <Route
+                path="customers"
+                element={
+                  <PartnerAdminGate>
+                    <PartnerCustomersPage />
+                  </PartnerAdminGate>
+                }
+              />
+              <Route
+                path="sellers"
+                element={
+                  <PartnerAdminGate>
+                    <PartnerSellersPage />
+                  </PartnerAdminGate>
+                }
+              />
+              <Route
+                path="licenses"
+                element={
+                  <PartnerAdminGate>
+                    <PartnerLicensesPage />
+                  </PartnerAdminGate>
+                }
+              />
+              <Route
+                path="gateway"
+                element={
+                  <PartnerAdminGate>
+                    <PartnerGatewayPage />
+                  </PartnerAdminGate>
+                }
+              />
+            </Route>
+
             {/* Super Admin - apenas para usuários com is_super_admin */}
             <Route path="/superadmin" element={<AuthGuard requireAuth={true} redirectTo="/"><SuperAdminGuard /></AuthGuard>}>
               <Route element={<SuperAdminLayout />}>
@@ -1102,6 +1217,9 @@ const App = () => (
                 <Route path="plans/:id/features" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlanFeatures /></Suspense>} />
                 <Route path="clients" element={<Suspense fallback={<LoadingFallback />}><SuperAdminClients /></Suspense>} />
                 <Route path="clients/new" element={<Suspense fallback={<LoadingFallback />}><SuperAdminClientNew /></Suspense>} />
+                <Route path="partners" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPartners /></Suspense>} />
+                <Route path="partners/new" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPartnerNew /></Suspense>} />
+                <Route path="partners/:id" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPartnerDetail /></Suspense>} />
                 <Route path="clients/:id" element={<Suspense fallback={<LoadingFallback />}><SuperAdminClientLayout /></Suspense>}>
                   <Route index element={<Navigate to="resumo" replace />} />
                   <Route path="resumo" element={<SuperAdminClientResumo />} />
@@ -1247,6 +1365,7 @@ const App = () => (
           </ModulePermissionsProvider>
         </AuthProvider>
         <Toaster />
+        </PartnerBrandProvider>
         </ThemeProvider>
       </BrowserRouter>
     </TooltipProvider>
