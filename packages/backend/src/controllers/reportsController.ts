@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth.js';
 import { pool } from '../utils/db.js';
+import { SQL_T_IS_PLATFORM_CUSTOMER } from '../partner/superadminTenantListScope.js';
 
 /**
  * GET /api/superadmin/reports
@@ -12,7 +13,7 @@ export async function getReports(req: AuthRequest, res: Response): Promise<void>
       pool.query(
         `SELECT p.id, p.name, p.slug, COUNT(t.id)::int AS tenants_count
          FROM plans p
-         LEFT JOIN tenants t ON t.plan_id = p.id AND t.status = 'active'
+         LEFT JOIN tenants t ON t.plan_id = p.id AND t.status = 'active' AND ${SQL_T_IS_PLATFORM_CUSTOMER}
          GROUP BY p.id, p.name, p.slug
          ORDER BY p.sort_order, p.name`
       ).then((r) => r.rows),
@@ -21,12 +22,12 @@ export async function getReports(req: AuthRequest, res: Response): Promise<void>
                 COUNT(t.id)::int AS active_tenants,
                 (COUNT(t.id) * p.price_cents)::bigint AS revenue_cents
          FROM plans p
-         LEFT JOIN tenants t ON t.plan_id = p.id AND t.status = 'active'
+         LEFT JOIN tenants t ON t.plan_id = p.id AND t.status = 'active' AND ${SQL_T_IS_PLATFORM_CUSTOMER}
          GROUP BY p.id, p.name, p.slug, p.price_cents, p.billing_interval
          ORDER BY p.sort_order`
       ).then((r) => r.rows),
       pool.query(
-        `SELECT status, COUNT(*)::int AS count FROM tenants GROUP BY status`
+        `SELECT t.status, COUNT(*)::int AS count FROM tenants t WHERE ${SQL_T_IS_PLATFORM_CUSTOMER} GROUP BY t.status`
       ).then((r) => r.rows),
     ]);
 

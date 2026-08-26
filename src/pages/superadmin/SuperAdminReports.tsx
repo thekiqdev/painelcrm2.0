@@ -61,7 +61,9 @@ export default function SuperAdminReports() {
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">Relatórios</h1>
-          <p className="text-muted-foreground">Adoção por plano, receita e exportação CSV.</p>
+          <p className="text-muted-foreground">
+            Venda direta (Platform). Canal Partner não entra nestes totais nem nos CSVs de planos/uso.
+          </p>
         </div>
         <div className="flex gap-2">
           <Button
@@ -101,7 +103,7 @@ export default function SuperAdminReports() {
               <BarChart3 className="h-5 w-5" />
               Adoção por plano
             </CardTitle>
-            <CardDescription>Empresas ativas por plano</CardDescription>
+            <CardDescription>Empresas Platform ativas por plano</CardDescription>
           </CardHeader>
           <CardContent>
             <ul className="space-y-2">
@@ -117,7 +119,7 @@ export default function SuperAdminReports() {
         <Card>
           <CardHeader>
             <CardTitle>Receita (estimada)</CardTitle>
-            <CardDescription>Por plano (ativos × preço)</CardDescription>
+            <CardDescription>Por plano (ativos Platform × preço de lista)</CardDescription>
           </CardHeader>
           <CardContent>
             <ul className="space-y-2">
@@ -137,7 +139,7 @@ export default function SuperAdminReports() {
       <Card>
         <CardHeader>
           <CardTitle>Status das empresas (churn)</CardTitle>
-          <CardDescription>Totais por status</CardDescription>
+          <CardDescription>Totais por status — só platform_customer</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-6">

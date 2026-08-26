@@ -16,6 +16,8 @@ export interface TenantDetailData {
   locale?: string | null;
   logo_url?: string | null;
   billing_phone?: string | null;
+  account_type?: string | null;
+  partner_id?: string | null;
 }
 
 interface TenantDetailContextValue {

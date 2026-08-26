@@ -19,6 +19,7 @@
 | **S5** | [`SPRINT_M5_S5_COMMISSIONS.md`](./SPRINT_M5_S5_COMMISSIONS.md) |
 | **S6** | [`SPRINT_M5_S6_SUSPENSION_MIGRATION.md`](./SPRINT_M5_S6_SUSPENSION_MIGRATION.md) |
 | **S7** | [`SPRINT_M5_S7_PARTNER_CHANNEL_CHECKOUT.md`](./SPRINT_M5_S7_PARTNER_CHANNEL_CHECKOUT.md) — cadastro/checkout exclusivo do canal |
+| **S8** | [`INVESTIGACAO_S8_SUPERADMIN_SEGREGACAO_CLIENTES.md`](./INVESTIGACAO_S8_SUPERADMIN_SEGREGACAO_CLIENTES.md) — Super Admin: lista SaaS ≠ clientes Partner (investigação) |
 | **Próximo** | Soften UX WL · NF (D19) · `revenue_share` |
 
 ---
@@ -545,3 +546,6 @@ Entrega: [`SPRINT_M5_S7_PARTNER_CHANNEL_CHECKOUT.md`](./SPRINT_M5_S7_PARTNER_CHA
 | 2026-08-18 | **S7.2 feito:** APIs públicas signup-trial/signup; provision `customer_tenant` + fatura no sell plan; FE passo 5 ligado |
 | 2026-08-18 | **S7 completo (S7.3):** honeypot + rate-limit brand; `gateway_ready` / suspenso; regressão sale-link; checklist QA |
 | 2026-08-19 | **S7.4 feito:** CPF/CNPJ obrigatório no checkout Partner (paridade Asaas); FE passo pagamento + carteira Partner; [`SPRINT_M5_S7_PARTNER_CHANNEL_CHECKOUT.md`](./SPRINT_M5_S7_PARTNER_CHANNEL_CHECKOUT.md) §S7.4 |
+| 2026-08-19 | **S8 investigação:** segregação Super Admin clientes SaaS vs Partner; [`INVESTIGACAO_S8_SUPERADMIN_SEGREGACAO_CLIENTES.md`](./INVESTIGACAO_S8_SUPERADMIN_SEGREGACAO_CLIENTES.md) |
+| 2026-08-19 | **S8 Onda A feito:** lista/CSV Super Admin só `platform_customer`; drill-down clientes na ficha Partner |
+| 2026-08-19 | **S8 Onda B feito:** dashboard/MRR/analytics/reports/exports/caixa/anúncios/cobranças Platform-only; trial Super Admin filtrado |

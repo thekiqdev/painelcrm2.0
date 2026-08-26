@@ -90,7 +90,17 @@ export default function SuperAdminClients() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Empresas</h1>
-          <p className="text-muted-foreground">Clique em uma linha para abrir o gerenciamento completo da empresa.</p>
+          <p className="text-muted-foreground">
+            Venda direta (Platform). Clientes de Partner ficam em{' '}
+            <button
+              type="button"
+              className="underline underline-offset-2"
+              onClick={() => navigate('/superadmin/partners')}
+            >
+              Partners
+            </button>
+            .
+          </p>
         </div>
         <Button onClick={() => navigate('/superadmin/clients/new')} disabled={plans.length === 0}>
           <Plus className="mr-2 h-4 w-4" />
@@ -105,7 +115,9 @@ export default function SuperAdminClients() {
       <Card>
         <CardHeader>
           <CardTitle>Lista de empresas</CardTitle>
-          <CardDescription>Contas cadastradas no site ou criadas pelo Super Admin.</CardDescription>
+          <CardDescription>
+            Contas Platform (cadastro no site ou Super Admin). Canal white-label não entra nesta lista.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {loading ? (
@@ -113,7 +125,7 @@ export default function SuperAdminClients() {
           ) : listError ? (
             <p className="text-destructive">{listError}</p>
           ) : tenants.length === 0 ? (
-            <p className="text-muted-foreground">Nenhuma empresa cadastrada.</p>
+            <p className="text-muted-foreground">Nenhuma empresa Platform cadastrada.</p>
           ) : (
             <Table>
               <TableHeader>

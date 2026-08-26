@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { AuthRequest } from '../middleware/auth.js';
 import { pool } from '../utils/db.js';
+import { SQL_T_IS_PLATFORM_CUSTOMER } from '../partner/superadminTenantListScope.js';
 
 /**
  * GET /api/superadmin/me
@@ -25,19 +26,28 @@ export async function getDashboard(req: Request, res: Response): Promise<void> {
   try {
     const [plansCount, tenantsCount, activeTenantsCount, usersCount, recentTenants, recentUsers] = await Promise.all([
       pool.query('SELECT COUNT(*)::int AS c FROM plans').then((r) => r.rows[0]?.c ?? 0),
-      pool.query('SELECT COUNT(*)::int AS c FROM tenants').then((r) => r.rows[0]?.c ?? 0),
-      pool.query("SELECT COUNT(*)::int AS c FROM tenants WHERE status = 'active'").then((r) => r.rows[0]?.c ?? 0),
-      pool.query('SELECT COUNT(*)::int AS c FROM users').then((r) => r.rows[0]?.c ?? 0),
+      pool.query(
+        `SELECT COUNT(*)::int AS c FROM tenants t WHERE ${SQL_T_IS_PLATFORM_CUSTOMER}`
+      ).then((r) => r.rows[0]?.c ?? 0),
+      pool.query(
+        `SELECT COUNT(*)::int AS c FROM tenants t WHERE t.status = 'active' AND ${SQL_T_IS_PLATFORM_CUSTOMER}`
+      ).then((r) => r.rows[0]?.c ?? 0),
+      pool.query(
+        `SELECT COUNT(*)::int AS c
+         FROM users u
+         INNER JOIN tenants t ON t.id = u.tenant_id AND ${SQL_T_IS_PLATFORM_CUSTOMER}`
+      ).then((r) => r.rows[0]?.c ?? 0),
       pool.query(
         `SELECT t.id, t.name, t.slug, t.status, t.created_at, p.name AS plan_name
          FROM tenants t
          JOIN plans p ON p.id = t.plan_id
+         WHERE ${SQL_T_IS_PLATFORM_CUSTOMER}
          ORDER BY t.created_at DESC LIMIT 10`
       ).then((r) => r.rows),
       pool.query(
         `SELECT u.id, u.email, u.created_at, t.name AS tenant_name
          FROM users u
-         LEFT JOIN tenants t ON t.id = u.tenant_id
+         INNER JOIN tenants t ON t.id = u.tenant_id AND ${SQL_T_IS_PLATFORM_CUSTOMER}
          ORDER BY u.created_at DESC LIMIT 10`
       ).then((r) => r.rows),
     ]);

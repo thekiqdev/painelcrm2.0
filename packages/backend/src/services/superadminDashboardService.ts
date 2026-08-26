@@ -2,6 +2,10 @@ import { pool } from '../utils/db.js';
 import { getGatewaysStatus } from './paymentGatewayConfigService.js';
 import { getSmtpSuperadminSettings } from './smtpSuperadminSettingsService.js';
 import { getDashboardMrrSnapshot } from './billing2/dashboardMrr.js';
+import {
+  SQL_SUBSCRIPTION_TENANT_IS_PLATFORM_CUSTOMER,
+  SQL_T_IS_PLATFORM_CUSTOMER,
+} from '../partner/superadminTenantListScope.js';
 
 type DashboardSeverity = 'info' | 'warning' | 'critical';
 type DashboardGatewayStatus = 'configured' | 'not_configured' | 'unknown';
@@ -188,7 +192,8 @@ export async function getSuperadminDashboardSnapshot(): Promise<SuperadminDashbo
                AND tb.due_date IS NOT NULL
                AND tb.paid_at::date > tb.due_date
            )::text AS recovered_30d_count
-         FROM tenant_billing tb`,
+         FROM tenant_billing tb
+         INNER JOIN tenants t ON t.id = tb.tenant_id AND ${SQL_T_IS_PLATFORM_CUSTOMER}`,
       ),
       pool.query<{
         total_tenants: string;
@@ -205,18 +210,21 @@ export async function getSuperadminDashboardSnapshot(): Promise<SuperadminDashbo
            COUNT(*) FILTER (WHERE t.status = 'suspended')::text AS suspended_tenants,
            COUNT(*) FILTER (WHERE t.status = 'trial' AND t.trial_ends_at IS NOT NULL AND t.trial_ends_at > now() AND t.trial_ends_at <= now() + interval '7 days')::text AS trials_expiring_soon,
            COUNT(*) FILTER (WHERE t.status = 'trial' AND t.trial_ends_at IS NOT NULL AND t.trial_ends_at <= now())::text AS trial_expired
-         FROM tenants t`,
+         FROM tenants t
+         WHERE ${SQL_T_IS_PLATFORM_CUSTOMER}`,
       ),
       Promise.all([
         pool.query<{ c: string }>(
           `SELECT COUNT(*)::text AS c
-           FROM tenants
-           WHERE created_at >= now() - interval '30 days'`,
+           FROM tenants t
+           WHERE ${SQL_T_IS_PLATFORM_CUSTOMER}
+             AND t.created_at >= now() - interval '30 days'`,
         ),
         pool.query<{ c: string }>(
           `SELECT COUNT(*)::text AS c
-           FROM users
-           WHERE created_at >= now() - interval '30 days'`,
+           FROM users u
+           INNER JOIN tenants t ON t.id = u.tenant_id AND ${SQL_T_IS_PLATFORM_CUSTOMER}
+           WHERE u.created_at >= now() - interval '30 days'`,
         ),
         pool.query<DayCountRow>(
           `WITH series AS (
@@ -228,8 +236,9 @@ export async function getSuperadminDashboardSnapshot(): Promise<SuperadminDashbo
            ),
            agg AS (
              SELECT created_at::date AS d, COUNT(*)::int AS c
-             FROM tenants
-             WHERE created_at >= CURRENT_DATE - interval '29 days'
+             FROM tenants t
+             WHERE ${SQL_T_IS_PLATFORM_CUSTOMER}
+               AND t.created_at >= CURRENT_DATE - interval '29 days'
              GROUP BY created_at::date
            )
            SELECT to_char(series.d, 'YYYY-MM-DD') AS date, COALESCE(agg.c, 0)::int AS count
@@ -246,10 +255,11 @@ export async function getSuperadminDashboardSnapshot(): Promise<SuperadminDashbo
              )::date AS d
            ),
            agg AS (
-             SELECT created_at::date AS d, COUNT(*)::int AS c
-             FROM users
-             WHERE created_at >= CURRENT_DATE - interval '29 days'
-             GROUP BY created_at::date
+             SELECT u.created_at::date AS d, COUNT(*)::int AS c
+             FROM users u
+             INNER JOIN tenants t ON t.id = u.tenant_id AND ${SQL_T_IS_PLATFORM_CUSTOMER}
+             WHERE u.created_at >= CURRENT_DATE - interval '29 days'
+             GROUP BY u.created_at::date
            )
            SELECT to_char(series.d, 'YYYY-MM-DD') AS date, COALESCE(agg.c, 0)::int AS count
            FROM series
@@ -287,7 +297,7 @@ export async function getSuperadminDashboardSnapshot(): Promise<SuperadminDashbo
                0
              )::bigint::text AS estimated_mrr_cents
            FROM plans p
-           LEFT JOIN tenants t ON t.plan_id = p.id
+           LEFT JOIN tenants t ON t.plan_id = p.id AND ${SQL_T_IS_PLATFORM_CUSTOMER}
            GROUP BY p.id, p.name, p.billing_interval, p.price_cents
            ORDER BY COUNT(t.id) DESC, p.name ASC`,
         ),
@@ -306,13 +316,15 @@ export async function getSuperadminDashboardSnapshot(): Promise<SuperadminDashbo
              )::bigint::text AS mrr_cents
            FROM tenants t
            INNER JOIN plans p ON p.id = t.plan_id
-           WHERE t.status = 'active'`,
+           WHERE t.status = 'active'
+             AND ${SQL_T_IS_PLATFORM_CUSTOMER}`,
         ),
         pool.query<{ cancelled_tenants: string }>(
           `SELECT COUNT(DISTINCT s.tenant_id)::text AS cancelled_tenants
            FROM subscriptions s
            WHERE s.type = 'saas'
              AND s.status = 'cancelled'
+             AND ${SQL_SUBSCRIPTION_TENANT_IS_PLATFORM_CUSTOMER}
              AND NOT EXISTS (
                SELECT 1
                FROM subscriptions s2
@@ -333,6 +345,7 @@ export async function getSuperadminDashboardSnapshot(): Promise<SuperadminDashbo
         `SELECT t.id::text, t.name, t.slug, t.status, t.created_at::text, p.name AS plan_name
          FROM tenants t
          LEFT JOIN plans p ON p.id = t.plan_id
+         WHERE ${SQL_T_IS_PLATFORM_CUSTOMER}
          ORDER BY t.created_at DESC
          LIMIT 8`,
       ),
@@ -351,7 +364,7 @@ export async function getSuperadminDashboardSnapshot(): Promise<SuperadminDashbo
            t.name AS tenant_name
          FROM users u
          LEFT JOIN profiles pr ON pr.id = u.id
-         LEFT JOIN tenants t ON t.id = u.tenant_id
+         INNER JOIN tenants t ON t.id = u.tenant_id AND ${SQL_T_IS_PLATFORM_CUSTOMER}
          ORDER BY u.created_at DESC
          LIMIT 8`,
       ),
@@ -375,11 +388,15 @@ export async function getSuperadminDashboardSnapshot(): Promise<SuperadminDashbo
            tb.paid_at::text,
            tb.created_at::text
          FROM tenant_billing tb
-         LEFT JOIN tenants t ON t.id = tb.tenant_id
+         INNER JOIN tenants t ON t.id = tb.tenant_id AND ${SQL_T_IS_PLATFORM_CUSTOMER}
          ORDER BY tb.created_at DESC
          LIMIT 8`,
       ),
-      pool.query<{ c: string }>('SELECT COUNT(*)::text AS c FROM users'),
+      pool.query<{ c: string }>(
+        `SELECT COUNT(*)::text AS c
+         FROM users u
+         INNER JOIN tenants t ON t.id = u.tenant_id AND ${SQL_T_IS_PLATFORM_CUSTOMER}`
+      ),
     ]);
 
   const [totalPlansR, byPlanR, mrrR, cancelledTenantsR] = planAgg;

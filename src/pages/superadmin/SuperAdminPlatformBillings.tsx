@@ -138,8 +138,8 @@ export default function SuperAdminPlatformBillings() {
       <div>
         <h1 className="text-2xl font-semibold">Cobranças da plataforma</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Listagem global de <code className="text-xs">tenant_billing</code> (SaaS). Somente leitura; link público é
-          idempotente.
+          Cobranças de clientes Platform (<code className="text-xs">account_type=platform_customer</code>). Canal
+          Partner não aparece aqui. Somente leitura; link público é idempotente.
         </p>
       </div>
 

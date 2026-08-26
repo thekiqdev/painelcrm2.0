@@ -2,6 +2,7 @@
  * Listagem global somente leitura: cobranças SaaS (tenant_billing) para Super Admin.
  */
 import { pool } from '../utils/db.js';
+import { SQL_T_IS_PLATFORM_CUSTOMER } from '../partner/superadminTenantListScope.js';
 import { pickGatewayFallbackUrlFromBilling } from './saasBillingLinkHelpers.js';
 import { buildPlatformSaasInvoiceUrl } from '../utils/saasPlatformInvoiceUrl.js';
 import type { TenantBillingRow } from './invoiceService.js';
@@ -75,6 +76,7 @@ export async function listSuperadminPlatformBillings(
   const countR = await pool.query<{ c: string }>(
     `SELECT count(*)::text AS c
      FROM tenant_billing tb
+     INNER JOIN tenants t ON t.id = tb.tenant_id AND ${SQL_T_IS_PLATFORM_CUSTOMER}
      WHERE ${whereSql}`,
     values,
   );
@@ -109,7 +111,7 @@ export async function listSuperadminPlatformBillings(
        tb.platform_public_pay_token,
        tb.gateway_metadata
      FROM tenant_billing tb
-     INNER JOIN tenants t ON t.id = tb.tenant_id
+     INNER JOIN tenants t ON t.id = tb.tenant_id AND ${SQL_T_IS_PLATFORM_CUSTOMER}
      LEFT JOIN plans p ON p.id = tb.plan_id
      WHERE ${whereSql}
      ORDER BY tb.created_at DESC, tb.id DESC

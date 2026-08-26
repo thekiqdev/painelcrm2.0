@@ -29,6 +29,6 @@ describe('dashboardMrr (Sprint 6)', () => {
 
   it('definições PRD presentes', () => {
     expect(DASHBOARD_KPI_DEFINITIONS.mrr_contracted).toMatch(/subscriptions/i);
-    expect(DASHBOARD_KPI_DEFINITIONS.mrr_catalog).toMatch(/catálogo|lista/i);
+    expect(DASHBOARD_KPI_DEFINITIONS.mrr_catalog).toMatch(/Platform|platform_customer|lista/i);
   });
 });

@@ -161,8 +161,10 @@ export async function executeFlowHttpRequest(opts: {
     responseMap: opts.responseMap,
   };
 
+  const timeoutMs = Math.max(500, Math.min(30_000, opts.timeoutMs || 10_000));
   const ac = new AbortController();
-  const t = setTimeout(() => ac.abort(), Math.max(500, Math.min(30_000, opts.timeoutMs || 10_000)));
+  const startedAt = Date.now();
+  const t = setTimeout(() => ac.abort(), timeoutMs);
   try {
     const res = await fetch(url.toString(), {
       method,
@@ -196,7 +198,17 @@ export async function executeFlowHttpRequest(opts: {
       error: ok ? undefined : `HTTP ${res.status}`,
     };
   } catch (e) {
-    const msg = e instanceof Error ? e.message : 'http_failed';
+    const elapsedMs = Date.now() - startedAt;
+    const name = e instanceof Error ? e.name : '';
+    const raw = e instanceof Error ? e.message : 'http_failed';
+    const isAbort =
+      name === 'AbortError' ||
+      /aborted|abort/i.test(raw) ||
+      (typeof (e as { code?: string })?.code === 'string' &&
+        String((e as { code?: string }).code).toUpperCase() === 'ABORT_ERR');
+    const msg = isAbort
+      ? `Timeout após ${timeoutMs}ms (sem resposta HTTP; aguardou ~${elapsedMs}ms)`
+      : raw;
     return {
       ok: false,
       status: 0,

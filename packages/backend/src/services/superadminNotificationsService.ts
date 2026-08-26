@@ -1,4 +1,8 @@
 import { pool } from '../utils/db.js';
+import {
+  PLATFORM_CUSTOMER_ACCOUNT_TYPE,
+  SQL_TENANT_IS_PLATFORM_CUSTOMER,
+} from '../partner/superadminTenantListScope.js';
 
 const NOTIFICATION_TYPE_NEW_TENANT = 'superadmin_new_tenant';
 const NOTIFICATION_TYPE_TRIAL_ENDING = 'superadmin_trial_ending';
@@ -14,6 +18,13 @@ async function getSuperAdminUserIds(): Promise<string[]> {
  */
 export async function notifySuperAdminsNewTenant(tenantName: string, tenantId: string): Promise<void> {
   try {
+    const typeR = await pool.query<{ account_type: string }>(
+      `SELECT account_type FROM tenants WHERE id = $1::uuid LIMIT 1`,
+      [tenantId]
+    );
+    if (typeR.rows[0]?.account_type !== PLATFORM_CUSTOMER_ACCOUNT_TYPE) {
+      return;
+    }
     const userIds = await getSuperAdminUserIds();
     for (const userId of userIds) {
       await pool.query(
@@ -40,7 +51,8 @@ export async function checkAndNotifyTrialEnding(): Promise<{ notified: number }>
   try {
     const result = await pool.query(
       `SELECT id, name, slug, trial_ends_at FROM tenants
-       WHERE status = 'trial' AND trial_ends_at IS NOT NULL
+       WHERE ${SQL_TENANT_IS_PLATFORM_CUSTOMER}
+         AND status = 'trial' AND trial_ends_at IS NOT NULL
          AND trial_ends_at > now() AND trial_ends_at <= now() + ($1::text || ' days')::interval`,
       [TRIAL_DAYS_AHEAD]
     );

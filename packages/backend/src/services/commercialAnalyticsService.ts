@@ -13,6 +13,7 @@ import type {
 } from '../commercial/tenantCommercialTypes.js';
 import { tryResolveSaasRenewalAmountFromContractSnapshot } from './billingService.js';
 import { pool } from '../utils/db.js';
+import { SQL_T_IS_PLATFORM_CUSTOMER } from '../partner/superadminTenantListScope.js';
 
 export type CommercialBreakdownCategoryKey =
   | 'catalog_price'
@@ -231,7 +232,8 @@ async function loadActiveTenantRows(): Promise<ActiveTenantRow[]> {
        ORDER BY sub.updated_at DESC NULLS LAST, sub.created_at DESC
        LIMIT 1
      ) s ON true
-     WHERE t.status = 'active'`,
+     WHERE t.status = 'active'
+       AND ${SQL_T_IS_PLATFORM_CUSTOMER}`,
   );
   return r.rows;
 }
@@ -283,10 +285,11 @@ async function loadPlanIntervalPrices(): Promise<Map<string, number>> {
 
 async function loadMonthlyRevenueLast30Days(): Promise<number> {
   const r = await pool.query<{ total_cents: string }>(
-    `SELECT COALESCE(SUM(amount_cents), 0)::text AS total_cents
-     FROM tenant_billing
-     WHERE status = 'paid'
-       AND paid_at >= now() - interval '30 days'`,
+    `SELECT COALESCE(SUM(tb.amount_cents), 0)::text AS total_cents
+     FROM tenant_billing tb
+     INNER JOIN tenants t ON t.id = tb.tenant_id AND ${SQL_T_IS_PLATFORM_CUSTOMER}
+     WHERE tb.status = 'paid'
+       AND tb.paid_at >= now() - interval '30 days'`,
   );
   return parseIntSafe(r.rows[0]?.total_cents);
 }

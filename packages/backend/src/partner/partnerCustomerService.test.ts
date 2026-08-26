@@ -237,6 +237,9 @@ describe('partnerCustomerService', () => {
     const items = await listPartnerCustomers('partner-1');
     expect(items[0].seats_allocated).toBe(5);
     expect(items[0].admin_email).toBe('admin@cliente.test');
+    expect(query.mock.calls[0][1]).toEqual(['partner-1']);
+    expect(String(query.mock.calls[0][0])).toMatch(/account_type = 'customer_tenant'/);
+    expect(String(query.mock.calls[0][0])).toMatch(/t\.partner_id = \$1/);
   });
 
   it('updatePartnerCustomer faz upgrade de plano e seats', async () => {

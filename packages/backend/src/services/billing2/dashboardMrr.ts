@@ -7,6 +7,11 @@
  */
 import { pool } from '../../utils/db.js';
 import { isBilling2FlagEnabled } from './billingFeatureFlags.js';
+import {
+  SQL_SUBSCRIPTION_TENANT_IS_PLATFORM_CUSTOMER,
+  SQL_T_IS_PLATFORM_CUSTOMER,
+  SQL_PT_IS_PLATFORM_CUSTOMER,
+} from '../../partner/superadminTenantListScope.js';
 
 export type DashboardMrrSource = 'catalog' | 'contracted';
 
@@ -56,9 +61,9 @@ export const DASHBOARD_KPI_DEFINITIONS = {
   mrr: 'MRR = soma mensalizada do valor contratado das assinaturas SaaS (active + past_due). Não usa só o preço de lista do catálogo.',
   arr: 'ARR = MRR × 12 (projeção anual a partir do MRR exibido).',
   mrr_catalog:
-    'MRR catálogo = tenants active × preço do plano (lista). Pode divergir do valor realmente cobrado.',
+    'MRR catálogo = tenants Platform (account_type=platform_customer) active × preço do plano (lista). Exclui canal Partner. Pode divergir do valor realmente cobrado.',
   mrr_contracted:
-    'MRR contratado = subscriptions SaaS (active + past_due) usando COALESCE(contracted_plan_price_cents, amount_cents), mensalizado pelo intervalo do contrato.',
+    'MRR contratado = subscriptions SaaS (active + past_due) de tenants Platform, COALESCE(contracted_plan_price_cents, amount_cents), mensalizado. Exclui canal Partner.',
   value_at_risk: 'Valor em risco = estoque de cobranças overdue / vencidas em aberto (tenant_billing).',
   inadimplencia: 'Inadimplência = mesmas cobranças overdue/vencidas (estoque), não confundir com subscription.past_due.',
 } as const;
@@ -83,7 +88,8 @@ export async function computeCatalogMrrCents(): Promise<number> {
        )::bigint::text AS mrr_cents
      FROM tenants t
      INNER JOIN plans p ON p.id = t.plan_id
-     WHERE t.status = 'active'`
+     WHERE t.status = 'active'
+       AND ${SQL_T_IS_PLATFORM_CUSTOMER}`
   );
   return Number.parseInt(r.rows[0]?.mrr_cents ?? '0', 10) || 0;
 }
@@ -108,7 +114,8 @@ export async function computeContractedMrrFromSubscriptions(): Promise<{
          COALESCE(NULLIF(TRIM(s.contracted_billing_interval), ''), s.billing_interval) AS billing_interval
        FROM subscriptions s
        WHERE s.type = 'saas'
-         AND s.status IN ('active', 'past_due')`
+         AND s.status IN ('active', 'past_due')
+         AND ${SQL_SUBSCRIPTION_TENANT_IS_PLATFORM_CUSTOMER}`
     ),
     pool.query<{ active_count: string; past_due_count: string }>(
       `SELECT
@@ -116,7 +123,11 @@ export async function computeContractedMrrFromSubscriptions(): Promise<{
          COUNT(*) FILTER (WHERE status = 'past_due')::text AS past_due_count
        FROM subscriptions
        WHERE type = 'saas'
-         AND status IN ('active', 'past_due')`
+         AND status IN ('active', 'past_due')
+         AND EXISTS (
+           SELECT 1 FROM tenants pt
+           WHERE pt.id = subscriptions.tenant_id AND ${SQL_PT_IS_PLATFORM_CUSTOMER}
+         )`
     ),
   ]);
 
@@ -140,7 +151,8 @@ export async function computeRenewalsDue30d(): Promise<{ count: number; cents: n
      FROM subscriptions s
      WHERE s.type = 'saas'
        AND s.status IN ('active', 'past_due')
-       AND s.next_billing_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '30 days'`
+       AND s.next_billing_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '30 days'
+       AND ${SQL_SUBSCRIPTION_TENANT_IS_PLATFORM_CUSTOMER}`
   );
   return {
     count: Number.parseInt(r.rows[0]?.c ?? '0', 10) || 0,

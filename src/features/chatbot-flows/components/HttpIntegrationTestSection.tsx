@@ -173,7 +173,8 @@ export function HttpIntegrationTestSection({ kind, data, onChange }: Props) {
         <div>
           <p className="text-sm font-medium">Testar integração</p>
           <p className="text-[11px] text-muted-foreground">
-            Dispara de verdade (com SSRF). Sample fica só no rascunho.
+            Dispara de verdade (com SSRF). Usa o timeout configurado no nó. Sample fica só no
+            rascunho.
           </p>
         </div>
         <Button type="button" size="sm" onClick={() => void runTest()} disabled={testing}>

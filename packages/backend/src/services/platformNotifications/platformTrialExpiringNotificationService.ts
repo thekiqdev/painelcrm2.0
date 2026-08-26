@@ -1,5 +1,6 @@
 import { pool } from '../../utils/db.js';
 import { schedulePublishPlatformTrialExpiring } from './platformBusinessNotifications.js';
+import { SQL_T_IS_PLATFORM_CUSTOMER } from '../../partner/superadminTenantListScope.js';
 
 const TRIAL_EXPIRING_DAYS_LEFT = 3;
 
@@ -9,7 +10,8 @@ function isPlatformTrialExpiringNotificationJobEnabled(): boolean {
 }
 
 /**
- * Avisa admins de tenants em trial quando faltam 3 dias para o fim (America/Sao_Paulo).
+ * Avisa admins de tenants Platform em trial quando faltam 3 dias para o fim (America/Sao_Paulo).
+ * Canal Partner não entra (trial bancado pelo Partner).
  * Idempotência por tenant/data no publisher (`platform.trial.expiring`).
  */
 export async function notifyPlatformTrialsExpiringSoon(): Promise<{ notified: number }> {
@@ -20,7 +22,8 @@ export async function notifyPlatformTrialsExpiringSoon(): Promise<{ notified: nu
   const r = await pool.query<{ id: string }>(
     `SELECT t.id::text AS id
      FROM tenants t
-     WHERE t.trial_ends_at IS NOT NULL
+     WHERE ${SQL_T_IS_PLATFORM_CUSTOMER}
+       AND t.trial_ends_at IS NOT NULL
        AND t.activated_billing_id IS NULL
        AND t.status IN ('trial', 'payment_pending')
        AND (timezone('America/Sao_Paulo', t.trial_ends_at))::date =

@@ -7,6 +7,7 @@ import { z } from 'zod';
 import type { AuthRequest } from '../middleware/auth.js';
 import { createPartner, PartnerAdminError, patchPartner } from './partnerAdminService.js';
 import { getPartnerDetail, listPartners } from './partnerRepository.js';
+import { listPartnerCustomers } from './partnerCustomerService.js';
 import type { PartnerAuthRequest } from './partnerAuthMiddleware.js';
 import type { PatchPartnerProfileInput } from './partnerTypes.js';
 import { pool } from '../utils/db.js';
@@ -79,6 +80,21 @@ export async function superadminGetPartner(req: AuthRequest, res: Response): Pro
       return;
     }
     res.json(detail);
+  } catch (err) {
+    handlePartnerError(err, res);
+  }
+}
+
+/** S8 Onda A — carteira do canal na ficha Super Admin (mesmo predicado da carteira Partner). */
+export async function superadminListPartnerCustomers(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const detail = await getPartnerDetail(req.params.id);
+    if (!detail) {
+      res.status(404).json({ error: 'Partner não encontrado', code: 'NOT_FOUND' });
+      return;
+    }
+    const items = await listPartnerCustomers(req.params.id);
+    res.json(items);
   } catch (err) {
     handlePartnerError(err, res);
   }

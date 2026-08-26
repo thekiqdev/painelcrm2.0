@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { ArrowLeft, Settings2, Trash2 } from 'lucide-react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,7 +12,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { ArrowLeft, Settings2, Trash2 } from 'lucide-react';
 import { toast } from '@/components/ui/sonner';
 import { apiClient } from '@/integrations/api/client';
 import { datetimeLocalToTrialEndsAtIso, trialEndsAtToDatetimeLocal } from '@/lib/trialEndsAtBrAdmin';
@@ -34,6 +34,8 @@ interface TenantDetail {
   trial_ends_at: string | null;
   created_at: string;
   users_count?: number;
+  account_type?: string | null;
+  partner_id?: string | null;
 }
 
 interface PrimaryUser {
@@ -244,6 +246,36 @@ export default function SuperAdminClientDetail() {
           <p className="text-muted-foreground">Gerenciamento completo da empresa</p>
         </div>
       </div>
+
+      {tenant.account_type === 'customer_tenant' && tenant.partner_id ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Cliente do canal Partner</CardTitle>
+            <CardDescription>
+              Não aparece na lista Empresas (SaaS). Cobrança no gateway do Partner.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button variant="outline" asChild>
+              <Link to={`/superadmin/partners/${tenant.partner_id}`}>Abrir Partner</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {tenant.account_type === 'partner' ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Tenant Partner</CardTitle>
+            <CardDescription>Agência white-label — gerencie em Partners, não como cliente SaaS.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button variant="outline" asChild>
+              <Link to={`/superadmin/partners/${tenant.id}`}>Abrir Partners</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader>

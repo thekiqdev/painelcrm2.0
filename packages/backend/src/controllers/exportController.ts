@@ -1,6 +1,11 @@
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth.js';
 import { pool } from '../utils/db.js';
+import {
+  isAllTenantsScope,
+  PLATFORM_CUSTOMER_ACCOUNT_TYPE,
+  SQL_T_IS_PLATFORM_CUSTOMER,
+} from '../partner/superadminTenantListScope.js';
 
 function escapeCsv(value: unknown): string {
   if (value == null) return '';
@@ -14,15 +19,30 @@ function escapeCsv(value: unknown): string {
  */
 export async function exportClients(req: AuthRequest, res: Response): Promise<void> {
   try {
+    const includeAll = isAllTenantsScope(req.query.scope);
     const result = await pool.query(
       `SELECT t.id, t.name, t.slug, t.domain, t.status, t.trial_ends_at, t.created_at,
+              t.account_type, t.partner_id::text AS partner_id,
               p.name AS plan_name, p.slug AS plan_slug,
               (SELECT COUNT(*)::int FROM users u WHERE u.tenant_id = t.id) AS users_count
        FROM tenants t
        JOIN plans p ON p.id = t.plan_id
-       ORDER BY t.name`
+       WHERE ($1::boolean IS TRUE OR t.account_type = $2)
+       ORDER BY t.name`,
+      [includeAll, PLATFORM_CUSTOMER_ACCOUNT_TYPE]
     );
-    const headers = ['id', 'name', 'slug', 'domain', 'status', 'trial_ends_at', 'plan_name', 'users_count', 'created_at'];
+    const headers = [
+      'id',
+      'name',
+      'slug',
+      'domain',
+      'status',
+      'trial_ends_at',
+      'plan_name',
+      'users_count',
+      'account_type',
+      'created_at',
+    ];
     const rows = result.rows.map((r: Record<string, unknown>) =>
       headers.map((h) => escapeCsv(r[h])).join(',')
     );
@@ -44,7 +64,7 @@ export async function exportPlans(req: AuthRequest, res: Response): Promise<void
     const result = await pool.query(
       `SELECT p.id, p.name, p.slug, p.description, p.price_cents, p.billing_interval,
               p.max_users, p.max_profiles, p.is_active, p.sort_order, p.created_at,
-              (SELECT COUNT(*)::int FROM tenants t WHERE t.plan_id = p.id) AS tenants_count
+              (SELECT COUNT(*)::int FROM tenants t WHERE t.plan_id = p.id AND ${SQL_T_IS_PLATFORM_CUSTOMER}) AS tenants_count
        FROM plans p
        ORDER BY p.sort_order, p.name`
     );
@@ -74,6 +94,7 @@ export async function exportUsage(req: AuthRequest, res: Response): Promise<void
               (SELECT COUNT(*)::int FROM user_profiles up JOIN users u ON u.id = up.owner_id WHERE u.tenant_id = t.id) AS profiles_count
        FROM tenants t
        JOIN plans p ON p.id = t.plan_id
+       WHERE ${SQL_T_IS_PLATFORM_CUSTOMER}
        ORDER BY p.name, t.name`
     );
     const headers = ['tenant_id', 'tenant_name', 'slug', 'status', 'plan_name', 'max_users', 'max_profiles', 'users_count', 'profiles_count'];

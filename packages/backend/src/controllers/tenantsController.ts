@@ -1,6 +1,10 @@
 import { Response } from 'express';
 import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
+import {
+  isAllTenantsScope,
+  PLATFORM_CUSTOMER_ACCOUNT_TYPE,
+} from '../partner/superadminTenantListScope.js';
 import { FEATURE_KEYS, isValidFeatureKey } from '../constants/features.js';
 import { logSuperAdminAction, insertTenantPlanHistory } from '../services/auditLogService.js';
 import { notifySuperAdminsNewTenant } from '../services/superadminNotificationsService.js';
@@ -52,10 +56,12 @@ const createTenantSchema = z.object({
 
 const updateTenantSchema = createTenantSchema.partial();
 
-export async function listTenants(_req: AuthRequest, res: Response): Promise<void> {
+export async function listTenants(req: AuthRequest, res: Response): Promise<void> {
   try {
+    const includeAll = isAllTenantsScope(req.query.scope);
     const result = await pool.query(
       `SELECT t.id, t.name, t.slug, t.domain, t.plan_id, t.status, t.trial_ends_at, t.created_at, t.updated_at,
+        t.account_type, t.partner_id::text AS partner_id,
         p.name AS plan_name, p.slug AS plan_slug,
         (SELECT COUNT(*)::int FROM users u WHERE u.tenant_id = t.id) AS users_count,
         (SELECT u.id FROM users u WHERE u.tenant_id = t.id ORDER BY u.created_at ASC LIMIT 1) AS primary_user_id,
@@ -64,7 +70,9 @@ export async function listTenants(_req: AuthRequest, res: Response): Promise<voi
         NULLIF(TRIM(t.billing_phone), '') AS billing_phone
        FROM tenants t
        JOIN plans p ON p.id = t.plan_id
-       ORDER BY t.created_at DESC, t.name ASC`
+       WHERE ($1::boolean IS TRUE OR t.account_type = $2)
+       ORDER BY t.created_at DESC, t.name ASC`,
+      [includeAll, PLATFORM_CUSTOMER_ACCOUNT_TYPE]
     );
     const rows = result.rows;
     let withCreatedVia: Record<string, unknown>[] = rows;

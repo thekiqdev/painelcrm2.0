@@ -451,7 +451,7 @@ export default function SuperAdminDashboard() {
           <PlatformSupportSummaryCard summary={null} loading />
         </section>
         <section className="space-y-3">
-          <SectionHeading title="Crescimento e planos" description="Série de 30 dias e distribuição por plano contratado." />
+          <SectionHeading title="Crescimento e planos" description="Série de 30 dias (venda direta) e distribuição por plano. Canal Partner excluído." />
           <ChartsSkeleton />
         </section>
         <section className="space-y-3">
@@ -563,14 +563,15 @@ export default function SuperAdminDashboard() {
         <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Super Admin</p>
         <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">Painel executivo</h1>
         <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
-          Resumo financeiro, evolução da base, distribuição por plano e monitoramento operacional.
+          Números da venda direta (Platform). Clientes de Partner e a agência WL não entram nestes totais —
+          use Partners e channel-stats para o canal.
         </p>
       </header>
 
       <section className="space-y-3">
         <SectionHeading
           title="Indicadores principais"
-          description="MRR (flag dashboard_mrr_contracted), caixa do mês, contratos SaaS e risco de cobrança. Hover nos subtítulos para definições PRD §12."
+          description="MRR e caixa só de tenants platform_customer. Canal Partner não infla estes KPIs. Hover nos subtítulos para definições PRD §12."
         />
         <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-7">
         <ExecutiveKpiCard
@@ -578,7 +579,7 @@ export default function SuperAdminDashboard() {
           subtitle={
             mrrSource === 'contracted'
               ? 'MRR contratado (subscriptions active + past_due)'
-              : 'MRR catálogo (tenants × preço de lista) — fallback'
+              : 'MRR catálogo (empresas Platform × preço de lista) — fallback'
           }
           titleAttr={defs.mrr ?? defs.mrr_contracted}
           icon={TrendingUp}
@@ -817,13 +818,14 @@ export default function SuperAdminDashboard() {
       </section>
 
       <section className="space-y-3">
-        <SectionHeading title="Crescimento e planos" description="Série de 30 dias e distribuição por plano contratado." />
+        <SectionHeading title="Crescimento e planos" description="Série de 30 dias (venda direta) e distribuição por plano. Canal Partner excluído." />
         <div className="grid gap-3 sm:gap-4 xl:grid-cols-3 2xl:gap-5">
         <Card className="border-border/60 shadow-none">
           <CardHeader className="space-y-1 px-4 pb-0 pt-4">
             <CardTitle className="text-sm font-semibold tracking-tight">Crescimento de empresas</CardTitle>
             <CardDescription className="text-xs">
               Últimos 30 dias · {intFmt.format(tenantsGrowthData.reduce((acc, item) => acc + item.count, 0))} novas
+              empresas Platform
             </CardDescription>
           </CardHeader>
           <CardContent className="px-4 pb-4 pt-3">

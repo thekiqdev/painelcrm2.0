@@ -1786,17 +1786,11 @@ export function NodePropertiesPanel({
                 flowVariables={flowVariables}
               />
             ) : null}
-            <div className="space-y-1.5">
-              <Label htmlFor="http-timeout">Timeout (ms)</Label>
-              <Input
-                id="http-timeout"
-                type="number"
-                min={500}
-                max={30000}
-                value={Number(data.timeout_ms) || 10000}
-                onChange={(e) => onChange({ timeout_ms: Number(e.target.value) || 10000 })}
-              />
-            </div>
+            <HttpTimeoutFields
+              id="http-timeout"
+              valueMs={Number(data.timeout_ms) || 10000}
+              onChange={(timeout_ms) => onChange({ timeout_ms })}
+            />
             <div className="space-y-1.5">
               <Label htmlFor="http-status-var">Variável do status HTTP</Label>
               <Input
@@ -1934,17 +1928,11 @@ export function NodePropertiesPanel({
                 Assina o body em <code>X-PainelCRM-Signature</code>. Removido no export.
               </p>
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="wh-timeout">Timeout (ms)</Label>
-              <Input
-                id="wh-timeout"
-                type="number"
-                min={500}
-                max={30000}
-                value={Number(data.timeout_ms) || 10000}
-                onChange={(e) => onChange({ timeout_ms: Number(e.target.value) || 10000 })}
-              />
-            </div>
+            <HttpTimeoutFields
+              id="wh-timeout"
+              valueMs={Number(data.timeout_ms) || 10000}
+              onChange={(timeout_ms) => onChange({ timeout_ms })}
+            />
             <HttpIntegrationTestSection kind="webhook_out" data={data} onChange={onChange} />
             <p className="text-[11px] text-muted-foreground">
               Saídas: <span className="text-emerald-600">ok</span> /{' '}
@@ -3277,6 +3265,66 @@ function WaitInputContactFields({
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function clampHttpTimeoutMs(raw: number): number {
+  if (!Number.isFinite(raw)) return 10000;
+  return Math.max(500, Math.min(30000, Math.round(raw)));
+}
+
+const HTTP_TIMEOUT_PRESETS_MS = [5000, 10000, 15000, 30000] as const;
+
+/** Timeout do request HTTP / webhook_out (500ms–30s). */
+function HttpTimeoutFields({
+  id,
+  valueMs,
+  onChange,
+}: {
+  id: string;
+  valueMs: number;
+  onChange: (timeoutMs: number) => void;
+}) {
+  const ms = clampHttpTimeoutMs(valueMs);
+  const secondsLabel = ms % 1000 === 0 ? `${ms / 1000}s` : `${(ms / 1000).toFixed(1)}s`;
+
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id}>Timeout da requisição</Label>
+      <div className="flex flex-wrap gap-1.5">
+        {HTTP_TIMEOUT_PRESETS_MS.map((preset) => {
+          const active = ms === preset;
+          return (
+            <Button
+              key={preset}
+              type="button"
+              size="sm"
+              variant={active ? 'default' : 'outline'}
+              className="h-7 px-2 text-[11px]"
+              onClick={() => onChange(preset)}
+            >
+              {preset / 1000}s
+            </Button>
+          );
+        })}
+      </div>
+      <div className="flex items-center gap-2">
+        <Input
+          id={id}
+          type="number"
+          min={500}
+          max={30000}
+          step={500}
+          value={ms}
+          onChange={(e) => onChange(clampHttpTimeoutMs(Number(e.target.value) || 10000))}
+          className="font-mono text-xs"
+        />
+        <span className="shrink-0 text-[11px] text-muted-foreground">ms · {secondsLabel}</span>
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        Tempo máximo aguardando resposta (mín. 0,5s · máx. 30s). Se estourar: saída erro, HTTP 0.
+      </p>
     </div>
   );
 }

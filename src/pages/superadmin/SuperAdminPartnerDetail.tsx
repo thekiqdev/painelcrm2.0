@@ -46,6 +46,18 @@ export default function SuperAdminPartnerDetail() {
       created_at: string;
     }>
   >([]);
+  const [customers, setCustomers] = useState<
+    Array<{
+      id: string;
+      name: string;
+      slug: string;
+      status: string;
+      admin_email: string | null;
+      sell_plan_name: string | null;
+      users_count: number;
+    }>
+  >([]);
+  const [customersLoading, setCustomersLoading] = useState(false);
 
   const reload = async () => {
     if (!id) return;
@@ -56,10 +68,19 @@ export default function SuperAdminPartnerDetail() {
       return;
     }
     setDetail(res.data);
-    const ev = await apiClient.get<typeof events>(
-      `/api/superadmin/partners/${id}/suspension-events`
-    );
+    setCustomersLoading(true);
+    const [ev, cust] = await Promise.all([
+      apiClient.get<typeof events>(`/api/superadmin/partners/${id}/suspension-events`),
+      apiClient.get<typeof customers>(`/api/superadmin/partners/${id}/customers`),
+    ]);
     if (!ev.error && ev.data) setEvents(ev.data);
+    if (cust.error) {
+      toast.error(cust.error || 'Falha ao listar clientes do canal');
+      setCustomers([]);
+    } else {
+      setCustomers(Array.isArray(cust.data) ? cust.data : []);
+    }
+    setCustomersLoading(false);
   };
 
   useEffect(() => {
@@ -175,6 +196,43 @@ export default function SuperAdminPartnerDetail() {
               {saving ? 'Salvando…' : 'Alocar'}
             </Button>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Clientes do canal</CardTitle>
+          <CardDescription>
+            Customer tenants deste Partner. Não entram na lista Empresas (venda direta).
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {customersLoading ? (
+            <p className="text-sm text-muted-foreground">Carregando carteira…</p>
+          ) : customers.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Nenhum cliente no canal ainda.</p>
+          ) : (
+            <div className="divide-y rounded-md border text-sm">
+              {customers.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-muted/50"
+                  onClick={() => navigate(`/superadmin/clients/${c.id}`)}
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate font-medium">{c.name}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {c.admin_email || c.slug} · {c.sell_plan_name || 'sem plano'} · {c.status}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {c.users_count} usuário{c.users_count === 1 ? '' : 's'}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 

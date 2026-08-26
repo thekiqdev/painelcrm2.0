@@ -2,6 +2,7 @@
  * Leitura Super Admin — Assinaturas SaaS (Billing 2.0 Sprint 5).
  */
 import { pool } from '../../utils/db.js';
+import { SQL_T_IS_PLATFORM_CUSTOMER } from '../../partner/superadminTenantListScope.js';
 
 export type SaasSubscriptionListItem = {
   id: string;
@@ -121,7 +122,7 @@ export async function listSaasSubscriptionsForSuperadmin(
   const q = query.q?.trim() || null;
 
   const params: unknown[] = [];
-  const where: string[] = [`s.type = 'saas'`];
+  const where: string[] = [`s.type = 'saas'`, SQL_T_IS_PLATFORM_CUSTOMER];
 
   if (status && status !== 'all') {
     params.push(status);

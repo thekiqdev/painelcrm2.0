@@ -115,6 +115,17 @@ describe('executeFlowHttpRequest — map em qualquer status', () => {
     expect(res.mapped.ext_id).toBe('srv');
     expect(res.mapped.http_body).toContain('boom');
   });
+
+  it('AbortError → Timeout após N ms e status 0', async () => {
+    const err = new Error('This operation was aborted');
+    err.name = 'AbortError';
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(err));
+    const res = await executeFlowHttpRequest({ ...mapOpts, timeoutMs: 15000 });
+    expect(res.ok).toBe(false);
+    expect(res.status).toBe(0);
+    expect(res.error).toMatch(/Timeout após 15000ms/i);
+    expect(res.mapped.http_status).toBe('0');
+  });
 });
 
 describe('buildWebhookOutBody S8', () => {

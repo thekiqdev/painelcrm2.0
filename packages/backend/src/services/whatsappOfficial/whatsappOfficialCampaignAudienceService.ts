@@ -1,4 +1,5 @@
 import { pool } from '../../utils/db.js';
+import { SQL_T_IS_PLATFORM_CUSTOMER } from '../../partner/superadminTenantListScope.js';
 import { normalizePhoneE164Digits, type CsvCampaignRow } from './whatsappOfficialCampaignCsv.js';
 
 /** Segmentação de tenants (Super Admin). */
@@ -57,7 +58,7 @@ export async function resolveTenantAudienceRows(filters: TenantAudienceFilters):
       LIMIT 1
     ) u ON true
     LEFT JOIN profiles pr ON pr.id = u.id
-    WHERE 1=1
+    WHERE ${SQL_T_IS_PLATFORM_CUSTOMER}
   `;
 
   if (filters.active_only === true) {

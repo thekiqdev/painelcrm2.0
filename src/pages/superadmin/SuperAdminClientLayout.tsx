@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { NavLink, Outlet, useNavigate, useParams } from 'react-router-dom';
+import { Link, NavLink, Outlet, useNavigate, useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -142,6 +142,30 @@ function ClientLayoutInner() {
             </Button>
           </div>
         </div>
+        {tenant.account_type === 'customer_tenant' && tenant.partner_id ? (
+          <div className="border-t bg-muted/40 px-4 py-2 text-sm">
+            Cliente do canal Partner. Cobrança e carteira são do Partner —{' '}
+            <Link
+              className="font-medium text-foreground underline underline-offset-2"
+              to={`/superadmin/partners/${tenant.partner_id}`}
+            >
+              abrir ficha do Partner
+            </Link>
+            . Esta tela permanece para suporte (acesso pleno).
+          </div>
+        ) : null}
+        {tenant.account_type === 'partner' ? (
+          <div className="border-t bg-muted/40 px-4 py-2 text-sm">
+            Este tenant é a agência Partner, não um cliente SaaS.{' '}
+            <Link
+              className="font-medium text-foreground underline underline-offset-2"
+              to={`/superadmin/partners/${tenant.id}`}
+            >
+              Abrir Partners
+            </Link>
+            .
+          </div>
+        ) : null}
       </header>
 
       <div className="flex flex-1 overflow-hidden">
