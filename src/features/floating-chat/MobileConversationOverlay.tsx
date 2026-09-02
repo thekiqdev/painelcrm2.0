@@ -530,6 +530,7 @@ export function MobileConversationOverlay({ conversationId, onClose }: Props) {
       ) : (
       <ChatComposerDropZone
         disabled
+        pasteDisabled={!canChatReply()}
         className="flex min-h-0 flex-1 flex-col"
         onSendImageFile={(f) => void sendMobileImageFile(f)}
         onSendDocumentFile={(f) => void sendMobileDocumentFile(f)}

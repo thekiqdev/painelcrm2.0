@@ -61,9 +61,11 @@ function resolveDocumentHref(rawUrl: string | null): string | null {
 function ChatMessageImage({
   rawUrl,
   caption,
+  fileName,
 }: {
   rawUrl: string;
   caption?: string | null;
+  fileName?: string | null;
 }) {
   const [failed, setFailed] = useState(false);
   const displaySrc = resolveDocumentHref(rawUrl) || rawUrl;
@@ -71,7 +73,7 @@ function ChatMessageImage({
   const openPreview = (e?: React.MouseEvent | React.KeyboardEvent) => {
     e?.preventDefault();
     e?.stopPropagation();
-    openChatImageLightbox({ src: displaySrc, caption });
+    openChatImageLightbox({ src: displaySrc, caption, fileName });
   };
 
   if (failed) {
@@ -355,7 +357,7 @@ export const ChatBubbleContent: React.FC<{
         ? displayText
         : '';
     const cap = captionFromContract || captionFromBody;
-    return <ChatMessageImage rawUrl={rawMediaUrl} caption={cap || undefined} />;
+    return <ChatMessageImage rawUrl={rawMediaUrl} caption={cap || undefined} fileName={docName} />;
   }
 
   if ((kind === 'image' || kind === 'sticker') && !rawMediaUrl) {
@@ -380,12 +382,12 @@ export const ChatBubbleContent: React.FC<{
   }
 
   if (url && rawMediaUrl && (looksLikeImageUrl || kind === 'image' || kind === 'sticker')) {
-    return <ChatMessageImage rawUrl={rawMediaUrl} />;
+    return <ChatMessageImage rawUrl={rawMediaUrl} fileName={docName} />;
   }
 
   if (url) {
     if (looksLikeImageUrl && rawMediaUrl) {
-      return <ChatMessageImage rawUrl={rawMediaUrl} caption={displayText || undefined} />;
+      return <ChatMessageImage rawUrl={rawMediaUrl} caption={displayText || undefined} fileName={docName} />;
     }
     return (
       <p className={`text-xs opacity-80 ${CHAT_MSG_TEXT}`}>

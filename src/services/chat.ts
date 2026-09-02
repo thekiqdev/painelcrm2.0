@@ -1274,6 +1274,26 @@ export const chatService = {
     };
   },
 
+  /** Inicia conversa outbound pelo telefone (sem lead/cliente). */
+  async prepareConversationByPhone(body: {
+    instance_id: string;
+    phone: string;
+    contact_name?: string;
+  }): Promise<{ conversation: ChatConversation; is_new: boolean; reused: boolean }> {
+    const response = await apiClient.post<{
+      conversation: ChatConversation | null;
+      is_new: boolean;
+      reused: boolean;
+    }>('/api/chat/conversations/prepare-by-phone', body);
+    if (response.error) throw new Error(response.error);
+    if (!response.data?.conversation) throw new Error('Resposta inválida ao preparar conversa');
+    return {
+      conversation: normalizeConversation(response.data.conversation as ChatConversation),
+      is_new: Boolean(response.data.is_new),
+      reused: Boolean(response.data.reused),
+    };
+  },
+
   /** Altera a instância da conversa preparada (apenas antes da primeira mensagem). */
   async patchPreparedConversationInstance(
     conversationId: string,

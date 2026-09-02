@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils';
 import {
   CHAT_OUTGOING_FILE_MAX_BYTES,
   classifyChatOutgoingFile,
+  extractClipboardFiles,
   validateChatOutgoingFileSize,
 } from '@/utils/chatComposerOutgoingFile';
 import { toast } from 'sonner';
@@ -13,6 +14,8 @@ type Props = {
   children: ReactNode;
   /** Desliga drag-and-drop (ex.: mobile ou sem conversa) */
   disabled?: boolean;
+  /** Desliga colar ficheiros (Ctrl+V). Por omissão segue `disabled`. */
+  pasteDisabled?: boolean;
   /**
    * Chamado com ficheiros válidos (um de cada vez na prática).
    * O pai decide enviar como imagem ou documento.
@@ -25,6 +28,7 @@ type Props = {
 export function ChatComposerDropZone({
   children,
   disabled = false,
+  pasteDisabled,
   onSendImageFile,
   onSendDocumentFile,
   className,
@@ -32,6 +36,7 @@ export function ChatComposerDropZone({
   useChatPerfRender('Composer');
   const [dragActive, setDragActive] = useState(false);
   const dragCounter = useRef(0);
+  const pasteOff = pasteDisabled ?? disabled;
 
   const handleDragEnter = useCallback(
     (e: React.DragEvent) => {
@@ -100,6 +105,19 @@ export function ChatComposerDropZone({
     [disabled, routeFile],
   );
 
+  const handlePaste = useCallback(
+    async (e: React.ClipboardEvent) => {
+      if (pasteOff) return;
+      const files = extractClipboardFiles(e.clipboardData);
+      if (files.length === 0) return;
+      e.preventDefault();
+      for (const file of files) {
+        await routeFile(file);
+      }
+    },
+    [pasteOff, routeFile],
+  );
+
   return (
     <div
       className={cn('relative flex min-h-0 min-w-0 flex-1 flex-col', className)}
@@ -107,6 +125,7 @@ export function ChatComposerDropZone({
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
+      onPaste={handlePaste}
     >
       {children}
       {dragActive && !disabled ? (

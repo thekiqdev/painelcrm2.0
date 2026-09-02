@@ -839,6 +839,7 @@ export function FloatingConversationWindow({
       ) : (
       <ChatComposerDropZone
         disabled={!canChatReply() || isMobile}
+        pasteDisabled={!canChatReply()}
         className="flex min-h-0 min-w-0 flex-1 flex-col"
         onSendImageFile={(f) => void sendFloatingImageFile(f)}
         onSendDocumentFile={(f) => void sendFloatingDocumentFile(f)}

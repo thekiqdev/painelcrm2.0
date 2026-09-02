@@ -55,6 +55,32 @@ export function validateChatOutgoingFileSize(file: File): { ok: true } | { ok: f
   return { ok: true };
 }
 
+/** Extrai ficheiros colados (Ctrl+V): ficheiros copiados ou screenshot da área de transferência. */
+export function extractClipboardFiles(data: DataTransfer | null | undefined): File[] {
+  if (!data) return [];
+  const fromFiles = Array.from(data.files || []);
+  if (fromFiles.length > 0) return fromFiles.map(normalizeClipboardFile);
+
+  const out: File[] = [];
+  for (const item of Array.from(data.items || [])) {
+    if (item.kind !== 'file') continue;
+    const file = item.getAsFile();
+    if (file) out.push(normalizeClipboardFile(file));
+  }
+  return out;
+}
+
+/** Screenshots colados podem vir sem nome; garante um nome mínimo para upload. */
+export function normalizeClipboardFile(file: File): File {
+  const trimmedName = file.name?.trim();
+  if (trimmedName) return file;
+  const mime = (file.type || '').toLowerCase();
+  const ext = mime.startsWith('image/')
+    ? mime.split('/')[1]?.replace('jpeg', 'jpg') || 'png'
+    : 'bin';
+  return new File([file], `clipboard-${Date.now()}.${ext}`, { type: file.type || 'application/octet-stream' });
+}
+
 const EXT_MIME: Record<string, string> = {
   pdf: 'application/pdf',
   doc: 'application/msword',

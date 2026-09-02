@@ -331,6 +331,10 @@ import {
   type ChatTicketDraft,
 } from '@/components/chat/ChatCreateTicketDialog';
 import { ChatComposerDropZone } from '@/components/chat/ChatComposerDropZone';
+import {
+  ChatStartWhatsappConversationDialog,
+  ChatStartWhatsappIconButton,
+} from '@/components/chat/ChatStartWhatsappConversationDialog';
 import { ChatStartFlowButton } from '@/components/chat/ChatStartFlowButton';
 import {
   ChatScheduledMessagesStrip,
@@ -620,6 +624,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
 
   const [slaUiContext, setSlaUiContext] = useState<SlaContextForUi | null>(null);
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
+  const [startWhatsappDialogOpen, setStartWhatsappDialogOpen] = useState(false);
   const [transferUsers, setTransferUsers] = useState<TenantUser[]>([]);
   const [transferTeams, setTransferTeams] = useState<Team[]>([]);
   const [transferTargetId, setTransferTargetId] = useState('');
@@ -3000,6 +3005,20 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
     instances.find((instance) => instance.id === selectedInstanceId) ||
     instances.find((instance) => instance.status === 'connected') ||
     null;
+
+  const connectedInstancesForStart = useMemo(
+    () =>
+      instances.filter(
+        (instance) =>
+          enabledInstanceIds.has(instance.id) &&
+          (instance.status === 'connected' || instance.status === 'open') &&
+          instance.metadata?.enabled_in_chat !== false,
+      ),
+    [instances, enabledInstanceIds],
+  );
+
+  const canStartWhatsappConversation =
+    !isPlatformScope && hasPermissionKey('chat.send_message') && canChatReply();
   const connectionStatus = activeInstance?.status || 'disconnected';
   const instanceConnectionUi = useMemo(
     () => resolveInstanceConnectionUi(activeInstance),
@@ -3066,6 +3085,18 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       (conversation.conversation_type === 'group' || conversation.external_chat_id?.endsWith('@g.us'));
     void loadConversationProfile(conversationId, { skipCrm });
   };
+
+  const handleWhatsappConversationStarted = useCallback(
+    async (conversationId: string) => {
+      const ids = Array.from(enabledInstanceIdsRef.current);
+      if (ids.length > 0) {
+        await loadConversations(ids, { force: true });
+      }
+      handleSelectConversationRef.current(conversationId);
+      scheduleInvalidateFloatingChatAggregates(queryClient);
+    },
+    [loadConversations, queryClient],
+  );
 
   const openContactProfileFromList = (conversation: ChatConversation, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -5676,6 +5707,18 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                           className="h-9 bg-background pl-9 md:h-8 md:text-[13px]"
                         />
                       </div>
+                      {canStartWhatsappConversation ? (
+                        <ChatStartWhatsappIconButton
+                          className="h-9 w-9 shrink-0 rounded-lg md:h-8 md:w-8"
+                          disabled={connectedInstancesForStart.length === 0}
+                          title={
+                            connectedInstancesForStart.length === 0
+                              ? 'Conecte um WhatsApp para iniciar conversa'
+                              : 'Nova conversa WhatsApp'
+                          }
+                          onClick={() => setStartWhatsappDialogOpen(true)}
+                        />
+                      ) : null}
                       <Popover open={filtersPopoverOpen} onOpenChange={setFiltersPopoverOpen}>
                 <PopoverTrigger asChild>
               <Button 
@@ -6740,6 +6783,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
                       <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
                         <ChatComposerDropZone
                           disabled={!selectedConversationId || !canChatReply() || isMobile}
+                          pasteDisabled={!selectedConversationId || !canChatReply()}
                           className="flex min-h-0 flex-1 flex-col"
                           onSendImageFile={(f) => void sendChatImageFile(f)}
                           onSendDocumentFile={(f) => void sendChatDocumentFile(f)}
@@ -7546,6 +7590,16 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
           }}
         />
       ) : null}
+
+      <ChatStartWhatsappConversationDialog
+        open={startWhatsappDialogOpen}
+        onOpenChange={setStartWhatsappDialogOpen}
+        instances={connectedInstancesForStart}
+        defaultInstanceId={
+          selectedConversation?.instanceId ?? selectedConversation?.instance_id ?? activeInstance?.id ?? null
+        }
+        onStarted={handleWhatsappConversationStarted}
+      />
 
       <Dialog open={transferDialogOpen} onOpenChange={setTransferDialogOpen}>
         <DialogContent className="sm:max-w-md">

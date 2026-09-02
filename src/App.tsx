@@ -25,6 +25,7 @@ import { ChatRouteFallback } from "@/components/chat/ChatRouteFallback";
 import { ChatRouteTimingListener } from "@/components/chat/ChatRouteTimingListener";
 import { loadChatPage } from "@/pages/chatLazy";
 import { EntityDrawerContainer } from "@/components/entities/EntityDrawerContainer";
+import { ChatImageLightboxHost } from "@/components/chat/ChatImageLightbox";
 
 /**
  * Fase 2 — bundle inicial do CRM:
@@ -1364,6 +1365,7 @@ const App = () => (
           <EntityDrawerContainer />
           </ModulePermissionsProvider>
         </AuthProvider>
+        <ChatImageLightboxHost />
         <Toaster />
         </PartnerBrandProvider>
         </ThemeProvider>

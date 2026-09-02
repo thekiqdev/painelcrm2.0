@@ -18,6 +18,7 @@ import {
   getClientMessages,
   sendMessage,
   prepareLeadConversation,
+  prepareConversationByPhone,
   resolveConversationForClient,
   patchPreparedConversationInstance,
   configureInstanceWebhook,
@@ -166,6 +167,7 @@ router.post('/queues', postChatQueue);
 router.patch('/queues/:id', patchChatQueue);
 router.get('/conversations', getConversations);
 router.post('/conversations/prepare', prepareLeadConversation);
+router.post('/conversations/prepare-by-phone', prepareConversationByPhone);
 router.post('/conversations/resolve-for-client', resolveConversationForClient);
 router.patch('/conversations/:id/prepared-instance', patchPreparedConversationInstance);
 router.post('/conversations/:id/attend', attendConversation);

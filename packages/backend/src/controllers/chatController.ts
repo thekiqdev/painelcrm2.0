@@ -306,6 +306,13 @@ const prepareLeadConversationSchema = z.object({
   instance_id: z.string().uuid(),
 });
 
+const prepareConversationByPhoneSchema = z.object({
+  instance_id: z.string().uuid(),
+  phone: z.string().trim().min(8).max(32),
+  /** Nome exibido na conversa (opcional). */
+  contact_name: z.string().trim().max(120).optional(),
+});
+
 const resolveConversationForClientSchema = z.object({
   client_id: z.string().uuid(),
   instance_id: z.string().uuid(),
@@ -8987,6 +8994,110 @@ async function ensureClientConversationForManualStart(params: {
   return { conversationId, reused: false, isNew: true };
 }
 
+async function findDirectConversationForManualStart(params: {
+  tenantId: string;
+  instanceId: string;
+  digits: string;
+  jid: string;
+}): Promise<AnyObject | null> {
+  const candidates = [
+    params.jid.toLowerCase(),
+    params.jid.replace(/@s\.whatsapp\.net$/i, '@c.us').toLowerCase(),
+    params.digits,
+  ];
+
+  const r = await pool.query(
+    `
+    SELECT c.*
+    FROM chat_conversations c
+    INNER JOIN users owner ON owner.id = c.user_id
+    WHERE owner.tenant_id = $1
+      AND COALESCE(c.conversation_type, 'direct') = 'direct'
+      AND c.instance_id = $2::uuid
+      AND (
+        lower(c.external_chat_id) = ANY($3::text[])
+        OR lower(COALESCE(c.canonical_chat_id, '')) = ANY($3::text[])
+        OR lower(COALESCE(c.provider_conversation_id, '')) = ANY($3::text[])
+        OR NULLIF(regexp_replace(COALESCE(c.phone_number, ''), '[^0-9]', '', 'g'), '') = $4
+        OR NULLIF(regexp_replace(COALESCE(c.canonical_phone, ''), '[^0-9]', '', 'g'), '') = $4
+      )
+    ORDER BY COALESCE(c.last_message_at, c.created_at) DESC NULLS LAST
+    LIMIT 1
+    `,
+    [params.tenantId, params.instanceId, candidates, params.digits],
+  );
+  return (r.rows[0] as AnyObject | undefined) ?? null;
+}
+
+async function ensureDirectConversationForManualStart(params: {
+  actorUserId: string;
+  tenantId: string;
+  instance: ChatInstanceRow;
+  digits: string;
+  jid: string;
+  contactName?: string | null;
+}): Promise<{ conversationId: string; reused: boolean; isNew: boolean }> {
+  const found = await findDirectConversationForManualStart({
+    tenantId: params.tenantId,
+    instanceId: params.instance.id,
+    digits: params.digits,
+    jid: params.jid,
+  });
+
+  if (found?.id) {
+    return { conversationId: String(found.id), reused: true, isNew: false };
+  }
+
+  const displayName = String(params.contactName || '').trim() || params.digits;
+  const metadata = {
+    source: 'outbound/manual_start_by_phone',
+    link_source: 'manual',
+    link_confidence: 'manual',
+    link_state: 'unlinked',
+    phone_normalized: params.digits,
+    created_by_manual_start_at: new Date().toISOString(),
+  };
+
+  const inserted = await pool.query(
+    `
+    INSERT INTO chat_conversations (
+      user_id, instance_id, external_chat_id, contact_name, profile_name, phone_number,
+      status, last_message_at, unread_count, metadata, client_id, lead_id,
+      canonical_chat_id, canonical_phone, display_name, identity_source, identity_strength,
+      identity_state, history_sync_status, last_history_sync_reason, provider,
+      provider_conversation_id, conversation_type, attendance_status
+    )
+    VALUES (
+      $1, $2, $3, $4, $4, $5,
+      'open', NULL, 0, $6::jsonb, NULL, NULL,
+      $3, $5, $4, 'phone_derived', 'medium',
+      'resolved', 'ready', 'manual_start_by_phone',
+      'whatsapp_uazapi', $3, 'direct', $7
+    )
+    RETURNING *
+    `,
+    [
+      params.instance.user_id,
+      params.instance.id,
+      params.jid,
+      displayName,
+      params.digits,
+      JSON.stringify(metadata),
+      normalizeAttendanceStatusForDb(undefined),
+    ],
+  );
+
+  const conversationId = String(inserted.rows[0].id);
+  void applyKanbanAutomationForConversation({
+    tenantId: params.tenantId,
+    actorUserId: params.actorUserId,
+    conversationId,
+    reason: 'new_conversation',
+  }).catch((err) => console.error('[kanban-entry-automation] new_conversation (manual phone)', err));
+
+  return { conversationId, reused: false, isNew: true };
+}
+
 function absolutizeOutgoingMediaUrl(candidate: unknown): string | null {
   if (typeof candidate !== 'string') return null;
   const raw = candidate.trim();
@@ -9327,6 +9438,83 @@ export async function prepareLeadConversation(req: AuthRequest, res: Response) {
       return;
     }
     console.error('Error preparing lead conversation:', error);
+    res.status(500).json({ error: error?.message || 'Não foi possível preparar a conversa' });
+  }
+}
+
+/** Prepara (ou reutiliza) conversa direct pelo telefone — outbound manual do inbox. */
+export async function prepareConversationByPhone(req: AuthRequest, res: Response) {
+  try {
+    const userId = req.userId!;
+    const tenantId = req.tenantId ?? (await resolveTenantIdForUser(userId));
+    if (!tenantId) {
+      res.status(403).json({ error: 'Tenant não identificado' });
+      return;
+    }
+
+    const data = prepareConversationByPhoneSchema.parse(req.body);
+    if (!(await canChatAction(userId, 'view', req))) {
+      res.status(403).json({ error: 'Sem permissão para visualizar o chat' });
+      return;
+    }
+    if (!(await canChatAction(userId, 'reply', req))) {
+      res.status(403).json({ error: 'Sem permissão para enviar mensagens no chat' });
+      return;
+    }
+
+    const digits = normalizeLeadPhoneToWhatsappDigits(data.phone);
+    if (!digits) {
+      res.status(400).json({ error: 'Informe um telefone WhatsApp válido (com DDD).' });
+      return;
+    }
+    const jid = whatsappDirectJidFromDigits(digits);
+
+    const instance = await fetchInstanceForOperate(userId, data.instance_id);
+    if (!instance) {
+      res.status(404).json({ error: 'Instância WhatsApp não encontrada' });
+      return;
+    }
+    const instanceStatus = String(instance.status || '').toLowerCase();
+    if (!['connected', 'open'].includes(instanceStatus)) {
+      res.status(400).json({ error: 'Instância WhatsApp desconectada' });
+      return;
+    }
+
+    const prepared = await ensureDirectConversationForManualStart({
+      actorUserId: userId,
+      tenantId,
+      instance: instance as ChatInstanceRow,
+      digits,
+      jid,
+      contactName: data.contact_name,
+    });
+
+    const fresh = await pool.query(
+      `
+      SELECT c.*, COALESCE(i.name, 'WhatsApp') AS instance_name
+      FROM chat_conversations c
+      LEFT JOIN chat_instances i ON i.id = c.instance_id
+      WHERE c.id = $1::uuid
+      LIMIT 1
+      `,
+      [prepared.conversationId],
+    );
+
+    res.status(prepared.isNew ? 201 : 200).json({
+      conversation: fresh.rows[0] ? conversationRowForClientApi(fresh.rows[0] as Record<string, unknown>) : null,
+      is_new: prepared.isNew,
+      reused: prepared.reused,
+    });
+  } catch (error: any) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Dados inválidos', details: error.errors });
+      return;
+    }
+    console.error('prepareConversationByPhone:', error);
     res.status(500).json({ error: error?.message || 'Não foi possível preparar a conversa' });
   }
 }
