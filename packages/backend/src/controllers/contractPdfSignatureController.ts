@@ -4,9 +4,10 @@ import { z } from 'zod';
 import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { assertModulePermission, ModulePermissionError } from '../permissions/index.js';
-import { isDocumentFrozen, isDraftStatus } from '../services/contractLifecycle.js';
+import { isDocumentFrozen, isPendingSignatureStatus } from '../services/contractLifecycle.js';
 import {
   contractSignedPdfKey,
+  copyPdfToFrozen,
   readContractPdfByKey,
   saveContractOriginalPdf,
 } from '../services/contractPdfStorageService.js';
@@ -88,15 +89,22 @@ export async function uploadContractPdf(req: AuthRequest, res: Response): Promis
     }
 
     const saved = await saveContractOriginalPdf(tenantId, id, file.buffer);
+    const pendingSent = isPendingSignatureStatus(String(row.status));
+    let frozenKey: string | null = null;
+    if (pendingSent) {
+      frozenKey = await copyPdfToFrozen(tenantId, id, saved.storageKey);
+    }
     await pool.query(
       `UPDATE contracts SET
          document_kind = 'pdf_signature',
          original_pdf_storage_key = $2,
          source_pdf_page_count = $3,
          pdf_page_count = $3,
+         frozen_pdf_storage_key = COALESCE($4, frozen_pdf_storage_key),
+         document_frozen_at = CASE WHEN $5::boolean THEN now() ELSE document_frozen_at END,
          updated_at = now()
        WHERE id = $1`,
-      [id, saved.storageKey, pageCount],
+      [id, saved.storageKey, pageCount, frozenKey, pendingSent],
     );
 
     res.json({
@@ -133,9 +141,9 @@ export async function getContractSourcePdf(req: AuthRequest, res: Response): Pro
       assigneeId: (row.responsible_id as string | null) ?? null,
     }, req);
 
-    const key =
-      (row.frozen_pdf_storage_key as string | null) ||
-      (row.original_pdf_storage_key as string | null);
+    const key = isDocumentFrozen(String(row.status))
+      ? (row.frozen_pdf_storage_key as string | null) || (row.original_pdf_storage_key as string | null)
+      : (row.original_pdf_storage_key as string | null) || (row.frozen_pdf_storage_key as string | null);
     if (!key) {
       res.status(404).json({ error: 'PDF não encontrado.', code: 'CONTRACT_PDF_NOT_FOUND' });
       return;

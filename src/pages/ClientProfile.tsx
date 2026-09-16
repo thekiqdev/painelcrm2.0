@@ -6,7 +6,7 @@ import { clientsService, type ClientTimelineEvent } from "@/services/clients";
 import { tasksService, Task, ChecklistItem } from "@/services/tasks";
 import { contractsService } from "@/services/contracts";
 import { Contract } from "@/types/contracts";
-import { getContractDocumentHtml } from "@/utils/contractDocument";
+import { getContractDocumentHtml, isContractRevisionAllowed } from "@/utils/contractDocument";
 import { chatService, ChatMessage, normalizeChatMessage } from "@/services/chat";
 import {
   ensureChatInstances,
@@ -2186,10 +2186,12 @@ const ClientProfile = () => {
                                   <FileText className="h-4 w-4 mr-2" />
                                   Visualizar
                                 </DropdownMenuItem>
+                                {isContractRevisionAllowed(contract.status) && (
                                 <DropdownMenuItem onClick={() => navigate(`/contracts/${contract.id}/edit`, { state: { fromClientProfile: true } })}>
                                   <Edit2 className="h-4 w-4 mr-2" />
                                   Editar
                                 </DropdownMenuItem>
+                                )}
                                 {contract.status === 'ACTIVE' && contract.auto_renew && (
                                   <DropdownMenuItem onClick={() => handleRenewContract(contract.id)}>
                                     <RefreshCw className="h-4 w-4 mr-2" />

@@ -4,8 +4,9 @@
  * Fonte da verdade do documento exibido: `content_snapshot_html` quando preenchido;
  * caso contrário `content_html` (legado / rascunho).
  *
- * Congelamento: todo status exceto DRAFT trata o documento como congelado para edição
- * de corpo, modelo, partes principais e signatários (mutações bloqueadas no backend).
+ * Congelamento: documento e signatários ficam editáveis em DRAFT e PENDING_SIGNATURE
+ * (enviado, ainda sem nenhuma assinatura). A partir da primeira assinatura
+ * (PARTIALLY_SIGNED / ACTIVE) ou de estados finais, o contrato congela.
  */
 
 export type ContractStatus =
@@ -20,14 +21,27 @@ export type ContractStatus =
 /** Regra de negócio para exclusão definitiva de contrato. */
 export const CONTRACT_DELETE_ALLOWED_STATUSES: ReadonlySet<string> = new Set(['CANCELLED', 'INACTIVE']);
 
-/** Rascunho: documento e estrutura editáveis. */
+/** Rascunho: documento e estrutura editáveis; ainda não enviado. */
 export function isDraftStatus(status: string): boolean {
   return status === 'DRAFT';
 }
 
+/** Enviado para assinatura, ainda sem nenhuma assinatura capturada. */
+export function isPendingSignatureStatus(status: string): boolean {
+  return status === 'PENDING_SIGNATURE';
+}
+
+/**
+ * Revisão permitida: rascunho ou enviado aguardando a primeira assinatura.
+ * Depois de qualquer assinatura (ou cancelado/encerrado), o documento congela.
+ */
+export function isContractRevisionAllowed(status: string): boolean {
+  return isDraftStatus(status) || isPendingSignatureStatus(status);
+}
+
 /** Documento congelado: não editar corpo/template/signatários/campos estruturais via API. */
 export function isDocumentFrozen(status: string): boolean {
-  return !isDraftStatus(status);
+  return !isContractRevisionAllowed(status);
 }
 
 /** HTML com texto útil (não só tags vazias). */

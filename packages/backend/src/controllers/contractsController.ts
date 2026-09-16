@@ -13,6 +13,7 @@ import {
   hasMeaningfulDocumentHtml,
   isDocumentFrozen,
   isDraftStatus,
+  isPendingSignatureStatus,
   isPdfSignatureDocumentKind,
   statusFreezesDocument,
 } from '../services/contractLifecycle.js';
@@ -470,7 +471,7 @@ export async function updateContract(req: AuthRequest, res: Response): Promise<v
       if (forbidden.length > 0) {
         res.status(409).json({
           error:
-            'Contrato congelado: não é possível alterar o documento, modelo, partes ou dados estruturais. Apenas status e tags podem ser atualizados.',
+            'Contrato assinado ou encerrado: não é possível alterar o documento, modelo, partes ou dados estruturais. Apenas status e tags podem ser atualizados.',
           code: 'CONTRACT_FROZEN',
         });
         return;
@@ -497,10 +498,15 @@ export async function updateContract(req: AuthRequest, res: Response): Promise<v
           ? contractData.content_html
           : (row.content_html as string | null);
 
+      const hasStructuralMutation = incomingKeys.some((k) => k !== 'status' && k !== 'tags');
       const willFreezeSnapshot =
         isDraftStatus(rowStatus) && mergedStatus !== 'DRAFT' && statusFreezesDocument(mergedStatus);
+      const willRefreshPendingSnapshot =
+        isPendingSignatureStatus(rowStatus) &&
+        mergedStatus === 'PENDING_SIGNATURE' &&
+        hasStructuralMutation;
 
-      if (willFreezeSnapshot) {
+      if (willFreezeSnapshot || willRefreshPendingSnapshot) {
         if (!mergedTitle?.trim()) {
           res.status(400).json({ error: 'Título obrigatório para enviar ou ativar o contrato.', code: 'CONTRACT_TITLE_REQUIRED' });
           return;
@@ -576,12 +582,17 @@ export async function updateContract(req: AuthRequest, res: Response): Promise<v
         ? contractData.content_html
         : (row.content_html as string | null);
 
+    const hasStructuralMutationForFreeze = incomingKeys.some((k) => k !== 'status' && k !== 'tags');
     const willFreezeSnapshot =
       isDraftStatus(rowStatus) &&
       mergedStatusForFreeze !== 'DRAFT' &&
       statusFreezesDocument(mergedStatusForFreeze);
+    const willRefreshPendingSnapshot =
+      isPendingSignatureStatus(rowStatus) &&
+      mergedStatusForFreeze === 'PENDING_SIGNATURE' &&
+      hasStructuralMutationForFreeze;
 
-    if (willFreezeSnapshot) {
+    if (willFreezeSnapshot || willRefreshPendingSnapshot) {
       const mergedTitleFreeze =
         contractData.title !== undefined ? contractData.title : (row.title as string);
       const mergedTotalFreeze =
@@ -675,7 +686,7 @@ export async function updateContract(req: AuthRequest, res: Response): Promise<v
     const newStatusStr = String((updatedRow as Record<string, unknown>).status);
 
     let signature_invite_bootstrap: Awaited<ReturnType<typeof bootstrapSignatureInvitesForContract>> | undefined;
-    if (isDraftStatus(rowStatus) && newStatusStr === 'PENDING_SIGNATURE') {
+    if (newStatusStr === 'PENDING_SIGNATURE' && (isDraftStatus(rowStatus) || isPendingSignatureStatus(rowStatus))) {
       try {
         signature_invite_bootstrap = await bootstrapSignatureInvitesForContract({
           contractId: id,
@@ -690,13 +701,14 @@ export async function updateContract(req: AuthRequest, res: Response): Promise<v
       }
 
       const tenantIdNotify = req.tenantId;
-      if (tenantIdNotify && signature_invite_bootstrap && signature_invite_bootstrap.length > 0) {
+      const newlyIssued = (signature_invite_bootstrap ?? []).filter((item) => 'token' in item);
+      if (tenantIdNotify && newlyIssued.length > 0) {
         publishContractSentNotifications({
           pool,
           tenantId: tenantIdNotify,
           contractId: id,
           actorUserId: userId,
-          bootstrap: signature_invite_bootstrap,
+          bootstrap: newlyIssued,
         });
       }
     }

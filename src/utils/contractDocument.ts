@@ -11,6 +11,11 @@ export function isContractDraft(status: Contract['status']): boolean {
   return status === 'DRAFT';
 }
 
+/** Rascunho ou enviado ainda sem nenhuma assinatura — documento e signatários editáveis. */
+export function isContractRevisionAllowed(status: Contract['status']): boolean {
+  return status === 'DRAFT' || status === 'PENDING_SIGNATURE';
+}
+
 export function isPdfSignatureContract(
   c: Pick<Contract, 'document_kind'> | null | undefined,
 ): boolean {

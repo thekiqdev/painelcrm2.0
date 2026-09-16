@@ -30,6 +30,7 @@ import {
   getContractDocumentHtml,
   hasMeaningfulDocumentHtml,
   isContractDraft,
+  isContractRevisionAllowed,
   resolvePdfSignatureContract,
 } from "@/utils/contractDocument";
 import { ContractA4Document } from "@/components/contracts/ContractA4Document";
@@ -59,6 +60,7 @@ import {
   Download,
   MessageSquare,
   ExternalLink,
+  Pencil,
 } from "lucide-react";
 import {
   Dialog,
@@ -528,6 +530,7 @@ const ContractDetails = () => {
       CREATED: FileText,
       STATUS_CHANGED: AlertCircle,
       SENT_FOR_SIGNATURE: Send,
+      DOCUMENT_REVISED: Pencil,
       SIGNED: CheckCircle,
       VIEWED: Clock,
       SIGNATURE_INVITE_ISSUED: Mail,
@@ -805,6 +808,17 @@ const ContractDetails = () => {
           </div>
         </div>
 
+        <div className="flex shrink-0 items-center gap-2">
+          {isContractRevisionAllowed(contract.status) && id && canEditThisContract ? (
+            <Button
+              variant="outline"
+              className="shrink-0"
+              onClick={() => navigate(`/contracts/${id}/edit`)}
+            >
+              <Pencil className="mr-2 h-4 w-4" />
+              Editar
+            </Button>
+          ) : null}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="icon" className="shrink-0 sm:h-10 sm:w-auto sm:px-4" aria-label="Ações">
@@ -824,14 +838,14 @@ const ContractDetails = () => {
                 Abrir aba Links
               </DropdownMenuItem>
             )}
-            {contract.status === 'DRAFT' && id && (
+            {isContractRevisionAllowed(contract.status) && id && (
               <DropdownMenuItem
-                disabled={!canContractSignatureOps}
-                title={!canContractSignatureOps ? "Sem permissão para pedir assinatura." : undefined}
+                disabled={!canEditThisContract}
+                title={!canEditThisContract ? "Sem permissão para editar o contrato." : undefined}
                 onClick={() => navigate(`/contracts/${id}/edit`)}
               >
-                <Send className="mr-2 h-4 w-4" />
-                Editar e enviar para assinatura
+                <Pencil className="mr-2 h-4 w-4" />
+                {contract.status === 'DRAFT' ? 'Editar e enviar para assinatura' : 'Editar contrato e assinantes'}
               </DropdownMenuItem>
             )}
             {hasSignedPdf && (
@@ -905,6 +919,7 @@ const ContractDetails = () => {
             )}
           </DropdownMenuContent>
         </DropdownMenu>
+        </div>
       </div>
 
       <Card className="border bg-muted/20 md:hidden">

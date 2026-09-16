@@ -32,6 +32,7 @@ export type SignerContractRow = {
   user_id: string;
   responsible_id: string | null;
   status: string;
+  signed_at: string | Date | null;
 };
 
 /** Signatário + contrato no tenant do solicitante. */
@@ -40,7 +41,8 @@ export async function findSignerInTenant(
   requestUserId: string
 ): Promise<SignerContractRow | null> {
   const result = await pool.query<SignerContractRow>(
-    `SELECT cs.id AS signer_id, c.id AS contract_id, c.user_id, c.responsible_id, c.status::text AS status
+    `SELECT cs.id AS signer_id, c.id AS contract_id, c.user_id, c.responsible_id, c.status::text AS status,
+            cs.signed_at
      FROM contract_signers cs
      INNER JOIN contracts c ON c.id = cs.contract_id
      INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)

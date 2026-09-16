@@ -38,7 +38,7 @@ import {
   getContractDocumentHtml,
   hasMeaningfulContractDocument,
   hasMeaningfulDocumentHtml,
-  isContractDraft,
+  isContractRevisionAllowed,
   isPdfSignatureContract,
 } from "@/utils/contractDocument";
 import {
@@ -226,7 +226,8 @@ export function ContractCreateForm({
   const [loading, setLoading] = useState(false);
   /** Status carregado do servidor na edição; null em contrato novo. */
   const [contractStatus, setContractStatus] = useState<ContractStatus | null>(null);
-  const documentLocked = isEditMode && contractStatus !== null && !isContractDraft(contractStatus);
+  const documentLocked = isEditMode && contractStatus !== null && !isContractRevisionAllowed(contractStatus);
+  const alreadySentForSignature = contractStatus === 'PENDING_SIGNATURE';
   /** Hidrata o combobox (modo remoto) com o cliente já vinculado ou recém-selecionado — garante `selectedFromLocal` e envio consistente do UUID. */
   const [linkedClientForCombo, setLinkedClientForCombo] = useState<Client[]>([]);
   const [tenantUsers, setTenantUsers] = useState<TenantUser[]>([]);
@@ -525,48 +526,61 @@ export function ContractCreateForm({
     };
   };
 
-  const syncSignersForContract = async (targetId: string) => {
+  const toSignerApiPayload = (signer: {
+    name: string;
+    email: string;
+    tax_id?: string;
+    role: SignerRole;
+    signing_order?: number;
+    whatsapp_phone?: string | null;
+  }) => ({
+    name: signer.name,
+    email: signer.email,
+    tax_id: normalizeBrazilTaxIdInput(signer.tax_id || ''),
+    role: signer.role,
+    signing_order: signer.signing_order || undefined,
+    whatsapp_phone: signer.whatsapp_phone?.trim()
+      ? normalizeBrazilWhatsappDigits(signer.whatsapp_phone)
+      : null,
+  });
+
+  const syncSignersPreservingIds = async <T extends { serverId?: string; localId?: string }>(
+    targetId: string,
+    drafts: T[],
+  ): Promise<T[]> => {
     const existingSigners = await contractsService.getContractSigners(targetId);
+    const keepIds = new Set(drafts.map((d) => d.serverId).filter((id): id is string => Boolean(id)));
     for (const signer of existingSigners) {
-      await contractsService.deleteContractSigner(signer.id);
+      if (!keepIds.has(signer.id)) {
+        await contractsService.deleteContractSigner(signer.id);
+      }
     }
-    for (const signer of signers) {
-      await contractsService.createContractSigner(targetId, {
-        name: signer.name,
-        email: signer.email,
-        tax_id: normalizeBrazilTaxIdInput(signer.tax_id || ''),
-        role: signer.role,
-        signing_order: signer.signing_order || undefined,
-        whatsapp_phone: signer.whatsapp_phone?.trim()
-          ? normalizeBrazilWhatsappDigits(signer.whatsapp_phone)
-          : null,
-      });
+    const existingIds = new Set(existingSigners.map((s) => s.id));
+    const next: T[] = [];
+    for (const signer of drafts) {
+      const payload = toSignerApiPayload(signer as unknown as ContractCreateSignerDraft);
+      if (signer.serverId && existingIds.has(signer.serverId)) {
+        await contractsService.updateContractSigner(signer.serverId, payload);
+        next.push(signer);
+      } else {
+        const created = await contractsService.createContractSigner(targetId, payload);
+        next.push({
+          ...signer,
+          serverId: created.id,
+          localId: signer.localId ?? created.id,
+        });
+      }
     }
+    return next;
+  };
+
+  const syncSignersForContract = async (targetId: string) => {
+    const next = await syncSignersPreservingIds(targetId, signers);
+    setSigners(next);
   };
 
   const syncPdfSignersForContract = async (targetId: string): Promise<PdfSignerDraft[]> => {
-    const existingSigners = await contractsService.getContractSigners(targetId);
-    for (const signer of existingSigners) {
-      await contractsService.deleteContractSigner(signer.id);
-    }
-    const next: PdfSignerDraft[] = [];
-    for (const signer of pdfSigners) {
-      const created = await contractsService.createContractSigner(targetId, {
-        name: signer.name,
-        email: signer.email,
-        tax_id: normalizeBrazilTaxIdInput(signer.tax_id || ''),
-        role: signer.role,
-        signing_order: signer.signing_order || undefined,
-        whatsapp_phone: signer.whatsapp_phone?.trim()
-          ? normalizeBrazilWhatsappDigits(signer.whatsapp_phone)
-          : null,
-      });
-      next.push({
-        ...signer,
-        serverId: created.id,
-        localId: signer.localId,
-      });
-    }
+    const next = await syncSignersPreservingIds(targetId, pdfSigners);
     setPdfSigners(next);
     setPdfFields((prev) => remapPdfFieldSignerIds(prev, next));
     return next;
@@ -589,11 +603,15 @@ export function ContractCreateForm({
 
   const handleSaveDraft = async () => {
     if (documentLocked) {
-      toast.error('Este contrato está congelado e não pode ser editado.');
+      toast.error('Este contrato já foi assinado ou encerrado e não pode ser editado.');
       return;
     }
     if (!formData.title) {
       toast.error('O título é obrigatório');
+      return;
+    }
+    if (alreadySentForSignature && signers.length === 0) {
+      toast.error('Inclua pelo menos um assinante');
       return;
     }
     if (signers.length > 0 && !validateSignersTaxAndIdentity()) return;
@@ -623,20 +641,7 @@ export function ContractCreateForm({
           signature_settings: formData.signature_settings,
         });
 
-        // Atualizar assinantes (remover todos e recriar)
-        const existingSigners = await contractsService.getContractSigners(id);
-        for (const signer of existingSigners) {
-          await contractsService.deleteContractSigner(signer.id);
-        }
-        for (const signer of signers) {
-          await contractsService.createContractSigner(id, {
-            name: signer.name,
-            email: signer.email,
-            tax_id: normalizeBrazilTaxIdInput(signer.tax_id || ''),
-            role: signer.role,
-            signing_order: signer.signing_order || undefined,
-          });
-        }
+        await syncSignersForContract(id);
 
         toast.success('Contrato atualizado com sucesso');
         
@@ -709,7 +714,7 @@ export function ContractCreateForm({
 
   const handleSendForSignature = async () => {
     if (documentLocked) {
-      toast.error('Este contrato já foi enviado ou não está mais em rascunho.');
+      toast.error('Este contrato já foi assinado ou encerrado e não pode ser editado.');
       return;
     }
     if (!formData.title?.trim()) {
@@ -760,19 +765,7 @@ export function ContractCreateForm({
           signature_settings: formData.signature_settings,
         });
 
-        const existingSigners = await contractsService.getContractSigners(id);
-        for (const signer of existingSigners) {
-          await contractsService.deleteContractSigner(signer.id);
-        }
-        for (const signer of signers) {
-          await contractsService.createContractSigner(id, {
-            name: signer.name,
-            email: signer.email,
-            tax_id: normalizeBrazilTaxIdInput(signer.tax_id || ''),
-            role: signer.role,
-            signing_order: signer.signing_order || undefined,
-          });
-        }
+        await syncSignersForContract(id);
 
         const sent = await contractsService.updateContract(id, { status: 'PENDING_SIGNATURE' });
         persistSignatureInviteBootstrap(id, sent.signature_invite_bootstrap);
@@ -785,12 +778,18 @@ export function ContractCreateForm({
         }
 
         await contractsService.createContractEvent(id, {
-          event_type: 'SENT_FOR_SIGNATURE',
-          description: 'Contrato enviado para assinatura',
+          event_type: alreadySentForSignature ? 'DOCUMENT_REVISED' : 'SENT_FOR_SIGNATURE',
+          description: alreadySentForSignature
+            ? 'Contrato revisado após o envio para assinatura'
+            : 'Contrato enviado para assinatura',
           metadata: { signers: signers.map(s => ({ name: s.name, email: s.email })) },
         });
 
-        toast.success('Contrato atualizado e enviado para assinatura. Links de assinatura preparados.');
+        toast.success(
+          alreadySentForSignature
+            ? 'Contrato atualizado. Os links de assinatura existentes passam a exibir a versão revisada.'
+            : 'Contrato atualizado e enviado para assinatura. Links de assinatura preparados.',
+        );
 
         if (location.state?.fromClientProfile) {
           const contract = await contractsService.getContractById(id);
@@ -1027,6 +1026,10 @@ export function ContractCreateForm({
           : `${pdfPlacementProgress.placed}/${pdfPlacementProgress.total} no PDF`;
 
     const handlePdfSaveDraft = async () => {
+      if (alreadySentForSignature && pdfSigners.length === 0) {
+        toast.error('Inclua pelo menos um assinante');
+        return;
+      }
       if (pdfSigners.length > 0 && !validateSignersTaxAndIdentity(pdfSigners)) return;
       setLoading(true);
       try {
@@ -1140,7 +1143,7 @@ export function ContractCreateForm({
                     onClick={() => void handlePdfSend()}
                   >
                     <Send className="h-4 w-4" />
-                    Enviar
+                    {alreadySentForSignature ? 'Atualizar envio' : 'Enviar'}
                   </Button>
                 ) : null}
               </div>
@@ -1228,7 +1231,7 @@ export function ContractCreateForm({
                     const full = await contractsService.getContractById(cid);
                     onCreated(full, 'draft');
                   } else {
-                    toast.success('Rascunho salvo');
+                    toast.success(alreadySentForSignature ? 'Contrato atualizado' : 'Rascunho salvo');
                     clearContractCreateWizardPersist(undefined);
                     navigate(`/contracts/${cid}`);
                   }
@@ -1238,10 +1241,16 @@ export function ContractCreateForm({
                   const sent = await contractsService.updateContract(cid, { status: 'PENDING_SIGNATURE' });
                   persistSignatureInviteBootstrap(cid, sent.signature_invite_bootstrap);
                   await contractsService.createContractEvent(cid, {
-                    event_type: 'SENT_FOR_SIGNATURE',
-                    description: 'Contrato PDF enviado para assinatura',
+                    event_type: alreadySentForSignature ? 'DOCUMENT_REVISED' : 'SENT_FOR_SIGNATURE',
+                    description: alreadySentForSignature
+                      ? 'Contrato PDF revisado após o envio para assinatura'
+                      : 'Contrato PDF enviado para assinatura',
                   });
-                  toast.success('Contrato enviado para assinatura');
+                  toast.success(
+                    alreadySentForSignature
+                      ? 'Contrato atualizado. Os links de assinatura existentes passam a exibir a versão revisada.'
+                      : 'Contrato enviado para assinatura',
+                  );
                   if (onCreated) {
                     const full = await contractsService.getContractById(cid);
                     onCreated(full, 'signature');
@@ -1274,7 +1283,7 @@ export function ContractCreateForm({
               onClick={() => void handlePdfSend()}
             >
               <Send className="h-4 w-4" />
-              Enviar
+              {alreadySentForSignature ? 'Atualizar' : 'Enviar'}
             </Button>
           ) : null}
         </div>
@@ -1324,7 +1333,7 @@ export function ContractCreateForm({
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={handleSaveDraft} disabled={loading || documentLocked || !canUseContracts}>
             <Save className="mr-2 h-4 w-4" />
-            Salvar Rascunho
+            {alreadySentForSignature ? 'Salvar alterações' : 'Salvar Rascunho'}
           </Button>
           <Button
             onClick={handleSendForSignature}
@@ -1334,7 +1343,7 @@ export function ContractCreateForm({
             }
           >
             <Send className="mr-2 h-4 w-4" />
-            Enviar para Assinatura
+            {alreadySentForSignature ? 'Atualizar envio' : 'Enviar para Assinatura'}
           </Button>
         </div>
       </div>
@@ -1343,8 +1352,18 @@ export function ContractCreateForm({
         <Alert>
           <AlertTitle>Documento congelado</AlertTitle>
           <AlertDescription>
-            Este contrato não está mais em rascunho. O texto e os signatários não podem ser alterados aqui.
+            Este contrato já foi assinado ou encerrado. O texto e os signatários não podem ser alterados.
             Use a tela de detalhes para ações permitidas (ex.: status ou tags, conforme o caso).
+          </AlertDescription>
+        </Alert>
+      )}
+      {alreadySentForSignature && !documentLocked && (
+        <Alert>
+          <AlertTitle>Revisão após envio</AlertTitle>
+          <AlertDescription>
+            Este contrato já foi enviado para assinatura e ainda não foi assinado. Você pode alterar o
+            documento e os assinantes. Os links já enviados passam a exibir a versão revisada; novos
+            assinantes recebem um convite automaticamente.
           </AlertDescription>
         </Alert>
       )}

@@ -1,11 +1,11 @@
 /**
- * Emissão automática de convites de assinatura ao enviar contrato para PENDING_SIGNATURE (aprimoramento UX).
+ * Emissão automática de convites de assinatura ao enviar (ou revisar) um contrato em PENDING_SIGNATURE.
  */
 import type { AuthRequest } from '../middleware/auth.js';
 import { pool } from '../utils/db.js';
 import { assertModulePermission } from '../permissions/index.js';
 import { findContractInTenant } from '../utils/contractAccess.js';
-import { isDraftStatus } from './contractLifecycle.js';
+import { isDraftStatus, isPendingSignatureStatus } from './contractLifecycle.js';
 import { issueSignatureInvite } from './contractSignatureInviteService.js';
 
 export type SignatureInviteBootstrapItem =
@@ -22,11 +22,14 @@ export async function bootstrapSignatureInvitesForContract(params: {
   requestUserId: string;
   createdByUserId: string;
   req: AuthRequest;
-  /** Garantir que só corre no primeiro envio a partir de rascunho. */
+  /** Garantir que só corre no envio (rascunho → pendente) ou numa revisão já pendente. */
   previousStatus: string;
   newStatus: string;
 }): Promise<SignatureInviteBootstrapItem[]> {
-  if (!isDraftStatus(params.previousStatus) || params.newStatus !== 'PENDING_SIGNATURE') {
+  const fromDraft = isDraftStatus(params.previousStatus) && params.newStatus === 'PENDING_SIGNATURE';
+  const revisePending =
+    isPendingSignatureStatus(params.previousStatus) && params.newStatus === 'PENDING_SIGNATURE';
+  if (!fromDraft && !revisePending) {
     return [];
   }
 

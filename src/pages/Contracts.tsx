@@ -54,7 +54,6 @@ import {
   MoreVertical,
   FileText,
   Download,
-  Send,
   Copy,
   Trash2,
   Play,
@@ -63,9 +62,10 @@ import {
   Calendar as CalendarIcon,
   Filter,
   Upload,
+  Pencil,
 } from "lucide-react";
 import type { Contract, ContractStatus, ContractFilters } from "@/types/contracts";
-import { getContractDocumentHtml } from "@/utils/contractDocument";
+import { getContractDocumentHtml, isContractRevisionAllowed } from "@/utils/contractDocument";
 import { canDeleteContractStatus } from "@/utils/contractStatusUi";
 import { applyUrlPatch } from "@/lib/listFiltersUrl";
 import { MobilePageHeader } from "@/components/mobile/MobilePageHeader";
@@ -917,12 +917,12 @@ const Contracts = () => {
                           <FileText className="mr-2 h-4 w-4" />
                           Ver/Editar
                         </DropdownMenuItem>
-                        {contract.status === 'DRAFT' && (
+                        {isContractRevisionAllowed(contract.status) && (
                           <DropdownMenuItem
                             onClick={() => navigate(`/contracts/${contract.id}/edit`)}
                           >
-                            <Send className="mr-2 h-4 w-4" />
-                            Editar e enviar para assinatura
+                            <Pencil className="mr-2 h-4 w-4" />
+                            {contract.status === 'DRAFT' ? 'Editar e enviar para assinatura' : 'Editar contrato e assinantes'}
                           </DropdownMenuItem>
                         )}
                         {String(contract.content_snapshot_html || "").trim() && (
@@ -1061,10 +1061,10 @@ const Contracts = () => {
                       <FileText className="mr-2 h-4 w-4" />
                       Ver / editar
                     </DropdownMenuItem>
-                    {contract.status === "DRAFT" && (
+                    {isContractRevisionAllowed(contract.status) && (
                       <DropdownMenuItem onClick={() => navigate(`/contracts/${contract.id}/edit`)}>
-                        <Send className="mr-2 h-4 w-4" />
-                        Enviar assinatura
+                        <Pencil className="mr-2 h-4 w-4" />
+                        {contract.status === "DRAFT" ? "Editar e enviar" : "Editar contrato"}
                       </DropdownMenuItem>
                     )}
                     {String(contract.content_snapshot_html || "").trim() && (

@@ -2,10 +2,11 @@ import { PDFDocument } from 'pdf-lib';
 import { pool } from '../utils/db.js';
 import {
   contractOriginalPdfKey,
+  copyPdfToFrozen,
   readContractPdfByKey,
   saveContractOriginalPdf,
 } from './contractPdfStorageService.js';
-import { isDocumentFrozen } from './contractLifecycle.js';
+import { isDocumentFrozen, isPendingSignatureStatus } from './contractLifecycle.js';
 
 export async function appendBlankPageToContractPdf(
   contractId: string,
@@ -41,6 +42,9 @@ export async function appendBlankPageToContractPdf(
   const out = Buffer.from(await doc.save());
   await saveContractOriginalPdf(tenantId, contractId, out);
   const pageCount = doc.getPageCount();
+  if (isPendingSignatureStatus(String(row.status))) {
+    await copyPdfToFrozen(tenantId, contractId, contractOriginalPdfKey(tenantId, contractId));
+  }
 
   await pool.query(
     `UPDATE contracts SET pdf_page_count = $2, updated_at = now() WHERE id = $1`,

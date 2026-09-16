@@ -3,9 +3,10 @@ import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { assertModulePermission, ModulePermissionError } from '../permissions/index.js';
 import { findContractInTenant, findSignerInTenant } from '../utils/contractAccess.js';
-import { isDraftStatus } from '../services/contractLifecycle.js';
+import { isDocumentFrozen, isPendingSignatureStatus } from '../services/contractLifecycle.js';
 import { normalizeBrazilTaxIdInput, isBrazilTaxIdDigits } from '../utils/brazilTaxId.js';
 import { normalizeBrazilWhatsappPhone } from '../utils/phone/normalizeBrazilPhone.js';
+import { issueSignatureInvite } from '../services/contractSignatureInviteService.js';
 import { z } from 'zod';
 
 const taxIdDigitsSchema = z
@@ -50,6 +51,21 @@ const signerUpdateSchema = z.object({
     .refine((d) => d === undefined || isBrazilTaxIdDigits(d), { message: 'CPF/CNPJ inválido' }),
   whatsapp_phone: whatsappPhoneSchema,
 });
+
+function respondSignersLocked(res: Response, alreadySigned = false): void {
+  if (alreadySigned) {
+    res.status(409).json({
+      error: 'Este signatário já assinou e não pode ser alterado.',
+      code: 'CONTRACT_SIGNER_ALREADY_SIGNED',
+    });
+    return;
+  }
+  res.status(409).json({
+    error:
+      'Signatários só podem ser alterados enquanto o contrato está em rascunho ou aguardando a primeira assinatura.',
+    code: 'CONTRACT_SIGNERS_LOCKED',
+  });
+}
 
 // Get contract signers
 export async function getContractSigners(req: AuthRequest, res: Response): Promise<void> {
@@ -161,11 +177,8 @@ export async function createContractSigner(req: AuthRequest, res: Response): Pro
       res.status(404).json({ error: 'Contract not found' });
       return;
     }
-    if (!isDraftStatus(contract.status)) {
-      res.status(409).json({
-        error: 'Signatários só podem ser alterados enquanto o contrato está em rascunho.',
-        code: 'CONTRACT_SIGNERS_LOCKED',
-      });
+    if (isDocumentFrozen(contract.status)) {
+      respondSignersLocked(res);
       return;
     }
     await assertModulePermission(
@@ -201,6 +214,20 @@ export async function createContractSigner(req: AuthRequest, res: Response): Pro
       ]
     );
 
+    if (isPendingSignatureStatus(contract.status)) {
+      try {
+        await issueSignatureInvite({
+          contractId,
+          signerId: result.rows[0].id,
+          requesterUserId: userId,
+          regenerate: false,
+          createdByUserId: userId,
+        });
+      } catch (e) {
+        console.error('createContractSigner: issueSignatureInvite:', e);
+      }
+    }
+
     res.status(201).json(result.rows[0]);
   } catch (error) {
     if (error instanceof ModulePermissionError) {
@@ -228,11 +255,12 @@ export async function updateContractSigner(req: AuthRequest, res: Response): Pro
       res.status(404).json({ error: 'Contract signer not found' });
       return;
     }
-    if (!isDraftStatus(row.status)) {
-      res.status(409).json({
-        error: 'Signatários só podem ser alterados enquanto o contrato está em rascunho.',
-        code: 'CONTRACT_SIGNERS_LOCKED',
-      });
+    if (isDocumentFrozen(row.status)) {
+      respondSignersLocked(res);
+      return;
+    }
+    if (row.signed_at) {
+      respondSignersLocked(res, true);
       return;
     }
     await assertModulePermission(
@@ -295,11 +323,12 @@ export async function deleteContractSigner(req: AuthRequest, res: Response): Pro
       res.status(404).json({ error: 'Contract signer not found' });
       return;
     }
-    if (!isDraftStatus(row.status)) {
-      res.status(409).json({
-        error: 'Signatários só podem ser alterados enquanto o contrato está em rascunho.',
-        code: 'CONTRACT_SIGNERS_LOCKED',
-      });
+    if (isDocumentFrozen(row.status)) {
+      respondSignersLocked(res);
+      return;
+    }
+    if (row.signed_at) {
+      respondSignersLocked(res, true);
       return;
     }
     await assertModulePermission(
