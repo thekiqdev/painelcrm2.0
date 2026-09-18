@@ -489,7 +489,7 @@ export default function ContractTemplateFormPage() {
               <CardTitle className="text-base">Texto do contrato</CardTitle>
             </CardHeader>
             <CardContent>
-              <RichTextEditor value={contentHtml} onChange={setContentHtml} />
+              <RichTextEditor value={contentHtml} onChange={setContentHtml} variant="contractA4" />
             </CardContent>
           </Card>
         </div>

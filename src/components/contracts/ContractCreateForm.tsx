@@ -1463,6 +1463,7 @@ export function ContractCreateForm({
                 onChange={(value) => setFormData({ ...formData, content_html: value })}
                 placeholder="Digite o conteúdo do contrato..."
                 readOnly={documentLocked}
+                variant="contractA4"
               />
             </CardContent>
           </Card>
