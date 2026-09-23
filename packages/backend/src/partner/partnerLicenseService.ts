@@ -12,6 +12,11 @@ export type PartnerLicenseSummary = {
   used_seats: number;
   available_seats: number;
   unit_cost_cents: number;
+  /** Preço efetivo para compra avulsa (overage do plano ou unit_cost). */
+  topup_unit_price_cents: number;
+  topup_price_source: 'wholesale_overage' | 'pool_unit_cost';
+  wholesale_status: string | null;
+  wholesale_plan_id: string | null;
   floor_price_cents: number | null;
   program_type: string | null;
 };
@@ -54,12 +59,44 @@ export async function getPartnerLicenseSummary(
       ? cfg.floor_price_cents
       : null;
 
+  let topupUnit = unit;
+  let topupSource: PartnerLicenseSummary['topup_price_source'] = 'pool_unit_cost';
+  let wholesalePlanId: string | null = null;
+  let wholesaleStatus: string | null = null;
+
+  const wr = await pool.query<{
+    wholesale_plan_id: string | null;
+    wholesale_status: string | null;
+    unit_overage_cents: number | null;
+  }>(
+    `SELECT pp.wholesale_plan_id::text AS wholesale_plan_id,
+            COALESCE(pp.wholesale_status, 'none') AS wholesale_status,
+            w.unit_overage_cents
+     FROM partner_profiles pp
+     LEFT JOIN partner_wholesale_plans w ON w.id = pp.wholesale_plan_id
+     WHERE pp.partner_tenant_id = $1`,
+    [partnerTenantId]
+  );
+  const wrow = wr.rows[0];
+  if (wrow) {
+    wholesalePlanId = wrow.wholesale_plan_id;
+    wholesaleStatus = wrow.wholesale_status;
+    if (wrow.unit_overage_cents != null && wrow.unit_overage_cents >= 0) {
+      topupUnit = wrow.unit_overage_cents;
+      topupSource = 'wholesale_overage';
+    }
+  }
+
   return {
     partner_tenant_id: partnerTenantId,
     purchased_seats: purchased,
     used_seats: used,
     available_seats: Math.max(0, purchased - used),
     unit_cost_cents: unit,
+    topup_unit_price_cents: topupUnit,
+    topup_price_source: topupSource,
+    wholesale_status: wholesaleStatus,
+    wholesale_plan_id: wholesalePlanId,
     floor_price_cents: floor,
     program_type: profile?.program_type ?? null,
   };
@@ -73,6 +110,9 @@ export async function assertPartnerPoolAllowsNewUser(
   partnerTenantId: string,
   additionalUsers = 1
 ): Promise<void> {
+  const { assertPartnerChannelGrowthAllowed } = await import('./partnerWholesaleStatusService.js');
+  await assertPartnerChannelGrowthAllowed(partnerTenantId);
+
   const summary = await getPartnerLicenseSummary(partnerTenantId);
   if (summary.used_seats + additionalUsers > summary.purchased_seats) {
     throw new PartnerAdminError(

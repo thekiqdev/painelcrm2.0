@@ -128,6 +128,16 @@ export const superAdminNavGroups: SuperAdminNavGroup[] = [
         icon: Package,
       },
       {
+        label: "Planos Partner (atacado)",
+        to: "/superadmin/partner-wholesale-plans",
+        icon: Building2,
+      },
+      {
+        label: "Relatório wholesale",
+        to: "/superadmin/partner-wholesale-report",
+        icon: BarChart3,
+      },
+      {
         label: "Recursos do sistema",
         to: "/superadmin/features",
         icon: Flag,

@@ -11,6 +11,7 @@ import {
   superadminPatchPartner,
   superadminSuspendPartner,
 } from './partnerControllers.js';
+import { superadminListPartnerLicenseLedger, superadminAssignWholesalePlan, superadminWholesaleReport } from './partnerWholesaleControllers.js';
 
 const router = Router();
 
@@ -19,9 +20,12 @@ router.use(requirePartnerChannelEnabled);
 
 router.get('/', superadminListPartners);
 router.get('/channel-stats', superadminPartnerChannelStats);
+router.get('/wholesale-report', superadminWholesaleReport);
 router.post('/', superadminCreatePartner);
 router.get('/:id', superadminGetPartner);
 router.get('/:id/customers', superadminListPartnerCustomers);
+router.get('/:id/license-ledger', superadminListPartnerLicenseLedger);
+router.post('/:id/wholesale/assign', superadminAssignWholesalePlan);
 router.patch('/:id', superadminPatchPartner);
 router.post('/:id/suspend', superadminSuspendPartner);
 router.get('/:id/suspension-events', superadminListPartnerSuspensionEvents);

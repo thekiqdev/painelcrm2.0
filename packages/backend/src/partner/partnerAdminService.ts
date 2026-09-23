@@ -16,16 +16,23 @@ import type {
   PartnerDetail,
   PatchPartnerInput,
 } from './partnerTypes.js';
+import { PartnerAdminError } from './partnerErrors.js';
+import { applyPartnerLicenseDelta } from './partnerLicenseLedgerService.js';
+import { isValidCpfOrCnpj, onlyDigits } from '../utils/cpfCnpj.js';
 
-export class PartnerAdminError extends Error {
-  constructor(
-    message: string,
-    public code: string,
-    public status = 400
-  ) {
-    super(message);
-    this.name = 'PartnerAdminError';
+export { PartnerAdminError } from './partnerErrors.js';
+
+function normalizePartnerDocument(raw?: string | null): string | null {
+  const digits = onlyDigits(raw ?? '');
+  if (!digits) return null;
+  if (!isValidCpfOrCnpj(digits)) {
+    throw new PartnerAdminError(
+      'CPF/CNPJ inválido. Informe um documento válido ou deixe em branco.',
+      'CPF_CNPJ_INVALID',
+      400
+    );
   }
+  return digits;
 }
 
 function normalizeSlug(slug: string): string {
@@ -63,9 +70,13 @@ export async function createPartner(
     );
   }
 
-  const purchasedSeats = Math.floor(input.purchased_seats);
-  if (!Number.isFinite(purchasedSeats) || purchasedSeats < 1) {
-    throw new PartnerAdminError('purchased_seats deve ser >= 1', 'SEATS_INVALID');
+  const purchasedSeats = Math.floor(
+    input.purchased_seats !== undefined && input.purchased_seats !== null
+      ? input.purchased_seats
+      : 0
+  );
+  if (!Number.isFinite(purchasedSeats) || purchasedSeats < 0) {
+    throw new PartnerAdminError('purchased_seats deve ser >= 0', 'SEATS_INVALID');
   }
   const floorPrice = Math.floor(input.floor_price_cents);
   const unitCost = Math.floor(input.unit_cost_cents);
@@ -81,7 +92,21 @@ export async function createPartner(
   const adminEmail = input.admin_email.trim();
   if (!adminEmail) throw new PartnerAdminError('admin_email é obrigatório', 'ADMIN_EMAIL_REQUIRED');
 
-  let planId = input.plan_id?.trim() || null;
+  const wholesalePlanId = input.wholesale_plan_id?.trim() || null;
+  let wholesaleEnvelopePlanId: string | null = null;
+  if (wholesalePlanId) {
+    const { getWholesalePlan } = await import('./partnerWholesalePlanService.js');
+    const wholesale = await getWholesalePlan(wholesalePlanId);
+    if (!wholesale) {
+      throw new PartnerAdminError('Plano atacado não encontrado', 'WHOLESALE_NOT_FOUND', 404);
+    }
+    if (wholesale.status === 'archived') {
+      throw new PartnerAdminError('Plano atacado arquivado', 'WHOLESALE_ARCHIVED', 400);
+    }
+    wholesaleEnvelopePlanId = wholesale.envelope_plan_id;
+  }
+
+  let planId = wholesaleEnvelopePlanId || input.plan_id?.trim() || null;
   if (!planId) {
     planId = await resolveDefaultPlanId();
   }
@@ -94,6 +119,8 @@ export async function createPartner(
     throw new PartnerAdminError('Plano não encontrado', 'PLAN_NOT_FOUND');
   }
 
+  const cpfCnpj = normalizePartnerDocument(input.cpf_cnpj);
+
   const client = await pool.connect();
   let partnerId: string;
   try {
@@ -102,10 +129,10 @@ export async function createPartner(
     const tenantIns = await client.query<{ id: string }>(
       `INSERT INTO tenants (
          name, slug, domain, plan_id, status, created_via, account_type, partner_id,
-         onboarding_completed
-       ) VALUES ($1, $2, $3, $4, 'active', 'superadmin', 'partner', NULL, true)
+         onboarding_completed, cpf_cnpj
+       ) VALUES ($1, $2, $3, $4, 'active', 'superadmin', 'partner', NULL, true, $5)
        RETURNING id`,
-      [name, slug, input.domain?.trim() || null, planId]
+      [name, slug, input.domain?.trim() || null, planId, cpfCnpj]
     );
     partnerId = tenantIns.rows[0].id;
 
@@ -123,16 +150,16 @@ export async function createPartner(
     await client.query(
       `INSERT INTO partner_profiles (
          partner_tenant_id, program_type, program_config_json,
-         public_name, product_name, status
-       ) VALUES ($1, $2, $3::jsonb, $4, $5, 'active')`,
+         public_name, product_name, status, wholesale_status
+       ) VALUES ($1, $2, $3::jsonb, $4, $5, 'active', 'none')`,
       [partnerId, programType, JSON.stringify(programConfig), publicName, productName]
     );
 
     await client.query(
       `INSERT INTO partner_license_pool (
          partner_tenant_id, purchased_seats, unit_cost_cents, used_seats_cache
-       ) VALUES ($1, $2, $3, 0)`,
-      [partnerId, purchasedSeats, unitCost]
+       ) VALUES ($1, 0, $2, 0)`,
+      [partnerId, unitCost]
     );
 
     const { userId } = await createTenantAdminUser(
@@ -151,6 +178,17 @@ export async function createPartner(
        VALUES ($1, $2, 'partner_admin', 'active')`,
       [partnerId, userId]
     );
+
+    if (purchasedSeats > 0 && !wholesalePlanId) {
+      await applyPartnerLicenseDelta({
+        partnerTenantId: partnerId,
+        deltaSeats: purchasedSeats,
+        reason: 'grant',
+        actorUserId,
+        note: 'Grant inicial na criação do Partner (M5-W)',
+        client,
+      });
+    }
 
     await client.query('COMMIT');
   } catch (err) {
@@ -176,7 +214,23 @@ export async function createPartner(
       name,
       slug,
       program_type: programType,
-      purchased_seats: purchasedSeats,
+      purchased_seats: wholesalePlanId ? 0 : purchasedSeats,
+      wholesale_plan_id: wholesalePlanId,
+      grant_source: wholesalePlanId
+        ? 'wholesale_grant'
+        : purchasedSeats > 0
+          ? 'create_grant'
+          : 'none',
+    });
+  }
+
+  if (wholesalePlanId) {
+    const { assignWholesalePlanGrant } = await import('./partnerWholesaleActivationService.js');
+    await assignWholesalePlanGrant({
+      partnerTenantId: partnerId,
+      wholesalePlanId,
+      actorUserId,
+      note: 'Grant na criação do Partner',
     });
   }
 
@@ -199,11 +253,31 @@ export async function patchPartner(
   try {
     await client.query('BEGIN');
 
+    const tenantPatch: string[] = [];
+    const tenantVals: unknown[] = [];
+    let t = 1;
+
     if (input.status !== undefined) {
-      await client.query(`UPDATE tenants SET status = $1, updated_at = now() WHERE id = $2`, [
-        input.status,
-        partnerTenantId,
-      ]);
+      tenantPatch.push(`status = $${t++}`);
+      tenantVals.push(input.status);
+    }
+    if (input.name !== undefined) {
+      const nextName = input.name.trim();
+      if (!nextName) throw new PartnerAdminError('Nome é obrigatório', 'NAME_REQUIRED');
+      tenantPatch.push(`name = $${t++}`);
+      tenantVals.push(nextName);
+    }
+    if (input.cpf_cnpj !== undefined) {
+      const doc = normalizePartnerDocument(input.cpf_cnpj);
+      tenantPatch.push(`cpf_cnpj = $${t++}`);
+      tenantVals.push(doc);
+    }
+    if (tenantPatch.length > 0) {
+      tenantVals.push(partnerTenantId);
+      await client.query(
+        `UPDATE tenants SET ${tenantPatch.join(', ')}, updated_at = now() WHERE id = $${t}`,
+        tenantVals
+      );
     }
 
     const profilePatch: string[] = [];
@@ -240,6 +314,23 @@ export async function patchPartner(
     if (input.payout_cadence_preference !== undefined) {
       profilePatch.push(`payout_cadence_preference = $${p++}`);
       profileVals.push(input.payout_cadence_preference);
+    }
+    if (input.wholesale_block_after_days !== undefined) {
+      if (input.wholesale_block_after_days === null) {
+        profilePatch.push(`wholesale_block_after_days = $${p++}`);
+        profileVals.push(null);
+      } else {
+        const n = Math.floor(Number(input.wholesale_block_after_days));
+        if (!Number.isFinite(n) || n < 0 || n > 90) {
+          throw new PartnerAdminError(
+            'wholesale_block_after_days deve ser inteiro entre 0 e 90 (ou null)',
+            'BLOCK_AFTER_DAYS_INVALID',
+            400
+          );
+        }
+        profilePatch.push(`wholesale_block_after_days = $${p++}`);
+        profileVals.push(n);
+      }
     }
 
     const cfg = { ...(existing.program_config_json || {}) };
@@ -280,33 +371,36 @@ export async function patchPartner(
     }
 
     if (input.purchased_seats !== undefined || input.add_seats !== undefined) {
-      let nextSeats = existing.purchased_seats;
+      let delta = 0;
       if (input.purchased_seats !== undefined) {
-        nextSeats = Math.floor(input.purchased_seats);
+        const nextSeats = Math.floor(input.purchased_seats);
+        if (!Number.isFinite(nextSeats) || nextSeats < 0) {
+          throw new PartnerAdminError('purchased_seats inválido', 'SEATS_INVALID');
+        }
+        delta = nextSeats - existing.purchased_seats;
       } else if (input.add_seats !== undefined) {
-        nextSeats = existing.purchased_seats + Math.floor(input.add_seats);
+        delta = Math.floor(input.add_seats);
       }
-      if (!Number.isFinite(nextSeats) || nextSeats < 0) {
+      if (!Number.isFinite(delta)) {
         throw new PartnerAdminError('purchased_seats inválido', 'SEATS_INVALID');
       }
-      if (nextSeats < existing.used_seats_cache) {
-        throw new PartnerAdminError(
-          'purchased_seats não pode ser menor que used_seats',
-          'SEATS_BELOW_USED'
-        );
-      }
-      await client.query(
-        `UPDATE partner_license_pool SET purchased_seats = $1, updated_at = now()
-         WHERE partner_tenant_id = $2`,
-        [nextSeats, partnerTenantId]
-      );
-      if (cfgChanged || input.purchased_seats !== undefined || input.add_seats !== undefined) {
-        const nextCfg = { ...cfg, min_seats: Math.max(Number(cfg.min_seats) || 0, nextSeats) };
-        await client.query(
-          `UPDATE partner_profiles SET program_config_json = $1::jsonb, updated_at = now()
-           WHERE partner_tenant_id = $2`,
-          [JSON.stringify(nextCfg), partnerTenantId]
-        );
+      if (delta !== 0) {
+        const fromAddSeats = input.add_seats !== undefined;
+        await applyPartnerLicenseDelta({
+          partnerTenantId,
+          deltaSeats: delta,
+          reason: fromAddSeats
+            ? delta > 0
+              ? 'grant'
+              : 'admin_adjust'
+            : 'admin_adjust',
+          actorUserId,
+          note:
+            input.add_seats !== undefined
+              ? `Super Admin add_seats=${input.add_seats}`
+              : `Super Admin set purchased_seats=${input.purchased_seats}`,
+          client,
+        });
       }
     }
 

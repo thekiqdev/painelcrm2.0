@@ -111,6 +111,22 @@ export default function PartnerOverviewPage() {
         }
       />
 
+      {me.wholesale_status === 'none' || !me.wholesale_status ? (
+        <Card className="border-primary/30 bg-primary/5 shadow-sm">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Contrate o plano Platform</CardTitle>
+            <CardDescription>
+              Nenhum plano atacado atrelado. Escolha e pague em Plano Platform para liberar licenças.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button asChild>
+              <Link to="/partner/platform-plan">Escolher plano</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      ) : null}
+
       {setupIncomplete ? (
         <Card className="border-crm-primary/25 bg-crm-primary/[0.04] shadow-sm">
           <CardHeader className="pb-3">

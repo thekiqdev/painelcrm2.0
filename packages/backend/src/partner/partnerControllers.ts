@@ -21,15 +21,19 @@ const createPartnerSchema = z.object({
   program_type: z.enum(['license_pool', 'revenue_share']).optional().default('license_pool'),
   floor_price_cents: z.number().int().min(0),
   unit_cost_cents: z.number().int().min(0),
-  purchased_seats: z.number().int().min(1),
+  /** Grant inicial; 0 = Partner sem seats (M5-W). */
+  purchased_seats: z.number().int().min(0).optional().default(0),
   public_name: z.string().min(1),
   product_name: z.string().min(1),
   plan_id: z.string().uuid().optional().nullable(),
   domain: z.string().optional().nullable(),
+  cpf_cnpj: z.string().optional().nullable(),
+  wholesale_plan_id: z.string().uuid().optional().nullable(),
 });
 
 const patchPartnerSchema = z
   .object({
+    name: z.string().min(1).optional(),
     floor_price_cents: z.number().int().min(0).optional(),
     unit_cost_cents: z.number().int().min(0).optional(),
     purchased_seats: z.number().int().min(0).optional(),
@@ -41,6 +45,8 @@ const patchPartnerSchema = z
     payout_cadence_preference: z.enum(['monthly', 'biweekly', 'on_demand']).optional(),
     partner_status: z.enum(['active', 'suspended']).optional(),
     status: z.enum(['active', 'suspended', 'trial', 'payment_pending']).optional(),
+    cpf_cnpj: z.string().nullable().optional(),
+    wholesale_block_after_days: z.number().int().min(0).max(90).nullable().optional(),
   })
   .refine((b) => Object.keys(b).length > 0, { message: 'Informe ao menos um campo' });
 
@@ -182,6 +188,9 @@ export async function partnerGetMe(req: PartnerAuthRequest, res: Response): Prom
       res.status(403).json({ error: 'Partner context missing' });
       return;
     }
+    const { getPartnerWholesaleStatusRow } = await import('./partnerWholesaleStatusService.js');
+    const wholesale = await getPartnerWholesaleStatusRow(ctx.partnerTenantId);
+
     res.json({
       partner_tenant_id: ctx.partnerTenantId,
       membership_id: ctx.membershipId,
@@ -205,6 +214,7 @@ export async function partnerGetMe(req: PartnerAuthRequest, res: Response): Prom
             unit_cost_cents: ctx.pool.unit_cost_cents,
           }
         : null,
+      wholesale_status: wholesale?.wholesale_status ?? 'none',
     });
   } catch (err) {
     handlePartnerError(err, res);

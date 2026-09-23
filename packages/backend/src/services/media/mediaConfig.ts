@@ -129,6 +129,13 @@ export function getFlowInboundTempPurgePollMs(): number {
   return Math.min(60 * 60 * 1000, Math.max(30_000, n));
 }
 
+/** Sprint 2 — TTL (segundos) da URL assinada ao abrir/baixar mídia do chat. Default 15 min. */
+export function getChatMediaAccessTtlSeconds(): number {
+  const n = parseInt(process.env.CHAT_MEDIA_ACCESS_TTL_SECONDS || '', 10);
+  if (!Number.isFinite(n) || n <= 0) return 15 * 60;
+  return Math.min(24 * 3600, Math.max(60, n));
+}
+
 /** S33 — quota: número máx. de assets ativos na Media Library por tenant. Default 500. */
 export function getMediaLibraryMaxCount(): number {
   const n = parseInt(process.env.MEDIA_LIBRARY_MAX_COUNT || '', 10);

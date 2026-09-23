@@ -116,6 +116,59 @@ export function sanitizeMediaItemsForDb(items: ChatMediaItem[]): ChatMediaItem[]
     });
 }
 
+/** URL assinada do nosso Media Service (`/api/media/v1/raw`). */
+export function isOurSignedMediaUrl(url: string | null | undefined): boolean {
+  if (!url || typeof url !== 'string') return false;
+  const t = url.trim();
+  if (!t) return false;
+  if (t.includes('/api/media/v1/raw')) return true;
+  try {
+    return new URL(t, 'https://placeholder.local').pathname.includes('/api/media/v1/raw');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * URL de ficheiro real (baixável), não miniatura JPEG `data:image` de stub Baileys.
+ * Usado para decidir se ainda precisamos de `/message/download` + ingestão.
+ */
+export function isRealInboundMediaFileUrl(
+  url: string | null | undefined,
+  kind?: ChatMessageKind | null
+): boolean {
+  if (!url || typeof url !== 'string') return false;
+  const t = url.trim();
+  if (!t) return false;
+  if (isOurSignedMediaUrl(t)) return true;
+  if (/^https?:\/\//i.test(t)) return true;
+  if (t.startsWith('data:')) {
+    const k = kind || null;
+    // Thumbnail JPEG em documento/áudio/vídeo ≠ ficheiro
+    if (
+      /^data:image\//i.test(t) &&
+      (k === 'document' || k === 'audio' || k === 'video')
+    ) {
+      return false;
+    }
+    // data:application/pdf (ou outro binário) conta como ficheiro
+    if (/^data:application\//i.test(t) || /^data:text\//i.test(t)) return true;
+    // Imagem/sticker em data URL é renderizável o suficiente
+    if (k === 'image' || k === 'sticker' || /^data:image\//i.test(t)) return true;
+    return false;
+  }
+  return false;
+}
+
+export function mediaItemsHaveRealFileUrl(
+  items: ChatMediaItem[],
+  kindHint?: ChatMessageKind | null
+): boolean {
+  return items.some((it) =>
+    isRealInboundMediaFileUrl(it.url, (it.type as ChatMessageKind) || kindHint || null)
+  );
+}
+
 function asMediaArray(raw: unknown): ChatMediaItem[] {
   if (raw == null || raw === '') return [];
   if (typeof raw === 'string') {

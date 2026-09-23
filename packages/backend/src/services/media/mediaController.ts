@@ -180,6 +180,21 @@ export async function getMediaRawBySignedKey(req: Request, res: Response): Promi
       sizeBytes: buf.length,
     });
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    const dispositionRaw = String(req.query.disposition || '').toLowerCase();
+    const disposition = dispositionRaw === 'attachment' ? 'attachment' : 'inline';
+    const rawName = String(req.query.filename || '')
+      .replace(/[\r\n"]+/g, '')
+      .trim()
+      .slice(0, 180);
+    const safeName = rawName || (disposition === 'attachment' ? 'download' : '');
+    if (safeName) {
+      res.setHeader(
+        'Content-Disposition',
+        `${disposition}; filename="${safeName}"; filename*=UTF-8''${encodeURIComponent(safeName)}`
+      );
+    } else {
+      res.setHeader('Content-Disposition', disposition);
+    }
     res.type(contentTypeForFile(absPath));
     res.send(buf);
   } catch (err: unknown) {

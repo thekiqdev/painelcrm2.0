@@ -614,7 +614,7 @@ function coerceMediaUrl(u: unknown): string | null {
   if (typeof u === 'string' && u.trim()) {
     const raw = u.trim();
     if (/^https?:\/\//i.test(raw) || raw.startsWith('data:')) return raw;
-    if (raw.startsWith('/media/')) {
+    if (raw.startsWith('/media/') || raw.startsWith('/api/media/')) {
       const base = getApiUrl().replace(/\/$/, '');
       return base ? `${base}${raw}` : raw;
     }
@@ -1729,6 +1729,30 @@ export const chatService = {
       throw new Error(response.error);
     }
     return response.data?.comments ?? [];
+  },
+
+  /** Sprint 2 — URL assinada temporária (abre/baixa); recupera stubs sob demanda. */
+  async resolveMessageMedia(
+    messageId: string,
+    opts?: { disposition?: 'inline' | 'attachment' }
+  ) {
+    const disposition = opts?.disposition === 'attachment' ? 'attachment' : 'inline';
+    const response = await apiClient.get<{
+      url: string;
+      relativeUrl?: string;
+      fileName?: string | null;
+      mimeType?: string | null;
+      expiresAt?: string;
+      recovered?: boolean;
+      disposition?: string;
+    }>(`/api/chat/messages/${messageId}/media?disposition=${disposition}`);
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    if (!response.data?.url) {
+      throw new Error('URL de mídia indisponível');
+    }
+    return response.data;
   },
 
   async listCrmNotesForClient(clientId: string, limit?: number) {

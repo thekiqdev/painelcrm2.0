@@ -17,7 +17,9 @@ export type BillingReason =
   | 'plan_renewal'
   | 'manual_charge'
   | 'seat_addon'
-  | 'instance_addon';
+  | 'instance_addon'
+  | 'partner_wholesale'
+  | 'partner_license_topup';
 
 /** Idempotência estável por linha + método (evita colisão entre tenants; troca de método gera nova chave no gateway). */
 export function buildSaasCheckoutChargeIdempotencyKey(billingId: string, paymentMethod: string): string {

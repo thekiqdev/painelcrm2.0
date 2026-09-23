@@ -561,12 +561,36 @@ export async function activatePlanFromBilling(billingId: string): Promise<void> 
   }
 
   const billingReason = billing.billing_reason ?? 'plan_purchase';
+  if (billingReason === 'plan_renewal') {
+    try {
+      const { maybeConfirmPartnerWholesaleRenewal } = await import(
+        '../partner/partnerWholesaleRenewalService.js'
+      );
+      await maybeConfirmPartnerWholesaleRenewal(billing);
+    } catch (e) {
+      console.error('[SUBSCRIPTION] wholesale renewal confirm failed', e);
+    }
+  }
   if (billingReason === 'seat_addon') {
     await activateSeatAddonFromBilling(billing);
     return;
   }
   if (billingReason === 'instance_addon') {
     await activateInstanceAddonFromBilling(billing);
+    return;
+  }
+  if (billingReason === 'partner_wholesale') {
+    const { activatePartnerWholesaleFromBilling } = await import(
+      '../partner/partnerWholesaleActivationService.js'
+    );
+    await activatePartnerWholesaleFromBilling(billing);
+    return;
+  }
+  if (billingReason === 'partner_license_topup') {
+    const { activatePartnerLicenseTopupFromBilling } = await import(
+      '../partner/partnerLicenseTopupService.js'
+    );
+    await activatePartnerLicenseTopupFromBilling(billing);
     return;
   }
 
@@ -916,7 +940,19 @@ const COMMERCIAL_SAAS_BILLING_REASONS = new Set([
   'manual_charge',
   'seat_addon',
   'instance_addon',
+  'partner_wholesale',
+  'partner_license_topup',
 ]);
+
+/** Platform→Partner (wholesale / top-up) sempre usa gateway global (nunca Asaas do Partner). */
+function saasGatewayTenantIdForBillingReason(
+  reason: string,
+  tenantId: string
+): string | undefined {
+  return reason === 'partner_wholesale' || reason === 'partner_license_topup'
+    ? undefined
+    : tenantId;
+}
 
 const CHECKOUT_PRESENTABLE_BILLING_STATUSES = ['pending', 'waiting_payment', 'processing', 'overdue'] as const;
 
@@ -939,7 +975,10 @@ export async function getSaasBillingCheckoutPresentation(
 
   const config = await getActiveConfig('saas');
   const gatewayKey = config?.gateway_key ?? 'asaas';
-  const gateway = await getActiveGateway({ billingType: 'saas', tenantId });
+  const gateway = await getActiveGateway({
+    billingType: 'saas',
+    tenantId: saasGatewayTenantIdForBillingReason(reason, tenantId),
+  });
   if (!gateway) return null;
 
   const methodsToTry: PaymentMethod[] = [];
@@ -1048,7 +1087,10 @@ export async function prepareSaasCheckoutPaymentMethodForBilling(
 
   const config = await getActiveConfig('saas');
   const gatewayKey = config?.gateway_key ?? 'asaas';
-  const gateway = await getActiveGateway({ billingType: 'saas', tenantId });
+  const gateway = await getActiveGateway({
+    billingType: 'saas',
+    tenantId: saasGatewayTenantIdForBillingReason(reason, tenantId),
+  });
   if (!gateway) return null;
 
   const dueDateStr = resolveTenantBillingDueDateIso10(billingRow);

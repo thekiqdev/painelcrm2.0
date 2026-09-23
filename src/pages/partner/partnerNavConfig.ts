@@ -59,6 +59,7 @@ export const partnerAdminNavGroups: PartnerNavGroup[] = [
       { to: '/partner/customers', label: 'Clientes', icon: Users, adminOnly: true },
       { to: '/partner/sellers', label: 'Vendedores', icon: UserPlus, adminOnly: true },
       { to: '/partner/licenses', label: 'Licenças', icon: KeyRound, adminOnly: true },
+      { to: '/partner/platform-plan', label: 'Plano Platform', icon: Package, adminOnly: true },
     ],
   },
   {

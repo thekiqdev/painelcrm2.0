@@ -132,6 +132,7 @@ import { refreshSystemFeatureFlagsFromPool } from './services/systemFeatureFlags
 import { refreshPlatformFeatureFlagRegistry } from './platform/featureFlagRegistry.js';
 import partnerRoutes from './partner/partnerRoutes.js';
 import superadminPartnerRoutes from './partner/superadminPartnerRoutes.js';
+import superadminPartnerWholesaleRoutes from './partner/superadminPartnerWholesaleRoutes.js';
 import { correlationIdMiddleware } from './middleware/correlationId.js';
 import {
   appLogger,
@@ -493,6 +494,7 @@ app.use('/api/chatbot-flows', chatbotFlowsRoutes);
 app.use('/api/announcements', authenticateToken, setCurrentTenant, announcementsUpdatesRoutes);
 app.use('/api/superadmin', superadminRoutes);
 app.use('/api/superadmin/plans', plansRoutes);
+app.use('/api/superadmin/partner-wholesale-plans', superadminPartnerWholesaleRoutes);
 app.use('/api/superadmin/tenants', tenantsRoutes);
 app.use('/api/superadmin/partners', superadminPartnerRoutes);
 app.use('/api/partner', partnerRoutes);
