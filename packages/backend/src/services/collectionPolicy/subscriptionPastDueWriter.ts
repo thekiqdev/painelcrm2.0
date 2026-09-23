@@ -117,6 +117,16 @@ export async function markSubscriptionPastDue(input: {
     payload: { subscription_id: input.subscriptionId, new_status: 'past_due' },
   });
 
+  // M5-W — espelha past_due no Partner (freeze canal)
+  try {
+    const { markPartnerWholesalePastDueBySubscription } = await import(
+      '../../partner/partnerWholesaleStatusService.js'
+    );
+    await markPartnerWholesalePastDueBySubscription(input.subscriptionId, { force: true });
+  } catch (e) {
+    console.warn('[past_due_writer] wholesale sync failed', e);
+  }
+
   return { status: 'ok', detail: 'subscription_past_due', subscription_id: input.subscriptionId };
 }
 
@@ -175,6 +185,15 @@ export async function clearSubscriptionPastDueOnPaid(input: {
       new_status: 'active',
     },
   });
+
+  try {
+    const { clearPartnerWholesalePastDueBySubscription } = await import(
+      '../../partner/partnerWholesaleStatusService.js'
+    );
+    await clearPartnerWholesalePastDueBySubscription(row.id);
+  } catch (e) {
+    console.warn('[past_due_writer] wholesale clear failed', e);
+  }
 
   return { status: 'ok', detail: 'past_due_cleared_to_active', subscription_id: row.id };
 }

@@ -24,7 +24,32 @@ describe('partnerLicenseService', () => {
   });
 
   it('getPartnerLicenseSummary calcula available', async () => {
-    vi.mocked(pool.query).mockResolvedValue({ rows: [{ c: '3' }] } as never);
+    vi.mocked(pool.query).mockImplementation(async (sql: string) => {
+      if (sql.includes('COUNT(*)')) return { rows: [{ c: '3' }] };
+      if (sql.includes('partner_wholesale_plans')) {
+        return {
+          rows: [
+            {
+              wholesale_plan_id: 'wp-1',
+              wholesale_status: 'active',
+              unit_overage_cents: 3500,
+            },
+          ],
+        };
+      }
+      if (sql.includes('FROM partner_profiles') && sql.includes('wholesale_status')) {
+        return {
+          rows: [
+            {
+              wholesale_status: 'active',
+              wholesale_subscription_id: null,
+              wholesale_plan_id: 'wp-1',
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
     vi.mocked(getPartnerLicensePool).mockResolvedValue({
       partner_tenant_id: PARTNER_ID,
       purchased_seats: 10,
@@ -53,10 +78,31 @@ describe('partnerLicenseService', () => {
     expect(s.used_seats).toBe(3);
     expect(s.available_seats).toBe(7);
     expect(s.floor_price_cents).toBe(9900);
+    expect(s.topup_unit_price_cents).toBe(3500);
+    expect(s.topup_price_source).toBe('wholesale_overage');
   });
 
   it('assertPartnerPoolAllowsNewUser bloqueia quando cheio', async () => {
-    vi.mocked(pool.query).mockResolvedValue({ rows: [{ c: '10' }] } as never);
+    vi.mocked(pool.query).mockImplementation(async (sql: string) => {
+      if (sql.includes('COUNT(*)')) return { rows: [{ c: '10' }] };
+      if (sql.includes('partner_wholesale_plans')) {
+        return {
+          rows: [{ wholesale_plan_id: null, wholesale_status: 'none', unit_overage_cents: null }],
+        };
+      }
+      if (sql.includes('FROM partner_profiles') && sql.includes('wholesale_status')) {
+        return {
+          rows: [
+            {
+              wholesale_status: 'active',
+              wholesale_subscription_id: null,
+              wholesale_plan_id: null,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
     vi.mocked(getPartnerLicensePool).mockResolvedValue({
       partner_tenant_id: PARTNER_ID,
       purchased_seats: 10,
@@ -83,6 +129,27 @@ describe('partnerLicenseService', () => {
 
     await expect(assertPartnerPoolAllowsNewUser(PARTNER_ID)).rejects.toMatchObject({
       code: 'LICENSE_POOL_EXHAUSTED',
+    });
+  });
+
+  it('assertPartnerPoolAllowsNewUser bloqueia past_due (freeze)', async () => {
+    vi.mocked(pool.query).mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM partner_profiles') && sql.includes('wholesale_status')) {
+        return {
+          rows: [
+            {
+              wholesale_status: 'past_due',
+              wholesale_subscription_id: 'sub-1',
+              wholesale_plan_id: 'wp-1',
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    await expect(assertPartnerPoolAllowsNewUser(PARTNER_ID)).rejects.toMatchObject({
+      code: 'WHOLESALE_CHANNEL_FROZEN',
     });
   });
 });

@@ -98,6 +98,11 @@ export async function applyPaymentEvent(params: ApplyPaymentEventParams): Promis
             billingId: entityId,
             correlationId: tenantBillingCorrelationId(entityId),
           });
+          // M5-W — limpa freeze mesmo se subscription não estava past_due (flag writer OFF)
+          const { clearPartnerWholesalePastDueBySubscription } = await import(
+            '../../../partner/partnerWholesaleStatusService.js'
+          );
+          await clearPartnerWholesalePastDueBySubscription(inv.subscription_id);
         }
         // Sprint B — cancela cobranças abertas deste ciclo (ex. Pix Auto + attempts); auth intacta.
         if (inv?.tenant_id) {

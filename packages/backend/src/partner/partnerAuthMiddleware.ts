@@ -73,3 +73,37 @@ function makeRequirePartnerRole(roles: PartnerMembershipRole[]) {
 export const requirePartnerAdmin = makeRequirePartnerRole(['partner_admin']);
 export const requirePartnerSeller = makeRequirePartnerRole(['partner_seller']);
 export const requirePartnerMember = makeRequirePartnerRole(['partner_admin', 'partner_seller']);
+
+/**
+ * Block S2 — bloqueia mutações de crescimento quando canal past_due/canceled.
+ * Rotas de pagamento wholesale /me / status ficam fora deste middleware.
+ */
+export async function requirePartnerWholesaleNotFrozen(
+  req: PartnerAuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const partnerId = req.partnerContext?.partnerTenantId;
+    if (!partnerId) {
+      next();
+      return;
+    }
+    const { assertPartnerChannelGrowthAllowed } = await import('./partnerWholesaleStatusService.js');
+    await assertPartnerChannelGrowthAllowed(partnerId);
+    next();
+  } catch (err) {
+    const { PartnerAdminError } = await import('./partnerErrors.js');
+    if (err instanceof PartnerAdminError) {
+      res.status(err.status).json({
+        error: err.message,
+        code: err.code,
+        paywall: true,
+        paywall_path: '/partner/platform-plan',
+      });
+      return;
+    }
+    console.error('[partnerAuth] wholesale freeze', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}

@@ -514,5 +514,17 @@ export const MIGRATION_ORDER = [
   '327_partner_sell_plan_trial.sql',
   /** Chatbot Flows S36 — CPF/CNPJ no lead */
   '328_leads_cpf_cnpj.sql',
+  /** M5-W Sprint 1 — wholesale plans + license ledger */
+  '329_partner_wholesale_s1.sql',
+  /** M5-W Sprint 2 — wholesale subscription link + billing_reason partner_wholesale */
+  '330_partner_wholesale_s2.sql',
+  /** M5-W Sprint 3 — billing_reason partner_license_topup */
+  '331_partner_license_topup_s3.sql',
+  /** M5-W Sprint 4 — past_due + legado */
+  '332_partner_wholesale_s4.sql',
+  /** M5-W Block S1 — dias para freeze Partner após vencimento */
+  '333_partner_wholesale_block_s1.sql',
+  /** M5-W Block S3 — override block_after_days por Partner */
+  '334_partner_wholesale_block_s3.sql',
   'create-admin-user.sql',
 ];

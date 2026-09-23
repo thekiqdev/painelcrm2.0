@@ -12,6 +12,7 @@ import { scheduleCollectionPolicyExtensionPoint } from './collectionPolicy/hook.
 import { tenantBillingCorrelationId } from './billing2/billingCorrelationId.js';
 import { writeBillingAuditEvent } from './collectionPolicy/billingAuditEventWriter.js';
 import { billingLog } from './billingLogger.js';
+import { getPartnerWholesaleBlockAfterDays } from '../partner/partnerWholesaleBlockSettingsService.js';
 
 export type DunningRunResult = {
   skipped: boolean;
@@ -22,6 +23,7 @@ export type DunningRunResult = {
   grace_events: number;
   cancel_events: number;
   retry_events: number;
+  wholesale_block_events: number;
 };
 
 function daysBetween(dueDate: string, todayYmd: string): number {
@@ -51,10 +53,12 @@ export async function runBillingDunningCycle(opts: {
       grace_events: 0,
       cancel_events: 0,
       retry_events: 0,
+      wholesale_block_events: 0,
     };
   }
 
   const { policy } = await getActiveCollectionPolicy();
+  const blockAfterDays = await getPartnerWholesaleBlockAfterDays();
   const todayR = await pool.query<{ d: string }>(`SELECT CURRENT_DATE::text AS d`);
   const today = todayR.rows[0]?.d ?? new Date().toISOString().slice(0, 10);
 
@@ -85,6 +89,7 @@ export async function runBillingDunningCycle(opts: {
   let grace_events = 0;
   let cancel_events = 0;
   let retry_events = 0;
+  let wholesale_block_events = 0;
 
   for (const row of r.rows) {
     const days = daysBetween(row.due_date, today);
@@ -127,6 +132,20 @@ export async function runBillingDunningCycle(opts: {
       grace_events += 1;
     }
 
+    // M5-W Block S1/S3 — freeze Partner: elegibilidade usa N efetivo (override|global) dentro do mark
+    if (row.subscription_id) {
+      wholesale_block_events += 1;
+      if (!dryRun) {
+        void import('../partner/partnerWholesaleStatusService.js')
+          .then((m) =>
+            m.markPartnerWholesalePastDueBySubscription(row.subscription_id!, {
+              origin: 'dunning_job',
+            })
+          )
+          .catch((e) => console.warn('[dunning] wholesale past_due sync', e));
+      }
+    }
+
     if (days >= policy.cancel_after_days) {
       emit('cancel.threshold_elapsed');
       cancel_events += 1;
@@ -141,6 +160,7 @@ export async function runBillingDunningCycle(opts: {
     grace_events,
     cancel_events,
     retry_events,
+    wholesale_block_events,
   };
 
   billingLog('job', 'dunning_cycle_done', {
@@ -150,6 +170,8 @@ export async function runBillingDunningCycle(opts: {
     grace_events,
     cancel_events,
     retry_events,
+    wholesale_block_events,
+    partner_wholesale_block_after_days: blockAfterDays,
   });
 
   await writeBillingAuditEvent({
@@ -160,7 +182,11 @@ export async function runBillingDunningCycle(opts: {
     entity_id: null,
     reason: dryRun ? 'dry_run' : 'emit_events',
     origin: 'dunning_job',
-    payload: { ...result, policy_max_attempts: policy.max_attempts },
+    payload: {
+      ...result,
+      policy_max_attempts: policy.max_attempts,
+      partner_wholesale_block_after_days: blockAfterDays,
+    },
   });
 
   return result;

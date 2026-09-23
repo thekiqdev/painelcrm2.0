@@ -8,7 +8,8 @@
 | **Nome** | **M5 — Partner White-label (canal + vendedores + comissão)** |
 | **Escopo** | Revenda white-label: Partner com painel próprio, programas comerciais, planos/licenças, gateway próprio, carteira, vendedores com regras de comissão; Platform governa piso/envelope e cria Partners |
 | **Princípio** | Platform **fora** da árvore; **sem** L2; Partner compra/revende; **marca 100% Partner**; vendedor = user do Partner com **painel próprio** (link + ganhos) |
-| **Status** | **S7 feito** (2026-08-18) · S0–S7 ok · aberto: NF (D19), `revenue_share` |
+| **Status** | **S7 feito** (2026-08-18) · S0–S7 ok · aberto: NF (D19), `revenue_share` · **M5-W MVP feito** (S1–S4) |
+| **Próximo** | Soften UX WL · NF (D19) · `revenue_share` |
 | **MVP** | **S4** (fechado) · `license_pool` · 1 licença = 1 usuário · gateway Asaas |
 | **Pós-MVP** | **S5** comissões (**feito**) · **S6** suspensão/migração (**feito**) · `revenue_share` |
 | **S0** | [`SPRINT_M5_S0_INVENTORY_AND_SCHEMA.md`](./SPRINT_M5_S0_INVENTORY_AND_SCHEMA.md) |
@@ -20,6 +21,7 @@
 | **S6** | [`SPRINT_M5_S6_SUSPENSION_MIGRATION.md`](./SPRINT_M5_S6_SUSPENSION_MIGRATION.md) |
 | **S7** | [`SPRINT_M5_S7_PARTNER_CHANNEL_CHECKOUT.md`](./SPRINT_M5_S7_PARTNER_CHANNEL_CHECKOUT.md) — cadastro/checkout exclusivo do canal |
 | **S8** | [`INVESTIGACAO_S8_SUPERADMIN_SEGREGACAO_CLIENTES.md`](./INVESTIGACAO_S8_SUPERADMIN_SEGREGACAO_CLIENTES.md) — Super Admin: lista SaaS ≠ clientes Partner (investigação) |
+| **M5-W** | [`PLAN_SPRINTS_M5_W_PARTNER_WHOLESALE.md`](./PLAN_SPRINTS_M5_W_PARTNER_WHOLESALE.md) — Platform→Partner: planos atacado, atrelar, licenças avulsas, renovação |
 | **Próximo** | Soften UX WL · NF (D19) · `revenue_share` |
 
 ---

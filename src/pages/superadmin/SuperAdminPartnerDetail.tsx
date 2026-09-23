@@ -8,6 +8,8 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { toast } from '@/components/ui/sonner';
 import { apiClient } from '@/integrations/api/client';
+import { formatCpfCnpjDigits } from '@/lib/brazilInputMasks';
+import { formatCpfCnpjDisplay, isValidCpfOrCnpj } from '@/utils/cpfCnpj';
 
 type PartnerDetail = {
   id: string;
@@ -22,6 +24,11 @@ type PartnerDetail = {
   unit_cost_cents: number;
   floor_price_cents: number | null;
   admin_email: string | null;
+  cpf_cnpj: string | null;
+  wholesale_plan_id: string | null;
+  wholesale_status: string;
+  wholesale_plan_name: string | null;
+  wholesale_block_after_days: number | null;
   memberships: Array<{
     id: string;
     role: string;
@@ -30,13 +37,46 @@ type PartnerDetail = {
   }>;
 };
 
+type WholesalePlanOption = {
+  id: string;
+  name: string;
+  slug: string;
+  seats_included: number;
+  price_cents: number;
+  status: string;
+};
+
+function onlyDigits(v: string): string {
+  return v.replace(/\D/g, '');
+}
+
+function centsToBrl(cents: number | null | undefined): string {
+  if (cents == null || !Number.isFinite(cents)) return '';
+  return (cents / 100).toFixed(2);
+}
+
+function brlToCents(raw: string): number {
+  const n = Number(String(raw).replace(',', '.'));
+  if (!Number.isFinite(n) || n < 0) return NaN;
+  return Math.round(n * 100);
+}
+
 export default function SuperAdminPartnerDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [detail, setDetail] = useState<PartnerDetail | null>(null);
   const [addSeats, setAddSeats] = useState('5');
   const [saving, setSaving] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
   const [suspendReason, setSuspendReason] = useState('');
+  const [editForm, setEditForm] = useState({
+    name: '',
+    public_name: '',
+    product_name: '',
+    cpf_cnpj: '',
+    floor_brl: '',
+    unit_cost_brl: '',
+  });
   const [events, setEvents] = useState<
     Array<{
       id: string;
@@ -57,7 +97,33 @@ export default function SuperAdminPartnerDetail() {
       users_count: number;
     }>
   >([]);
+  const [ledger, setLedger] = useState<
+    Array<{
+      id: string;
+      delta_seats: number;
+      balance_after: number;
+      reason: string;
+      note: string | null;
+      created_at: string;
+    }>
+  >([]);
   const [customersLoading, setCustomersLoading] = useState(false);
+  const [wholesalePlans, setWholesalePlans] = useState<WholesalePlanOption[]>([]);
+  const [assignPlanId, setAssignPlanId] = useState('');
+  const [assignMode, setAssignMode] = useState<'grant' | 'charge'>('grant');
+  const [blockAfterDays, setBlockAfterDays] = useState('');
+  const [savingBlock, setSavingBlock] = useState(false);
+
+  const syncEditForm = (d: PartnerDetail) => {
+    setEditForm({
+      name: d.name || '',
+      public_name: d.public_name || '',
+      product_name: d.product_name || '',
+      cpf_cnpj: d.cpf_cnpj ? formatCpfCnpjDigits(onlyDigits(d.cpf_cnpj)) : '',
+      floor_brl: centsToBrl(d.floor_price_cents),
+      unit_cost_brl: centsToBrl(d.unit_cost_cents),
+    });
+  };
 
   const reload = async () => {
     if (!id) return;
@@ -68,12 +134,29 @@ export default function SuperAdminPartnerDetail() {
       return;
     }
     setDetail(res.data);
+    if (res.data) {
+      syncEditForm(res.data);
+      setBlockAfterDays(
+        res.data.wholesale_block_after_days == null
+          ? ''
+          : String(res.data.wholesale_block_after_days)
+      );
+    }
     setCustomersLoading(true);
-    const [ev, cust] = await Promise.all([
+    const [ev, cust, led, plans] = await Promise.all([
       apiClient.get<typeof events>(`/api/superadmin/partners/${id}/suspension-events`),
       apiClient.get<typeof customers>(`/api/superadmin/partners/${id}/customers`),
+      apiClient.get<typeof ledger>(`/api/superadmin/partners/${id}/license-ledger?limit=20`),
+      apiClient.get<WholesalePlanOption[]>('/api/superadmin/partner-wholesale-plans'),
     ]);
     if (!ev.error && ev.data) setEvents(ev.data);
+    if (!led.error && Array.isArray(led.data)) setLedger(led.data);
+    else setLedger([]);
+    if (!plans.error && Array.isArray(plans.data)) {
+      const active = plans.data.filter((p) => p.status === 'active' || p.status === 'draft');
+      setWholesalePlans(active);
+      if (!assignPlanId && active[0]) setAssignPlanId(active[0].id);
+    }
     if (cust.error) {
       toast.error(cust.error || 'Falha ao listar clientes do canal');
       setCustomers([]);
@@ -86,6 +169,42 @@ export default function SuperAdminPartnerDetail() {
   useEffect(() => {
     void reload();
   }, [id]);
+
+  const saveProfile = async () => {
+    if (!id) return;
+    if (!editForm.name.trim() || !editForm.public_name.trim() || !editForm.product_name.trim()) {
+      toast.error('Nome interno, público e produto são obrigatórios');
+      return;
+    }
+    const floor = brlToCents(editForm.floor_brl);
+    const unit = brlToCents(editForm.unit_cost_brl);
+    if (!Number.isFinite(floor) || !Number.isFinite(unit)) {
+      toast.error('Piso e custo unitário inválidos');
+      return;
+    }
+    const docDigits = onlyDigits(editForm.cpf_cnpj);
+    if (docDigits && !isValidCpfOrCnpj(docDigits)) {
+      toast.error('CPF/CNPJ inválido');
+      return;
+    }
+
+    setSavingProfile(true);
+    const res = await apiClient.patch(`/api/superadmin/partners/${id}`, {
+      name: editForm.name.trim(),
+      public_name: editForm.public_name.trim(),
+      product_name: editForm.product_name.trim(),
+      floor_price_cents: floor,
+      unit_cost_cents: unit,
+      cpf_cnpj: docDigits || null,
+    });
+    setSavingProfile(false);
+    if (res.error) {
+      toast.error(res.error || 'Falha ao salvar cadastro');
+      return;
+    }
+    toast.success('Cadastro atualizado');
+    await reload();
+  };
 
   const topUp = async () => {
     if (!id) return;
@@ -102,6 +221,67 @@ export default function SuperAdminPartnerDetail() {
       return;
     }
     toast.success(`+${n} licenças alocadas`);
+    await reload();
+  };
+
+  const saveBlockOverride = async () => {
+    if (!id) return;
+    const raw = blockAfterDays.trim();
+    let wholesale_block_after_days: number | null = null;
+    if (raw !== '') {
+      const n = Math.floor(Number(raw));
+      if (!Number.isFinite(n) || n < 0 || n > 90) {
+        toast.error('Dias de bloqueio: inteiro 0–90 (vazio = global)');
+        return;
+      }
+      wholesale_block_after_days = n;
+    }
+    setSavingBlock(true);
+    const res = await apiClient.patch(`/api/superadmin/partners/${id}`, {
+      wholesale_block_after_days,
+    });
+    setSavingBlock(false);
+    if (res.error) {
+      toast.error(res.error || 'Falha ao salvar override');
+      return;
+    }
+    toast.success(
+      wholesale_block_after_days == null
+        ? 'Override removido — usa setting global'
+        : `Override: bloqueia após ${wholesale_block_after_days} dia(s)`
+    );
+    await reload();
+  };
+
+  const assignWholesale = async () => {
+    if (!id || !assignPlanId) {
+      toast.error('Selecione um plano atacado');
+      return;
+    }
+    setSaving(true);
+    const res = await apiClient.post<{
+      mode: string;
+      seats_credited?: number;
+      settled?: boolean;
+      paymentUrls?: { invoiceUrl?: string; pixCopyPaste?: string } | null;
+      error?: string;
+    }>(`/api/superadmin/partners/${id}/wholesale/assign`, {
+      wholesale_plan_id: assignPlanId,
+      mode: assignMode,
+      payment_method: 'PIX',
+    });
+    setSaving(false);
+    if (res.error) {
+      toast.error(res.error || 'Falha ao atrelar plano');
+      return;
+    }
+    if (assignMode === 'grant') {
+      toast.success(`Plano atrelado (grant). +${res.data?.seats_credited ?? 0} seats`);
+    } else if (res.data?.settled) {
+      toast.success('Cobrança R$ 0 liquidada — plano ativo');
+    } else {
+      toast.success('Cobrança Platform criada — Partner pode pagar no painel');
+    }
     await reload();
   };
 
@@ -156,13 +336,93 @@ export default function SuperAdminPartnerDetail() {
           <h1 className="text-2xl font-semibold">{detail.public_name}</h1>
           <p className="text-sm text-muted-foreground">
             {detail.slug} · {detail.product_name}
+            {detail.cpf_cnpj ? ` · ${formatCpfCnpjDisplay(detail.cpf_cnpj)}` : ''}
           </p>
+          {detail.admin_email ? (
+            <p className="text-xs text-muted-foreground">Admin: {detail.admin_email}</p>
+          ) : null}
         </div>
         <div className="flex gap-2">
           <Badge variant="outline">{detail.program_type}</Badge>
           <Badge>{detail.partner_status}</Badge>
         </div>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Cadastro do Partner</CardTitle>
+          <CardDescription>Visualize e edite dados comerciais / fiscais</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label>Nome interno</Label>
+              <Input
+                value={editForm.name}
+                onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Slug</Label>
+              <Input value={detail.slug} disabled />
+            </div>
+            <div className="space-y-2">
+              <Label>Nome público</Label>
+              <Input
+                value={editForm.public_name}
+                onChange={(e) => setEditForm((f) => ({ ...f, public_name: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Nome do produto</Label>
+              <Input
+                value={editForm.product_name}
+                onChange={(e) => setEditForm((f) => ({ ...f, product_name: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <Label>CPF ou CNPJ</Label>
+              <Input
+                inputMode="numeric"
+                placeholder="000.000.000-00 ou 00.000.000/0000-00"
+                value={editForm.cpf_cnpj}
+                onChange={(e) =>
+                  setEditForm((f) => ({
+                    ...f,
+                    cpf_cnpj: formatCpfCnpjDigits(onlyDigits(e.target.value)),
+                  }))
+                }
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Piso de venda (R$)</Label>
+              <Input
+                value={editForm.floor_brl}
+                onChange={(e) => setEditForm((f) => ({ ...f, floor_brl: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Custo/licença Platform (R$)</Label>
+              <Input
+                value={editForm.unit_cost_brl}
+                onChange={(e) => setEditForm((f) => ({ ...f, unit_cost_brl: e.target.value }))}
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              disabled={savingProfile || !detail}
+              onClick={() => detail && syncEditForm(detail)}
+            >
+              Descartar
+            </Button>
+            <Button onClick={() => void saveProfile()} disabled={savingProfile}>
+              {savingProfile ? 'Salvando…' : 'Salvar cadastro'}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -196,6 +456,131 @@ export default function SuperAdminPartnerDetail() {
               {saving ? 'Salvando…' : 'Alocar'}
             </Button>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Plano atacado (Platform)</CardTitle>
+          <CardDescription>
+            Atrela Partner a um plano wholesale — grant (sem Asaas) ou gera cobrança Platform
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm">
+            Status{' '}
+            <Badge variant="outline">{detail.wholesale_status || 'none'}</Badge>
+            {detail.wholesale_plan_name ? (
+              <>
+                {' '}
+                · plano <strong>{detail.wholesale_plan_name}</strong>
+              </>
+            ) : (
+              <span className="text-muted-foreground"> · nenhum plano ativo</span>
+            )}
+          </p>
+          <div className="flex flex-wrap items-end gap-3 rounded-md border border-dashed p-3">
+            <div className="space-y-2">
+              <Label htmlFor="block-override">Bloqueio após vencimento (dias)</Label>
+              <Input
+                id="block-override"
+                type="number"
+                min={0}
+                max={90}
+                className="w-28"
+                placeholder="Global"
+                value={blockAfterDays}
+                onChange={(e) => setBlockAfterDays(e.target.value)}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Vazio = setting global Super Admin. Override 0–90 só para este Partner.
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={savingBlock}
+              onClick={() => void saveBlockOverride()}
+            >
+              {savingBlock ? 'Salvando…' : 'Salvar bloqueio'}
+            </Button>
+          </div>
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="min-w-[220px] space-y-2">
+              <Label>Plano</Label>
+              <select
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                value={assignPlanId}
+                onChange={(e) => setAssignPlanId(e.target.value)}
+              >
+                {wholesalePlans.length === 0 ? (
+                  <option value="">Nenhum plano cadastrado</option>
+                ) : (
+                  wholesalePlans.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} · {p.seats_included} seats · R${' '}
+                      {(p.price_cents / 100).toFixed(2)}
+                    </option>
+                  ))
+                )}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <Label>Modo</Label>
+              <select
+                className="flex h-10 rounded-md border border-input bg-background px-3 text-sm"
+                value={assignMode}
+                onChange={(e) => setAssignMode(e.target.value as 'grant' | 'charge')}
+              >
+                <option value="grant">Grant (sem cobrança)</option>
+                <option value="charge">Cobrar (Asaas Platform)</option>
+              </select>
+            </div>
+            <Button
+              onClick={() => void assignWholesale()}
+              disabled={saving || !assignPlanId}
+            >
+              {saving ? 'Processando…' : 'Atrelar plano'}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Ledger de licenças</CardTitle>
+          <CardDescription>Auditoria de grants e ajustes (M5-W)</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {ledger.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Nenhum lançamento ainda.</p>
+          ) : (
+            <ul className="space-y-2 text-sm">
+              {ledger.map((row) => (
+                <li
+                  key={row.id}
+                  className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border/60 pb-2 last:border-0"
+                >
+                  <span>
+                    <Badge variant="outline" className="mr-2 font-mono text-[10px]">
+                      {row.reason}
+                    </Badge>
+                    <span className={row.delta_seats >= 0 ? 'text-emerald-700' : 'text-destructive'}>
+                      {row.delta_seats >= 0 ? '+' : ''}
+                      {row.delta_seats}
+                    </span>
+                    <span className="text-muted-foreground"> → saldo {row.balance_after}</span>
+                    {row.note ? (
+                      <span className="ml-2 text-xs text-muted-foreground">{row.note}</span>
+                    ) : null}
+                  </span>
+                  <span className="text-[11px] text-muted-foreground">
+                    {new Date(row.created_at).toLocaleString('pt-BR')}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
         </CardContent>
       </Card>
 

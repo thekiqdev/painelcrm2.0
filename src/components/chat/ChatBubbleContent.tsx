@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
-import { Download, ExternalLink, FileText } from 'lucide-react';
-import { coerceChatPlainText, groupMessageSenderPrefix, type ChatMessage } from '@/services/chat';
+import { Download, ExternalLink, FileText, Loader2 } from 'lucide-react';
+import { coerceChatPlainText, groupMessageSenderPrefix, chatService, type ChatMessage } from '@/services/chat';
 import { chatMediaDebugLog } from '@/lib/chatMediaDebug';
 import { openChatImageLightbox } from '@/components/chat/ChatImageLightbox';
+import { toast } from 'sonner';
+import { getApiUrl } from '@/integrations/api/client';
 
 /** Texto da bolha: preserva quebras do remetente; quebra só por palavras / overflow normal (evita “uma letra por linha”). */
 const CHAT_MSG_TEXT =
@@ -163,6 +165,7 @@ export const ChatBubbleContent: React.FC<{
   /** Mensagens recebidas em conversa de grupo: prefixo com nome do remetente quando disponível. */
   groupIncomingFormat?: boolean;
 }> = ({ message, groupIncomingFormat }) => {
+  const [mediaBusy, setMediaBusy] = useState(false);
   const c = message.message_contract;
   const kind = c?.kind;
   const rawMediaUrl = firstRenderableMediaUrl(message);
@@ -248,38 +251,96 @@ export const ChatBubbleContent: React.FC<{
     const typeLabel = detectDocumentTypeLabel(mime, docName);
     const documentHref = url;
     const isDataDocument = !!documentHref && documentHref.startsWith('data:');
-    const handleOpenDocument = () => {
-      if (!documentHref) return;
-      if (!isDataDocument) {
-        window.open(documentHref, '_blank', 'noopener,noreferrer');
+    const canResolveViaApi = Boolean(message.id);
+
+    const absolutizeMediaUrl = (raw: string): string => {
+      const t = raw.trim();
+      if (!t) return t;
+      if (/^https?:\/\//i.test(t) || t.startsWith('data:') || t.startsWith('blob:')) return t;
+      if (t.startsWith('/')) {
+        const base = getApiUrl().replace(/\/$/, '');
+        return base ? `${base}${t}` : t;
+      }
+      return t;
+    };
+
+    const resolveViaApi = async (disposition: 'inline' | 'attachment'): Promise<string | null> => {
+      if (!message.id) return null;
+      const resolved = await chatService.resolveMessageMedia(message.id, { disposition });
+      return absolutizeMediaUrl(resolved.url);
+    };
+
+    const handleOpenDocument = async () => {
+      if (mediaBusy) return;
+      if (isDataDocument && documentHref) {
+        const blob = dataUriToBlob(documentHref);
+        if (!blob) return;
+        const blobUrl = URL.createObjectURL(blob);
+        window.open(blobUrl, '_blank', 'noopener,noreferrer');
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 30_000);
         return;
       }
-      const blob = dataUriToBlob(documentHref);
-      if (!blob) return;
-      const blobUrl = URL.createObjectURL(blob);
-      window.open(blobUrl, '_blank', 'noopener,noreferrer');
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 30_000);
+      if (canResolveViaApi) {
+        setMediaBusy(true);
+        try {
+          const href = await resolveViaApi('inline');
+          if (!href) throw new Error('empty');
+          window.open(href, '_blank', 'noopener,noreferrer');
+        } catch (e: unknown) {
+          toast.error(e instanceof Error ? e.message : 'Não foi possível abrir o documento');
+        } finally {
+          setMediaBusy(false);
+        }
+        return;
+      }
+      if (documentHref) {
+        window.open(documentHref, '_blank', 'noopener,noreferrer');
+      }
     };
-    const handleDownloadDocument = () => {
-      if (!documentHref) return;
-      if (!isDataDocument) {
+
+    const handleDownloadDocument = async () => {
+      if (mediaBusy) return;
+      if (isDataDocument && documentHref) {
+        const blob = dataUriToBlob(documentHref);
+        if (!blob) return;
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = docName || 'documento.pdf';
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 30_000);
+        return;
+      }
+      if (canResolveViaApi) {
+        setMediaBusy(true);
+        try {
+          const href = await resolveViaApi('attachment');
+          if (!href) throw new Error('empty');
+          const a = document.createElement('a');
+          a.href = href;
+          a.download = docName || 'documento';
+          a.rel = 'noreferrer';
+          a.target = '_blank';
+          a.click();
+        } catch (e: unknown) {
+          toast.error(e instanceof Error ? e.message : 'Não foi possível baixar o documento');
+        } finally {
+          setMediaBusy(false);
+        }
+        return;
+      }
+      if (documentHref) {
         const a = document.createElement('a');
         a.href = documentHref;
         a.download = docName || 'documento';
         a.rel = 'noreferrer';
         a.target = '_blank';
         a.click();
-        return;
       }
-      const blob = dataUriToBlob(documentHref);
-      if (!blob) return;
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = blobUrl;
-      a.download = docName || 'documento.pdf';
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 30_000);
     };
+
+    const showActions = canResolveViaApi || !!documentHref;
+
     return (
       <div className="space-y-1">
         <div className="rounded-md border border-border bg-background/70 px-2 py-1.5 dark:bg-background/50">
@@ -290,22 +351,24 @@ export const ChatBubbleContent: React.FC<{
               <p className="text-[10px] text-muted-foreground">{typeLabel}</p>
             </div>
           </div>
-          {documentHref ? (
+          {showActions ? (
             <div className="mt-2 flex items-center gap-3 text-xs">
               <button
                 type="button"
-                onClick={handleOpenDocument}
-                className="inline-flex items-center gap-1 underline"
+                disabled={mediaBusy}
+                onClick={() => void handleOpenDocument()}
+                className="inline-flex items-center gap-1 underline disabled:opacity-60"
               >
-                <ExternalLink className="h-3.5 w-3.5" />
+                {mediaBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="h-3.5 w-3.5" />}
                 Visualizar
               </button>
               <button
                 type="button"
-                onClick={handleDownloadDocument}
-                className="inline-flex items-center gap-1 underline"
+                disabled={mediaBusy}
+                onClick={() => void handleDownloadDocument()}
+                className="inline-flex items-center gap-1 underline disabled:opacity-60"
               >
-                <Download className="h-3.5 w-3.5" />
+                {mediaBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
                 Baixar
               </button>
             </div>

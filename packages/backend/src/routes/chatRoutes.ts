@@ -106,6 +106,7 @@ import {
   postCrmNote,
   postMessageComment,
 } from '../controllers/chatCollaborationController.js';
+import { getMessageMedia } from '../controllers/chatMessageMediaController.js';
 import {
   getChatGroupDetails,
   getChatGroupParticipants,
@@ -217,6 +218,7 @@ router.patch('/crm-notes/:noteId', patchCrmNote);
 router.delete('/crm-notes/:noteId', deleteCrmNote);
 router.post('/messages/:messageId/comments', postMessageComment);
 router.get('/messages/:messageId/comments', getMessageComments);
+router.get('/messages/:messageId/media', getMessageMedia);
 router.patch('/message-comments/:commentId', patchMessageComment);
 router.delete('/message-comments/:commentId', deleteMessageComment);
 router.post('/conversations/:id/mark-read', markConversationRead);

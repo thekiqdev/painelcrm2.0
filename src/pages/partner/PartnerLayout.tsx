@@ -1,6 +1,6 @@
 import React, { Suspense } from 'react';
 import { LogOut, Menu } from 'lucide-react';
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
@@ -13,6 +13,7 @@ import {
   partnerAdminNavGroups,
   partnerSellerNavItems,
 } from './partnerNavConfig';
+import PartnerPaywallGate, { isPartnerPaywallActive } from './PartnerPaywallGate';
 
 function PartnerNavLinks({
   onNavigate,
@@ -126,8 +127,9 @@ function PartnerHorizontalTabs() {
 function PartnerLayoutInner() {
   const { signOut, user } = useAuth();
   const navigate = useNavigate();
-  const { me, loading, error } = usePartnerPanel();
+  const { me, loading, error, isAdmin } = usePartnerPanel();
   const [mobileOpen, setMobileOpen] = React.useState(false);
+  const paywall = isPartnerPaywallActive(me?.wholesale_status);
 
   return (
     <div className="min-h-screen bg-muted/30">
@@ -167,6 +169,11 @@ function PartnerLayoutInner() {
                 {me.role === 'partner_admin' ? 'Admin' : 'Vendedor'}
               </Badge>
             ) : null}
+            {paywall ? (
+              <Badge variant="destructive" className="hidden sm:inline-flex">
+                Inadimplente
+              </Badge>
+            ) : null}
             <span className="hidden max-w-[160px] truncate text-xs text-muted-foreground lg:inline">
               {user?.email}
             </span>
@@ -179,6 +186,24 @@ function PartnerLayoutInner() {
           </div>
         </div>
       </header>
+
+      {paywall ? (
+        <div className="border-b border-amber-500/40 bg-amber-500/10">
+          <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-sm md:px-6">
+            <p>
+              Canal congelado: plano Platform em atraso. Clientes existentes continuam; novas vendas e
+              licenças ficam bloqueadas até regularizar.
+            </p>
+            {isAdmin ? (
+              <Button asChild size="sm" variant="default">
+                <Link to="/partner/platform-plan">Regularizar pagamento</Link>
+              </Button>
+            ) : (
+              <span className="text-xs text-muted-foreground">Peça ao admin do canal para pagar.</span>
+            )}
+          </div>
+        </div>
+      ) : null}
 
       <div className="mx-auto flex max-w-7xl gap-6 px-4 py-4 md:px-6 md:py-6">
         <aside className="hidden w-56 shrink-0 md:block">
@@ -218,7 +243,9 @@ function PartnerLayoutInner() {
                 </div>
               }
             >
-              <Outlet />
+              <PartnerPaywallGate>
+                <Outlet />
+              </PartnerPaywallGate>
             </Suspense>
           )}
         </main>

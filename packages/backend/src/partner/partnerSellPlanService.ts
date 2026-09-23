@@ -162,6 +162,8 @@ export async function createPartnerSellPlan(
   const status = input.status || 'draft';
   const trialDays = Math.max(0, Math.min(365, Math.floor(Number(input.trial_days ?? 0) || 0)));
   if (status === 'active') {
+    const { assertPartnerChannelGrowthAllowed } = await import('./partnerWholesaleStatusService.js');
+    await assertPartnerChannelGrowthAllowed(partnerTenantId);
     const gw = await import('./partnerLicenseService.js').then((m) =>
       m.canPartnerSellWithGateway(partnerTenantId)
     );
@@ -233,6 +235,8 @@ export async function patchPartnerSellPlan(
       ? Math.max(0, Math.min(365, Math.floor(Number(input.trial_days) || 0)))
       : existing.trial_days;
   if (status === 'active' && existing.status !== 'active') {
+    const { assertPartnerChannelGrowthAllowed } = await import('./partnerWholesaleStatusService.js');
+    await assertPartnerChannelGrowthAllowed(partnerTenantId);
     const gw = await import('./partnerLicenseService.js').then((m) =>
       m.canPartnerSellWithGateway(partnerTenantId)
     );

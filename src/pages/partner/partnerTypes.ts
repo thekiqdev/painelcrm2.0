@@ -19,6 +19,8 @@ export type PartnerMe = {
     used_seats_cache: number;
     unit_cost_cents: number;
   } | null;
+  /** Block S2 — none | active | past_due | canceled */
+  wholesale_status?: string;
 };
 
 export type DomainInstructions = {

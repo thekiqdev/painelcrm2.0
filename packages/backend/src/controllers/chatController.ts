@@ -120,11 +120,13 @@ import {
   inferMessageTypeFromPayload,
   mediaItemsFromDownloadPayload,
   mergeMessageEnvelope,
+  mediaItemsHaveRealFileUrl,
   normalizeIdForUazDownload,
   sanitizeMediaItemsForDb,
   type ChatMediaItem,
   type ChatMessageKind,
 } from '../utils/chatMessageContract.js';
+import { rehostChatInboundMediaItems } from '../services/chatInboundMediaPersist.js';
 import { SQL_CHAT_ACCESS_PREDICATE, sqlChatAccessPredicate } from '../utils/chatConversationAccess.js';
 import { assertPermissionKey, ModulePermissionError } from '../permissions/index.js';
 import { isWhatsappGroupsEnabled } from '../config/whatsappGroupsEnv.js';
@@ -2584,7 +2586,7 @@ function shouldSkipTerminalIdentityRefreshAfterMessageSync(crow: {
 }
 
 function mediaItemsHaveRenderableUrl(items: ChatMediaItem[]): boolean {
-  return items.some((it) => typeof it.url === 'string' && it.url.trim().length > 0);
+  return mediaItemsHaveRealFileUrl(items);
 }
 
 const IDENTITY_BATCH_CONCURRENCY = 5;
@@ -4056,14 +4058,12 @@ async function performSyncConversationMessagesForConversation(
     const syncBody = extractMessageBody(message) || null;
     let syncMedia = extractMediaInfo(message);
     const syncKind = inferMessageTypeFromPayload(message);
-    const syncBodyPlain = ensurePlainString(syncBody ?? '');
     if (syncMedia.length === 0 && syncKind !== 'text' && syncKind !== 'unknown') {
       syncMedia = buildPersistentMediaStubForKind(message, syncKind);
     }
     const hasRenderableUrl = mediaItemsHaveRenderableUrl(syncMedia);
     const tryMediaDownload =
       !hasRenderableUrl &&
-      !syncBodyPlain &&
       syncIncomingMediaDownloads < MAX_INCOMING_MEDIA_DOWNLOAD_PER_SYNC &&
       ((direction === 'incoming' &&
         (syncKind === 'image' ||
@@ -4081,7 +4081,11 @@ async function performSyncConversationMessagesForConversation(
         hint
       );
       if (fromDl.length > 0) {
-        syncMedia = fromDl;
+        const prevName = syncMedia[0]?.fileName ?? null;
+        syncMedia = fromDl.map((it, idx) => ({
+          ...it,
+          fileName: it.fileName || (idx === 0 ? prevName : null) || null,
+        }));
         syncIncomingMediaDownloads += 1;
       } else {
         const stubLeft =
@@ -4118,6 +4122,13 @@ async function performSyncConversationMessagesForConversation(
           });
         }
       }
+    }
+    if (syncMedia.length > 0 && tenantId) {
+      syncMedia = await rehostChatInboundMediaItems({
+        tenantId,
+        conversationId: conversation.id,
+        items: syncMedia,
+      });
     }
     const msgRec = message && typeof message === 'object' ? (message as Record<string, unknown>) : {};
     const groupMeta =
@@ -11209,14 +11220,12 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
       const messageBody = extractMessageBody(message);
       let media = extractMediaInfo(message);
       const msgKind = inferMessageTypeFromPayload(message);
-      const msgBodyPlain = ensurePlainString(messageBody ?? '');
       if (media.length === 0 && msgKind !== 'text' && msgKind !== 'unknown') {
         media = buildPersistentMediaStubForKind(message, msgKind);
       }
       const hasRenderableUrl = mediaItemsHaveRenderableUrl(media);
       const tryMediaDownload =
         !hasRenderableUrl &&
-        !msgBodyPlain &&
         instance.instance_token &&
         ((extracted.direction === 'incoming' &&
           (msgKind === 'image' ||
@@ -11234,7 +11243,11 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
           hint
         );
         if (fromDl.length > 0) {
-          media = fromDl;
+          const prevName = media[0]?.fileName ?? null;
+          media = fromDl.map((it, idx) => ({
+            ...it,
+            fileName: it.fileName || (idx === 0 ? prevName : null) || null,
+          }));
           console.log(`[Webhook ${webhookId}] Media resolved via /message/download`, {
             kind: hint,
             direction: extracted.direction,
@@ -11260,6 +11273,14 @@ async function processWebhookEvent(instance: ChatInstanceRow, payload: any, even
             });
           }
         }
+      }
+
+      if (media.length > 0 && tenantId) {
+        media = await rehostChatInboundMediaItems({
+          tenantId,
+          conversationId: conversation.id,
+          items: media,
+        });
       }
 
       const sentAt = parseTimestamp(message.timestamp || message.messageTimestamp);

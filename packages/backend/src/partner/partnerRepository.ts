@@ -166,12 +166,23 @@ export async function getPartnerDetail(
     used_seats_cache: number;
     unit_cost_cents: number;
     admin_email: string | null;
+    wholesale_plan_id: string | null;
+    wholesale_status: string;
+    wholesale_subscription_id: string | null;
+    wholesale_plan_name: string | null;
+    wholesale_block_after_days: number | null;
+    cpf_cnpj: string | null;
   }>(
     `SELECT t.id, t.name, t.slug, t.status, t.account_type, t.created_at::text,
-            t.plan_id, t.domain,
+            t.plan_id, t.domain, t.cpf_cnpj,
             pp.public_name, pp.product_name, pp.program_type, pp.status AS partner_status,
             pp.program_config_json, pp.logo_url, pp.theme_json,
             pp.custom_domain, pp.domain_status, pp.payout_cadence_preference,
+            pp.wholesale_plan_id::text AS wholesale_plan_id,
+            COALESCE(pp.wholesale_status, 'none') AS wholesale_status,
+            pp.wholesale_subscription_id::text AS wholesale_subscription_id,
+            wp.name AS wholesale_plan_name,
+            pp.wholesale_block_after_days,
             COALESCE(pl.purchased_seats, 0) AS purchased_seats,
             COALESCE(pl.used_seats_cache, 0) AS used_seats_cache,
             COALESCE(pl.unit_cost_cents, 0) AS unit_cost_cents,
@@ -185,6 +196,7 @@ export async function getPartnerDetail(
      FROM tenants t
      JOIN partner_profiles pp ON pp.partner_tenant_id = t.id
      LEFT JOIN partner_license_pool pl ON pl.partner_tenant_id = t.id
+     LEFT JOIN partner_wholesale_plans wp ON wp.id = pp.wholesale_plan_id
      WHERE t.id = $1 AND t.account_type = 'partner'`,
     [partnerTenantId]
   );
@@ -216,6 +228,7 @@ export async function getPartnerDetail(
     created_at: row.created_at,
     plan_id: row.plan_id,
     domain: row.domain,
+    cpf_cnpj: row.cpf_cnpj ?? null,
     public_name: row.public_name,
     product_name: row.product_name,
     program_type: row.program_type as PartnerDetail['program_type'],
@@ -231,6 +244,12 @@ export async function getPartnerDetail(
     custom_domain: row.custom_domain,
     domain_status: row.domain_status as PartnerDetail['domain_status'],
     payout_cadence_preference: row.payout_cadence_preference as PartnerDetail['payout_cadence_preference'],
+    wholesale_plan_id: row.wholesale_plan_id,
+    wholesale_status: (row.wholesale_status || 'none') as PartnerDetail['wholesale_status'],
+    wholesale_subscription_id: row.wholesale_subscription_id,
+    wholesale_plan_name: row.wholesale_plan_name,
+    wholesale_block_after_days:
+      row.wholesale_block_after_days == null ? null : Number(row.wholesale_block_after_days),
     memberships: memberships.rows,
   };
 }

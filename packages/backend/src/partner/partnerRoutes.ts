@@ -5,6 +5,7 @@ import {
   requirePartnerChannelEnabled,
   requirePartnerMember,
   requirePartnerSeller,
+  requirePartnerWholesaleNotFrozen,
 } from './partnerAuthMiddleware.js';
 import {
   partnerGetMe,
@@ -23,10 +24,14 @@ import {
 import {
   partnerArchiveSellPlan,
   partnerCreateSellPlan,
+  partnerGetLicenseLedger,
   partnerGetLicenses,
+  partnerGetLicenseTopupBilling,
   partnerGetSellPlan,
   partnerListSellPlans,
   partnerPatchSellPlan,
+  partnerPurchaseLicenses,
+  partnerQuoteLicensePurchase,
   partnerSellPlanProjection,
 } from './partnerCommercialControllers.js';
 import {
@@ -50,6 +55,12 @@ import {
   partnerSellerGetCommissions,
   partnerUpsertCommissionRule,
 } from './partnerCommissionControllers.js';
+import {
+  partnerGetWholesaleBilling,
+  partnerGetWholesaleStatus,
+  partnerListWholesalePlans,
+  partnerSubscribeWholesale,
+} from './partnerWholesalePartnerControllers.js';
 
 const router = Router();
 
@@ -65,24 +76,34 @@ router.delete('/domain', requirePartnerAdmin, partnerClearDomain);
 
 /** S3 — licenças, gateway, planos de venda */
 router.get('/licenses', requirePartnerAdmin, partnerGetLicenses);
+router.get('/licenses/ledger', requirePartnerAdmin, partnerGetLicenseLedger);
+router.get('/licenses/quote', requirePartnerAdmin, partnerQuoteLicensePurchase);
+router.post('/licenses/purchase', requirePartnerAdmin, requirePartnerWholesaleNotFrozen, partnerPurchaseLicenses);
+router.get('/licenses/billing/:billingId', requirePartnerAdmin, partnerGetLicenseTopupBilling);
 router.get('/gateway', requirePartnerAdmin, partnerGetGateway);
 router.put('/gateway', requirePartnerAdmin, partnerPutGateway);
 router.post('/gateway/test', requirePartnerAdmin, partnerTestGateway);
 router.get('/sell-plans/projection', requirePartnerAdmin, partnerSellPlanProjection);
 router.get('/sell-plans', requirePartnerAdmin, partnerListSellPlans);
-router.post('/sell-plans', requirePartnerAdmin, partnerCreateSellPlan);
+router.post('/sell-plans', requirePartnerAdmin, requirePartnerWholesaleNotFrozen, partnerCreateSellPlan);
 router.get('/sell-plans/:id', requirePartnerAdmin, partnerGetSellPlan);
-router.patch('/sell-plans/:id', requirePartnerAdmin, partnerPatchSellPlan);
-router.delete('/sell-plans/:id', requirePartnerAdmin, partnerArchiveSellPlan);
+router.patch('/sell-plans/:id', requirePartnerAdmin, requirePartnerWholesaleNotFrozen, partnerPatchSellPlan);
+router.delete('/sell-plans/:id', requirePartnerAdmin, requirePartnerWholesaleNotFrozen, partnerArchiveSellPlan);
+
+/** M5-W S2 — plano Platform (atacado) */
+router.get('/wholesale/plans', requirePartnerAdmin, partnerListWholesalePlans);
+router.get('/wholesale/status', requirePartnerAdmin, partnerGetWholesaleStatus);
+router.post('/wholesale/subscribe', requirePartnerAdmin, partnerSubscribeWholesale);
+router.get('/wholesale/billing/:billingId', requirePartnerAdmin, partnerGetWholesaleBilling);
 
 /** S4 — carteira + sellers + link */
 router.get('/customers', requirePartnerAdmin, partnerListCustomers);
-router.post('/customers', requirePartnerAdmin, partnerCreateCustomer);
-router.patch('/customers/:id', requirePartnerAdmin, partnerPatchCustomer);
-router.delete('/customers/:id', requirePartnerAdmin, partnerDeleteCustomer);
+router.post('/customers', requirePartnerAdmin, requirePartnerWholesaleNotFrozen, partnerCreateCustomer);
+router.patch('/customers/:id', requirePartnerAdmin, requirePartnerWholesaleNotFrozen, partnerPatchCustomer);
+router.delete('/customers/:id', requirePartnerAdmin, requirePartnerWholesaleNotFrozen, partnerDeleteCustomer);
 router.get('/sellers', requirePartnerAdmin, partnerListSellers);
-router.post('/sellers', requirePartnerAdmin, partnerCreateSeller);
-router.patch('/sellers/:id', requirePartnerAdmin, partnerPatchSeller);
+router.post('/sellers', requirePartnerAdmin, requirePartnerWholesaleNotFrozen, partnerCreateSeller);
+router.patch('/sellers/:id', requirePartnerAdmin, requirePartnerWholesaleNotFrozen, partnerPatchSeller);
 router.get('/sale-link', requirePartnerAdmin, partnerGetHouseSaleLink);
 router.get('/seller/me/link', requirePartnerSeller, partnerSellerGetLink);
 router.get('/seller/me/commissions', requirePartnerSeller, partnerSellerGetCommissions);

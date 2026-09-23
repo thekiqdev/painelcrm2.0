@@ -140,6 +140,12 @@ const ChatbotFlows = lazyWithReload(() => import("./pages/ChatbotFlows"));
 const ChatbotFlowEditor = lazyWithReload(() => import("./pages/ChatbotFlowEditor"));
 const SuperAdminDashboard = lazyWithReload(() => import("./pages/superadmin/SuperAdminDashboard"));
 const SuperAdminPlans = lazyWithReload(() => import("./pages/superadmin/SuperAdminPlans"));
+const SuperAdminPartnerWholesalePlans = lazyWithReload(
+  () => import("./pages/superadmin/SuperAdminPartnerWholesalePlans")
+);
+const SuperAdminPartnerWholesaleReport = lazyWithReload(
+  () => import("./pages/superadmin/SuperAdminPartnerWholesaleReport")
+);
 const SuperAdminClients = lazyWithReload(() => import("./pages/superadmin/SuperAdminClients"));
 const SuperAdminClientLayout = lazyWithReload(() => import("./pages/superadmin/SuperAdminClientLayout"));
 const SuperAdminClientResumo = lazyWithReload(() => import("./pages/superadmin/SuperAdminClientResumo"));
@@ -167,6 +173,7 @@ const PartnerCommissionsPage = lazyWithReload(() => import("./pages/partner/Part
 const PartnerCustomersPage = lazyWithReload(() => import("./pages/partner/PartnerCustomersPage"));
 const PartnerSellersPage = lazyWithReload(() => import("./pages/partner/PartnerSellersPage"));
 const PartnerLicensesPage = lazyWithReload(() => import("./pages/partner/PartnerLicensesPage"));
+const PartnerWholesalePage = lazyWithReload(() => import("./pages/partner/PartnerWholesalePage"));
 const PartnerGatewayPage = lazyWithReload(() => import("./pages/partner/PartnerGatewayPage"));
 const PartnerAdminGate = lazyWithReload(() => import("./pages/partner/PartnerAdminGate"));
 const SuperAdminFeatures = lazyWithReload(() => import("./pages/superadmin/SuperAdminFeatures"));
@@ -1146,6 +1153,14 @@ const App = () => (
                 }
               />
               <Route
+                path="platform-plan"
+                element={
+                  <PartnerAdminGate>
+                    <PartnerWholesalePage />
+                  </PartnerAdminGate>
+                }
+              />
+              <Route
                 path="gateway"
                 element={
                   <PartnerAdminGate>
@@ -1215,6 +1230,22 @@ const App = () => (
                 <Route path="avancado/feature-flags/chat-optimization" element={<Suspense fallback={<LoadingFallback />}><SuperAdminChatMigrationFlagsPage /></Suspense>} />
                 <Route path="seguranca" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
                 <Route path="plans" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlans /></Suspense>} />
+                <Route
+                  path="partner-wholesale-plans"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SuperAdminPartnerWholesalePlans />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="partner-wholesale-report"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SuperAdminPartnerWholesaleReport />
+                    </Suspense>
+                  }
+                />
                 <Route path="plans/:id/features" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlanFeatures /></Suspense>} />
                 <Route path="clients" element={<Suspense fallback={<LoadingFallback />}><SuperAdminClients /></Suspense>} />
                 <Route path="clients/new" element={<Suspense fallback={<LoadingFallback />}><SuperAdminClientNew /></Suspense>} />
