@@ -1,0 +1,165 @@
+{
+  "export_version": 1,
+  "name": "Fluxo Safe (fixture S21)",
+  "chatbot": {
+    "name": "Fluxo Safe (fixture S21)",
+    "flow_data": {
+      "nodes": [
+        {
+          "id": "start1",
+          "type": "start",
+          "position": { "x": 0, "y": 0 },
+          "data": { "trigger": { "type": "first_message" } }
+        },
+        {
+          "id": "msg1",
+          "type": "message",
+          "position": { "x": 200, "y": 0 },
+          "data": { "text": "Olá! Qual seu nome?" }
+        },
+        {
+          "id": "q1",
+          "type": "open_question",
+          "position": { "x": 400, "y": 0 },
+          "data": {
+            "prompt": "Digite seu nome",
+            "variable": "nome",
+            "save_to_contact": true,
+            "contact_field": "name"
+          }
+        },
+        {
+          "id": "menu1",
+          "type": "options",
+          "position": { "x": 600, "y": 0 },
+          "data": {
+            "text": "Escolha:",
+            "variable": "choice",
+            "options": [
+              { "label": "Suporte" },
+              { "label": "Financeiro" }
+            ]
+          }
+        },
+        {
+          "id": "http1",
+          "type": "http_request",
+          "position": { "x": 800, "y": -80 },
+          "data": {
+            "method": "POST",
+            "url": "https://httpbin.org/post",
+            "headers": {
+              "Content-Type": "application/json",
+              "x-api-key": "SECRET_SHOULD_NOT_LEAK",
+              "Authorization": "Bearer SECRET_TOKEN"
+            },
+            "body": "{\"name\":\"{{nome}}\"}",
+            "save_mappings": [{ "path": "json.name", "variable": "echo_name" }]
+          }
+        },
+        {
+          "id": "cond1",
+          "type": "condition",
+          "position": { "x": 800, "y": 80 },
+          "data": {
+            "cases": [
+              {
+                "conditions": [
+                  { "variable": "choice", "operator": "eq", "value": "opt_0" }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "pipe1",
+          "type": "pipeline_move_card",
+          "position": { "x": 1000, "y": 80 },
+          "data": {
+            "pipeline_id": 160,
+            "stage_id": 1050,
+            "title": "Lead {{nome}}"
+          }
+        },
+        {
+          "id": "note1",
+          "type": "conversation_note",
+          "position": { "x": 1000, "y": -80 },
+          "data": { "text": "Cliente {{nome}} escolheu suporte" }
+        },
+        {
+          "id": "wait1",
+          "type": "wait",
+          "position": { "x": 1200, "y": 0 },
+          "data": { "seconds": 30 }
+        },
+        {
+          "id": "tag1",
+          "type": "contact_label_add",
+          "position": { "x": 1400, "y": 0 },
+          "data": { "tag_label": "bot-import", "tag_id": "ext-99" }
+        },
+        {
+          "id": "human1",
+          "type": "transfer_to_human",
+          "position": { "x": 1600, "y": 0 },
+          "data": { "message": "Transferindo…" }
+        },
+        {
+          "id": "unsupported1",
+          "type": "ai_agent",
+          "position": { "x": 0, "y": 200 },
+          "data": { "prompt": "ignored" }
+        },
+        {
+          "id": "end1",
+          "type": "end",
+          "position": { "x": 1800, "y": 0 },
+          "data": {}
+        }
+      ],
+      "edges": [
+        { "id": "e1", "source": "start1", "target": "msg1", "sourceHandle": "default" },
+        { "id": "e2", "source": "msg1", "target": "q1", "sourceHandle": "default" },
+        { "id": "e3", "source": "q1", "target": "menu1", "sourceHandle": "default" },
+        { "id": "e4", "source": "menu1", "target": "http1", "sourceHandle": "opt:0" },
+        { "id": "e5", "source": "menu1", "target": "cond1", "sourceHandle": "opt:1" },
+        {
+          "id": "e6",
+          "source": "http1",
+          "target": "note1",
+          "sourceHandle": "default"
+        },
+        {
+          "id": "e7",
+          "source": "http1",
+          "target": "wait1",
+          "kind": "http_failure"
+        },
+        {
+          "id": "e8",
+          "source": "cond1",
+          "target": "pipe1",
+          "sourceHandle": "case:0"
+        },
+        {
+          "id": "e9",
+          "source": "cond1",
+          "target": "tag1",
+          "kind": "condition_else"
+        },
+        { "id": "e10", "source": "note1", "target": "wait1", "sourceHandle": "default" },
+        { "id": "e11", "source": "pipe1", "target": "tag1", "sourceHandle": "default" },
+        { "id": "e12", "source": "wait1", "target": "tag1", "sourceHandle": "default" },
+        { "id": "e13", "source": "tag1", "target": "human1", "sourceHandle": "default" },
+        { "id": "e14", "source": "human1", "target": "end1", "sourceHandle": "default" },
+        {
+          "id": "e_broken",
+          "source": "unsupported1",
+          "target": "end1",
+          "sourceHandle": "default"
+        }
+      ]
+    }
+  }
+}

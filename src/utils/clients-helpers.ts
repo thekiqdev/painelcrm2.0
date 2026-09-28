@@ -12,6 +12,7 @@ export interface ClientData {
   status?: string;
   notes?: string;
   profile_id?: string;
+  cpf_cnpj?: string | null;
 }
 
 // Interface para os dados de tarefas do cliente
@@ -38,6 +39,10 @@ export const addClient = async (clientData: ClientData) => {
     if (clientData.notes && clientData.notes.trim()) cleanData.notes = clientData.notes.trim();
     if (clientData.group_id && clientData.group_id.trim()) cleanData.group_id = clientData.group_id;
     if (clientData.profile_id && clientData.profile_id.trim()) cleanData.profile_id = clientData.profile_id;
+    if (clientData.cpf_cnpj != null && String(clientData.cpf_cnpj).trim()) {
+      const digits = String(clientData.cpf_cnpj).replace(/\D/g, "").trim();
+      if (digits.length > 0) cleanData.cpf_cnpj = digits;
+    }
     
     const response = await apiClient.post("/api/clients", cleanData);
     

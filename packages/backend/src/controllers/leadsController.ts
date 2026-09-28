@@ -1,7 +1,79 @@
-import { Request, Response } from 'express';
+import { Response } from 'express';
 import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { z } from 'zod';
+import { assertModulePermission, assertPermissionKey, ModulePermissionError } from '../permissions/index.js';
+import { resolveLeadsGranularFromLegacy } from '../permissions/permissionCatalog.js';
+import { normalizeConversationPhone } from '../services/conversationMatchingService.js';
+import { migrateConversationLeadToClient } from '../services/conversationLinkService.js';
+import { migrateLeadLinkedCrmRecordsToClient } from '../services/leadConversionMigrationService.js';
+
+const MODULE_LEADS = 'leads';
+
+let hasLeadWhatsappAvatarUrlColumnPromise: Promise<boolean> | null = null;
+async function hasLeadWhatsappAvatarUrlColumn(): Promise<boolean> {
+  if (!hasLeadWhatsappAvatarUrlColumnPromise) {
+    hasLeadWhatsappAvatarUrlColumnPromise = (async () => {
+      const r = await pool.query<{ c: string }>(
+        `SELECT COUNT(*)::text AS c
+         FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'leads'
+           AND column_name = 'whatsapp_avatar_url'`
+      );
+      return (r.rows[0]?.c ?? '0') === '1';
+    })();
+  }
+  return hasLeadWhatsappAvatarUrlColumnPromise;
+}
+
+let hasLeadWhatsappAvatarCachedUrlColumnPromise: Promise<boolean> | null = null;
+async function hasLeadWhatsappAvatarCachedUrlColumn(): Promise<boolean> {
+  if (!hasLeadWhatsappAvatarCachedUrlColumnPromise) {
+    hasLeadWhatsappAvatarCachedUrlColumnPromise = (async () => {
+      const r = await pool.query<{ c: string }>(
+        `SELECT COUNT(*)::text AS c
+         FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'leads'
+           AND column_name = 'whatsapp_avatar_cached_url'`
+      );
+      return (r.rows[0]?.c ?? '0') === '1';
+    })();
+  }
+  return hasLeadWhatsappAvatarCachedUrlColumnPromise;
+}
+
+async function leadWhatsappAvatarSelectExpr(): Promise<string> {
+  const hasUrl = await hasLeadWhatsappAvatarUrlColumn();
+  const hasCached = await hasLeadWhatsappAvatarCachedUrlColumn();
+  if (hasUrl && hasCached) {
+    return 'COALESCE(l.whatsapp_avatar_cached_url, l.whatsapp_avatar_url, wa.wa_url)';
+  }
+  if (hasUrl) {
+    return 'COALESCE(l.whatsapp_avatar_url, wa.wa_url)';
+  }
+  return 'wa.wa_url';
+}
+
+function firstQueryString(value: unknown): string | undefined {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    const s = value.find((v): v is string => typeof v === 'string');
+    return s;
+  }
+  return undefined;
+}
+
+function normalizeCpfCnpj(value: string | null | undefined): string | null {
+  if (value == null || typeof value !== 'string') return null;
+  const digits = value.replace(/\D/g, '');
+  return digits.length === 0 ? null : digits;
+}
+
+function isValidCpfCnpjLength(digits: string): boolean {
+  return digits.length === 11 || digits.length === 14;
+}
 
 const leadSchema = z.object({
   name: z.string().min(1),
@@ -12,22 +84,129 @@ const leadSchema = z.object({
   status: z.union([z.string(), z.literal(""), z.null()]).optional(),
   notes: z.union([z.string(), z.literal(""), z.null()]).optional(),
   profile_id: z.string().uuid().optional().nullable(),
+  cpf_cnpj: z.string().optional().nullable(),
+});
+
+/** PATCH: aceita `migrated_client_id` para migrar conversas lead→cliente sem depender só do match por telefone. */
+const updateLeadBodySchema = leadSchema.partial().extend({
+  migrated_client_id: z.string().uuid().optional(),
 });
 
 export async function getLeads(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const userId = req.userId!;
-    const { profileId } = req.query;
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.json([]);
+      return;
+    }
+    const userId = req.userId;
+    if (!userId) {
+      res.status(401).json({ error: 'Não autenticado' });
+      return;
+    }
+    let permMap;
+    try {
+      permMap = await assertPermissionKey(userId, 'leads.view', req);
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        res.status(e.statusCode).json({ error: e.message });
+        return;
+      }
+      throw e;
+    }
+    const lg = resolveLeadsGranularFromLegacy(permMap);
+    const { profileId, onlyConverted } = req.query;
+    const onlyConv = onlyConverted === 'true' || onlyConverted === '1';
 
-    let query = 'SELECT * FROM leads WHERE user_id = $1';
-    const params: any[] = [userId];
+    const waAvatarExpr = await leadWhatsappAvatarSelectExpr();
+
+    let query = `
+      SELECT l.*, ${waAvatarExpr} AS whatsapp_avatar_url
+      FROM leads l
+      INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(
+          NULLIF(TRIM(cc.metadata->>'whatsapp_profile_photo'), ''),
+          NULLIF(TRIM(cc.metadata->>'image'), ''),
+          NULLIF(TRIM(cc.metadata->>'imagePreview'), ''),
+          NULLIF(TRIM(cc.metadata->>'image_preview'), '')
+        ) AS wa_url
+        FROM chat_conversations cc
+        INNER JOIN users cu ON cu.id = cc.user_id AND cu.tenant_id = $1
+        WHERE (
+          cc.lead_id = l.id
+          OR (
+            l.status = 'Convertido'
+            AND (cc.metadata->'link_migration'->>'previous_lead_id') = l.id::text
+          )
+          OR (
+            l.status = 'Convertido'
+            AND EXISTS (
+              SELECT 1
+              FROM clients c
+              INNER JOIN users uc ON uc.id = c.user_id AND uc.tenant_id = $1
+              CROSS JOIN LATERAL (
+                SELECT CASE
+                  WHEN length(regexp_replace(l.phone, '\\D', '', 'g')) IN (10, 11)
+                    THEN '55' || regexp_replace(l.phone, '\\D', '', 'g')
+                  WHEN length(regexp_replace(l.phone, '\\D', '', 'g')) IN (12, 13)
+                    AND left(regexp_replace(l.phone, '\\D', '', 'g'), 2) = '55'
+                    THEN regexp_replace(l.phone, '\\D', '', 'g')
+                  ELSE NULL
+                END AS n
+              ) nl
+              WHERE c.id = cc.client_id
+                AND l.phone IS NOT NULL AND btrim(l.phone) <> ''
+                AND nl.n IS NOT NULL
+                AND (
+                  regexp_replace(c.phone, '\\D', '', 'g') = nl.n
+                  OR regexp_replace(c.phone, '\\D', '', 'g') = substring(nl.n from 3)
+                )
+            )
+          )
+        )
+        ORDER BY COALESCE(cc.last_message_at, cc.created_at) DESC NULLS LAST
+        LIMIT 1
+      ) wa ON true
+      WHERE 1=1
+    `;
+    const params: any[] = [tenantId];
+
+    if (lg.view_own && !lg.view_all) {
+      query += ` AND l.user_id = $${params.length + 1}`;
+      params.push(userId);
+    }
+
+    if (onlyConv) {
+      query += ` AND l.status = 'Convertido'`;
+    } else {
+      // Lista principal: sem convertidos (multi-tenant inalterado).
+      query += ` AND (l.status IS NULL OR l.status <> 'Convertido')`;
+    }
 
     if (profileId) {
-      query += ' AND profile_id = $2';
+      query += ` AND l.profile_id = $${params.length + 1}`;
       params.push(profileId);
     }
 
-    query += ' ORDER BY created_at DESC';
+    const qSearch = (firstQueryString(req.query.q) ?? '').trim();
+    if (qSearch.length > 0) {
+      query += ` AND (
+        l.name ILIKE $${params.length + 1}
+        OR COALESCE(l.email, '') ILIKE $${params.length + 1}
+        OR COALESCE(l.company, '') ILIKE $${params.length + 1}
+        OR COALESCE(l.phone, '') ILIKE $${params.length + 1}
+        OR COALESCE(l.cpf_cnpj, '') ILIKE $${params.length + 1}
+        OR regexp_replace(COALESCE(l.cpf_cnpj, ''), '\\D', '', 'g') LIKE $${params.length + 2}
+      )`;
+      const qDigits = qSearch.replace(/\D/g, '');
+      params.push(`%${qSearch}%`, `%${qDigits || qSearch}%`);
+    }
+
+    query += ' ORDER BY l.created_at DESC';
+    if (qSearch.length > 0) {
+      query += ' LIMIT 80';
+    }
 
     const result = await pool.query(query, params);
     res.json(result.rows);
@@ -42,8 +221,69 @@ export async function getLeadById(req: AuthRequest, res: Response): Promise<void
     const userId = req.userId!;
     const { id } = req.params;
 
+    let permMap;
+    try {
+      permMap = await assertPermissionKey(userId, 'leads.view', req);
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        res.status(e.statusCode).json({ error: e.message });
+        return;
+      }
+      throw e;
+    }
+    const lg = resolveLeadsGranularFromLegacy(permMap);
+
+    const waAvatarExpr = await leadWhatsappAvatarSelectExpr();
+
     const result = await pool.query(
-      'SELECT * FROM leads WHERE id = $1 AND user_id = $2',
+      `SELECT l.*, ${waAvatarExpr} AS whatsapp_avatar_url
+       FROM leads l
+       INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(
+           NULLIF(TRIM(cc.metadata->>'whatsapp_profile_photo'), ''),
+           NULLIF(TRIM(cc.metadata->>'image'), ''),
+           NULLIF(TRIM(cc.metadata->>'imagePreview'), ''),
+           NULLIF(TRIM(cc.metadata->>'image_preview'), '')
+         ) AS wa_url
+         FROM chat_conversations cc
+         INNER JOIN users cu ON cu.id = cc.user_id AND cu.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+         WHERE (
+           cc.lead_id = l.id
+           OR (
+             l.status = 'Convertido'
+             AND (cc.metadata->'link_migration'->>'previous_lead_id') = l.id::text
+           )
+           OR (
+             l.status = 'Convertido'
+             AND EXISTS (
+               SELECT 1
+               FROM clients c
+               INNER JOIN users uc ON uc.id = c.user_id AND uc.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+               CROSS JOIN LATERAL (
+                 SELECT CASE
+                   WHEN length(regexp_replace(l.phone, '\\D', '', 'g')) IN (10, 11)
+                     THEN '55' || regexp_replace(l.phone, '\\D', '', 'g')
+                   WHEN length(regexp_replace(l.phone, '\\D', '', 'g')) IN (12, 13)
+                     AND left(regexp_replace(l.phone, '\\D', '', 'g'), 2) = '55'
+                     THEN regexp_replace(l.phone, '\\D', '', 'g')
+                   ELSE NULL
+                 END AS n
+               ) nl
+               WHERE c.id = cc.client_id
+                 AND l.phone IS NOT NULL AND btrim(l.phone) <> ''
+                 AND nl.n IS NOT NULL
+                 AND (
+                   regexp_replace(c.phone, '\\D', '', 'g') = nl.n
+                   OR regexp_replace(c.phone, '\\D', '', 'g') = substring(nl.n from 3)
+                 )
+             )
+           )
+         )
+         ORDER BY COALESCE(cc.last_message_at, cc.created_at) DESC NULLS LAST
+         LIMIT 1
+       ) wa ON true
+       WHERE l.id = $1`,
       [id, userId]
     );
 
@@ -52,7 +292,13 @@ export async function getLeadById(req: AuthRequest, res: Response): Promise<void
       return;
     }
 
-    res.json(result.rows[0]);
+    const row = result.rows[0];
+    if (lg.view_own && !lg.view_all && row.user_id !== userId) {
+      res.status(404).json({ error: 'Lead not found' });
+      return;
+    }
+
+    res.json(row);
   } catch (error) {
     console.error('Error fetching lead:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -62,6 +308,8 @@ export async function getLeadById(req: AuthRequest, res: Response): Promise<void
 export async function createLead(req: AuthRequest, res: Response): Promise<void> {
   try {
     const userId = req.userId!;
+    await assertModulePermission(userId, MODULE_LEADS, 'create', undefined, req);
+    await assertPermissionKey(userId, 'leads.create', req);
     const leadData = leadSchema.parse(req.body);
 
     // Clean up the data - convert empty strings to null for optional fields
@@ -94,6 +342,14 @@ export async function createLead(req: AuthRequest, res: Response): Promise<void>
     } else {
       cleanData.company = null;
     }
+
+    const rawCpfCnpj =
+      leadData.cpf_cnpj != null && typeof leadData.cpf_cnpj === 'string' ? leadData.cpf_cnpj.trim() : '';
+    cleanData.cpf_cnpj = normalizeCpfCnpj(rawCpfCnpj || null);
+    if (cleanData.cpf_cnpj !== null && !isValidCpfCnpjLength(cleanData.cpf_cnpj)) {
+      res.status(400).json({ error: 'CPF/CNPJ deve ter 11 (CPF) ou 14 (CNPJ) dígitos.' });
+      return;
+    }
     
     // Source is required, but we'll use a default if empty
     if (leadData.source && typeof leadData.source === 'string' && leadData.source.trim()) {
@@ -125,18 +381,22 @@ export async function createLead(req: AuthRequest, res: Response): Promise<void>
 
     const result = await pool.query(
       `INSERT INTO leads (
-        user_id, name, email, phone, company, source, status, notes, profile_id
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        user_id, name, email, phone, company, source, status, notes, profile_id, cpf_cnpj
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING *`,
       [
         userId, cleanData.name, cleanData.email, cleanData.phone,
         cleanData.company, cleanData.source, cleanData.status,
-        cleanData.notes, cleanData.profile_id
+        cleanData.notes, cleanData.profile_id, cleanData.cpf_cnpj
       ]
     );
 
     res.status(201).json(result.rows[0]);
   } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: 'Validation error', details: error.errors });
       return;
@@ -150,16 +410,42 @@ export async function updateLead(req: AuthRequest, res: Response): Promise<void>
   try {
     const userId = req.userId!;
     const { id } = req.params;
-    const leadData = leadSchema.partial().parse(req.body);
+    const existing = await pool.query(
+      `SELECT l.user_id FROM leads l
+       INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE l.id = $1`,
+      [id, userId]
+    );
+    if (existing.rows.length === 0) {
+      res.status(404).json({ error: 'Lead not found' });
+      return;
+    }
+    await assertModulePermission(userId, MODULE_LEADS, 'edit', {
+      ownerId: existing.rows[0].user_id,
+    }, req);
+    const leadData = updateLeadBodySchema.parse(req.body);
+    const { migrated_client_id, ...leadFields } = leadData;
+
+    if (leadFields.cpf_cnpj !== undefined) {
+      const normalizedCpfCnpj = normalizeCpfCnpj(leadFields.cpf_cnpj);
+      if (normalizedCpfCnpj !== null && !isValidCpfCnpjLength(normalizedCpfCnpj)) {
+        res.status(400).json({ error: 'CPF/CNPJ deve ter 11 (CPF) ou 14 (CNPJ) dígitos.' });
+        return;
+      }
+    }
 
     const updates: string[] = [];
     const values: any[] = [];
     let paramIndex = 1;
 
-    Object.entries(leadData).forEach(([key, value]) => {
+    Object.entries(leadFields).forEach(([key, value]) => {
       if (value !== undefined) {
+        let normalized: unknown = value;
+        if (key === 'cpf_cnpj') {
+          normalized = normalizeCpfCnpj(value as string);
+        }
         updates.push(`${key} = $${paramIndex}`);
-        values.push(value);
+        values.push(normalized);
         paramIndex++;
       }
     });
@@ -169,13 +455,13 @@ export async function updateLead(req: AuthRequest, res: Response): Promise<void>
       return;
     }
 
-    values.push(id, userId);
+    values.push(id);
     const result = await pool.query(
       `UPDATE leads 
        SET ${updates.join(', ')}, updated_at = now()
-       WHERE id = $${paramIndex} AND user_id = $${paramIndex + 1}
+       WHERE id = $${paramIndex} AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $${paramIndex + 1}))
        RETURNING *`,
-      values
+      [...values, userId]
     );
 
     if (result.rows.length === 0) {
@@ -183,8 +469,108 @@ export async function updateLead(req: AuthRequest, res: Response): Promise<void>
       return;
     }
 
-    res.json(result.rows[0]);
+    const updatedLead = result.rows[0];
+    if ((leadFields.status ?? null) === 'Convertido' || updatedLead.status === 'Convertido') {
+      try {
+        await assertPermissionKey(userId, 'leads.convert_to_client', req);
+        const tenantRow = await pool.query<{ tenant_id: string }>(
+          `SELECT tenant_id FROM users WHERE id = $1 LIMIT 1`,
+          [userId]
+        );
+        const tenantId = tenantRow.rows[0]?.tenant_id ?? null;
+        if (tenantId) {
+        let targetClientId: string | null = null;
+        if (migrated_client_id) {
+          const okClient = await pool.query<{ id: string }>(
+            `
+            SELECT c.id
+            FROM clients c
+            INNER JOIN users u ON u.id = c.user_id
+            WHERE c.id = $1 AND u.tenant_id = $2
+            LIMIT 1
+            `,
+            [migrated_client_id, tenantId]
+          );
+          if (okClient.rows.length === 1) {
+            targetClientId = okClient.rows[0].id;
+          }
+        }
+
+        if (!targetClientId) {
+          const normalizedPhone = normalizeConversationPhone(updatedLead.phone);
+          if (normalizedPhone) {
+            const clientRows = await pool.query<{ id: string }>(
+              `
+              SELECT c.id
+              FROM clients c
+              INNER JOIN users u ON u.id = c.user_id
+              WHERE u.tenant_id = $1
+                AND c.phone IS NOT NULL
+                AND c.phone <> ''
+                AND (
+                  regexp_replace(c.phone, '\\D', '', 'g') = $2
+                  OR regexp_replace(c.phone, '\\D', '', 'g') = substring($2 from 3)
+                )
+              LIMIT 2
+              `,
+              [tenantId, normalizedPhone]
+            );
+            if (clientRows.rows.length === 1) {
+              targetClientId = clientRows.rows[0].id;
+            }
+          }
+        }
+
+        if (targetClientId) {
+          const migrationClient = await pool.connect();
+          try {
+            await migrationClient.query('BEGIN');
+            await migrateLeadLinkedCrmRecordsToClient(migrationClient, {
+              tenantId,
+              leadId: id,
+              clientId: targetClientId,
+              actorUserId: userId,
+            });
+            await migrationClient.query('COMMIT');
+          } catch (migrateRecordsErr) {
+            await migrationClient.query('ROLLBACK');
+            console.error('[updateLead] migrate proposals/tickets lead→client failed:', migrateRecordsErr);
+          } finally {
+            migrationClient.release();
+          }
+
+          const conversationRows = await pool.query<{ id: string; user_id: string }>(
+            `
+            SELECT c.id, c.user_id
+            FROM chat_conversations c
+            INNER JOIN users u ON u.id = c.user_id
+            WHERE u.tenant_id = $1
+              AND c.lead_id = $2
+            `,
+            [tenantId, id]
+          );
+          for (const c of conversationRows.rows) {
+            await migrateConversationLeadToClient({
+              conversationId: c.id,
+              userId: c.user_id,
+              clientId: targetClientId,
+              previousLeadId: id,
+              context: { actorUserId: userId, reason: 'lead_converted' },
+            });
+          }
+        }
+        }
+      } catch (migrateError) {
+        console.error('[updateLead] lead->client link migration failed:', migrateError);
+      }
+    }
+
+    res.json(updatedLead);
   } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: 'Validation error', details: error.errors });
       return;
@@ -198,9 +584,21 @@ export async function deleteLead(req: AuthRequest, res: Response): Promise<void>
   try {
     const userId = req.userId!;
     const { id } = req.params;
-
+    const existing = await pool.query(
+      `SELECT l.user_id FROM leads l
+       INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE l.id = $1`,
+      [id, userId]
+    );
+    if (existing.rows.length === 0) {
+      res.status(404).json({ error: 'Lead not found' });
+      return;
+    }
+    await assertModulePermission(userId, MODULE_LEADS, 'delete', {
+      ownerId: existing.rows[0].user_id,
+    }, req);
     const result = await pool.query(
-      'DELETE FROM leads WHERE id = $1 AND user_id = $2 RETURNING id',
+      `DELETE FROM leads WHERE id = $1 AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $2)) RETURNING id`,
       [id, userId]
     );
 
@@ -211,6 +609,10 @@ export async function deleteLead(req: AuthRequest, res: Response): Promise<void>
 
     res.json({ message: 'Lead deleted successfully' });
   } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
     console.error('Error deleting lead:', error);
     res.status(500).json({ error: 'Internal server error' });
   }

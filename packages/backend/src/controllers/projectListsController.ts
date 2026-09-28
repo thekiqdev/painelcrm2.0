@@ -1,7 +1,6 @@
 import { Request, Response } from 'express';
 import { pool } from '../utils/db.js';
 import { z } from 'zod';
-
 const listSchema = z.object({
   name: z.string().min(1, 'Nome é obrigatório'),
   order_position: z.number().int().min(0).default(0),
@@ -10,15 +9,18 @@ const listSchema = z.object({
 // GET /api/projects/:projectId/lists
 export const getProjectLists = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
+    const tenantId = (req as any).tenantId ?? null;
     const { projectId } = req.params;
 
-    // Verificar se o projeto pertence ao usuário
+    if (!tenantId) {
+      return res.status(404).json({ error: 'Projeto não encontrado' });
+    }
     const projectCheck = await pool.query(
-      `SELECT id FROM projects WHERE id = $1 AND user_id = $2`,
-      [projectId, userId]
+      `SELECT p.id FROM projects p
+       INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = $1
+       WHERE p.id = $2`,
+      [tenantId, projectId]
     );
-
     if (projectCheck.rows.length === 0) {
       return res.status(404).json({ error: 'Projeto não encontrado' });
     }
@@ -42,14 +44,18 @@ export const getProjectLists = async (req: Request, res: Response) => {
 export const createProjectList = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
+    const tenantId = (req as any).tenantId ?? null;
     const { projectId } = req.params;
 
-    // Verificar se o projeto pertence ao usuário
+    if (!tenantId) {
+      return res.status(404).json({ error: 'Projeto não encontrado' });
+    }
     const projectCheck = await pool.query(
-      `SELECT id FROM projects WHERE id = $1 AND user_id = $2`,
-      [projectId, userId]
+      `SELECT p.id FROM projects p
+       INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = $1
+       WHERE p.id = $2`,
+      [tenantId, projectId]
     );
-
     if (projectCheck.rows.length === 0) {
       return res.status(404).json({ error: 'Projeto não encontrado' });
     }
@@ -98,13 +104,14 @@ export const updateProjectList = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Nenhum campo para atualizar' });
     }
 
-    values.push(listId, userId);
+    values.push(listId);
     const result = await pool.query(
       `UPDATE project_lists
        SET ${updates.join(', ')}, updated_at = now()
-       WHERE id = $${paramCount} AND user_id = $${paramCount + 1}
+       WHERE id = $${paramCount}
+         AND project_id IN (SELECT p.id FROM projects p INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $${paramCount + 1}))
        RETURNING id, project_id, name, order_position, created_at, updated_at`,
-      values
+      [...values, userId]
     );
 
     if (result.rows.length === 0) {
@@ -129,7 +136,8 @@ export const deleteProjectList = async (req: Request, res: Response) => {
 
     const result = await pool.query(
       `DELETE FROM project_lists
-       WHERE id = $1 AND user_id = $2
+       WHERE id = $1
+         AND project_id IN (SELECT p.id FROM projects p INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2))
        RETURNING id`,
       [listId, userId]
     );

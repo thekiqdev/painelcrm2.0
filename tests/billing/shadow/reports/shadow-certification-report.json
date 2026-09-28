@@ -1,0 +1,3194 @@
+{
+  "sprint": "5.0-21A",
+  "generatedAt": "2026-07-27T20:16:13.310Z",
+  "scenarioCount": 40,
+  "metrics": {
+    "legacyExecutionMs": 71.64,
+    "aggregateExecutionMs": 65.18,
+    "historyParityPercent": 100,
+    "calendarParityPercent": 100,
+    "sidebarParityPercent": 99.4,
+    "nextInvoiceParityPercent": 98.3,
+    "alertsParityPercent": 90,
+    "capabilitiesParityPercent": 100,
+    "eventsParityPercent": 100,
+    "overallParityPercent": 98.9
+  },
+  "scenarios": [
+    {
+      "scenarioId": "first-charge-paid",
+      "legacyMs": 21.07049999999981,
+      "aggregateMs": 18.664099999999962,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "subscription-newly-created",
+      "legacyMs": 0.718300000000454,
+      "aggregateMs": 1.0685999999996056,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "subscription-paused",
+      "legacyMs": 0.5259999999998399,
+      "aggregateMs": 1.5036000000000058,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 0,
+          "percent": 0,
+          "divergences": [
+            {
+              "surface": "alerts",
+              "scenarioId": "subscription-paused",
+              "field": "kinds",
+              "legacy": [
+                "client_overdue"
+              ],
+              "aggregate": [],
+              "classification": "structural",
+              "evidence": "Taxonomias de alerta diferentes (legado UX vs Aggregate)"
+            },
+            {
+              "surface": "alerts",
+              "scenarioId": "subscription-paused",
+              "field": "count",
+              "legacy": 1,
+              "aggregate": 0,
+              "classification": "semantic",
+              "evidence": "Quantidade de alertas"
+            }
+          ]
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": [
+        {
+          "surface": "alerts",
+          "scenarioId": "subscription-paused",
+          "field": "kinds",
+          "legacy": [
+            "client_overdue"
+          ],
+          "aggregate": [],
+          "classification": "structural",
+          "evidence": "Taxonomias de alerta diferentes (legado UX vs Aggregate)"
+        },
+        {
+          "surface": "alerts",
+          "scenarioId": "subscription-paused",
+          "field": "count",
+          "legacy": 1,
+          "aggregate": 0,
+          "classification": "semantic",
+          "evidence": "Quantidade de alertas"
+        }
+      ]
+    },
+    {
+      "scenarioId": "subscription-resumed",
+      "legacyMs": 0.6355999999996129,
+      "aggregateMs": 0.8591999999998734,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 0,
+          "percent": 0,
+          "divergences": [
+            {
+              "surface": "alerts",
+              "scenarioId": "subscription-resumed",
+              "field": "kinds",
+              "legacy": [
+                "client_overdue"
+              ],
+              "aggregate": [],
+              "classification": "structural",
+              "evidence": "Taxonomias de alerta diferentes (legado UX vs Aggregate)"
+            },
+            {
+              "surface": "alerts",
+              "scenarioId": "subscription-resumed",
+              "field": "count",
+              "legacy": 1,
+              "aggregate": 0,
+              "classification": "semantic",
+              "evidence": "Quantidade de alertas"
+            }
+          ]
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": [
+        {
+          "surface": "alerts",
+          "scenarioId": "subscription-resumed",
+          "field": "kinds",
+          "legacy": [
+            "client_overdue"
+          ],
+          "aggregate": [],
+          "classification": "structural",
+          "evidence": "Taxonomias de alerta diferentes (legado UX vs Aggregate)"
+        },
+        {
+          "surface": "alerts",
+          "scenarioId": "subscription-resumed",
+          "field": "count",
+          "legacy": 1,
+          "aggregate": 0,
+          "classification": "semantic",
+          "evidence": "Quantidade de alertas"
+        }
+      ]
+    },
+    {
+      "scenarioId": "subscription-reactivated",
+      "legacyMs": 0.5698000000002139,
+      "aggregateMs": 0.7695999999996275,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 0,
+          "percent": 0,
+          "divergences": [
+            {
+              "surface": "alerts",
+              "scenarioId": "subscription-reactivated",
+              "field": "kinds",
+              "legacy": [
+                "client_overdue"
+              ],
+              "aggregate": [],
+              "classification": "structural",
+              "evidence": "Taxonomias de alerta diferentes (legado UX vs Aggregate)"
+            },
+            {
+              "surface": "alerts",
+              "scenarioId": "subscription-reactivated",
+              "field": "count",
+              "legacy": 1,
+              "aggregate": 0,
+              "classification": "semantic",
+              "evidence": "Quantidade de alertas"
+            }
+          ]
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": [
+        {
+          "surface": "alerts",
+          "scenarioId": "subscription-reactivated",
+          "field": "kinds",
+          "legacy": [
+            "client_overdue"
+          ],
+          "aggregate": [],
+          "classification": "structural",
+          "evidence": "Taxonomias de alerta diferentes (legado UX vs Aggregate)"
+        },
+        {
+          "surface": "alerts",
+          "scenarioId": "subscription-reactivated",
+          "field": "count",
+          "legacy": 1,
+          "aggregate": 0,
+          "classification": "semantic",
+          "evidence": "Quantidade de alertas"
+        }
+      ]
+    },
+    {
+      "scenarioId": "subscription-cancelled",
+      "legacyMs": 0.10350000000016735,
+      "aggregateMs": 0.45049999999991996,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 3,
+          "percent": 75,
+          "divergences": [
+            {
+              "surface": "sidebar",
+              "scenarioId": "subscription-cancelled",
+              "field": "nextReceiptDate",
+              "legacy": "—",
+              "aggregate": "14 Jul",
+              "classification": "semantic",
+              "evidence": "Data da próxima cobrança (label curto)"
+            }
+          ]
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 1,
+          "percent": 33.3,
+          "divergences": [
+            {
+              "surface": "nextInvoice",
+              "scenarioId": "subscription-cancelled",
+              "field": "cycleId",
+              "legacy": null,
+              "aggregate": "c-last",
+              "classification": "semantic",
+              "evidence": "cycleId da próxima cobrança (first eligible)"
+            },
+            {
+              "surface": "nextInvoice",
+              "scenarioId": "subscription-cancelled",
+              "field": "presence",
+              "legacy": false,
+              "aggregate": true,
+              "classification": "semantic",
+              "evidence": "Presença de próxima cobrança (real ou projetada)"
+            }
+          ]
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": [
+        {
+          "surface": "sidebar",
+          "scenarioId": "subscription-cancelled",
+          "field": "nextReceiptDate",
+          "legacy": "—",
+          "aggregate": "14 Jul",
+          "classification": "semantic",
+          "evidence": "Data da próxima cobrança (label curto)"
+        },
+        {
+          "surface": "nextInvoice",
+          "scenarioId": "subscription-cancelled",
+          "field": "cycleId",
+          "legacy": null,
+          "aggregate": "c-last",
+          "classification": "semantic",
+          "evidence": "cycleId da próxima cobrança (first eligible)"
+        },
+        {
+          "surface": "nextInvoice",
+          "scenarioId": "subscription-cancelled",
+          "field": "presence",
+          "legacy": false,
+          "aggregate": true,
+          "classification": "semantic",
+          "evidence": "Presença de próxima cobrança (real ou projetada)"
+        }
+      ]
+    },
+    {
+      "scenarioId": "charge-paid",
+      "legacyMs": 0.4279999999998836,
+      "aggregateMs": 0.8060999999997875,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "charge-overdue",
+      "legacyMs": 0.6000000000003638,
+      "aggregateMs": 1.4836999999997715,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "charge-future",
+      "legacyMs": 1,
+      "aggregateMs": 2.65520000000015,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "charge-manual",
+      "legacyMs": 0.8648000000002867,
+      "aggregateMs": 2.5262000000002445,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "charge-early-generated",
+      "legacyMs": 0.7632999999996173,
+      "aggregateMs": 2.6190999999998894,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "generate-jul-before-aug",
+      "legacyMs": 0.6157999999995809,
+      "aggregateMs": 1.0388999999995576,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "generate-oct-skip-sep",
+      "legacyMs": 0.6345000000001164,
+      "aggregateMs": 0.7665999999999258,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "generate-retroactive-months",
+      "legacyMs": 0.46489999999994325,
+      "aggregateMs": 0.8595000000004802,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "generate-multiple-future-months",
+      "legacyMs": 0.988100000000486,
+      "aggregateMs": 2.4254999999993743,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "retry-after-failure",
+      "legacyMs": 2.2597999999998137,
+      "aggregateMs": 1.295600000000377,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "gateway-failed",
+      "legacyMs": 0.8800000000001091,
+      "aggregateMs": 1.5960000000004584,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "cycle-skipped",
+      "legacyMs": 0.5393000000003667,
+      "aggregateMs": 0.5118000000002212,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "cancelled-official",
+      "legacyMs": 8.59649999999965,
+      "aggregateMs": 5.6810999999997875,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "cancelled-legacy",
+      "legacyMs": 0.5353999999997541,
+      "aggregateMs": 2.380099999999402,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "invoice-deleted",
+      "legacyMs": 0.8337000000001353,
+      "aggregateMs": 0.4938000000001921,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "invoice-refund",
+      "legacyMs": 1.0305000000007567,
+      "aggregateMs": 0.5991000000003623,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "invoice-only",
+      "legacyMs": 0.5933999999997468,
+      "aggregateMs": 0.5837000000001353,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "projection-only",
+      "legacyMs": 0.3383000000003449,
+      "aggregateMs": 0.6197999999994863,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "timeline-without-cycle",
+      "legacyMs": 0.33880000000044674,
+      "aggregateMs": 0.42849999999998545,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 0,
+          "percent": 0,
+          "divergences": [
+            {
+              "surface": "alerts",
+              "scenarioId": "timeline-without-cycle",
+              "field": "kinds",
+              "legacy": [
+                "client_overdue"
+              ],
+              "aggregate": [],
+              "classification": "structural",
+              "evidence": "Taxonomias de alerta diferentes (legado UX vs Aggregate)"
+            },
+            {
+              "surface": "alerts",
+              "scenarioId": "timeline-without-cycle",
+              "field": "count",
+              "legacy": 1,
+              "aggregate": 0,
+              "classification": "semantic",
+              "evidence": "Quantidade de alertas"
+            }
+          ]
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": [
+        {
+          "surface": "alerts",
+          "scenarioId": "timeline-without-cycle",
+          "field": "kinds",
+          "legacy": [
+            "client_overdue"
+          ],
+          "aggregate": [],
+          "classification": "structural",
+          "evidence": "Taxonomias de alerta diferentes (legado UX vs Aggregate)"
+        },
+        {
+          "surface": "alerts",
+          "scenarioId": "timeline-without-cycle",
+          "field": "count",
+          "legacy": 1,
+          "aggregate": 0,
+          "classification": "semantic",
+          "evidence": "Quantidade de alertas"
+        }
+      ]
+    },
+    {
+      "scenarioId": "timeline-with-cycle",
+      "legacyMs": 0.37920000000030996,
+      "aggregateMs": 1.1864999999997963,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "next-billing-date-changed",
+      "legacyMs": 0.44319999999970605,
+      "aggregateMs": 0.5785999999998239,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "contract-interval-change",
+      "legacyMs": 2.29740000000038,
+      "aggregateMs": 2.1315000000004147,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "anchor-change",
+      "legacyMs": 0.6738999999997759,
+      "aggregateMs": 0.6334000000006199,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "month-gap",
+      "legacyMs": 0.6210000000000946,
+      "aggregateMs": 0.6024999999999636,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "gap-filled",
+      "legacyMs": 0.6934000000001106,
+      "aggregateMs": 0.7188000000005559,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "reschedule",
+      "legacyMs": 16.152999999999338,
+      "aggregateMs": 0.8023999999995794,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "job-mismatch",
+      "legacyMs": 1.0081999999993059,
+      "aggregateMs": 0.9768999999996595,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "job-reenqueue",
+      "legacyMs": 0.5187000000005355,
+      "aggregateMs": 1.8235999999997148,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "manual-renew",
+      "legacyMs": 0.9724999999998545,
+      "aggregateMs": 0.9030000000002474,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "worker-renewal",
+      "legacyMs": 0.47229999999944994,
+      "aggregateMs": 0.48589999999967404,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "scheduler-renewal",
+      "legacyMs": 0.3609999999998763,
+      "aggregateMs": 0.40539999999964493,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "subscription-trial",
+      "legacyMs": 0.3455999999996493,
+      "aggregateMs": 0.4117999999998574,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "subscription-pending-activation",
+      "legacyMs": 0.43220000000019354,
+      "aggregateMs": 0.4254000000000815,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    },
+    {
+      "scenarioId": "subscription-expired",
+      "legacyMs": 0.34069999999974243,
+      "aggregateMs": 0.4080000000003565,
+      "surfaces": [
+        {
+          "surface": "subscription",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "cycles",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "events",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "history",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "calendar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "sidebar",
+          "checks": 4,
+          "passed": 4,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "nextInvoice",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "alerts",
+          "checks": 2,
+          "passed": 2,
+          "percent": 100,
+          "divergences": []
+        },
+        {
+          "surface": "capabilities",
+          "checks": 3,
+          "passed": 3,
+          "percent": 100,
+          "divergences": []
+        }
+      ],
+      "divergences": []
+    }
+  ],
+  "divergenceMatrix": [
+    {
+      "surface": "alerts",
+      "scenarioId": "subscription-paused",
+      "field": "kinds",
+      "legacy": [
+        "client_overdue"
+      ],
+      "aggregate": [],
+      "classification": "structural",
+      "evidence": "Taxonomias de alerta diferentes (legado UX vs Aggregate)"
+    },
+    {
+      "surface": "alerts",
+      "scenarioId": "subscription-paused",
+      "field": "count",
+      "legacy": 1,
+      "aggregate": 0,
+      "classification": "semantic",
+      "evidence": "Quantidade de alertas"
+    },
+    {
+      "surface": "alerts",
+      "scenarioId": "subscription-resumed",
+      "field": "kinds",
+      "legacy": [
+        "client_overdue"
+      ],
+      "aggregate": [],
+      "classification": "structural",
+      "evidence": "Taxonomias de alerta diferentes (legado UX vs Aggregate)"
+    },
+    {
+      "surface": "alerts",
+      "scenarioId": "subscription-resumed",
+      "field": "count",
+      "legacy": 1,
+      "aggregate": 0,
+      "classification": "semantic",
+      "evidence": "Quantidade de alertas"
+    },
+    {
+      "surface": "alerts",
+      "scenarioId": "subscription-reactivated",
+      "field": "kinds",
+      "legacy": [
+        "client_overdue"
+      ],
+      "aggregate": [],
+      "classification": "structural",
+      "evidence": "Taxonomias de alerta diferentes (legado UX vs Aggregate)"
+    },
+    {
+      "surface": "alerts",
+      "scenarioId": "subscription-reactivated",
+      "field": "count",
+      "legacy": 1,
+      "aggregate": 0,
+      "classification": "semantic",
+      "evidence": "Quantidade de alertas"
+    },
+    {
+      "surface": "sidebar",
+      "scenarioId": "subscription-cancelled",
+      "field": "nextReceiptDate",
+      "legacy": "—",
+      "aggregate": "14 Jul",
+      "classification": "semantic",
+      "evidence": "Data da próxima cobrança (label curto)"
+    },
+    {
+      "surface": "nextInvoice",
+      "scenarioId": "subscription-cancelled",
+      "field": "cycleId",
+      "legacy": null,
+      "aggregate": "c-last",
+      "classification": "semantic",
+      "evidence": "cycleId da próxima cobrança (first eligible)"
+    },
+    {
+      "surface": "nextInvoice",
+      "scenarioId": "subscription-cancelled",
+      "field": "presence",
+      "legacy": false,
+      "aggregate": true,
+      "classification": "semantic",
+      "evidence": "Presença de próxima cobrança (real ou projetada)"
+    },
+    {
+      "surface": "alerts",
+      "scenarioId": "timeline-without-cycle",
+      "field": "kinds",
+      "legacy": [
+        "client_overdue"
+      ],
+      "aggregate": [],
+      "classification": "structural",
+      "evidence": "Taxonomias de alerta diferentes (legado UX vs Aggregate)"
+    },
+    {
+      "surface": "alerts",
+      "scenarioId": "timeline-without-cycle",
+      "field": "count",
+      "legacy": 1,
+      "aggregate": 0,
+      "classification": "semantic",
+      "evidence": "Quantidade de alertas"
+    }
+  ],
+  "cutoverRecommendation": "READY_WITH_CORRECTIONS"
+}

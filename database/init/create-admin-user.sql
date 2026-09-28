@@ -6,22 +6,26 @@
 -- Hash bcrypt da senha "admin123" (10 rounds)
 -- Gerado com: bcrypt.hash('admin123', 10)
 
--- Inserir usuário
-INSERT INTO users (id, email, password_hash, whatsapp_number, email_verified, created_at, updated_at)
-VALUES (
+-- Inserir usuário só se não existir (evita ON CONFLICT em índice parcial, compatível com todas as versões do PG)
+INSERT INTO users (id, email, password_hash, whatsapp_number, email_verified, is_super_admin, created_at, updated_at, tenant_id)
+SELECT
   gen_random_uuid(),
   'admin@painelcrm.com',
   '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', -- hash de "admin123"
   '11981199950',
   true,
+  true,
   NOW(),
-  NOW()
-)
-ON CONFLICT (email) DO UPDATE
-SET 
-  password_hash = EXCLUDED.password_hash,
-  whatsapp_number = EXCLUDED.whatsapp_number,
-  updated_at = NOW();
+  NOW(),
+  NULL
+WHERE NOT EXISTS (
+  SELECT 1 FROM users WHERE email = 'admin@painelcrm.com' AND tenant_id IS NULL
+);
+
+-- Atualizar whatsapp e is_super_admin no admin existente (não sobrescreve senha)
+UPDATE users
+SET whatsapp_number = '11981199950', is_super_admin = true, updated_at = NOW()
+WHERE email = 'admin@painelcrm.com' AND tenant_id IS NULL;
 
 -- Criar perfil associado
 INSERT INTO profiles (id, first_name, last_name, company_name, whatsapp_number, whatsapp_connected, registration_complete, created_at, updated_at)
@@ -45,7 +49,7 @@ SET
   whatsapp_number = EXCLUDED.whatsapp_number,
   updated_at = NOW();
 
--- Verificar se foi criado
+-- Verificar se foi criado (admin sem tenant)
 SELECT 
   u.id,
   u.email,
@@ -56,5 +60,5 @@ SELECT
   p.registration_complete
 FROM users u
 LEFT JOIN profiles p ON u.id = p.id
-WHERE u.email = 'admin@painelcrm.com';
+WHERE u.email = 'admin@painelcrm.com' AND u.tenant_id IS NULL;
 

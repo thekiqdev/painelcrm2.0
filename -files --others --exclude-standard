@@ -1,0 +1,138 @@
+[1mdiff --git a/src/contexts/AuthContext.tsx b/src/contexts/AuthContext.tsx[m
+[1mindex 48a5a6a..d24d62a 100644[m
+[1m--- a/src/contexts/AuthContext.tsx[m
+[1m+++ b/src/contexts/AuthContext.tsx[m
+[36m@@ -69,8 +69,8 @@[m [mexport const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children[m
+         apiClient.setToken(null);[m
+         setSession(null);[m
+         setUser(null);[m
+[31m-        setProfile(null);[m
+[31m-        setRegistrationComplete(false);[m
+[32m+[m[32m          setProfile(null);[m
+[32m+[m[32m          setRegistrationComplete(false);[m
+         setLoading(false);[m
+         return;[m
+       }[m
+[36m@@ -84,9 +84,9 @@[m [mexport const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children[m
+       setLoading(false);[m
+     } catch (error) {[m
+       console.error('Error fetching user:', error);[m
+[31m-      setLoading(false);[m
+[31m-    }[m
+[31m-  };[m
+[32m+[m[32m        setLoading(false);[m
+[32m+[m[32m      }[m
+[32m+[m[32m    };[m
+ [m
+   const fetchUserProfile = async (userId: string) => {[m
+     try {[m
+[36m@@ -122,14 +122,14 @@[m [mexport const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children[m
+         toast.error(response.error || 'Falha no login');[m
+         return;[m
+       }[m
+[31m-[m
+[32m+[m[41m      [m
+       if (response.data) {[m
+         apiClient.setToken(response.data.token);[m
+         setSession({ token: response.data.token });[m
+         setUser(response.data.user);[m
+         setProfile(response.data.user);[m
+         setRegistrationComplete(response.data.user.registration_complete || false);[m
+[31m-        toast.success('Login realizado com sucesso!');[m
+[32m+[m[32m      toast.success('Login realizado com sucesso!');[m
+       }[m
+     } catch (error: any) {[m
+       toast.error(error.message || 'Erro desconhecido');[m
+[36m@@ -173,14 +173,14 @@[m [mexport const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children[m
+         toast.error(response.error || 'Falha no cadastro');[m
+         return;[m
+       }[m
+[31m-[m
+[32m+[m[41m      [m
+       if (response.data) {[m
+         apiClient.setToken(response.data.token);[m
+         setSession({ token: response.data.token });[m
+         setUser(response.data.user);[m
+         setProfile(response.data.user);[m
+         setRegistrationComplete(false);[m
+[31m-        toast.success('Cadastro realizado com sucesso!');[m
+[32m+[m[32m      toast.success('Cadastro realizado com sucesso!');[m
+       }[m
+     } catch (error: any) {[m
+       toast.error(error.message || 'Erro desconhecido');[m
+[36m@@ -258,7 +258,7 @@[m [mexport const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children[m
+ [m
+       const response = await apiClient.post('/api/registration-steps', {[m
+         step_name: step,[m
+[31m-        completed,[m
+[32m+[m[32m            completed,[m[41m [m
+       });[m
+ [m
+       if (response.error) {[m
+[1mdiff --git a/src/pages/ProposalDetails.tsx b/src/pages/ProposalDetails.tsx[m
+[1mindex 60fed2f..2e04424 100644[m
+[1m--- a/src/pages/ProposalDetails.tsx[m
+[1m+++ b/src/pages/ProposalDetails.tsx[m
+[36m@@ -59,9 +59,9 @@[m [mconst ProposalDetails = () => {[m
+       await proposalsService.updateProposal(proposal.id, {[m
+         status: 'accepted'[m
+       });[m
+[31m-      toast.success("Proposta aceita com sucesso!");[m
+[31m-      setIsAcceptDialogOpen(false);[m
+[31m-      setTimeout(() => navigate(`/funnel`), 1000);[m
+[32m+[m[32m    toast.success("Proposta aceita com sucesso!");[m
+[32m+[m[32m    setIsAcceptDialogOpen(false);[m
+[32m+[m[32m    setTimeout(() => navigate(`/funnel`), 1000);[m
+     } catch (error) {[m
+       console.error("Erro ao aceitar proposta:", error);[m
+       toast.error("Erro ao aceitar proposta");[m
+[36m@@ -75,9 +75,9 @@[m [mconst ProposalDetails = () => {[m
+       await proposalsService.updateProposal(proposal.id, {[m
+         status: 'rejected'[m
+       });[m
+[31m-      toast.success("Proposta recusada e movida para estágio apropriado");[m
+[31m-      setIsRejectDialogOpen(false);[m
+[31m-      setTimeout(() => navigate(`/funnel`), 1000);[m
+[32m+[m[32m    toast.success("Proposta recusada e movida para estágio apropriado");[m
+[32m+[m[32m    setIsRejectDialogOpen(false);[m
+[32m+[m[32m    setTimeout(() => navigate(`/funnel`), 1000);[m
+     } catch (error) {[m
+       console.error("Erro ao recusar proposta:", error);[m
+       toast.error("Erro ao recusar proposta");[m
+[36m@@ -175,26 +175,26 @@[m [mconst ProposalDetails = () => {[m
+               <p className="font-semibold">{formatCurrency(proposal.amount)}</p>[m
+             </div>[m
+             {proposal.sent_date && ([m
+[31m-              <div className="space-y-1">[m
+[31m-                <p className="text-sm text-muted-foreground">Data de Envio</p>[m
+[32m+[m[32m            <div className="space-y-1">[m
+[32m+[m[32m              <p className="text-sm text-muted-foreground">Data de Envio</p>[m
+                 <p>{format(new Date(proposal.sent_date), "dd/MM/yyyy")}</p>[m
+[31m-              </div>[m
+[32m+[m[32m            </div>[m
+             )}[m
+             {proposal.valid_until && ([m
+[31m-              <div className="space-y-1">[m
+[31m-                <p className="text-sm text-muted-foreground">Válido até</p>[m
+[32m+[m[32m            <div className="space-y-1">[m
+[32m+[m[32m              <p className="text-sm text-muted-foreground">Válido até</p>[m
+                 <p>{format(new Date(proposal.valid_until), "dd/MM/yyyy")}</p>[m
+[31m-              </div>[m
+[32m+[m[32m            </div>[m
+             )}[m
+           </div>[m
+ [m
+           <Separator />[m
+           [m
+           {proposal.description && ([m
+[31m-            <div>[m
+[31m-              <h3 className="font-medium mb-2">Descrição</h3>[m
+[31m-              <p className="text-sm text-muted-foreground">{proposal.description}</p>[m
+[31m-            </div>[m
+[32m+[m[32m          <div>[m
+[32m+[m[32m            <h3 className="font-medium mb-2">Descrição</h3>[m
+[32m+[m[32m            <p className="text-sm text-muted-foreground">{proposal.description}</p>[m
+[32m+[m[32m          </div>[m
+           )}[m
+ [m
+           <Separator />[m

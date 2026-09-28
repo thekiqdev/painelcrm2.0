@@ -42,17 +42,59 @@ export interface Product {
   updated_at?: string;
 }
 
+/** Resposta das APIs públicas de catálogo (V2-1); sem dados internos nem variations. */
+export interface PublicCatalogProduct {
+  id: string;
+  name: string;
+  type: 'product' | 'service';
+  short_description?: string;
+  description?: string;
+  price?: number | null;
+  discount_price?: number | null;
+  currency: string;
+  category?: string | null;
+  images: string[];
+  secondary_images?: string[];
+  features: string[];
+  duration_hours?: number | null;
+  is_recurring?: boolean | null;
+  recurrence_interval?: string | null;
+}
+
+/** Preço unitário exibido na vitrine/checkout (menor entre preço e desconto quando aplicável). */
+export function resolvePublicCatalogUnitPrice(
+  row: Pick<PublicCatalogProduct, 'price' | 'discount_price'>
+): number | null {
+  const rawPrice = row.price != null ? Number(row.price) : null;
+  const rawDisc = row.discount_price != null ? Number(row.discount_price) : null;
+  let value: number | null = rawPrice;
+  if (rawDisc != null && rawPrice != null && rawDisc < rawPrice) {
+    value = rawDisc;
+  } else if (rawDisc != null && rawPrice == null) {
+    value = rawDisc;
+  }
+  if (value == null || Number.isNaN(value) || value <= 0) return null;
+  return value;
+}
+
+export type StorefrontThemeKey = 'default' | 'minimal' | 'moderno' | 'luzmodas';
+
 export interface StoreProfile {
   id: string;
   user_id: string;
   store_name: string;
   store_description?: string;
   store_logo?: string;
+  store_banner_url?: string | null;
   contact_phone?: string;
   contact_email?: string;
   contact_whatsapp?: string;
   store_slug?: string;
   is_active: boolean;
+  /** Opt-in: Comprar com checkout na vitrine (e flags globais). Ausente em respostas antigas = false. */
+  store_checkout_enabled?: boolean;
+  theme_key?: StorefrontThemeKey | string | null;
+  theme_options?: Record<string, unknown> | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -106,11 +148,26 @@ export interface ShoppingCart {
   updated_at?: string;
 }
 
+export interface OrderItemRow {
+  id: string;
+  product_id: string;
+  product_name: string;
+  product_type: string;
+  quantity: number;
+  unit_price: number;
+  total_price: number;
+  selected_variation?: unknown;
+}
+
 export interface Order {
   id: string;
   order_number: string;
   store_user_id: string;
-  customer_user_id?: string;
+  customer_user_id?: string | null;
+  /** Cliente CRM (checkout público da loja). */
+  client_id?: string | null;
+  /** Fatura CRM vinculada ao pedido. */
+  customer_invoice_id?: string | null;
   customer_name: string;
   customer_email: string;
   customer_phone?: string;
@@ -121,4 +178,5 @@ export interface Order {
   notes?: string;
   created_at?: string;
   updated_at?: string;
+  order_items?: OrderItemRow[];
 }

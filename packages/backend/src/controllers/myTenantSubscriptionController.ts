@@ -1,0 +1,449 @@
+/**
+ * Fase 2 Billing Engine: assinatura do tenant (get, cancelar, mudar plano).
+ * Rotas sob /api/me/tenant (tenantAuth).
+ */
+import { Response } from 'express';
+import { AuthRequest } from '../middleware/auth.js';
+import { pool } from '../utils/db.js';
+import {
+  getActiveSaasSubscriptionByTenantAutoRepair,
+  cancelSubscription,
+  changeSubscriptionPlan,
+} from '../services/billingSubscriptionService.js';
+import { ensureUsableSaasSubscriptionForActivePaidTenant } from '../services/subscriptionService.js';
+import { resolveSubscriptionCommercialDisplayCents } from '../services/saasContractRenewalReconcileService.js';
+import { z } from 'zod';
+
+async function getMyTenantId(req: AuthRequest): Promise<string | null> {
+  if (!req.userId) return null;
+  const r = await pool.query<{ tenant_id: string }>('SELECT tenant_id FROM users WHERE id = $1', [req.userId]);
+  return r.rows[0]?.tenant_id ?? null;
+}
+
+/** Alterar/cancelar assinatura: mesmo critério do PUT /plan (apenas primary). */
+async function getMyTenantIdIfPrimary(req: AuthRequest): Promise<string | null> {
+  if (!req.userId) return null;
+  const r = await pool.query<{ tenant_id: string; primary_user_id: string }>(
+    `SELECT t.id AS tenant_id,
+        (SELECT u2.id FROM users u2 WHERE u2.tenant_id = t.id ORDER BY u2.created_at ASC LIMIT 1) AS primary_user_id
+     FROM users u
+     JOIN tenants t ON t.id = u.tenant_id
+     WHERE u.id = $1`,
+    [req.userId]
+  );
+  const row = r.rows[0];
+  if (!row || row.primary_user_id !== req.userId) return null;
+  return row.tenant_id;
+}
+
+function daysFromTodayToYmd(ymd: string | null | undefined): number | null {
+  if (!ymd || typeof ymd !== 'string') return null;
+  const parts = ymd.split('-').map((x) => parseInt(x, 10));
+  if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) return null;
+  const target = new Date(parts[0]!, parts[1]! - 1, parts[2]!);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  target.setHours(0, 0, 0, 0);
+  return Math.round((target.getTime() - today.getTime()) / 86400000);
+}
+
+/** GET /api/me/tenant/subscription — assinatura ativa do meu tenant (saas). */
+export async function getMySubscription(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = await getMyTenantId(req);
+    if (!tenantId) {
+      res.status(403).json({ error: 'Usuário não vinculado a uma conta' });
+      return;
+    }
+    await ensureUsableSaasSubscriptionForActivePaidTenant(tenantId);
+    const subscription = await getActiveSaasSubscriptionByTenantAutoRepair(tenantId);
+
+    const { resolvePartnerCommercialAmountCents, getPartnerChannelTenantContext } = await import(
+      '../partner/partnerChannelCustomerPlans.js'
+    );
+    const channelCtx = await getPartnerChannelTenantContext(tenantId);
+    const isPartnerCustomer =
+      channelCtx?.account_type === 'customer_tenant' && Boolean(channelCtx.partner_id);
+    const partnerCommercial = isPartnerCustomer
+      ? await resolvePartnerCommercialAmountCents(tenantId)
+      : null;
+
+    if (!subscription) {
+      if (partnerCommercial) {
+        res.status(200).json({
+          subscription: {
+            id: null,
+            plan_id: channelCtx?.partner_sell_plan_id ?? null,
+            plan_name: partnerCommercial.plan_name,
+            plan_slug: null,
+            plan_type: 'standard',
+            amount_cents: partnerCommercial.amount_cents,
+            billing_interval: partnerCommercial.billing_interval,
+            status: 'active',
+            next_billing_date: null,
+            current_period_start: null,
+            current_period_end: null,
+            cancel_at_period_end: false,
+            users_count: null,
+            days_until_next_billing: null,
+            renewal_overdue: false,
+            will_cancel_at_period_end: false,
+            pix_automatic: null,
+            channel: 'partner',
+            partner_commercial: true,
+          },
+        });
+        return;
+      }
+      res.status(200).json({ subscription: null });
+      return;
+    }
+    const planRow = await pool.query<{ name: string; slug: string; plan_type: string }>(
+      'SELECT name, slug, plan_type FROM plans WHERE id = $1',
+      [subscription.plan_id]
+    );
+    const pl = planRow.rows[0];
+    const daysUntil = daysFromTodayToYmd(subscription.next_billing_date);
+    const renewalOverdue = daysUntil !== null && daysUntil < 0;
+
+    let pix_automatic: Awaited<
+      ReturnType<
+        typeof import('../services/billing2/billingPixAutomaticService.js').getPixAutomaticPreferenceForTenant
+      >
+    > | null = null;
+    try {
+      const { getPixAutomaticPreferenceForTenant } = await import(
+        '../services/billing2/billingPixAutomaticService.js'
+      );
+      pix_automatic = await getPixAutomaticPreferenceForTenant(tenantId);
+    } catch {
+      pix_automatic = null;
+    }
+
+    let asaas_card_subscription: {
+      linked: boolean;
+      asaas_subscription_id: string | null;
+      gateway: string | null;
+    } | null = null;
+    try {
+      const { getAsaasSubscriptionStatusForLocal } = await import(
+        '../services/saasAsaasSubscriptionSyncService.js'
+      );
+      asaas_card_subscription = await getAsaasSubscriptionStatusForLocal(subscription.id);
+    } catch {
+      asaas_card_subscription = null;
+    }
+
+    const planType = partnerCommercial ? 'standard' : (pl?.plan_type ?? null);
+    const commercialAmountCents = partnerCommercial
+      ? (partnerCommercial.amount_cents ?? subscription.amount_cents)
+      : resolveSubscriptionCommercialDisplayCents({
+          planType,
+          amountCents: subscription.amount_cents,
+          contractedPlanPriceCents: subscription.contracted_plan_price_cents,
+          contractedPricePerUserCents: subscription.contracted_price_per_user_cents,
+          usersCount: subscription.users_count,
+        });
+
+    res.status(200).json({
+      subscription: {
+        id: subscription.id,
+        plan_id: partnerCommercial
+          ? (channelCtx?.partner_sell_plan_id ?? subscription.plan_id)
+          : subscription.plan_id,
+        plan_name: partnerCommercial?.plan_name ?? pl?.name ?? null,
+        plan_slug: partnerCommercial ? null : (pl?.slug ?? null),
+        plan_type: planType,
+        amount_cents: commercialAmountCents,
+        contracted_plan_price_cents: partnerCommercial
+          ? null
+          : (subscription.contracted_plan_price_cents ?? null),
+        contracted_price_per_user_cents: partnerCommercial
+          ? null
+          : (subscription.contracted_price_per_user_cents ?? null),
+        billing_interval: partnerCommercial?.billing_interval ?? subscription.billing_interval,
+        status: subscription.status,
+        next_billing_date: subscription.next_billing_date,
+        current_period_start: subscription.current_period_start,
+        current_period_end: subscription.current_period_end,
+        cancel_at_period_end: subscription.cancel_at_period_end,
+        users_count: subscription.users_count,
+        days_until_next_billing: daysUntil,
+        renewal_overdue: renewalOverdue,
+        will_cancel_at_period_end:
+          subscription.status === 'active' && subscription.cancel_at_period_end === true,
+        pix_automatic,
+        asaas_card_subscription,
+        ...(partnerCommercial
+          ? { channel: 'partner' as const, partner_commercial: true }
+          : isPartnerCustomer
+            ? { channel: 'partner' as const, partner_commercial: false }
+            : {}),
+      },
+    });
+  } catch (e) {
+    console.error('[getMySubscription]', e);
+    res.status(500).json({ error: 'Erro ao buscar assinatura' });
+  }
+}
+
+const cancelBodySchema = z.object({
+  immediate: z.boolean().optional().default(false),
+});
+
+/** POST /api/me/tenant/subscription/cancel — cancelar assinatura (imediato ou ao fim do período). */
+export async function cancelMySubscription(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = await getMyTenantId(req);
+    if (!tenantId) {
+      res.status(403).json({ error: 'Usuário não vinculado a uma conta' });
+      return;
+    }
+    await ensureUsableSaasSubscriptionForActivePaidTenant(tenantId);
+    const sub = await getActiveSaasSubscriptionByTenantAutoRepair(tenantId);
+    if (!sub) {
+      res.status(404).json({ error: 'Nenhuma assinatura ativa encontrada' });
+      return;
+    }
+    const parsed = cancelBodySchema.safeParse(req.body);
+    const immediate = parsed.success ? parsed.data.immediate : false;
+    const result = await cancelSubscription(sub.id, tenantId, { immediate });
+    if (!result.ok) {
+      res.status(400).json({ error: result.error });
+      return;
+    }
+    res.status(200).json({
+      ok: true,
+      message: immediate
+        ? 'Assinatura cancelada. Seu acesso foi alterado para trial.'
+        : 'Assinatura será cancelada ao fim do período atual.',
+    });
+  } catch (e) {
+    console.error('[cancelMySubscription]', e);
+    res.status(500).json({ error: 'Erro ao cancelar assinatura' });
+  }
+}
+
+const changePlanBodySchema = z.object({
+  plan_id: z.string().uuid().optional(),
+  billing_interval: z.enum(['monthly', 'quarterly', 'semi_annual', 'yearly']).optional(),
+  users_count: z.number().int().min(1).nullable().optional(),
+});
+
+/**
+ * PATCH /api/me/tenant/subscription — alterar plano, intervalo e/ou assentos da assinatura.
+ * Política Fase 2 (sem pró-rata imediato): alterações refletem no valor da próxima cobrança recorrente.
+ */
+export async function patchMySubscription(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = await getMyTenantIdIfPrimary(req);
+    if (!tenantId) {
+      res.status(403).json({
+        error: 'Apenas o administrador da conta pode alterar a assinatura.',
+      });
+      return;
+    }
+    await ensureUsableSaasSubscriptionForActivePaidTenant(tenantId);
+    const sub = await getActiveSaasSubscriptionByTenantAutoRepair(tenantId);
+    if (!sub) {
+      res.status(404).json({ error: 'Nenhuma assinatura ativa encontrada' });
+      return;
+    }
+    if (!sub.plan_id) {
+      res.status(400).json({ error: 'Assinatura sem plano vinculado; entre em contato com o suporte.' });
+      return;
+    }
+    const parsed = changePlanBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Dados inválidos', details: parsed.error.flatten() });
+      return;
+    }
+    const { plan_id: bodyPlanId, billing_interval, users_count } = parsed.data;
+    if (bodyPlanId === undefined && billing_interval === undefined && users_count === undefined) {
+      res.status(400).json({
+        error: 'Informe plan_id, billing_interval ou users_count para alterar a assinatura.',
+      });
+      return;
+    }
+    const effectivePlanId = bodyPlanId ?? sub.plan_id;
+    const result = await changeSubscriptionPlan(
+      sub.id,
+      tenantId,
+      {
+        plan_id: effectivePlanId,
+        billing_interval,
+        users_count: users_count ?? undefined,
+      },
+      { syncContractSnapshot: true }
+    );
+    if (!result.ok) {
+      res.status(400).json({ error: result.error });
+      return;
+    }
+
+    // CS S3: troca de plano sem checkout também deve alinhar renovações abertas.
+    try {
+      const refreshed = await getActiveSaasSubscriptionByTenantAutoRepair(tenantId);
+      if (refreshed?.plan_id && refreshed.next_billing_date) {
+        const { addInterval } = await import('../services/subscriptionService.js');
+        const { toYmd } = await import('../services/billingSubscriptionService.js');
+        const {
+          reconcileOpenPlanRenewalsAfterContractChange,
+          resolveExpectedRenewalAmountCents,
+        } = await import('../services/saasContractRenewalReconcileService.js');
+        const nextStart = toYmd(refreshed.next_billing_date) ?? String(refreshed.next_billing_date).slice(0, 10);
+        const interval = (refreshed.billing_interval || 'monthly') as import('../services/billingService.js').BillingInterval;
+        const nextEndDate = addInterval(new Date(`${nextStart}T12:00:00`), interval);
+        const nextEnd = toYmd(nextEndDate);
+        if (nextEnd) {
+          await reconcileOpenPlanRenewalsAfterContractChange({
+            tenantId,
+            subscriptionId: refreshed.id,
+            planId: refreshed.plan_id,
+            billingInterval: interval,
+            usersCount: refreshed.users_count,
+            expectedAmountCents: resolveExpectedRenewalAmountCents({
+              amountCents: refreshed.amount_cents,
+              contractedPlanPriceCents: refreshed.contracted_plan_price_cents,
+            }),
+            nextPeriodStart: nextStart,
+            nextPeriodEnd: nextEnd,
+          });
+        }
+      }
+    } catch (reconcileErr) {
+      console.warn('[patchMySubscription] CS S2/S3 reconcile renewals skipped', reconcileErr);
+    }
+
+    res.status(200).json({
+      ok: true,
+      message:
+        'Assinatura atualizada. Sem cobrança extra agora — o valor da próxima renovação passará a refletir esta alteração.',
+    });
+  } catch (e) {
+    console.error('[patchMySubscription]', e);
+    res.status(500).json({ error: 'Erro ao atualizar plano' });
+  }
+}
+
+const pixAutoEnableSchema = z.object({
+  billing_id: z.string().uuid().optional().nullable(),
+});
+
+const pixAutoDisableSchema = z.object({
+  billing_id: z.string().uuid().optional().nullable(),
+});
+
+/** GET /api/me/tenant/pix-automatic — SSOT preferência (flag + status na assinatura). */
+export async function getMyPixAutomatic(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = await getMyTenantId(req);
+    if (!tenantId) {
+      res.status(403).json({ error: 'Usuário não vinculado a uma conta' });
+      return;
+    }
+    const { getPixAutomaticPreferenceForTenant } = await import(
+      '../services/billing2/billingPixAutomaticService.js'
+    );
+    const pix_automatic = await getPixAutomaticPreferenceForTenant(tenantId);
+    res.status(200).json({ ok: true, pix_automatic });
+  } catch (e) {
+    console.error('[getMyPixAutomatic]', e);
+    res.status(500).json({ error: 'Erro ao buscar Pix Automático' });
+  }
+}
+
+/** POST /api/me/tenant/pix-automatic/enable — switch ON (inicia auth; precisa fatura aberta). */
+export async function postMyPixAutomaticEnable(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = await getMyTenantIdIfPrimary(req);
+    if (!tenantId) {
+      res.status(403).json({
+        error: 'Apenas o administrador da conta pode alterar o Pix Automático.',
+      });
+      return;
+    }
+    const parsed = pixAutoEnableSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Dados inválidos', details: parsed.error.flatten() });
+      return;
+    }
+    const { enablePixAutomaticForTenant } = await import(
+      '../services/billing2/billingPixAutomaticService.js'
+    );
+    const result = await enablePixAutomaticForTenant({
+      tenantId,
+      billingId: parsed.data.billing_id ?? null,
+      correlationId: `me_pix_auto_enable:${tenantId}`,
+    });
+    if (!result.ok) {
+      const status =
+        result.detail === 'flag_pix_automatic_off'
+          ? 403
+          : result.detail === 'needs_open_billing'
+            ? 409
+            : result.detail === 'auth_already_active'
+              ? 409
+              : 400;
+      res.status(status).json({ ok: false, error: result.detail, code: result.detail });
+      return;
+    }
+    res.status(200).json({
+      ok: true,
+      authorization_id: result.authorization_id,
+      status: result.status,
+      pix_copy_paste: result.qr_payload,
+      pix_qr_code: result.qr_image,
+      billing_id: result.billing_id,
+    });
+  } catch (e) {
+    console.error('[postMyPixAutomaticEnable]', e);
+    res.status(500).json({ error: 'Erro ao ativar Pix Automático' });
+  }
+}
+
+/** POST /api/me/tenant/pix-automatic/disable — switch OFF (cancela auth Asaas + local). */
+export async function postMyPixAutomaticDisable(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = await getMyTenantIdIfPrimary(req);
+    if (!tenantId) {
+      res.status(403).json({
+        error: 'Apenas o administrador da conta pode alterar o Pix Automático.',
+      });
+      return;
+    }
+    const parsed = pixAutoDisableSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Dados inválidos', details: parsed.error.flatten() });
+      return;
+    }
+    const { cancelPixAutomaticAuthorizationForSubscription } = await import(
+      '../services/billing2/billingPixAutomaticService.js'
+    );
+    const result = await cancelPixAutomaticAuthorizationForSubscription({
+      tenantId,
+      billingId: parsed.data.billing_id ?? null,
+      correlationId: `me_pix_auto_disable:${tenantId}`,
+      reason: 'switch_off',
+    });
+    if (!result.ok) {
+      res.status(400).json({ ok: false, error: result.detail, code: result.detail });
+      return;
+    }
+    const { getPixAutomaticPreferenceForTenant } = await import(
+      '../services/billing2/billingPixAutomaticService.js'
+    );
+    const pix_automatic = await getPixAutomaticPreferenceForTenant(tenantId);
+    res.status(200).json({
+      ok: true,
+      detail: result.detail,
+      pix_automatic,
+      billing_id: result.billing_id,
+      pix_copy_paste: result.pix_copy_paste,
+      pix_qr_code: result.pix_qr_code,
+    });
+  } catch (e) {
+    console.error('[postMyPixAutomaticDisable]', e);
+    res.status(500).json({ error: 'Erro ao desativar Pix Automático' });
+  }
+}

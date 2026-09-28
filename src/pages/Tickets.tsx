@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Search, Filter, LayoutGrid, List } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { Plus, Search, LayoutGrid, List } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
@@ -15,9 +16,13 @@ import {
   ticketPriorityLabels,
   ticketStatusColors,
   ticketPriorityColors,
+  ticketChannelLabels,
 } from '@/types/tickets';
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { MobilePageHeader } from '@/components/mobile/MobilePageHeader';
+import { ClientEntityLink, LeadEntityLink } from '@/components/entities';
+import { clientsService } from '@/services/clients';
 
 export default function Tickets() {
   const navigate = useNavigate();
@@ -25,21 +30,42 @@ export default function Tickets() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [viewMode, setViewMode] = useState<'table' | 'kanban'>('table');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+
+  const { data: clientsList = [] } = useQuery({
+    queryKey: ['clients', 'tickets-list', user?.id],
+    queryFn: () => clientsService.getClients(),
+    enabled: Boolean(user?.id),
+    staleTime: 120_000,
+  });
+  const clientNameById = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const c of clientsList) {
+      const label = (c.name || c.company || c.email || '').trim();
+      if (label) m[c.id] = label;
+    }
+    return m;
+  }, [clientsList]);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedSearch(searchQuery.trim()), 350);
+    return () => window.clearTimeout(t);
+  }, [searchQuery]);
 
   useEffect(() => {
     if (user) {
       loadTickets();
     }
-  }, [user, statusFilter]);
+  }, [user, statusFilter, debouncedSearch]);
 
   const loadTickets = async () => {
     try {
       setLoading(true);
       const data = await ticketsService.getTickets({
         status: statusFilter !== 'all' ? statusFilter : undefined,
-        search: searchQuery || undefined,
+        search: debouncedSearch || undefined,
       });
       setTickets(data);
     } catch (error: any) {
@@ -52,17 +78,6 @@ export default function Tickets() {
       setLoading(false);
     }
   };
-
-  const filteredTickets = tickets.filter((ticket) => {
-    const matchesSearch = 
-      ticket.ticket_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      ticket.subject.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      ticket.contact_name.toLowerCase().includes(searchQuery.toLowerCase());
-    
-    const matchesStatus = statusFilter === 'all' || ticket.status === statusFilter;
-    
-    return matchesSearch && matchesStatus;
-  });
 
   const getSLABadge = (ticket: Ticket) => {
     if (!ticket.resolution_due_at) return null;
@@ -91,8 +106,29 @@ export default function Tickets() {
 
   return (
     <div className="container mx-auto p-6 space-y-6">
-      {/* Header */}
-      <div className="flex justify-between items-center">
+      <div className="md:hidden sticky top-0 z-30 -mx-0.5 border-b border-border/70 bg-background/95 px-0.5 pb-2 pt-1 backdrop-blur supports-[backdrop-filter]:bg-background/90">
+        <MobilePageHeader
+          title="Tickets"
+          secondaryActions={[
+            {
+              icon: <List className="h-4 w-4" aria-hidden />,
+              ariaLabel: 'Vista em lista',
+              onClick: () => setViewMode('table'),
+            },
+            {
+              icon: <LayoutGrid className="h-4 w-4" aria-hidden />,
+              ariaLabel: 'Vista em kanban',
+              onClick: () => navigate('/support/tickets/kanban'),
+            },
+          ]}
+          primaryAction={{
+            label: 'Novo ticket',
+            icon: <Plus className="h-4 w-4" aria-hidden />,
+            onClick: () => navigate('/support/tickets/new'),
+          }}
+        />
+      </div>
+      <div className="hidden md:flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold">Tickets</h1>
           <p className="text-muted-foreground">Gerencie seus chamados e atendimentos</p>
@@ -138,7 +174,8 @@ export default function Tickets() {
             <Button
               variant={viewMode === 'kanban' ? 'default' : 'outline'}
               size="icon"
-              onClick={() => setViewMode('kanban')}
+              onClick={() => navigate('/support/tickets/kanban')}
+              title="Kanban"
             >
               <LayoutGrid className="h-4 w-4" />
             </Button>
@@ -163,7 +200,7 @@ export default function Tickets() {
                 </tr>
               </thead>
               <tbody>
-                {filteredTickets.map((ticket) => (
+                {tickets.map((ticket) => (
                   <tr
                     key={ticket.id}
                     className="border-b hover:bg-muted/50 cursor-pointer"
@@ -171,11 +208,55 @@ export default function Tickets() {
                   >
                     <td className="p-4 font-medium">{ticket.ticket_number}</td>
                     <td className="p-4">{ticket.subject}</td>
-                    <td className="p-4">{ticket.contact_name}</td>
+                    <td className="p-4 max-w-[220px]">
+                      {(() => {
+                        const tid =
+                          ticket.client_id != null && ticket.client_id !== ""
+                            ? String(ticket.client_id).trim()
+                            : "";
+                        const lid =
+                          ticket.lead_id != null && ticket.lead_id !== ""
+                            ? String(ticket.lead_id).trim()
+                            : "";
+                        if (tid) {
+                          return (
+                            <ClientEntityLink
+                              clientId={tid}
+                              name={clientNameById[tid] ?? ticket.client_name}
+                              disabledFallbackText="Abrir cliente"
+                              variant="table"
+                              stopPropagationOnClick
+                            />
+                          );
+                        }
+                        if (lid) {
+                          return (
+                            <span className="inline-flex min-w-0 max-w-full flex-col gap-0.5">
+                              <LeadEntityLink
+                                leadId={lid}
+                                name={ticket.lead_name || ticket.contact_name}
+                                disabledFallbackText="Lead"
+                                variant="table"
+                                stopPropagationOnClick
+                              />
+                              <Badge variant="outline" className="w-fit text-[10px] font-normal">
+                                Lead
+                              </Badge>
+                            </span>
+                          );
+                        }
+                        return <span className="text-muted-foreground">{ticket.contact_name}</span>;
+                      })()}
+                    </td>
                     <td className="p-4">
-                      <Badge className={ticketPriorityColors[ticket.priority]}>
-                        {ticketPriorityLabels[ticket.priority]}
-                      </Badge>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge className={ticketPriorityColors[ticket.priority]}>
+                          {ticketPriorityLabels[ticket.priority]}
+                        </Badge>
+                        <Badge variant="outline" className="text-xs font-normal">
+                          {ticketChannelLabels[ticket.channel]}
+                        </Badge>
+                      </div>
                     </td>
                     <td className="p-4">
                       <Badge className={ticketStatusColors[ticket.status]}>
@@ -205,11 +286,11 @@ export default function Tickets() {
               <div className="font-semibold">
                 {ticketStatusLabels[status as keyof typeof ticketStatusLabels]}
                 <span className="ml-2 text-sm text-muted-foreground">
-                  ({filteredTickets.filter((t) => t.status === status).length})
+                  ({tickets.filter((t) => t.status === status).length})
                 </span>
               </div>
               <div className="space-y-2">
-                {filteredTickets
+                {tickets
                   .filter((t) => t.status === status)
                   .map((ticket) => (
                     <Card
@@ -227,7 +308,46 @@ export default function Tickets() {
                           {getSLABadge(ticket)}
                         </div>
                         <div className="text-xs text-muted-foreground">
-                          {ticket.contact_name}
+                          {(() => {
+                            const tid =
+                              ticket.client_id != null && ticket.client_id !== ""
+                                ? String(ticket.client_id).trim()
+                                : "";
+                            const lid =
+                              ticket.lead_id != null && ticket.lead_id !== ""
+                                ? String(ticket.lead_id).trim()
+                                : "";
+                            if (tid) {
+                              return (
+                                <ClientEntityLink
+                                  clientId={tid}
+                                  name={clientNameById[tid] ?? ticket.client_name}
+                                  disabledFallbackText="Abrir cliente"
+                                  variant="compact"
+                                  stopPropagationOnClick
+                                  className="inline min-w-0 max-w-full align-baseline"
+                                />
+                              );
+                            }
+                            if (lid) {
+                              return (
+                                <span className="inline-flex flex-col gap-0.5">
+                                  <LeadEntityLink
+                                    leadId={lid}
+                                    name={ticket.lead_name || ticket.contact_name}
+                                    disabledFallbackText="Lead"
+                                    variant="compact"
+                                    stopPropagationOnClick
+                                    className="inline min-w-0 max-w-full align-baseline"
+                                  />
+                                  <Badge variant="outline" className="w-fit text-[9px] font-normal px-1 py-0">
+                                    Lead
+                                  </Badge>
+                                </span>
+                              );
+                            }
+                            return ticket.contact_name;
+                          })()}
                         </div>
                       </div>
                     </Card>
@@ -238,7 +358,7 @@ export default function Tickets() {
         </div>
       )}
 
-      {filteredTickets.length === 0 && (
+      {tickets.length === 0 && (
         <Card className="p-12 text-center">
           <p className="text-muted-foreground">Nenhum ticket encontrado</p>
         </Card>

@@ -1,13 +1,14 @@
 import { Router } from 'express';
 import * as leadStatusesController from '../controllers/leadStatusesController.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { tenantAuthCrm } from '../middleware/auth.js';
 
 const router = Router();
+router.use(...tenantAuthCrm);
 
-router.get('/', authenticateToken, leadStatusesController.getLeadStatuses);
-router.post('/', authenticateToken, leadStatusesController.createLeadStatus);
-router.put('/:id', authenticateToken, leadStatusesController.updateLeadStatus);
-router.delete('/:id', authenticateToken, leadStatusesController.deleteLeadStatus);
+router.get('/', leadStatusesController.getLeadStatuses);
+router.post('/', leadStatusesController.createLeadStatus);
+router.put('/:id', leadStatusesController.updateLeadStatus);
+router.delete('/:id', leadStatusesController.deleteLeadStatus);
 
 export default router;
 

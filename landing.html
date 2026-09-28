@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <script>
+      (function () {
+        try {
+          var k = "painelcrm-theme";
+          var t = localStorage.getItem(k);
+          if (t !== "dark" && t !== "light") {
+            t = "light";
+            try {
+              localStorage.setItem(k, t);
+            } catch (e2) {}
+          }
+          var c = document.documentElement.classList;
+          c.remove("light", "dark");
+          if (t === "dark") c.add("dark");
+          else c.add("light");
+        } catch (e) {}
+      })();
+    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#2563eb" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <link rel="manifest" href="/manifest.json" />
+    <title>PainelCRM - Plataforma de Gestão de Relacionamento</title>
+    <meta name="description" content="Sistema completo de CRM para gestão de clientes, funis de vendas, propostas e contratos" />
+    <meta name="author" content="PainelCRM" />
+    <meta property="og:title" content="PainelCRM - Plataforma de Gestão de Relacionamento" />
+    <meta property="og:description" content="Sistema completo de CRM para gestão de clientes, funis de vendas, propostas e contratos" />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@painelcrm" />
+    <meta name="twitter:image" content="/og-image.png" />
+  </head>
+  <body>
+    <div id="root">
+      <a href="#landing-main" class="landing-skip">Saltar para o conteúdo principal</a>
+      <div class="landing-ssr-shell landing-page">
+        <nav class="landing-ssr-nav" aria-label="Navegação principal">
+          <div class="landing-ssr-nav-inner">
+            <a class="landing-ssr-brand" href="/">
+              <span class="landing-ssr-logo" aria-hidden="true">PC</span>
+              PainelCRM
+            </a>
+            <div class="landing-ssr-links">
+              <a href="#recursos">Recursos</a>
+              <a href="#como-funciona">Como funciona</a>
+              <a href="#planos">Planos</a>
+              <a href="/login?redirect=%2Fsuporte">Suporte</a>
+            </div>
+            <div class="landing-ssr-ctas">
+              <a href="/login">Acessar</a>
+              <a href="/checkout">Começar grátis</a>
+            </div>
+          </div>
+        </nav>
+        <main id="landing-main">
+          <div class="landing-ssr-hero">
+            <div class="landing-ssr-pill">
+              <span aria-hidden="true"></span>
+              Plataforma CRM completa para PMEs
+            </div>
+            <h1>
+              Transforme conversas em vendas e
+              <span class="landing-ssr-gradient"> gerencie toda sua empresa</span>
+            </h1>
+            <p>
+              Atenda seus clientes pelo WhatsApp, organize oportunidades no Kanban e automatize etapas comerciais
+              dentro do PainelCRM.
+            </p>
+            <div class="landing-ssr-cta-row">
+              <a href="/checkout">Começar agora</a>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+    <script type="module" src="/src/landing/main.tsx"></script>
+  </body>
+</html>

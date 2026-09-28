@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import { pool } from '../utils/db.js';
 import { z } from 'zod';
+import type { AuthRequest } from '../middleware/auth.js';
+import { assertPermissionKey, ModulePermissionError } from '../permissions/index.js';
 
 const expenseSchema = z.object({
   project_id: z.string().uuid().optional().nullable(),
@@ -15,53 +17,63 @@ const expenseSchema = z.object({
 // GET /api/expenses
 export const getExpenses = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
-    if (!userId) {
-      return res.status(401).json({ error: 'Não autenticado' });
+    const tenantId = (req as any).tenantId as string | null | undefined;
+    const auth = req as AuthRequest;
+    if (!tenantId) {
+      return res.json([]);
+    }
+    try {
+      await assertPermissionKey(auth.userId, 'finance.view_expenses', auth);
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        return res.status(e.statusCode).json({ error: e.message });
+      }
+      throw e;
     }
 
     const { project_id, category, is_paid, start_date, end_date } = req.query;
 
     let query = `
-      SELECT id, project_id, description, amount, date, category,
-             is_paid, notes, created_at, updated_at
-      FROM expenses
-      WHERE user_id = $1
+      SELECT e.id, e.project_id, e.description, e.amount, e.date, e.category,
+             e.is_paid, e.notes, e.created_at, e.updated_at
+      FROM expenses e
+      INNER JOIN users u ON u.id = e.user_id AND u.tenant_id = $1
+      WHERE 1=1
     `;
-    const params: any[] = [userId];
-    let paramCount = 1;
+    const params: any[] = [tenantId];
+    let paramCount = 2;
 
     if (project_id) {
-      paramCount++;
-      query += ` AND project_id = $${paramCount}`;
+      query += ` AND e.project_id = $${paramCount}`;
       params.push(project_id);
+      paramCount++;
     }
 
     if (category) {
-      paramCount++;
-      query += ` AND category = $${paramCount}`;
+      query += ` AND e.category = $${paramCount}`;
       params.push(category);
+      paramCount++;
     }
 
     if (is_paid !== undefined) {
-      paramCount++;
-      query += ` AND is_paid = $${paramCount}`;
+      query += ` AND e.is_paid = $${paramCount}`;
       params.push(is_paid === 'true');
+      paramCount++;
     }
 
     if (start_date) {
-      paramCount++;
-      query += ` AND date >= $${paramCount}`;
+      query += ` AND e.date >= $${paramCount}`;
       params.push(start_date);
+      paramCount++;
     }
 
     if (end_date) {
-      paramCount++;
-      query += ` AND date <= $${paramCount}`;
+      query += ` AND e.date <= $${paramCount}`;
       params.push(end_date);
+      paramCount++;
     }
 
-    query += ` ORDER BY date DESC, created_at DESC`;
+    query += ` ORDER BY e.date DESC, e.created_at DESC`;
 
     const result = await pool.query(query, params);
 
@@ -81,13 +93,23 @@ export const getExpenses = async (req: Request, res: Response) => {
 export const getExpenseById = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
+    const auth = req as AuthRequest;
+    try {
+      await assertPermissionKey(auth.userId, 'finance.view_expenses', auth);
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        return res.status(e.statusCode).json({ error: e.message });
+      }
+      throw e;
+    }
     const { id } = req.params;
 
     const result = await pool.query(
-      `SELECT id, project_id, description, amount, date, category,
-              is_paid, notes, created_at, updated_at
-       FROM expenses
-       WHERE id = $1 AND user_id = $2`,
+      `SELECT e.id, e.project_id, e.description, e.amount, e.date, e.category,
+              e.is_paid, e.notes, e.created_at, e.updated_at
+       FROM expenses e
+       INNER JOIN users u ON u.id = e.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
+       WHERE e.id = $1`,
       [id, userId]
     );
 
@@ -111,8 +133,17 @@ export const getExpenseById = async (req: Request, res: Response) => {
 export const createExpense = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
+    const auth = req as AuthRequest;
     if (!userId) {
       return res.status(401).json({ error: 'Não autenticado' });
+    }
+    try {
+      await assertPermissionKey(auth.userId, 'finance.create_expense', auth);
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        return res.status(e.statusCode).json({ error: e.message });
+      }
+      throw e;
     }
 
     const validated = expenseSchema.parse(req.body);
@@ -156,6 +187,15 @@ export const createExpense = async (req: Request, res: Response) => {
 export const updateExpense = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
+    const auth = req as AuthRequest;
+    try {
+      await assertPermissionKey(auth.userId, 'finance.edit_expense', auth);
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        return res.status(e.statusCode).json({ error: e.message });
+      }
+      throw e;
+    }
     const { id } = req.params;
 
     const validated = expenseSchema.partial().parse(req.body);
@@ -201,7 +241,7 @@ export const updateExpense = async (req: Request, res: Response) => {
     const result = await pool.query(
       `UPDATE expenses
        SET ${updates.join(', ')}, updated_at = now()
-       WHERE id = $${paramCount} AND user_id = $${paramCount + 1}
+       WHERE id = $${paramCount} AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $${paramCount + 1}))
        RETURNING id, project_id, description, amount, date, category,
                  is_paid, notes, created_at, updated_at`,
       values
@@ -230,11 +270,20 @@ export const updateExpense = async (req: Request, res: Response) => {
 export const deleteExpense = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
+    const auth = req as AuthRequest;
+    try {
+      await assertPermissionKey(auth.userId, 'finance.delete_expense', auth);
+    } catch (e) {
+      if (e instanceof ModulePermissionError) {
+        return res.status(e.statusCode).json({ error: e.message });
+      }
+      throw e;
+    }
     const { id } = req.params;
 
     const result = await pool.query(
       `DELETE FROM expenses
-       WHERE id = $1 AND user_id = $2
+       WHERE id = $1 AND user_id IN (SELECT id FROM users WHERE tenant_id = (SELECT tenant_id FROM users WHERE id = $2))
        RETURNING id`,
       [id, userId]
     );

@@ -9,10 +9,15 @@ export interface JWTPayload {
 }
 
 export function generateToken(payload: JWTPayload): string {
-  // Pass expiresIn directly without strict typing to avoid TypeScript issues
-  // JWT_EXPIRES_IN is a string like "7d" which is valid for jwt.sign
   return jwt.sign(payload, JWT_SECRET, {
     expiresIn: JWT_EXPIRES_IN,
+  } as jwt.SignOptions);
+}
+
+/** Token de curta duração para impersonation (1h). */
+export function generateImpersonationToken(payload: JWTPayload): string {
+  return jwt.sign(payload, JWT_SECRET, {
+    expiresIn: '1h',
   } as jwt.SignOptions);
 }
 
@@ -32,4 +37,64 @@ export function decodeToken(token: string): JWTPayload | null {
   }
 }
 
+const PASSWORD_RESET_PURPOSE = 'password_reset_complete' as const;
+
+export type PasswordResetCompletionPayload = JWTPayload & { purpose: typeof PASSWORD_RESET_PURPOSE };
+
+/** Token curto (15 min) emitido após validar o código WhatsApp; permite apenas POST /password-reset/complete. */
+export function generatePasswordResetCompletionToken(userId: string, email: string): string {
+  return jwt.sign(
+    { userId, email, purpose: PASSWORD_RESET_PURPOSE },
+    JWT_SECRET,
+    { expiresIn: '15m' } as jwt.SignOptions,
+  );
+}
+
+export function verifyPasswordResetCompletionToken(token: string): PasswordResetCompletionPayload {
+  const decoded = jwt.verify(token, JWT_SECRET) as jwt.JwtPayload & {
+    userId?: string;
+    email?: string;
+    purpose?: string;
+  };
+  if (
+    decoded.purpose !== PASSWORD_RESET_PURPOSE ||
+    typeof decoded.userId !== 'string' ||
+    typeof decoded.email !== 'string'
+  ) {
+    throw new Error('Invalid or expired token');
+  }
+  return {
+    userId: decoded.userId,
+    email: decoded.email,
+    purpose: PASSWORD_RESET_PURPOSE,
+  };
+}
+
+const ME_PROFILE_EDIT_PURPOSE = 'me_profile_edit' as const;
+
+/** JWT curto após confirmar código WhatsApp — obrigatório em PUT /api/me/profile e POST avatar. */
+export function generateMeProfileEditToken(userId: string): string {
+  return jwt.sign(
+    { userId, purpose: ME_PROFILE_EDIT_PURPOSE },
+    JWT_SECRET,
+    { expiresIn: '30m' } as jwt.SignOptions,
+  );
+}
+
+export function verifyMeProfileEditToken(token: string | undefined, expectedUserId: string): boolean {
+  if (!token?.trim()) return false;
+  try {
+    const decoded = jwt.verify(token.trim(), JWT_SECRET) as jwt.JwtPayload & {
+      userId?: string;
+      purpose?: string;
+    };
+    return (
+      decoded.purpose === ME_PROFILE_EDIT_PURPOSE &&
+      typeof decoded.userId === 'string' &&
+      decoded.userId === expectedUserId
+    );
+  } catch {
+    return false;
+  }
+}
 

@@ -1,0 +1,72 @@
+/**
+ * Feature flags e limites do motor de billing / recorrência (Fase 9).
+ * Defaults seguros: recursos ativos; desligar só em incidente ou rollout gradual.
+ */
+
+/** E2 — `processChildItemDueInvoices`. Desligar: `BILLING_CHILD_ITEM_INVOICES_ENABLED=false`. */
+export function isChildItemInvoicesEnabled(): boolean {
+  return process.env.BILLING_CHILD_ITEM_INVOICES_ENABLED !== 'false';
+}
+
+/** Itens processados por execução do worker (E2). Máx. 200. */
+export function getChildBillingBatchLimit(): number {
+  const raw = process.env.BILLING_CHILD_BATCH_LIMIT;
+  if (raw == null || raw === '') return 50;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return 50;
+  return Math.min(n, 200);
+}
+
+/** Logs por assinatura no scheduler (`enqueue_job_inserted`, skips). Default: false (menos ruído em produção). */
+export function isBillingSchedulerVerbose(): boolean {
+  return process.env.BILLING_SCHEDULER_VERBOSE === 'true';
+}
+
+/**
+ * Quando true, job `completed_no_invoice_no_eligible_items` também emite log `operational_alert`
+ * com `notify: true` (útil para agregadores / alertas externos).
+ */
+export function shouldAlertNoInvoiceCycle(): boolean {
+  return process.env.BILLING_ALERT_ON_NO_INVOICE_CYCLE === 'true';
+}
+
+/** Fase 0: logs diagnósticos de janela local por tenant (sem alterar elegibilidade real). */
+export function isBillingTimeWindowVerbose(): boolean {
+  return process.env.BILLING_TIME_WINDOW_VERBOSE === 'true';
+}
+
+/** B0.2.3 — trace forense `[BILLING_JOB_TRACE]` do ciclo de vida do job. Default: ativo. */
+export function isBillingJobLifecycleTraceEnabled(): boolean {
+  return process.env.BILLING_JOB_LIFECYCLE_TRACE !== 'false';
+}
+
+/**
+ * Jobs em `processing` com `locked_at` mais antigo que este limite são repostos em `pending`
+ * no início de cada batch do worker (recuperação pós-crash / processo morto).
+ * Default 20 min; desligar: `BILLING_WORKER_STALE_PROCESSING_RECLAIM_MINUTES=0`.
+ */
+export function getBillingStaleProcessingReclaimMinutes(): number {
+  const raw = process.env.BILLING_WORKER_STALE_PROCESSING_RECLAIM_MINUTES;
+  if (raw === '0') return 0;
+  if (raw == null || raw === '') return 20;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return 20;
+  return Math.min(n, 24 * 60);
+}
+
+/**
+ * Logs `[BILLING_WORKER_DIAGNOSTIC]` antes do SELECT do batch (investigação operacional).
+ * Desligar após estabilizar: `BILLING_WORKER_BATCH_DIAGNOSTIC=false`.
+ */
+export function isBillingWorkerBatchDiagnostic(): boolean {
+  return process.env.BILLING_WORKER_BATCH_DIAGNOSTIC !== 'false';
+}
+
+/** TTL de relatórios de consistência em dias. Default: 90. */
+export function getBillingConsistencyReportTtlDays(): number {
+  const raw = process.env.BILLING_CONSISTENCY_REPORT_TTL_DAYS;
+  if (raw == null || raw === '') return 90;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return 90;
+  return Math.min(n, 365);
+}

@@ -1,0 +1,146 @@
+/* Landing: sem Google Fonts — stack do sistema (Fase 3 performance). */
+.landing-page {
+  --background: 222 47% 6%;
+  --foreground: 210 40% 96%;
+  --card: 222 44% 9%;
+  --card-foreground: 210 40% 96%;
+  --popover: 222 44% 9%;
+  --popover-foreground: 210 40% 96%;
+  --primary: 199 89% 48%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 222 30% 14%;
+  --secondary-foreground: 210 40% 90%;
+  --muted: 222 30% 14%;
+  /* Contraste mais seguro (links / texto secundário em fundo escuro) */
+  --muted-foreground: 215 18% 72%;
+  --accent: 199 89% 48%;
+  --accent-foreground: 0 0% 100%;
+  --border: 222 30% 18%;
+  --input: 222 30% 18%;
+  --ring: 199 89% 48%;
+  --radius: 0.75rem;
+  --gradient-primary: linear-gradient(135deg, hsl(199 89% 48%), hsl(220 90% 56%));
+  --gradient-hero: linear-gradient(180deg, hsl(222 47% 8%) 0%, hsl(222 47% 4%) 100%);
+  --gradient-card: linear-gradient(145deg, hsl(222 44% 11%) 0%, hsl(222 44% 7%) 100%);
+  --gradient-cta: linear-gradient(135deg, hsl(199 89% 48%), hsl(185 80% 45%));
+  --glow-primary: 0 0 40px hsl(199 89% 48% / 0.15);
+  --glow-strong: 0 0 80px hsl(199 89% 48% / 0.25);
+  --shadow-card: 0 4px 24px hsl(222 47% 2% / 0.5);
+}
+
+/* Garantir texto claro na landing (botões e links herdam ou usam foreground) */
+.landing-page {
+  color: hsl(var(--foreground));
+}
+
+.landing-page .text-gradient {
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  background-image: var(--gradient-cta);
+}
+
+.landing-page .bg-grid {
+  background-image:
+    linear-gradient(hsl(var(--border) / 0.3) 1px, transparent 1px),
+    linear-gradient(90deg, hsl(var(--border) / 0.3) 1px, transparent 1px);
+  background-size: 60px 60px;
+}
+
+.landing-page .glow-primary {
+  box-shadow: var(--glow-primary);
+}
+
+.landing-page .glow-strong {
+  box-shadow: var(--glow-strong);
+}
+
+.landing-page .card-gradient {
+  background: var(--gradient-card);
+}
+
+.landing-page .animate-fade-up {
+  animation: landing-fade-up 0.7s ease-out forwards;
+}
+
+@keyframes landing-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.landing-page.font-display,
+.landing-page .font-display {
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
+}
+
+/* Hero mockup interativo */
+.landing-page .hero-mockup-col-glow {
+  box-shadow:
+    0 0 0 1px hsl(var(--primary) / 0.35),
+    0 0 28px hsl(var(--primary) / 0.14);
+}
+
+.landing-page .hero-mockup-toast-enter {
+  animation: landing-hero-toast-in 0.45s ease-out both;
+}
+
+@keyframes landing-hero-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.landing-page .hero-mockup-breathe {
+  animation: landing-hero-breathe 2.4s ease-in-out infinite;
+}
+
+@keyframes landing-hero-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+}
+
+.landing-page .hero-mockup-badge-pulse {
+  animation: landing-hero-badge 1.4s ease-in-out infinite;
+}
+
+@keyframes landing-hero-badge {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.07);
+    opacity: 0.95;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-page .hero-mockup-toast-enter {
+    animation: none;
+  }
+  .landing-page .hero-mockup-breathe,
+  .landing-page .hero-mockup-badge-pulse {
+    animation: none;
+  }
+  .landing-page .animate-ping {
+    animation: none !important;
+  }
+}

@@ -24,7 +24,29 @@ const orderSchema = z.object({
 export async function createOrder(req: AuthRequest, res: Response): Promise<void> {
   try {
     const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
+      return;
+    }
     const orderData = orderSchema.parse(req.body);
+
+    // Validar que todos os product_ids pertencem ao tenant atual (evita vazamento multi-tenant)
+    const productIds = orderData.items.map(item => item.product_id);
+    const uniqueProductIds = [...new Set(productIds)];
+    const productsResult = await pool.query(
+      `SELECT id, name, type FROM products
+       WHERE id = ANY($1::uuid[])
+         AND user_id IN (SELECT id FROM users WHERE tenant_id = $2)`,
+      [uniqueProductIds, tenantId]
+    );
+    if (productsResult.rows.length !== uniqueProductIds.length) {
+      res.status(400).json({
+        error: 'Um ou mais produtos não existem ou não pertencem à sua conta. Verifique os itens do pedido.',
+      });
+      return;
+    }
+    const productsMap = new Map(productsResult.rows.map((p: { id: string; name: string; type: string }) => [p.id, p]));
 
     // Start transaction
     await pool.query('BEGIN');
@@ -45,10 +67,10 @@ export async function createOrder(req: AuthRequest, res: Response): Promise<void
           order_number, store_user_id, customer_user_id,
           customer_name, customer_email, customer_phone,
           total_amount, payment_method, notes, status, payment_status
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        ) VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING *`,
         [
-          orderNumber, orderData.store_user_id, userId,
+          orderNumber, orderData.store_user_id,
           orderData.customer_name, orderData.customer_email, orderData.customer_phone,
           totalAmount, orderData.payment_method, orderData.notes,
           'pending', 'pending'
@@ -56,14 +78,6 @@ export async function createOrder(req: AuthRequest, res: Response): Promise<void
       );
 
       const order = orderResult.rows[0];
-
-      // Get product names
-      const productIds = orderData.items.map(item => item.product_id);
-      const productsResult = await pool.query(
-        `SELECT id, name, type FROM products WHERE id = ANY($1::uuid[])`,
-        [productIds]
-      );
-      const productsMap = new Map(productsResult.rows.map(p => [p.id, p]));
 
       // Create order items
       const orderItems = orderData.items.map(item => {
@@ -167,7 +181,15 @@ export async function createOrder(req: AuthRequest, res: Response): Promise<void
 export async function getOrders(req: AuthRequest, res: Response): Promise<void> {
   try {
     const userId = req.userId!;
-    const { storeUserId, status } = req.query;
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
+      return;
+    }
+
+    const status = typeof req.query.status === 'string' ? req.query.status.trim() : '';
+    const paymentStatus =
+      typeof req.query.paymentStatus === 'string' ? req.query.paymentStatus.trim() : '';
 
     let query = `
       SELECT o.*, 
@@ -188,24 +210,27 @@ export async function getOrders(req: AuthRequest, res: Response): Promise<void> 
              ) as order_items
       FROM orders o
       LEFT JOIN order_items oi ON o.id = oi.order_id
-      WHERE 1=1
+      WHERE EXISTS (
+        SELECT 1 FROM users su
+        WHERE su.id = o.store_user_id AND su.tenant_id = $1::uuid
+      )
     `;
-    const params: any[] = [];
-    let paramIndex = 1;
+    const params: any[] = [tenantId];
+    let paramIndex = 2;
 
-    if (storeUserId) {
-      query += ` AND o.store_user_id = $${paramIndex}`;
-      params.push(storeUserId);
-      paramIndex++;
-    } else {
-      query += ` AND o.customer_user_id = $${paramIndex}`;
-      params.push(userId);
-      paramIndex++;
-    }
+    query += ` AND o.store_user_id = $${paramIndex}`;
+    params.push(userId);
+    paramIndex++;
 
     if (status) {
       query += ` AND o.status = $${paramIndex}`;
       params.push(status);
+      paramIndex++;
+    }
+
+    if (paymentStatus) {
+      query += ` AND o.payment_status = $${paramIndex}`;
+      params.push(paymentStatus);
       paramIndex++;
     }
 
@@ -235,6 +260,11 @@ export async function getOrders(req: AuthRequest, res: Response): Promise<void> 
 export async function getOrderById(req: AuthRequest, res: Response): Promise<void> {
   try {
     const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
+      return;
+    }
     const { id } = req.params;
 
     const result = await pool.query(
@@ -256,9 +286,14 @@ export async function getOrderById(req: AuthRequest, res: Response): Promise<voi
               ) as order_items
        FROM orders o
        LEFT JOIN order_items oi ON o.id = oi.order_id
-       WHERE o.id = $1 AND (o.store_user_id = $2 OR o.customer_user_id = $2)
+       WHERE o.id = $1
+         AND o.store_user_id = $2
+         AND EXISTS (
+           SELECT 1 FROM users su
+           WHERE su.id = o.store_user_id AND su.tenant_id = $3::uuid
+         )
        GROUP BY o.id`,
-      [id, userId]
+      [id, userId, tenantId]
     );
 
     if (result.rows.length === 0) {
@@ -286,4 +321,91 @@ export async function getOrderById(req: AuthRequest, res: Response): Promise<voi
   }
 }
 
+/**
+ * Exclui pedido da loja (somente dono / store_user_id). Bloqueado se o pagamento do pedido estiver pago.
+ * Fatura CRM vinculada em aberto é marcada como cancelada na mesma transação.
+ */
+export async function deleteOrder(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId!;
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
+      return;
+    }
+    const { id } = req.params;
+
+    const sel = await pool.query<{
+      payment_status: string;
+      customer_invoice_id: string | null;
+    }>(
+      `SELECT o.payment_status, o.customer_invoice_id
+       FROM orders o
+       WHERE o.id = $1
+         AND o.store_user_id = $2
+         AND EXISTS (
+           SELECT 1 FROM users su
+           WHERE su.id = o.store_user_id AND su.tenant_id = $3::uuid
+         )`,
+      [id, userId, tenantId]
+    );
+
+    if (sel.rows.length === 0) {
+      res.status(404).json({ error: 'Pedido não encontrado' });
+      return;
+    }
+
+    const row = sel.rows[0];
+    if (row.payment_status === 'paid') {
+      res.status(400).json({ error: 'Não é possível excluir um pedido já pago.' });
+      return;
+    }
+
+    if (row.customer_invoice_id) {
+      const inv = await pool.query<{ status: string }>(
+        `SELECT status FROM customer_invoices WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
+        [row.customer_invoice_id, tenantId]
+      );
+      if (inv.rows[0]?.status === 'paid') {
+        res.status(409).json({
+          error: 'A fatura deste pedido já está paga. Não é possível excluir o pedido.',
+        });
+        return;
+      }
+    }
+
+    await pool.query('BEGIN');
+    try {
+      if (row.customer_invoice_id) {
+        await pool.query(
+          `UPDATE customer_invoices
+           SET status = 'cancelled', updated_at = now()
+           WHERE id = $1 AND tenant_id = $2
+             AND status NOT IN ('paid', 'cancelled', 'failed', 'refunded')`,
+          [row.customer_invoice_id, tenantId]
+        );
+      }
+
+      const del = await pool.query(`DELETE FROM orders WHERE id = $1 AND store_user_id = $2 RETURNING id`, [
+        id,
+        userId,
+      ]);
+
+      if (del.rowCount === 0) {
+        await pool.query('ROLLBACK');
+        res.status(400).json({ error: 'Não foi possível excluir o pedido.' });
+        return;
+      }
+
+      await pool.query('COMMIT');
+      res.status(204).send();
+    } catch (inner) {
+      await pool.query('ROLLBACK');
+      throw inner;
+    }
+  } catch (error) {
+    console.error('Error deleting order:', error);
+    res.status(500).json({ error: 'Erro ao excluir pedido' });
+  }
+}
 

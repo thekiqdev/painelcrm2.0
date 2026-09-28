@@ -1,6 +1,8 @@
-import { Request, Response } from 'express';
+import { Response } from 'express';
 import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
+import { assertModulePermission, ModulePermissionError } from '../permissions/index.js';
+import { findContractInTenant } from '../utils/contractAccess.js';
 import { z } from 'zod';
 
 const eventSchema = z.object({
@@ -15,19 +17,21 @@ export async function getContractEvents(req: AuthRequest, res: Response): Promis
     const userId = req.userId!;
     const { contractId } = req.params;
 
-    // Verify contract belongs to user
-    const contractResult = await pool.query(
-      'SELECT id FROM contracts WHERE id = $1 AND user_id = $2',
-      [contractId, userId]
-    );
-
-    if (contractResult.rows.length === 0) {
+    const contract = await findContractInTenant(contractId, userId);
+    if (!contract) {
       res.status(404).json({ error: 'Contract not found' });
       return;
     }
+    await assertModulePermission(
+      userId,
+      'contracts',
+      'view',
+      { ownerId: contract.user_id, assigneeId: contract.responsible_id },
+      req
+    );
 
     const result = await pool.query(
-      `SELECT ce.*, 
+      `SELECT ce.*,
               json_build_object('id', u.id, 'email', u.email) as created_by_user
        FROM contract_events ce
        LEFT JOIN users u ON ce.created_by = u.id
@@ -36,16 +40,22 @@ export async function getContractEvents(req: AuthRequest, res: Response): Promis
       [contractId]
     );
 
-    // Parse metadata JSON
-    const events = result.rows.map(event => ({
+    const events = result.rows.map((event) => ({
       ...event,
-      metadata: typeof event.metadata === 'object' && event.metadata !== null
-        ? event.metadata
-        : (event.metadata ? JSON.parse(event.metadata) : {}),
+      metadata:
+        typeof event.metadata === 'object' && event.metadata !== null
+          ? event.metadata
+          : event.metadata
+            ? JSON.parse(event.metadata)
+            : {},
     }));
 
     res.json(events);
   } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
     console.error('Error fetching contract events:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -58,16 +68,18 @@ export async function createContractEvent(req: AuthRequest, res: Response): Prom
     const { contractId } = req.params;
     const eventData = eventSchema.parse(req.body);
 
-    // Verify contract belongs to user
-    const contractResult = await pool.query(
-      'SELECT id FROM contracts WHERE id = $1 AND user_id = $2',
-      [contractId, userId]
-    );
-
-    if (contractResult.rows.length === 0) {
+    const contract = await findContractInTenant(contractId, userId);
+    if (!contract) {
       res.status(404).json({ error: 'Contract not found' });
       return;
     }
+    await assertModulePermission(
+      userId,
+      'contracts',
+      'edit',
+      { ownerId: contract.user_id, assigneeId: contract.responsible_id },
+      req
+    );
 
     const result = await pool.query(
       `INSERT INTO contract_events (
@@ -75,15 +87,16 @@ export async function createContractEvent(req: AuthRequest, res: Response): Prom
       ) VALUES ($1, $2, $3, $4, $5)
       RETURNING *`,
       [
-        contractId, eventData.event_type, eventData.description,
+        contractId,
+        eventData.event_type,
+        eventData.description,
         eventData.metadata ? JSON.stringify(eventData.metadata) : '{}',
-        userId
+        userId,
       ]
     );
 
     const event = result.rows[0];
-    
-    // Format response
+
     const formattedEvent = {
       ...event,
       metadata: typeof event.metadata === 'object' ? event.metadata : JSON.parse(event.metadata || '{}'),
@@ -91,6 +104,10 @@ export async function createContractEvent(req: AuthRequest, res: Response): Prom
 
     res.status(201).json(formattedEvent);
   } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: 'Validation error', details: error.errors });
       return;
@@ -99,4 +116,3 @@ export async function createContractEvent(req: AuthRequest, res: Response): Prom
     res.status(500).json({ error: 'Internal server error' });
   }
 }
-

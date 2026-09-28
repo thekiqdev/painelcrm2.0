@@ -1,4 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate, useSearchParams, useLocation, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -27,27 +29,94 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
-import { Search, Plus, FileText, MoreVertical, UserPlus, ArrowDown, ArrowUp, Filter, CalendarIcon, Trash2 } from "lucide-react";
-import { toast } from "sonner";
+import {
+  Search,
+  Plus,
+  FileText,
+  MoreVertical,
+  UserPlus,
+  ArrowDown,
+  ArrowUp,
+  Filter,
+  CalendarIcon,
+  Trash2,
+  RefreshCw,
+  MessageCircle,
+  CreditCard,
+  Building2,
+  Layers,
+  CheckCircle2,
+  Ban,
+  Eye,
+  Receipt,
+  CalendarSync,
+  FileSignature,
+  Pencil,
+  Upload,
+} from "lucide-react";
+import { toast } from "@/components/ui/sonner";
 import { clientsService } from "@/services/clients";
 import { Form, FormField, FormItem, FormLabel, FormControl, FormMessage } from "@/components/ui/form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { format } from "date-fns";
+import { formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { withUserId } from "@/utils/auth-helpers";
+import { useAuth } from "@/contexts/AuthContext";
 import { addClient, addClientTask } from "@/utils/clients-helpers";
+import { formatCpfCnpjDisplay } from "@/utils/cpfCnpj";
+import { resolveProfileAvatarUrl } from "@/utils/chatIdentityDisplay";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { StickyNote, StickyNoteData } from "@/components/clients/StickyNote";
+import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
+import { resolveClientsGranularFromLegacy } from "@/permissions/permissionCatalog";
+import { proposalsService, type Proposal } from "@/services/proposals";
+import { applyUrlPatch } from "@/lib/listFiltersUrl";
+import { cn } from "@/lib/utils";
+import {
+  COMMERCIAL_FILTERS_PANEL,
+  COMMERCIAL_LIST_CONTAINER_CARD,
+  COMMERCIAL_SUMMARY_ACTIVE_RING,
+  COMMERCIAL_SUMMARY_CARD_CLASS,
+  COMMERCIAL_SUMMARY_GRID_3,
+  COMMERCIAL_TABLE_DESKTOP_WRAP,
+} from "@/lib/commercialListUi";
+import { CommercialListingPageShell } from "@/components/listing/CommercialListingPageShell";
+import { CommercialListingPageHeader } from "@/components/listing/CommercialListingPageHeader";
+import { MobileClientsSearchSheet } from "@/components/clients/MobileClientsSearchSheet";
+import { useFloatingChat } from "@/features/floating-chat";
+import { useFeatureFlag } from "@/hooks/useFeatureFlag";
+import {
+  appendClientsListReturnPath,
+  consumeClientsListScrollPosition,
+  saveClientsListScrollPosition,
+} from "@/lib/clientsListRestore";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { prepareClientsFromCsv } from "@/utils/importClientsCsv";
 
 // Opções para quantidade de itens por página
 const itemsPerPageOptions = [10, 25, 50, 100];
+
+const CLIENT_SORT_WHITELIST = new Set(["name", "company", "email", "phone", "status", "group"]);
 
 // Schema de validação para as tarefas
 const taskSchema = z.object({
@@ -57,28 +126,204 @@ const taskSchema = z.object({
   status: z.string().default("Pendente"),
 });
 
+const MODULE_CLIENTS = 'clients';
+
+const CLIENTS_QUERY_KEY = ["clients", "list"] as const;
+
+const DIALOG_PROPOSAL_STATUS_LABELS: Record<Proposal["status"], string> = {
+  draft: "Rascunho",
+  sent: "Enviada",
+  accepted: "Aceita",
+  rejected: "Recusada",
+  expired: "Expirada",
+  invoiced: "Faturada",
+};
+
+const DIALOG_PROPOSAL_STATUS_CLASS: Record<Proposal["status"], string> = {
+  draft: "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-100",
+  sent: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-100",
+  accepted: "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-100",
+  rejected: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-100",
+  expired: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-100",
+  invoiced: "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-100",
+};
+
+function dialogClientProposalCode(id: string): string {
+  return `PROP-${id.replace(/-/g, "").slice(0, 8).toUpperCase()}`;
+}
+
+function formatDialogProposalCurrency(value: number): string {
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
+}
+
+/** Resumo de observação em texto simples (ignora JSON de notas adesivas). */
+function clientNotesPreview(raw: unknown, maxLen = 72): string | null {
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  if (s.startsWith("[") || s.startsWith("{")) return null;
+  const oneLine = s.replace(/\s+/g, " ");
+  if (oneLine.length <= maxLen) return oneLine;
+  return `${oneLine.slice(0, maxLen).trimEnd()}…`;
+}
+
 const Clients = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const clientsListHref = `${location.pathname}${location.search}`;
+  const [searchParams, setSearchParams] = useSearchParams();
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const tenantId = user?.tenant_id ?? "";
+  const userId = user?.id ?? "";
+  const { canCreate, canEdit, canDelete, canView, permissions, loading: permissionsLoading } =
+    useModulePermissions();
+  const clientsPermissionScope = useMemo(
+    () => resolveClientsGranularFromLegacy(permissions),
+    [permissions],
+  );
+  const showClientsOwnListBanner =
+    !permissionsLoading && clientsPermissionScope.view_own && clientsPermissionScope.view;
+  const hasChat = useFeatureFlag("chat");
+  const floatingChat = useFloatingChat();
   const [clients, setClients] = useState<any[]>([]);
   const [clientGroups, setClientGroups] = useState<any[]>([]);
-  const [searchTerm, setSearchTerm] = useState("");
+  const [searchTerm, setSearchTerm] = useState(() => searchParams.get("q") ?? "");
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  const csvImportInputRef = useRef<HTMLInputElement>(null);
+  const [csvImportDialogOpen, setCsvImportDialogOpen] = useState(false);
+  const [csvImportRunning, setCsvImportRunning] = useState(false);
+  const [csvImportSummary, setCsvImportSummary] = useState<{
+    created: number;
+    failed: { line: number; message: string }[];
+  } | null>(null);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
   const [selectedClient, setSelectedClient] = useState<any>(null);
-  const [sortField, setSortField] = useState("name");
-  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
-  const [activeTab, setActiveTab] = useState("all");
-  const [currentPage, setCurrentPage] = useState(1);
-  const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
+  const [sortField, setSortField] = useState(() => {
+    const s = searchParams.get("sort");
+    return s && CLIENT_SORT_WHITELIST.has(s) ? s : "name";
+  });
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">(() =>
+    searchParams.get("dir") === "desc" ? "desc" : "asc",
+  );
+  const [activeTab, setActiveTab] = useState(() => {
+    const t = searchParams.get("tab");
+    return t === "active" || t === "inactive" ? t : "all";
+  });
+  const [currentPage, setCurrentPage] = useState(() => {
+    const p = parseInt(searchParams.get("page") || "1", 10);
+    return Number.isFinite(p) && p > 0 ? p : 1;
+  });
+  const [selectedGroup, setSelectedGroup] = useState<string | null>(() => searchParams.get("group"));
   const [newClientGroup, setNewClientGroup] = useState("");
-  const [itemsPerPage, setItemsPerPage] = useState(10);
-  const [isLoading, setIsLoading] = useState(true);
-  const [noteContent, setNoteContent] = useState("");
+  const [itemsPerPage, setItemsPerPage] = useState(() => {
+    const per = parseInt(searchParams.get("per") || "10", 10);
+    return itemsPerPageOptions.includes(per) ? per : 10;
+  });
+  const [notes, setNotes] = useState<StickyNoteData[]>([]);
   const [clientTasks, setClientTasks] = useState<any[]>([]);
   const [isAddTaskDialogOpen, setIsAddTaskDialogOpen] = useState(false);
   const [tabSelected, setTabSelected] = useState("details");
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [clientToDelete, setClientToDelete] = useState<any>(null);
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  const [dialogProposals, setDialogProposals] = useState<Proposal[]>([]);
+  const [dialogProposalsLoading, setDialogProposalsLoading] = useState(false);
+
+  const dialogProposalStats = useMemo(() => {
+    const pending = dialogProposals.filter((p) => p.status === "draft" || p.status === "sent").length;
+    const acceptedRows = dialogProposals.filter((p) => p.status === "accepted" || p.status === "invoiced");
+    const acceptedCount = acceptedRows.length;
+    const acceptedTotal = acceptedRows.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    const totalCount = dialogProposals.length;
+    return { pending, acceptedCount, acceptedTotal, totalCount };
+  }, [dialogProposals]);
+
+  useEffect(() => {
+    if (searchParams.get("new") === "1") {
+      setIsAddDialogOpen(true);
+      const next = new URLSearchParams(searchParams);
+      next.delete("new");
+      setSearchParams(next, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
+
+  // Hidratar filtros a partir da URL (voltar do detalhe, link partilhado).
+  useEffect(() => {
+    const q = searchParams.get("q") ?? "";
+    const tabRaw = searchParams.get("tab");
+    const tab = tabRaw === "active" || tabRaw === "inactive" ? tabRaw : "all";
+    const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1);
+    const perRaw = parseInt(searchParams.get("per") || "10", 10);
+    const per = itemsPerPageOptions.includes(perRaw) ? perRaw : 10;
+    const groupRaw = searchParams.get("group");
+    const group = groupRaw && groupRaw.length > 0 ? groupRaw : null;
+    const sRaw = searchParams.get("sort");
+    const sort = sRaw && CLIENT_SORT_WHITELIST.has(sRaw) ? sRaw : "name";
+    const dir: "asc" | "desc" = searchParams.get("dir") === "desc" ? "desc" : "asc";
+
+    setSearchTerm((prev) => (prev !== q ? q : prev));
+    setActiveTab((prev) => (prev !== tab ? tab : prev));
+    setCurrentPage((prev) => (prev !== page ? page : prev));
+    setItemsPerPage((prev) => (prev !== per ? per : prev));
+    setSelectedGroup((prev) => (prev !== group ? group : prev));
+    setSortField((prev) => (prev !== sort ? sort : prev));
+    setSortDirection((prev) => (prev !== dir ? dir : prev));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intencional: só reagir a mudanças na URL
+  }, [searchParams]);
+
+  // Persistir filtros na URL (substitui entrada atual para não poluir histórico).
+  useEffect(() => {
+    setSearchParams(
+      (prev) =>
+        applyUrlPatch(prev, {
+          q: searchTerm.trim() || null,
+          tab: activeTab === "all" ? null : activeTab,
+          group: selectedGroup || null,
+          page: currentPage > 1 ? currentPage : null,
+          per: itemsPerPage !== 10 ? itemsPerPage : null,
+          sort: sortField !== "name" ? sortField : null,
+          dir: sortDirection !== "asc" ? sortDirection : null,
+        }),
+      { replace: true },
+    );
+  }, [
+    searchTerm,
+    activeTab,
+    selectedGroup,
+    currentPage,
+    itemsPerPage,
+    sortField,
+    sortDirection,
+    setSearchParams,
+  ]);
+
+  useEffect(() => {
+    if (!isViewDialogOpen || !selectedClient?.id || tabSelected !== "opportunities" || !canView("proposals")) {
+      return;
+    }
+    let cancelled = false;
+    setDialogProposalsLoading(true);
+    void proposalsService
+      .getProposals({ client_id: selectedClient.id })
+      .then((rows) => {
+        if (!cancelled) setDialogProposals(rows);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          toast.error(e instanceof Error ? e.message : "Erro ao carregar propostas");
+          setDialogProposals([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setDialogProposalsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isViewDialogOpen, selectedClient?.id, tabSelected, canView]);
   
   // New client data state
   const [newClient, setNewClient] = useState({
@@ -88,7 +333,8 @@ const Clients = () => {
     phone: "",
     status: "Ativo",
     group_id: "",
-    notes: ""
+    notes: "",
+    cpf_cnpj: ""
   });
   
   // Edited client state (for edit mode)
@@ -99,7 +345,8 @@ const Clients = () => {
     phone: "",
     status: "",
     group_id: "",
-    notes: ""
+    notes: "",
+    cpf_cnpj: ""
   });
 
   // Form para adicionar nova tarefa
@@ -112,42 +359,49 @@ const Clients = () => {
     },
   });
 
-  // Carregar clientes e grupos
+  // Clientes e grupos em cache – ao voltar na página os dados aparecem na hora
+  const { data: clientsData, isPending: isLoading } = useQuery({
+    queryKey: [...CLIENTS_QUERY_KEY, tenantId, userId],
+    queryFn: async () => {
+      const [groupsData, clientsData] = await Promise.all([
+        clientsService.getClientGroups(),
+        clientsService.getClients(),
+      ]);
+      const groups = groupsData || [];
+      const formatted = (clientsData || []).map((client: any) => ({
+        id: client.id,
+        name: client.name,
+        company: client.company,
+        email: client.email,
+        phone: client.phone,
+        status: client.status,
+        group: client.client_groups?.name || "",
+        group_id: client.group_id,
+        notes: client.notes,
+        cpf_cnpj: client.cpf_cnpj ?? null,
+        whatsapp_avatar_url: client.whatsapp_avatar_url ?? null,
+      }));
+      return { clients: formatted, groups };
+    },
+    enabled: Boolean(tenantId && userId),
+  });
   useEffect(() => {
-    const fetchData = async () => {
-      setIsLoading(true);
-      try {
-        // Carregar grupos de clientes
-        const groupsData = await clientsService.getClientGroups();
-        setClientGroups(groupsData || []);
+    if (clientsData) {
+      setClients(clientsData.clients);
+      setClientGroups(clientsData.groups);
+    }
+  }, [clientsData]);
 
-        // Carregar clientes
-        const clientsData = await clientsService.getClients();
-        
-        // Formatar os dados dos clientes
-        const formattedClients = clientsData?.map(client => ({
-          id: client.id,
-          name: client.name,
-          company: client.company,
-          email: client.email,
-          phone: client.phone,
-          status: client.status,
-          group: client.client_groups?.name || "",
-          group_id: client.group_id,
-          notes: client.notes
-        }));
-
-        setClients(formattedClients || []);
-      } catch (error: any) {
-        console.error("Erro ao carregar dados:", error);
-        toast.error(error.message || "Erro ao carregar os dados. Tente novamente.");
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchData();
-  }, []);
+  /** Após voltar de fatura/proposta/etc., repõe o scroll da listagem (URL já traz filtros/página). */
+  useLayoutEffect(() => {
+    if (isLoading && clients.length === 0) return;
+    const y = consumeClientsListScrollPosition(clientsListHref);
+    if (y != null && y > 0) {
+      requestAnimationFrame(() => {
+        window.scrollTo({ top: y, left: 0, behavior: "auto" });
+      });
+    }
+  }, [clientsListHref, isLoading, clients.length]);
 
   // Carregar tarefas do cliente selecionado
   useEffect(() => {
@@ -209,18 +463,55 @@ const Clients = () => {
     }
   });
 
+  const clientMetrics = useMemo(() => {
+    return {
+      total: sortedClients.length,
+      ativos: sortedClients.filter((c) => c.status === "Ativo").length,
+      inativos: sortedClients.filter((c) => c.status === "Inativo").length,
+    };
+  }, [sortedClients]);
+
   // Apply pagination with dynamic itemsPerPage
-  const totalPages = Math.ceil(sortedClients.length / itemsPerPage);
+  const totalPages = Math.max(1, Math.ceil(sortedClients.length / itemsPerPage));
   const startIndex = (currentPage - 1) * itemsPerPage;
   const paginatedClients = sortedClients.slice(startIndex, startIndex + itemsPerPage);
 
+  useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages);
+  }, [currentPage, totalPages]);
+
   const handleViewClient = (client: any) => {
+    saveClientsListScrollPosition();
+    navigate(`/clients/${client.id}`);
+  };
+
+  /** Edição rápida a partir da lista (mobile): reutiliza o diálogo de ficha já existente. */
+  const openClientQuickEditFromList = (client: any) => {
     setSelectedClient(client);
+    setEditedClient({
+      name: client.name,
+      company: client.company || "",
+      email: client.email || "",
+      phone: client.phone || "",
+      status: client.status,
+      group_id: client.group_id || "",
+      notes: typeof client.notes === "string" ? client.notes : "",
+      cpf_cnpj: client.cpf_cnpj ?? "",
+    });
     setNewClientGroup(client.group_id || "");
-    setNoteContent(client.notes || "");
-    setIsEditMode(false);
-    setIsViewDialogOpen(true);
+    try {
+      const raw = client.notes;
+      if (typeof raw === "string" && raw.trim().startsWith("[")) {
+        setNotes(JSON.parse(raw) as StickyNoteData[]);
+      } else {
+        setNotes([]);
+      }
+    } catch {
+      setNotes([]);
+    }
+    setIsEditMode(true);
     setTabSelected("details");
+    setIsViewDialogOpen(true);
   };
   
   const handleEditClient = () => {
@@ -232,7 +523,8 @@ const Clients = () => {
         phone: selectedClient.phone || "",
         status: selectedClient.status,
         group_id: selectedClient.group_id || "",
-        notes: selectedClient.notes || ""
+        notes: selectedClient.notes || "",
+        cpf_cnpj: selectedClient.cpf_cnpj ?? ""
       });
       setIsEditMode(true);
     }
@@ -246,13 +538,14 @@ const Clients = () => {
     if (selectedClient) {
       try {
         await clientsService.updateClient(selectedClient.id, {
-          name: editedClient.name,
-          company: editedClient.company,
-          email: editedClient.email,
-          phone: editedClient.phone,
-          status: editedClient.status,
+            name: editedClient.name,
+            company: editedClient.company,
+            email: editedClient.email,
+            phone: editedClient.phone,
+            status: editedClient.status,
           group_id: editedClient.group_id || undefined,
-          notes: editedClient.notes
+            notes: editedClient.notes,
+            cpf_cnpj: editedClient.cpf_cnpj?.replace(/\D/g, "").trim() || null
         });
         
         // Atualizar o cliente na lista local
@@ -268,13 +561,15 @@ const Clients = () => {
               status: editedClient.status,
               group_id: editedClient.group_id,
               group: updatedGroupName,
-              notes: editedClient.notes
+              notes: editedClient.notes,
+              cpf_cnpj: editedClient.cpf_cnpj?.trim() || null
             };
           }
           return client;
         });
         
         setClients(updatedClients);
+        queryClient.invalidateQueries({ queryKey: [...CLIENTS_QUERY_KEY, tenantId, userId] });
         setSelectedClient({
           ...selectedClient,
           name: editedClient.name,
@@ -284,7 +579,8 @@ const Clients = () => {
           status: editedClient.status,
           group_id: editedClient.group_id,
           group: clientGroups.find(g => g.id === editedClient.group_id)?.name || "",
-          notes: editedClient.notes
+          notes: editedClient.notes,
+          cpf_cnpj: editedClient.cpf_cnpj?.trim() || null
         });
         
         setIsEditMode(false);
@@ -341,7 +637,8 @@ const Clients = () => {
         phone: newClient.phone || undefined,
         status: newClient.status || undefined,
         group_id: newClient.group_id || undefined,
-        notes: newClient.notes || undefined
+        notes: newClient.notes || undefined,
+        cpf_cnpj: newClient.cpf_cnpj?.trim() || undefined
       });
       
       if (!result.success) {
@@ -365,12 +662,12 @@ const Clients = () => {
         status: addedClient.status,
         group: clientGroups.find(g => g.id === addedClient.group_id)?.name || "",
         group_id: addedClient.group_id,
-        notes: addedClient.notes
+        notes: addedClient.notes,
+        cpf_cnpj: addedClient.cpf_cnpj ?? null
       };
       
-      // Add the new client to the list
       setClients([...clients, formattedClient]);
-      
+      queryClient.invalidateQueries({ queryKey: [...CLIENTS_QUERY_KEY, tenantId, userId] });
       toast.success("Cliente adicionado com sucesso!");
       setIsAddDialogOpen(false);
       
@@ -382,11 +679,72 @@ const Clients = () => {
         phone: "",
         status: "Ativo",
         group_id: "",
-        notes: ""
+        notes: "",
+        cpf_cnpj: ""
       });
     } catch (error: any) {
       console.error("Erro ao adicionar cliente:", error);
       toast.error(`Erro ao adicionar cliente: ${error.message}`);
+    }
+  };
+
+  const handleCsvFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !canCreate(MODULE_CLIENTS)) return;
+
+    setCsvImportRunning(true);
+    try {
+      const text = await file.text();
+      const { prepared, skipped } = prepareClientsFromCsv(text, clientGroups);
+      const failed: { line: number; message: string }[] = skipped.map((s) => ({
+        line: s.line,
+        message: s.reason,
+      }));
+      let created = 0;
+      const BATCH = 4;
+      for (let i = 0; i < prepared.length; i += BATCH) {
+        const chunk = prepared.slice(i, i + BATCH);
+        await Promise.all(
+          chunk.map(async ({ lineNumber, payload }) => {
+            const result = await addClient(payload);
+            if (!result.success) {
+              const err = result.error as Error | undefined;
+              failed.push({
+                line: lineNumber,
+                message:
+                  typeof err?.message === "string"
+                    ? err.message
+                    : String(err ?? "Erro ao criar cliente"),
+              });
+            } else {
+              created++;
+            }
+          }),
+        );
+      }
+
+      await queryClient.invalidateQueries({ queryKey: [...CLIENTS_QUERY_KEY, tenantId, userId] });
+
+      setCsvImportSummary({ created, failed });
+      const showReportDialog = failed.length > 0 || created === 0;
+      if (showReportDialog) setCsvImportDialogOpen(true);
+
+      if (created > 0 && failed.length === 0) {
+        toast.success(`${created} cliente${created === 1 ? "" : "s"} importado${created === 1 ? "" : "s"}.`);
+      } else if (created > 0) {
+        toast.warning(`${created} importado(s); ${failed.length} linha(s) com falha ou aviso.`);
+      } else if (failed.length > 0 || skipped.length > 0) {
+        toast.error("Nenhum cliente criado ou arquivo com problemas. Veja o relatório.");
+      } else {
+        toast.message("Nenhuma linha válida para importar.");
+        setCsvImportDialogOpen(true);
+      }
+    } catch (err: unknown) {
+      console.error(err);
+      toast.error(err instanceof Error ? err.message : "Falha ao ler o arquivo CSV.");
+    } finally {
+      setCsvImportRunning(false);
     }
   };
 
@@ -397,8 +755,6 @@ const Clients = () => {
       try {
         // Atualizar o grupo do cliente
         await clientsService.updateClient(selectedClient.id, { group_id: newClientGroup || undefined });
-        
-        if (error) throw error;
         
         // Atualizar o cliente na lista local
         const updatedClients = clients.map(client => {
@@ -414,8 +770,7 @@ const Clients = () => {
         });
         
         setClients(updatedClients);
-        
-        // Atualizar o cliente selecionado
+        queryClient.invalidateQueries({ queryKey: [...CLIENTS_QUERY_KEY, tenantId, userId] });
         setSelectedClient({
           ...selectedClient, 
           group_id: newClientGroup,
@@ -431,32 +786,70 @@ const Clients = () => {
     }
   };
   
-  const handleSaveNote = async () => {
+  const handleAddNote = () => {
+    const newNote: StickyNoteData = {
+      id: `note-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      content: "",
+      color: 'bg-yellow-200',
+      created_at: new Date().toISOString(),
+    };
+    setNotes([...notes, newNote]);
+    // Salvar automaticamente quando a nota for criada (mesmo vazia)
+    setTimeout(() => saveNotes([...notes, newNote]), 100);
+  };
+
+  const handleUpdateNote = async (id: string, content: string) => {
+    const updatedNotes = notes.map(note => 
+      note.id === id 
+        ? { ...note, content, updated_at: new Date().toISOString() }
+        : note
+    );
+    setNotes(updatedNotes);
+    await saveNotes(updatedNotes);
+  };
+
+  const handleDeleteNote = async (id: string) => {
+    const updatedNotes = notes.filter(note => note.id !== id);
+    setNotes(updatedNotes);
+    await saveNotes(updatedNotes);
+  };
+
+  const handleColorChange = async (id: string, color: string) => {
+    const updatedNotes = notes.map(note => 
+      note.id === id ? { ...note, color } : note
+    );
+    setNotes(updatedNotes);
+    await saveNotes(updatedNotes);
+  };
+
+  const saveNotes = async (notesToSave: StickyNoteData[]) => {
     if (!selectedClient) return;
     
     try {
-      await clientsService.updateClient(selectedClient.id, { notes: noteContent });
+      // Salvar como JSON string
+      const notesJson = JSON.stringify(notesToSave);
+      await clientsService.updateClient(selectedClient.id, { notes: notesJson });
       
       // Atualizar o cliente na lista local
       const updatedClients = clients.map(client => {
         if (client.id === selectedClient.id) {
-          return { ...client, notes: noteContent };
+          return { ...client, notes: notesJson };
         }
         return client;
       });
       
       setClients(updatedClients);
-      
+      queryClient.invalidateQueries({ queryKey: [...CLIENTS_QUERY_KEY, tenantId, userId] });
       // Atualizar o cliente selecionado
       setSelectedClient({
         ...selectedClient,
-        notes: noteContent
+        notes: notesJson
       });
       
-      toast.success("Anotação salva com sucesso!");
+      toast.success("Notas salvas com sucesso!");
     } catch (error: any) {
-      console.error("Erro ao salvar anotação:", error);
-      toast.error(`Erro ao salvar anotação: ${error.message}`);
+      console.error("Erro ao salvar notas:", error);
+      toast.error(`Erro ao salvar notas: ${error.message}`);
     }
   };
 
@@ -481,11 +874,18 @@ const Clients = () => {
       }
       
       // Adicionar a nova tarefa à lista
-      setClientTasks([...clientTasks, result.data?.[0]]);
+      // result.data já é o objeto da tarefa, não um array
+      if (result.data) {
+        setClientTasks([...clientTasks, result.data]);
+      }
       
       toast.success("Tarefa adicionada com sucesso!");
       setIsAddTaskDialogOpen(false);
       taskForm.reset();
+      
+      // Recarregar tarefas para garantir sincronização
+      const tasks = await clientsService.getClientTasks(selectedClient.id);
+      setClientTasks(tasks || []);
     } catch (error: any) {
       console.error("Erro ao adicionar tarefa:", error);
       toast.error(`Erro ao adicionar tarefa: ${error.message}`);
@@ -527,10 +927,8 @@ const Clients = () => {
     
     try {
       await clientsService.deleteClient(clientToDelete.id);
-      
-      // Remove the client from the local list
       setClients(clients.filter(client => client.id !== clientToDelete.id));
-      
+      queryClient.invalidateQueries({ queryKey: [...CLIENTS_QUERY_KEY, tenantId, userId] });
       // If the deleted client was selected, clear selection
       if (selectedClient && selectedClient.id === clientToDelete.id) {
         setSelectedClient(null);
@@ -688,6 +1086,15 @@ const Clients = () => {
               />
             </div>
             <div className="space-y-2">
+              <Label htmlFor="cpf_cnpj">CPF ou CNPJ</Label>
+              <Input 
+                id="cpf_cnpj"
+                placeholder="000.000.000-00 ou 00.000.000/0000-00"
+                value={editedClient.cpf_cnpj}
+                onChange={handleEditInputChange}
+              />
+            </div>
+            <div className="space-y-2">
               <Label htmlFor="status">Status</Label>
               <Select
                 value={editedClient.status}
@@ -741,6 +1148,10 @@ const Clients = () => {
           <div className="space-y-1">
             <Label>Telefone</Label>
             <p className="text-sm">{selectedClient.phone}</p>
+          </div>
+          <div className="space-y-1">
+            <Label>CPF ou CNPJ</Label>
+            <p className="text-sm">{formatCpfCnpjDisplay(selectedClient.cpf_cnpj)}</p>
           </div>
           <div className="space-y-1">
             <Label>Empresa</Label>
@@ -805,11 +1216,14 @@ const Clients = () => {
           </Button>
         </div>
         <div className="space-y-2">
-          {clientTasks.map(task => (
+          {clientTasks && clientTasks.length > 0 ? (
+            clientTasks.map(task => {
+              if (!task || !task.id) return null;
+              return (
             <Card key={task.id} className="p-4">
               <div className="flex justify-between">
                 <div>
-                  <h4 className="font-medium">{task.title}</h4>
+                      <h4 className="font-medium">{task.title || 'Sem título'}</h4>
                   {task.description && <p className="text-sm text-muted-foreground mt-1">{task.description}</p>}
                   {task.due_date && (
                     <div className="flex items-center text-xs text-muted-foreground mt-2">
@@ -820,7 +1234,7 @@ const Clients = () => {
                 </div>
                 <div className="flex items-start space-x-2">
                   <Select
-                    value={task.status}
+                        value={task.status || 'Pendente'}
                     onValueChange={(value) => handleUpdateTaskStatus(task.id, value)}
                   >
                     <SelectTrigger className="h-8 w-[120px]">
@@ -846,33 +1260,188 @@ const Clients = () => {
                 </div>
               </div>
             </Card>
-          ))}
+              );
+            })
+          ) : (
+            <p className="text-sm text-muted-foreground text-center py-4">Nenhuma tarefa cadastrada</p>
+          )}
         </div>
       </div>
     );
   };
 
   return (
-    <div className="space-y-6">
-      {/* Título e botões */}
-      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center space-y-4 sm:space-y-0">
-        <h1 className="text-2xl font-bold">Clientes</h1>
-        <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">
-          <div className="relative">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+    <CommercialListingPageShell>
+      <div className="contents" onPointerDownCapture={() => saveClientsListScrollPosition()}>
+      <CommercialListingPageHeader
+        eyebrow="Base comercial"
+        EyebrowIcon={Building2}
+        title="Clientes"
+        description="Carteira ativa: dados principais, grupos e atalhos para relacionamento e vendas."
+        mobileSecondaryActions={[
+          {
+            icon: <Search className="h-4 w-4" aria-hidden />,
+            ariaLabel: "Buscar clientes",
+            onClick: () => setMobileSearchOpen(true),
+          },
+          {
+            icon: <Filter className="h-4 w-4" aria-hidden />,
+            ariaLabel: "Filtros",
+            onClick: () => setMobileFiltersOpen(true),
+          },
+        ]}
+        mobilePrimaryAction={
+          canCreate(MODULE_CLIENTS)
+            ? {
+                label: "Novo cliente",
+                icon: <Plus className="h-4 w-4" aria-hidden />,
+                onClick: () => setIsAddDialogOpen(true),
+              }
+            : undefined
+        }
+        mobileSecondarySlot={
+          canCreate(MODULE_CLIENTS) ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              disabled={csvImportRunning}
+              className="h-10 w-10 touch-manipulation text-muted-foreground hover:text-foreground"
+              aria-label="Importar clientes (CSV)"
+              onClick={() => csvImportInputRef.current?.click()}
+            >
+              <Upload className="h-4 w-4" aria-hidden />
+            </Button>
+          ) : undefined
+        }
+        belowTitle={
+          <>
+            {showClientsOwnListBanner ? (
+              <Alert className="border-muted-foreground/25 bg-muted/40 py-2 md:mt-0">
+                <AlertDescription className="text-xs text-muted-foreground">
+                  Você está vendo apenas clientes criados por você.
+                </AlertDescription>
+              </Alert>
+            ) : null}
+            <input
+              ref={csvImportInputRef}
+              type="file"
+              accept=".csv,text/csv,.txt"
+              className="sr-only"
+              tabIndex={-1}
+              aria-hidden
+              onChange={handleCsvFileChange}
+            />
+            <MobileClientsSearchSheet
+              open={mobileSearchOpen}
+              onOpenChange={setMobileSearchOpen}
+              canCreateClient={canCreate(MODULE_CLIENTS)}
+              canUseChat={hasChat && canView("chat")}
+              onRequestCreateClient={() => setIsAddDialogOpen(true)}
+              clientsListHref={clientsListHref}
+            />
+            <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
+              <SheetContent
+                side="bottom"
+                className="max-h-[88vh] overflow-y-auto rounded-t-2xl px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-4 md:hidden"
+              >
+                  <SheetHeader className="text-left">
+                    <SheetTitle>Filtros</SheetTitle>
+                    <SheetDescription>
+                      Situação, grupo e itens por página. Use a busca no topo da página.
+                    </SheetDescription>
+                  </SheetHeader>
+                  <div className="mt-4 space-y-4">
+                    <div className="space-y-2">
+                      <p className="text-xs font-medium text-muted-foreground">Situação</p>
+                      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+                        <TabsList className="grid w-full grid-cols-3">
+                          <TabsTrigger value="all">Todos</TabsTrigger>
+                          <TabsTrigger value="active">Ativos</TabsTrigger>
+                          <TabsTrigger value="inactive">Inativos</TabsTrigger>
+                        </TabsList>
+                      </Tabs>
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-xs font-medium text-muted-foreground">Grupo</p>
+                      <Select
+                        value={selectedGroup || "all"}
+                        onValueChange={(value) => setSelectedGroup(value === "all" ? null : value)}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Grupo" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Todos os grupos</SelectItem>
+                          {clientGroups.map((group) => (
+                            <SelectItem key={group.id} value={group.id}>
+                              {group.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-xs font-medium text-muted-foreground">Itens por página</p>
+                      <Select
+                        value={itemsPerPage.toString()}
+                        onValueChange={(value) => {
+                          setItemsPerPage(Number(value));
+                          setCurrentPage(1);
+                        }}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {itemsPerPageOptions.map((option) => (
+                            <SelectItem key={option} value={option.toString()}>
+                              {option}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <SheetClose asChild>
+                      <Button type="button" className="w-full">
+                        Concluir
+                      </Button>
+                    </SheetClose>
+                  </div>
+                </SheetContent>
+              </Sheet>
+            <div className="hidden min-w-0 md:flex md:flex-row md:flex-nowrap md:items-stretch md:gap-2">
+              <div className="relative min-w-0 flex-1">
+                <Search
+                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                  aria-hidden
+                />
             <Input
               type="search"
-              placeholder="Buscar clientes..."
-              className="pl-8 w-full sm:w-[250px]"
+                  placeholder="Buscar nome, empresa ou e-mail…"
+                  className="h-10 pl-9"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
+                  aria-label="Buscar clientes"
             />
           </div>
+          {canCreate(MODULE_CLIENTS) && (
+            <>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-10 shrink-0 touch-manipulation gap-2 px-3"
+            disabled={csvImportRunning}
+            onClick={() => csvImportInputRef.current?.click()}
+          >
+            <Upload className="h-4 w-4 shrink-0" aria-hidden />
+            Importar
+          </Button>
           <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
             <DialogTrigger asChild>
-              <Button>
+                    <Button type="button" className="h-10 shrink-0 touch-manipulation sm:px-4">
                 <Plus className="mr-2 h-4 w-4" />
-                Novo Cliente
+                      Novo cliente
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-2xl">
@@ -929,6 +1498,17 @@ const Clients = () => {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
+                      <Label htmlFor="cpf_cnpj">CPF ou CNPJ</Label>
+                      <Input 
+                        id="cpf_cnpj" 
+                        placeholder="000.000.000-00 ou 00.000.000/0000-00" 
+                        value={newClient.cpf_cnpj}
+                        onChange={handleInputChange}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
                       <Label htmlFor="status">Status</Label>
                       <Select 
                         defaultValue="Ativo"
@@ -953,8 +1533,10 @@ const Clients = () => {
                           <SelectValue placeholder="Selecione um grupo" />
                         </SelectTrigger>
                         <SelectContent>
-                          {clientGroups.map(group => (
-                            <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>
+                                {clientGroups.map((group) => (
+                                  <SelectItem key={group.id} value={group.id}>
+                                    {group.name}
+                                  </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
@@ -979,6 +1561,179 @@ const Clients = () => {
               </form>
             </DialogContent>
           </Dialog>
+            </>
+          )}
+            </div>
+            <Dialog open={csvImportDialogOpen} onOpenChange={setCsvImportDialogOpen}>
+              <DialogContent className="max-w-lg">
+                <DialogHeader>
+                  <DialogTitle>Importação CSV</DialogTitle>
+                  <DialogDescription>Resumo do envio do arquivo.</DialogDescription>
+                </DialogHeader>
+                {csvImportSummary ? (
+                  <div className="space-y-3">
+                    <p className="text-sm text-muted-foreground">
+                      <span className="font-medium text-foreground">{csvImportSummary.created}</span> cliente(s) criado(s).
+                      {csvImportSummary.failed.length > 0 ? (
+                        <>
+                          {" "}
+                          <span className="font-medium text-destructive">{csvImportSummary.failed.length}</span> aviso(s) ou
+                          falha(s).
+                        </>
+                      ) : null}
+                    </p>
+                    {csvImportSummary.failed.length > 0 ? (
+                      <ScrollArea className="h-[220px] rounded-md border p-3">
+                        <ul className="space-y-1.5 text-xs">
+                          {csvImportSummary.failed.map((f, i) => (
+                            <li key={`${f.line}-${i}`}>
+                              Linha {f.line}: {f.message}
+                            </li>
+                          ))}
+                        </ul>
+                      </ScrollArea>
+                    ) : null}
+                  </div>
+                ) : null}
+                <DialogFooter>
+                  <Button type="button" onClick={() => setCsvImportDialogOpen(false)}>
+                    Fechar
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </>
+        }
+      />
+
+      <div className={COMMERCIAL_SUMMARY_GRID_3}>
+        <Card
+          role="button"
+          tabIndex={0}
+          className={cn(
+            COMMERCIAL_SUMMARY_CARD_CLASS,
+            activeTab === "all" && COMMERCIAL_SUMMARY_ACTIVE_RING,
+          )}
+          onClick={() => {
+            setActiveTab("all");
+            setCurrentPage(1);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setActiveTab("all");
+              setCurrentPage(1);
+            }
+          }}
+        >
+          <CardContent className="p-3.5">
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-sm font-medium text-muted-foreground">Total (filtro)</p>
+              <Layers className="h-4 w-4 shrink-0 text-muted-foreground opacity-80" aria-hidden />
+            </div>
+            <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{clientMetrics.total}</p>
+            <p className="mt-1 text-[11px] leading-snug text-muted-foreground">Todos nesta pesquisa e grupo</p>
+          </CardContent>
+        </Card>
+        <Card
+          role="button"
+          tabIndex={0}
+          className={cn(
+            COMMERCIAL_SUMMARY_CARD_CLASS,
+            activeTab === "active" && COMMERCIAL_SUMMARY_ACTIVE_RING,
+          )}
+          onClick={() => {
+            setActiveTab("active");
+            setCurrentPage(1);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setActiveTab("active");
+              setCurrentPage(1);
+            }
+          }}
+        >
+          <CardContent className="p-3.5">
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-sm font-medium text-muted-foreground">Ativos</p>
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600/80" aria-hidden />
+            </div>
+            <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{clientMetrics.ativos}</p>
+            <p className="mt-1 text-[11px] leading-snug text-muted-foreground">Em relacionamento comercial</p>
+          </CardContent>
+        </Card>
+        <Card
+          role="button"
+          tabIndex={0}
+          className={cn(
+            "col-span-2 sm:col-span-1",
+            COMMERCIAL_SUMMARY_CARD_CLASS,
+            activeTab === "inactive" && COMMERCIAL_SUMMARY_ACTIVE_RING,
+          )}
+          onClick={() => {
+            setActiveTab("inactive");
+            setCurrentPage(1);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setActiveTab("inactive");
+              setCurrentPage(1);
+            }
+          }}
+        >
+          <CardContent className="p-3.5">
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-sm font-medium text-muted-foreground">Inativos</p>
+              <Ban className="h-4 w-4 shrink-0 text-muted-foreground opacity-80" aria-hidden />
+            </div>
+            <p className="mt-1.5 text-xl font-semibold tabular-nums tracking-tight">{clientMetrics.inativos}</p>
+            <p className="mt-1 text-[11px] leading-snug text-muted-foreground">Fora da operação atual</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className={cn(COMMERCIAL_FILTERS_PANEL, "hidden space-y-4 md:block")}>
+        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Situação e grupo</p>
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between xl:gap-6">
+          <Tabs defaultValue="all" value={activeTab} onValueChange={setActiveTab} className="w-full min-w-0">
+            <TabsList className="h-auto w-full flex-wrap justify-start gap-1 bg-background/80 p-1 md:min-h-11">
+              <TabsTrigger value="all" className="px-3 text-xs sm:text-sm">
+                Todos
+              </TabsTrigger>
+              <TabsTrigger value="active" className="px-3 text-xs sm:text-sm">
+                Ativos
+              </TabsTrigger>
+              <TabsTrigger value="inactive" className="px-3 text-xs sm:text-sm">
+                Inativos
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+          <div className="flex w-full min-w-0 flex-col gap-1.5 border-border/50 xl:w-auto xl:max-w-sm xl:border-l xl:pl-6">
+            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Grupo</span>
+            <Select
+              value={selectedGroup || "all"}
+              onValueChange={(value) => {
+                setSelectedGroup(value === "all" ? null : value);
+                setCurrentPage(1);
+              }}
+            >
+              <SelectTrigger className="h-10 w-full md:max-w-md">
+                <SelectValue placeholder="Filtrar por grupo" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos os grupos</SelectItem>
+                {clientGroups.map((group) => (
+                  <SelectItem key={group.id} value={group.id}>
+                    {group.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      </div>
 
           {/* Dialog para adicionar nova tarefa */}
           <Dialog open={isAddTaskDialogOpen} onOpenChange={setIsAddTaskDialogOpen}>
@@ -1112,34 +1867,164 @@ const Clients = () => {
                 <Tabs value={tabSelected} onValueChange={setTabSelected} className="w-full">
                   <TabsList className="grid grid-cols-4 mb-4">
                     <TabsTrigger value="details">Detalhes</TabsTrigger>
-                    <TabsTrigger value="opportunities">Oportunidades</TabsTrigger>
+                    <TabsTrigger value="opportunities">Propostas</TabsTrigger>
                     <TabsTrigger value="tasks">Tarefas</TabsTrigger>
                     <TabsTrigger value="notes">Anotações</TabsTrigger>
                   </TabsList>
                   <TabsContent value="details">
                     {renderClientDetails()}
                   </TabsContent>
-                  <TabsContent value="opportunities">
-                    <p className="text-sm text-muted-foreground text-center py-6">
-                      Nenhuma oportunidade encontrada para este cliente.
-                    </p>
-                    <Button className="w-full">
-                      <Plus className="mr-2 h-4 w-4" />
-                      Adicionar Oportunidade
-                    </Button>
+                  <TabsContent value="opportunities" className="space-y-4">
+                    {!canView("proposals") ? (
+                      <p className="text-sm text-muted-foreground text-center py-6">
+                        Sem permissão para visualizar propostas.
+                      </p>
+                    ) : dialogProposalsLoading ? (
+                      <div className="flex justify-center py-10">
+                        <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+                      </div>
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                          <div className="rounded-lg border bg-muted/30 px-3 py-2">
+                            <p className="text-xs text-muted-foreground">Pendentes</p>
+                            <p className="text-base font-semibold tabular-nums">{dialogProposalStats.pending}</p>
+                            <p className="text-[10px] text-muted-foreground">Rascunho ou enviada</p>
+                          </div>
+                          <div className="rounded-lg border bg-muted/30 px-3 py-2">
+                            <p className="text-xs text-muted-foreground">Aceitas / faturadas</p>
+                            <p className="text-base font-semibold tabular-nums">{dialogProposalStats.acceptedCount}</p>
+                          </div>
+                          <div className="rounded-lg border bg-muted/30 px-3 py-2">
+                            <p className="text-xs text-muted-foreground">Valor (aceitas + faturadas)</p>
+                            <p className="text-base font-semibold tabular-nums">
+                              {formatDialogProposalCurrency(dialogProposalStats.acceptedTotal)}
+                            </p>
+                          </div>
+                          <div className="rounded-lg border bg-muted/30 px-3 py-2">
+                            <p className="text-xs text-muted-foreground">Total</p>
+                            <p className="text-base font-semibold tabular-nums">{dialogProposalStats.totalCount}</p>
+                          </div>
+                        </div>
+                        {dialogProposals.length === 0 ? (
+                          <div className="rounded-md border border-dashed py-8 text-center space-y-3">
+                            <p className="text-sm text-muted-foreground">
+                              Nenhuma proposta cadastrada para este cliente.
+                            </p>
+                            {canCreate("proposals") && selectedClient?.id ? (
+                              <Button variant="outline" asChild className="mx-auto">
+                                <Link
+                                  to={appendClientsListReturnPath(
+                                    `/proposals/new?clientId=${encodeURIComponent(selectedClient.id)}&from=client`,
+                                    clientsListHref,
+                                  )}
+                                  onClick={() => setIsViewDialogOpen(false)}
+                                >
+                                  <Plus className="mr-2 h-4 w-4" />
+                                  Nova proposta
+                                </Link>
+                              </Button>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <div className="rounded-md border overflow-x-auto max-h-[min(360px,50vh)] overflow-y-auto">
+                            <Table>
+                              <TableHeader>
+                                <TableRow>
+                                  <TableHead className="whitespace-nowrap">Código</TableHead>
+                                  <TableHead>Título</TableHead>
+                                  <TableHead className="whitespace-nowrap">Status</TableHead>
+                                  <TableHead className="whitespace-nowrap hidden sm:table-cell">Validade</TableHead>
+                                  <TableHead className="text-right whitespace-nowrap">Valor</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {dialogProposals.map((p) => (
+                                  <TableRow
+                                    key={p.id}
+                                    className="cursor-pointer hover:bg-muted/50"
+                                    onClick={() => {
+                                      setIsViewDialogOpen(false);
+                                      navigate(`/proposals/${p.id}`);
+                                    }}
+                                  >
+                                    <TableCell className="font-mono text-xs text-muted-foreground whitespace-nowrap">
+                                      {dialogClientProposalCode(p.id)}
+                                    </TableCell>
+                                    <TableCell className="font-medium max-w-[140px] truncate">{p.title}</TableCell>
+                                    <TableCell>
+                                      <span
+                                        className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${DIALOG_PROPOSAL_STATUS_CLASS[p.status]}`}
+                                      >
+                                        {DIALOG_PROPOSAL_STATUS_LABELS[p.status]}
+                                      </span>
+                                    </TableCell>
+                                    <TableCell className="hidden sm:table-cell text-sm text-muted-foreground whitespace-nowrap">
+                                      {p.valid_until ? formatDateOnlyPtBr(p.valid_until) : "—"}
+                                    </TableCell>
+                                    <TableCell className="text-right tabular-nums text-sm font-medium">
+                                      {formatDialogProposalCurrency(Number(p.amount) || 0)}
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        )}
+                        {dialogProposals.length > 0 && canCreate("proposals") && selectedClient?.id ? (
+                          <Button className="w-full" variant="outline" asChild>
+                            <Link
+                              to={appendClientsListReturnPath(
+                                `/proposals/new?clientId=${encodeURIComponent(selectedClient.id)}&from=client`,
+                                clientsListHref,
+                              )}
+                              onClick={() => setIsViewDialogOpen(false)}
+                            >
+                              <Plus className="mr-2 h-4 w-4" />
+                              Nova proposta
+                            </Link>
+                          </Button>
+                        ) : null}
+                      </>
+                    )}
                   </TabsContent>
                   <TabsContent value="tasks">
                     {renderTasksTab()}
                   </TabsContent>
                   <TabsContent value="notes">
                     <div className="space-y-4">
-                      <Textarea 
-                        className="mb-4 min-h-[150px]" 
-                        placeholder="Adicione uma nota sobre este cliente..." 
-                        value={noteContent}
-                        onChange={(e) => setNoteContent(e.target.value)}
-                      />
-                      <Button onClick={handleSaveNote}>Salvar Anotações</Button>
+                      <div className="flex justify-between items-center">
+                        <h3 className="text-lg font-medium">Notas Autoadesivas</h3>
+                        <Button onClick={handleAddNote} size="sm">
+                          <Plus className="mr-2 h-4 w-4" />
+                          Nova Nota
+                        </Button>
+                      </div>
+                      <div className="relative min-h-[400px] rounded-lg border border-border/60 bg-muted/40 p-4 dark:bg-muted/25">
+                        {notes.length > 0 ? (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                            {notes.map(note => (
+                              <StickyNote
+                                key={note.id}
+                                note={note}
+                                onUpdate={handleUpdateNote}
+                                onDelete={handleDeleteNote}
+                                onColorChange={handleColorChange}
+                              />
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center justify-center h-[300px] text-center">
+                            <p className="text-muted-foreground mb-4">
+                              Nenhuma nota cadastrada
+                            </p>
+                            <Button onClick={handleAddNote} variant="outline">
+                              <Plus className="mr-2 h-4 w-4" />
+                              Criar Primeira Nota
+                            </Button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </TabsContent>
                 </Tabs>
@@ -1158,176 +2043,258 @@ const Clients = () => {
                       <Button variant="outline" onClick={() => setIsViewDialogOpen(false)}>
                         Fechar
                       </Button>
+                      {canEdit(MODULE_CLIENTS) && (
                       <Button onClick={handleEditClient}>
                         Editar Cliente
                       </Button>
+                      )}
                     </>
                   )}
                 </DialogFooter>
               </DialogContent>
             )}
           </Dialog>
-        </div>
-      </div>
 
-      {/* Tabs e Filtros */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center space-y-4 sm:space-y-0">
-        <Tabs defaultValue="all" value={activeTab} onValueChange={setActiveTab}>
-          <TabsList>
-            <TabsTrigger value="all">Todos</TabsTrigger>
-            <TabsTrigger value="active">Ativos</TabsTrigger>
-            <TabsTrigger value="inactive">Inativos</TabsTrigger>
-          </TabsList>
-        </Tabs>
-
-        <div className="flex items-center gap-2">
-          <Select 
-            value={selectedGroup || "all"} 
-            onValueChange={(value) => setSelectedGroup(value === "all" ? null : value)}
-          >
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Filtrar por grupo" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todos os grupos</SelectItem>
-              {clientGroups.map(group => (
-                <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          
-          <Button variant="outline" size="sm">
-            <Filter className="h-4 w-4 mr-2" />
-            Mais Filtros
-          </Button>
-        </div>
-      </div>
-
-      <Card>
-        <CardHeader className="pb-0">
-          <CardTitle>Lista de Clientes</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-col sm:flex-row justify-between mb-4">
-            <div className="mb-2 sm:mb-0">
-              <p className="text-sm text-muted-foreground">
-                Mostrando {paginatedClients.length} de {filteredClients.length} clientes
+      <Card className={COMMERCIAL_LIST_CONTAINER_CARD}>
+        <CardHeader className="flex flex-col gap-2 border-b border-border/50 pb-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <CardTitle className="text-lg font-semibold tracking-tight">Lista de clientes</CardTitle>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              {sortedClients.length === 0
+                ? "Nenhum resultado"
+                : `Mostrando ${paginatedClients.length} de ${sortedClients.length} neste filtro`}
               </p>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm">Mostrar</span>
+          <div className="hidden items-center gap-2 md:flex">
+            <span className="text-sm text-muted-foreground">Por página</span>
               <Select 
                 value={itemsPerPage.toString()} 
                 onValueChange={(value) => {
                   setItemsPerPage(Number(value));
-                  setCurrentPage(1); // Reset to first page when changing items per page
+                setCurrentPage(1);
                 }}
               >
-                <SelectTrigger className="w-[80px] h-8">
+              <SelectTrigger className="h-10 w-[88px]">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {itemsPerPageOptions.map(option => (
+                {itemsPerPageOptions.map((option) => (
                     <SelectItem key={option} value={option.toString()}>
                       {option}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              <span className="text-sm">por página</span>
             </div>
-          </div>
-          
-          {isLoading ? (
-            <div className="py-10 text-center">
-              <p className="text-muted-foreground">Carregando clientes...</p>
+        </CardHeader>
+        <CardContent className="pt-4">
+          {isLoading && clients.length === 0 ? (
+            <div className="flex min-h-[12rem] flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border/70 bg-card/50 px-4 py-8 text-center">
+              <UserPlus className="h-7 w-7 text-muted-foreground/80" aria-hidden />
+              <p className="text-sm font-medium text-foreground">Carregando clientes</p>
+              <p className="text-xs text-muted-foreground">Aguarde enquanto buscamos sua base.</p>
             </div>
           ) : (
+            <>
+              <div className={COMMERCIAL_TABLE_DESKTOP_WRAP}>
             <Table>
               <TableHeader>
-                <TableRow>
-                  <TableHead className="cursor-pointer" onClick={() => handleSort("name")}>
+                    <TableRow className="border-b border-border/60 hover:bg-transparent">
+                  <TableHead className="w-12" aria-label="Avatar" />
+                      <TableHead
+                        className="min-w-[200px] cursor-pointer text-xs font-medium text-muted-foreground"
+                        onClick={() => handleSort("name")}
+                      >
                     <div className="flex items-center">
-                      Nome
+                          Cliente
                       <SortIcon field="name" />
                     </div>
                   </TableHead>
-                  <TableHead className="cursor-pointer" onClick={() => handleSort("company")}>
+                      <TableHead
+                        className="hidden cursor-pointer text-xs font-medium text-muted-foreground lg:table-cell lg:min-w-[160px]"
+                        onClick={() => handleSort("company")}
+                      >
                     <div className="flex items-center">
                       Empresa
                       <SortIcon field="company" />
                     </div>
                   </TableHead>
-                  <TableHead>E-mail</TableHead>
-                  <TableHead>Telefone</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Grupo</TableHead>
-                  <TableHead>Ações</TableHead>
+                      <TableHead className="hidden text-xs font-medium text-muted-foreground xl:table-cell xl:max-w-[200px]">
+                        E-mail
+                      </TableHead>
+                      <TableHead className="hidden text-xs font-medium text-muted-foreground md:table-cell">
+                        Telefone
+                      </TableHead>
+                      <TableHead className="text-xs font-medium text-muted-foreground">Status</TableHead>
+                      <TableHead className="hidden text-xs font-medium text-muted-foreground lg:table-cell lg:max-w-[140px]">
+                        Grupo
+                      </TableHead>
+                      <TableHead className="w-[132px] text-right text-xs font-medium text-muted-foreground">Ações</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {paginatedClients.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center text-muted-foreground">
+                    <TableCell colSpan={8} className="text-center text-muted-foreground">
                       Nenhum cliente encontrado com os critérios de busca
                     </TableCell>
                   </TableRow>
                 ) : (
-                  paginatedClients.map((client) => (
-                    <TableRow key={client.id} className="cursor-pointer" onClick={() => handleViewClient(client)}>
-                      <TableCell>{client.name}</TableCell>
-                      <TableCell>{client.company || "—"}</TableCell>
-                      <TableCell>{client.email || "—"}</TableCell>
-                      <TableCell>{client.phone || "—"}</TableCell>
-                      <TableCell>
+                  paginatedClients.map((client) => {
+                    const listAvatar = resolveProfileAvatarUrl(
+                      client,
+                      client.whatsapp_avatar_url ?? null
+                    );
+                    return (
+                        <TableRow
+                          key={client.id}
+                          className="group/row border-border/40 transition-colors hover:bg-muted/50"
+                        >
+                          <TableCell className="w-12 align-middle">
+                            <Avatar className="h-9 w-9 ring-1 ring-border/60">
+                          {listAvatar.src ? (
+                            <AvatarImage src={listAvatar.src} alt={client.name} />
+                          ) : null}
+                          <AvatarFallback className="text-xs">{listAvatar.initials}</AvatarFallback>
+                        </Avatar>
+                      </TableCell>
+                          <TableCell className="align-middle">
+                            <button
+                              type="button"
+                              className="block w-full text-left"
+                              onClick={() => handleViewClient(client)}
+                            >
+                              <span className="font-semibold text-foreground group-hover/row:text-primary">
+                                {client.name}
+                              </span>
+                              {client.company ? (
+                                <span className="mt-0.5 block truncate text-xs text-muted-foreground lg:hidden">
+                                  {client.company}
+                                </span>
+                              ) : null}
+                            </button>
+                          </TableCell>
+                          <TableCell className="hidden align-middle text-sm text-muted-foreground lg:table-cell">
+                            <span className="line-clamp-2 max-w-[200px]">{client.company || "—"}</span>
+                          </TableCell>
+                          <TableCell className="hidden align-middle xl:table-cell">
+                            <span className="line-clamp-2 max-w-[200px] text-sm text-muted-foreground">
+                              {client.email || "—"}
+                            </span>
+                          </TableCell>
+                          <TableCell className="hidden align-middle text-sm tabular-nums text-muted-foreground md:table-cell">
+                            {client.phone || "—"}
+                          </TableCell>
+                          <TableCell className="align-middle">
                         <Badge 
-                          variant={
-                            client.status === "Ativo" ? "default" :
-                            client.status === "Inativo" ? "destructive" :
-                            "outline"
-                          }
+                              variant="outline"
+                              className={cn(
+                                "rounded-md px-2.5 py-1 text-xs font-medium",
+                                client.status === "Ativo" &&
+                                  "border-emerald-200/80 bg-emerald-100 text-emerald-950 dark:border-emerald-800/50 dark:bg-emerald-950/35 dark:text-emerald-100",
+                                client.status === "Inativo" &&
+                                  "border-border/60 bg-muted/80 text-muted-foreground",
+                                client.status !== "Ativo" &&
+                                  client.status !== "Inativo" &&
+                                  "border-border/60",
+                              )}
                         >
                           {client.status}
                         </Badge>
                       </TableCell>
-                      <TableCell>{client.group || "—"}</TableCell>
-                      <TableCell>
+                          <TableCell className="hidden align-middle text-sm text-muted-foreground lg:table-cell">
+                            <span className="line-clamp-2 max-w-[160px]">{client.group || "—"}</span>
+                          </TableCell>
+                          <TableCell className="text-right align-middle" onClick={(e) => e.stopPropagation()}>
+                            <div className="flex justify-end gap-0.5">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                                aria-label="Abrir ficha"
+                                onClick={() => handleViewClient(client)}
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                            <Button variant="ghost" size="icon">
+                                  <Button variant="outline" size="sm" className="h-8 gap-1 px-2" aria-label="Mais ações">
                               <MoreVertical className="h-4 w-4" />
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuLabel>Ações</DropdownMenuLabel>
+                                  <DropdownMenuLabel>Mais ações</DropdownMenuLabel>
                             <DropdownMenuSeparator />
-                            <DropdownMenuItem onClick={(e) => {
+                                  <DropdownMenuItem
+                                    onClick={(e) => {
                               e.stopPropagation();
-                              setSelectedClient(client);
-                              handleEditClient();
-                              setIsViewDialogOpen(true);
-                            }}>
-                              <FileText className="h-4 w-4 mr-2" />
-                              Editar Cliente
+                                      saveClientsListScrollPosition();
+                              navigate(`/clients/${client.id}/tasks`);
+                                    }}
+                                  >
+                                    <Plus className="mr-2 h-4 w-4" />
+                                    Adicionar tarefa
                             </DropdownMenuItem>
-                            <DropdownMenuItem onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedClient(client);
-                              setTabSelected("tasks");
-                              setIsViewDialogOpen(true);
-                            }}>
-                              <Plus className="h-4 w-4 mr-2" />
-                              Adicionar Tarefa
+                                  {canCreate("proposals") && (
+                                    <DropdownMenuItem asChild>
+                                      <Link
+                                        to={appendClientsListReturnPath(
+                                          `/proposals/new?clientId=${encodeURIComponent(client.id)}&from=client`,
+                                          clientsListHref,
+                                        )}
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        <UserPlus className="mr-2 h-4 w-4" />
+                                        Nova proposta
+                                      </Link>
                             </DropdownMenuItem>
-                            <DropdownMenuItem>
-                              <UserPlus className="h-4 w-4 mr-2" />
-                              Adicionar Oportunidade
+                                  )}
+                                  {canCreate("billing") ? (
+                                    <>
+                                      <DropdownMenuSeparator />
+                                      <DropdownMenuItem asChild>
+                                        <Link
+                                          to={appendClientsListReturnPath(
+                                            `/customer-invoices/new?client_id=${encodeURIComponent(client.id)}&billing=one_off`,
+                                            clientsListHref,
+                                          )}
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
+                                          <Receipt className="mr-2 h-4 w-4" />
+                                          Nova fatura
+                                        </Link>
                             </DropdownMenuItem>
-                            <DropdownMenuItem>
-                              <FileText className="h-4 w-4 mr-2" />
-                              Gerar Proposta
-                            </DropdownMenuItem>
+                                      <DropdownMenuItem asChild>
+                                        <Link
+                                          to={appendClientsListReturnPath(
+                                            `/customer-invoices/new?client_id=${encodeURIComponent(client.id)}&billing=subscription`,
+                                            clientsListHref,
+                                          )}
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
+                                          <CalendarSync className="mr-2 h-4 w-4" />
+                                          Nova assinatura
+                                        </Link>
+                                      </DropdownMenuItem>
+                                    </>
+                                  ) : null}
+                                  {canCreate("contracts") ? (
+                                    <DropdownMenuItem asChild>
+                                      <Link
+                                        to={appendClientsListReturnPath(
+                                          `/contracts/new?clientId=${encodeURIComponent(client.id)}`,
+                                          clientsListHref,
+                                        )}
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        <FileSignature className="mr-2 h-4 w-4" />
+                                        Criar contrato
+                                      </Link>
+                                    </DropdownMenuItem>
+                                  ) : null}
                             <DropdownMenuSeparator />
+                            {canDelete(MODULE_CLIENTS) && (
                             <DropdownMenuItem 
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1335,26 +2302,224 @@ const Clients = () => {
                               }}
                               className="text-destructive focus:text-destructive"
                             >
-                              <Trash2 className="h-4 w-4 mr-2" />
-                              Excluir Cliente
+                                      <Trash2 className="mr-2 h-4 w-4" />
+                                      Excluir cliente
                             </DropdownMenuItem>
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
+                            </div>
                       </TableCell>
                     </TableRow>
-                  ))
+                    );
+                  })
                 )}
               </TableBody>
             </Table>
+              </div>
+
+              <div className="space-y-2 pb-[max(0.25rem,env(safe-area-inset-bottom))] md:hidden">
+                {paginatedClients.length === 0 ? (
+                  <div className="flex min-h-[9rem] flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-border/70 bg-card/50 px-3 py-8 text-center">
+                    <Search className="h-7 w-7 text-muted-foreground/80" aria-hidden />
+                    <p className="text-sm font-medium text-foreground">Nenhum cliente encontrado</p>
+                    <p className="text-xs text-muted-foreground">Ajuste filtros ou termos de busca para continuar.</p>
+                  </div>
+                ) : (
+                  paginatedClients.map((client) => {
+                    const listAvatar = resolveProfileAvatarUrl(
+                      client,
+                      client.whatsapp_avatar_url ?? null
+                    );
+                    const notePreview = clientNotesPreview(client.notes);
+                    const contactLine = [client.phone, client.email].filter(Boolean).join(" · ");
+                    const opHint =
+                      client.group?.trim() ||
+                      (notePreview ? notePreview.slice(0, 72) + (notePreview.length > 72 ? "…" : "") : "");
+
+                    return (
+                      <Card
+                        key={`m-${client.id}`}
+                        className="overflow-hidden border-border/70 shadow-sm"
+                      >
+                        <CardContent className="p-0">
+                          <button
+                            type="button"
+                            className="flex w-full min-h-[4.5rem] gap-2.5 px-3 py-2.5 text-left outline-none transition-colors hover:bg-muted/20 focus-visible:bg-muted/25 active:bg-muted/35"
+                            onClick={() => handleViewClient(client)}
+                            aria-label={`Abrir ficha de ${client.name}`}
+                          >
+                            <Avatar className="h-10 w-10 shrink-0 ring-1 ring-border/50">
+                              {listAvatar.src ? (
+                                <AvatarImage src={listAvatar.src} alt={client.name} />
+                              ) : null}
+                              <AvatarFallback className="text-xs">{listAvatar.initials}</AvatarFallback>
+                            </Avatar>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                  <p className="truncate text-[15px] font-semibold leading-tight text-foreground">
+                                    {client.name}
+                                  </p>
+                                  {client.company ? (
+                                    <p className="mt-0.5 flex items-center gap-1 truncate text-xs text-muted-foreground">
+                                      <Building2 className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+                                      {client.company}
+                                    </p>
+                                  ) : null}
+                                </div>
+                                <Badge
+                                  variant={
+                                    client.status === "Ativo"
+                                      ? "default"
+                                      : client.status === "Inativo"
+                                        ? "destructive"
+                                        : "outline"
+                                  }
+                                  className="max-w-[6.5rem] shrink-0 truncate px-2 py-0.5 text-[11px]"
+                                >
+                                  {client.status}
+                                </Badge>
+                              </div>
+                              {contactLine ? (
+                                <p className="mt-1 line-clamp-1 text-xs tabular-nums text-muted-foreground">
+                                  {contactLine}
+                                </p>
+                              ) : null}
+                              {opHint ? (
+                                <p className="mt-0.5 line-clamp-1 text-[11px] text-muted-foreground">{opHint}</p>
+                              ) : null}
+                            </div>
+                          </button>
+                          <div className="flex items-center gap-1.5 border-t border-border/50 bg-muted/15 px-2 py-1.5">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              className="h-8 min-w-0 flex-1 touch-manipulation px-2 text-xs"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void floatingChat.openChatForClient(client.id);
+                              }}
+                            >
+                              <MessageCircle className="mr-1 h-3.5 w-3.5 shrink-0" aria-hidden />
+                              Chat
+                            </Button>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  type="button"
+                                  size="icon"
+                                  variant="outline"
+                                  className="h-8 w-8 shrink-0 touch-manipulation"
+                                  aria-label="Mais ações"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <MoreVertical className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-56">
+                                <DropdownMenuLabel>Ações rápidas</DropdownMenuLabel>
+                                <DropdownMenuSeparator />
+                                {canCreate("billing") ? (
+                                  <>
+                                    <DropdownMenuItem asChild>
+                                      <Link
+                                        to={appendClientsListReturnPath(
+                                          `/customer-invoices/new?client_id=${encodeURIComponent(client.id)}&billing=one_off`,
+                                          clientsListHref,
+                                        )}
+                                      >
+                                        <Receipt className="mr-2 h-4 w-4" />
+                                        Nova fatura
+                                      </Link>
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem asChild>
+                                      <Link
+                                        to={appendClientsListReturnPath(
+                                          `/customer-invoices/new?client_id=${encodeURIComponent(client.id)}&billing=subscription`,
+                                          clientsListHref,
+                                        )}
+                                      >
+                                        <CalendarSync className="mr-2 h-4 w-4" />
+                                        Nova assinatura
+                                      </Link>
+                                    </DropdownMenuItem>
+                                  </>
+                                ) : null}
+                                {canCreate("proposals") ? (
+                                  <DropdownMenuItem asChild>
+                                    <Link
+                                      to={appendClientsListReturnPath(
+                                        `/proposals/new?clientId=${encodeURIComponent(client.id)}&from=client`,
+                                        clientsListHref,
+                                      )}
+                                    >
+                                      <FileText className="mr-2 h-4 w-4" />
+                                      Criar proposta
+                                    </Link>
+                                  </DropdownMenuItem>
+                                ) : null}
+                                {canCreate("contracts") ? (
+                                  <DropdownMenuItem asChild>
+                                    <Link
+                                      to={appendClientsListReturnPath(
+                                        `/contracts/new?clientId=${encodeURIComponent(client.id)}`,
+                                        clientsListHref,
+                                      )}
+                                    >
+                                      <FileSignature className="mr-2 h-4 w-4" />
+                                      Criar contrato
+                                    </Link>
+                                  </DropdownMenuItem>
+                                ) : null}
+                                {canEdit(MODULE_CLIENTS) ? (
+                                  <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                      onClick={() => {
+                                        openClientQuickEditFromList(client);
+                                      }}
+                                    >
+                                      <Pencil className="mr-2 h-4 w-4" />
+                                      Editar
+                                    </DropdownMenuItem>
+                                  </>
+                                ) : null}
+                                {canDelete(MODULE_CLIENTS) ? (
+                                  <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                      className="text-destructive focus:text-destructive"
+                                      onClick={() => confirmDeleteClient(client)}
+                                    >
+                                      <Trash2 className="mr-2 h-4 w-4" />
+                                      Excluir
+                                    </DropdownMenuItem>
+                                  </>
+                                ) : null}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })
+                )}
+              </div>
+            </>
           )}
 
-          <div className="mt-4">
-            <Pagination>
-              <PaginationContent>
-                {renderPagination()}
-              </PaginationContent>
+          {sortedClients.length > 0 ? (
+            <div className="mt-4 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-center text-xs text-muted-foreground sm:text-left">
+                Página {currentPage} de {totalPages}
+              </p>
+              <Pagination className="justify-center sm:justify-end">
+                <PaginationContent className="flex-wrap gap-1">{renderPagination()}</PaginationContent>
             </Pagination>
           </div>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -1390,6 +2555,7 @@ const Clients = () => {
         </DialogContent>
       </Dialog>
     </div>
+    </CommercialListingPageShell>
   );
 };
 

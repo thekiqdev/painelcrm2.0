@@ -12,23 +12,35 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { PhoneInput } from "@/components/ui/phone-input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { InfoIcon, CheckCircle2, QrCode, RefreshCw } from "lucide-react";
-import { ConnectionType } from "@/components/settings/types";
-import { evolutionApi } from "@/services/evolutionApi";
-import { toast } from "sonner";
-import { whatsappConnectionManager } from "@/services/whatsappConnectionManager";
+import { Link } from "react-router-dom";
+import { toast } from "@/components/ui/sonner";
+import { chatService, type InstanceSyncMode } from "@/services/chat";
 import QRCodePopup from "./QRCodePopup";
 
 interface AddConnectionDialogProps {
   isOpen: boolean;
   onClose: () => void;
   onAddConnection: (connectionName: string, connectionType: string, configData?: any) => void;
+  /** WI1: bloqueia submit se a quota do plano estiver esgotada */
+  limitReached?: boolean;
+  limitLabel?: string | null;
 }
 
 const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   isOpen,
   onClose,
   onAddConnection,
+  limitReached = false,
+  limitLabel = null,
 }) => {
   const [connectionName, setConnectionName] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
@@ -39,7 +51,10 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   const [configDetails, setConfigDetails] = useState<any>(null);
   const [isGeneratingQR, setIsGeneratingQR] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<string>("created");
-  
+  const [qrCodeData, setQrCodeData] = useState<string | null>(null);
+  const [syncOnConnect, setSyncOnConnect] = useState(true);
+  const [syncMode, setSyncMode] = useState<InstanceSyncMode>("full");
+
   // Função para extrair apenas os números do telefone
   const extractPhoneNumbers = (phone: string): string => {
     return phone.replace(/\D/g, '');
@@ -55,32 +70,6 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
     
     return `${cleanName}_${cleanPhone}`;
   };
-  
-  const checkAndSetupConfiguration = async () => {
-    try {
-      console.log("=== VERIFICANDO CONFIGURAÇÃO PRÉ-DEFINIDA ===");
-      
-      // Buscar configuração (que agora sempre retornará a pré-definida)
-      const config = await evolutionApi.getActiveConfig();
-      console.log("Configuração obtida:", config);
-      
-      if (config) {
-        setConfigDetails(config);
-        console.log("=== CONFIGURAÇÃO PRÉ-DEFINIDA ATIVA ===");
-      }
-      
-    } catch (error) {
-      console.error("Erro ao verificar configuração:", error);
-      setConfigDetails(null);
-    }
-  };
-  
-  useEffect(() => {
-    if (isOpen) {
-      console.log("Dialog aberto, carregando configuração pré-definida...");
-      checkAndSetupConfiguration();
-    }
-  }, [isOpen]);
 
   // Reset form when dialog closes
   useEffect(() => {
@@ -93,43 +82,50 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
       setShowQRPopup(false);
       setIsGeneratingQR(false);
       setConnectionStatus("created");
+      setQrCodeData(null);
+      setSyncOnConnect(true);
+      setSyncMode("full");
     }
   }, [isOpen]);
   
   const handleCreateInstance = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+    if (limitReached) {
+      toast.error("Limite de conexões WhatsApp do plano atingido", {
+        description: limitLabel
+          ? `${limitLabel}. Aumente o limite no Meu Plano.`
+          : "Aumente o limite no Meu Plano.",
+      });
+      return;
+    }
+
     setIsSubmitting(true);
     
     try {
       const cleanPhoneNumber = extractPhoneNumbers(phoneNumber);
       const instanceName = createInstanceName(connectionName, phoneNumber);
-      
-      console.log("Criando conexão com:", { 
-        connectionName, 
-        instanceName, 
-        cleanPhoneNumber 
+
+      // Criar instância via backend (chatService)
+      const instance = await chatService.createInstance({ 
+        name: instanceName,
+        metadata: {
+          phoneNumber: cleanPhoneNumber,
+          connectionName: connectionName,
+          sync_on_connect: syncOnConnect,
+          sync_mode: syncOnConnect ? syncMode : "none",
+        }
       });
       
-      const result = await whatsappConnectionManager.createConnection(instanceName, cleanPhoneNumber);
+      setConnectionId(instance.id);
+      setConnectionStatus(instance.status || 'disconnected');
+      setIsCreated(true);
       
-      if (result.success && result.connection) {
-        setConnectionId(result.connection.id);
-        setConnectionStatus(result.connection.status);
-        setIsCreated(true);
-        
-        if (result.connection.status === "awaiting_scan") {
-          toast.success("Instância criada e QR Code obtido!", {
-            description: `Instância "${instanceName}" criada. Clique em 'Ler QR Code' para conectar`,
-          });
-        } else {
-          toast.success("Instância criada com sucesso!", {
-            description: `Instância "${instanceName}" criada. Use 'Gerar QR Code' para conectar`,
-          });
-        }
-      } else {
-        throw new Error(result.error || "Erro ao criar conexão");
-      }
+      // Webhook não é necessário para criar a instância - pode ser configurado depois
+      // Removido configuração automática de webhook conforme documentação UazAPI
+      
+      toast.success("Instância criada com sucesso!", {
+        description: `Instância "${instanceName}" criada. Use 'Gerar QR Code' para conectar`,
+      });
       
     } catch (error) {
       console.error("Erro ao criar instância:", error);
@@ -145,15 +141,46 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
     setIsGeneratingQR(true);
     
     try {
-      const result = await whatsappConnectionManager.generateQRCode(connectionId);
+      // Conectar instância e obter QR Code via backend (sem phone para gerar QR code)
+      const connectResponse = await chatService.connectInstance(connectionId);
       
-      if (result.success && result.qrCode) {
+      console.log('Resposta do connect:', connectResponse);
+      
+      // A resposta da UazAPI pode ter o QR code em diferentes lugares:
+      // - instance.qrcode (base64)
+      // - qrcode (base64 direto)
+      // - code (base64)
+      // - pairingCode (código de pareamento)
+      const instance = connectResponse?.instance || {};
+      const qrData = instance?.qrcode || connectResponse?.qrcode || connectResponse?.code;
+      const pairingCode = instance?.paircode || connectResponse?.paircode || connectResponse?.pairingCode;
+      
+      if (qrData) {
+        // Se o QR code já vem com prefixo data:image, usar direto
+        // Caso contrário, adicionar prefixo
+        const processedQR = qrData.startsWith('data:image') 
+          ? qrData 
+          : `data:image/png;base64,${qrData}`;
+        
+        setQrCodeData(processedQR);
         setConnectionStatus("awaiting_scan");
         toast.success("QR Code gerado com sucesso!", {
           description: "Clique em 'Ler QR Code' para conectar"
         });
+      } else if (pairingCode) {
+        // Se não tem QR code mas tem pairing code, mostrar mensagem
+        toast.info("Código de pareamento disponível", {
+          description: `Use o código: ${pairingCode}`
+        });
+        setConnectionStatus("awaiting_scan");
       } else {
-        throw new Error(result.error || "Erro ao gerar QR code");
+        // Verificar se já está conectado
+        if (connectResponse?.connected || connectResponse?.loggedIn || instance?.status === 'open') {
+          setConnectionStatus("connected");
+          toast.success("Instância já está conectada!");
+      } else {
+          throw new Error("QR Code não disponível na resposta. Verifique os logs do console.");
+        }
       }
     } catch (error) {
       console.error("Erro ao gerar QR code:", error);
@@ -170,13 +197,14 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
   };
 
   const handleQRCodeConnect = () => {
-    const connection = whatsappConnectionManager.getConnections().find(c => c.id === connectionId);
-    if (connection) {
-      onAddConnection(connection.name, "evolution", connection.configData);
-    }
-    
+    // Se connectionId é UUID, a instância já está criada no backend
+    // Apenas fechar o dialog e recarregar a lista de instâncias
     setShowQRPopup(false);
     onClose();
+    // Chamar callback se fornecido
+    if (onAddConnection) {
+      onAddConnection('', '', {});
+    }
   };
 
   return (
@@ -196,6 +224,16 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
           {!isCreated ? (
             <form onSubmit={handleCreateInstance}>
               <div className="grid gap-4 py-4">
+                {limitReached ? (
+                  <Alert>
+                    <AlertDescription>
+                      Limite do plano atingido{limitLabel ? ` (${limitLabel})` : ""}.{" "}
+                      <Link to="/meu-plano" className="font-medium underline underline-offset-4">
+                        Ir para Meu Plano
+                      </Link>
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
                 <div className="grid gap-2">
                   <Label htmlFor="connectionName">Nome da Conexão</Label>
                   <Input
@@ -204,6 +242,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
                     value={connectionName}
                     onChange={(e) => setConnectionName(e.target.value)}
                     required
+                    disabled={limitReached}
                   />
                 </div>
                 
@@ -213,10 +252,54 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
                     value={phoneNumber}
                     onChange={setPhoneNumber}
                     required
+                    disabled={limitReached}
                   />
                   <p className="text-xs text-muted-foreground">
                     Digite o número no formato (XX) 9 XXXX-XXXX. O código do país (+55) será adicionado automaticamente.
                   </p>
+                </div>
+
+                <div className="flex flex-col gap-3 rounded-lg border p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="space-y-1">
+                      <Label htmlFor="syncOnConnect" className="text-sm font-medium">
+                        Sincronizar histórico ao conectar
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        Após escanear o QR, o sistema pode buscar conversas e mensagens antigas conforme o período.
+                      </p>
+                    </div>
+                    <Switch
+                      id="syncOnConnect"
+                      checked={syncOnConnect}
+                      onCheckedChange={setSyncOnConnect}
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="syncMode">Período do histórico</Label>
+                    <Select
+                      value={syncMode}
+                      onValueChange={(v) => setSyncMode(v as InstanceSyncMode)}
+                      disabled={!syncOnConnect}
+                    >
+                      <SelectTrigger id="syncMode" className="w-full">
+                        <SelectValue placeholder="Período" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="days_7">Últimos 7 dias</SelectItem>
+                        <SelectItem value="days_30">Últimos 30 dias</SelectItem>
+                        <SelectItem value="days_90">Últimos 90 dias</SelectItem>
+                        <SelectItem value="full">Completo (respeitando limites do sistema)</SelectItem>
+                        <SelectItem value="none">Sem histórico (só mensagens novas em tempo real)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {!syncOnConnect ? (
+                      <p className="text-xs text-muted-foreground">
+                        Com a sincronização automática desligada, nenhum histórico é puxado na conexão; você pode
+                        sincronizar depois pelo painel.
+                      </p>
+                    ) : null}
+                  </div>
                 </div>
               </div>
               
@@ -226,7 +309,13 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
                 </Button>
                 <Button 
                   type="submit" 
-                  disabled={isSubmitting || !connectionName || !phoneNumber || extractPhoneNumbers(phoneNumber).length < 10}
+                  disabled={
+                    limitReached ||
+                    isSubmitting ||
+                    !connectionName ||
+                    !phoneNumber ||
+                    extractPhoneNumbers(phoneNumber).length < 10
+                  }
                 >
                   {isSubmitting ? "Criando..." : "Criar Instância"}
                 </Button>
@@ -279,6 +368,7 @@ const AddConnectionDialog: React.FC<AddConnectionDialogProps> = ({
         isOpen={showQRPopup}
         onClose={() => setShowQRPopup(false)}
         connectionId={connectionId}
+        qrCode={qrCodeData}
         onConnect={handleQRCodeConnect}
       />
     </>

@@ -2,7 +2,7 @@
 import React, { useState } from "react";
 import { Filter } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 import { useAuth } from "@/contexts/AuthContext"; // Importando o contexto de autenticação
 
 // Lista de opções de fonte

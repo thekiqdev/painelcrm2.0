@@ -1,0 +1,494 @@
+/**
+ * Pipeline SaaS renewal — BillingRenewalEngine (B0.3).
+ */
+import { pool } from '../../utils/db.js';
+import { billingLog } from '../billingLogger.js';
+import {
+  changeSubscriptionPlan,
+  type SubscriptionRow,
+} from '../billingSubscriptionService.js';
+import {
+  createInvoice,
+  updateInvoiceGatewayData,
+  type CreateInvoiceInput,
+} from '../invoiceService.js';
+import { publishPlatformBillingChargeCreated } from '../platformNotifications/platformBusinessNotifications.js';
+import {
+  calculateSaasRenewalInvoiceAmount,
+  computeWhatsAppInstanceRenewalExtrasCents,
+  resolveWhatsAppInstanceUnitPriceForRenewal,
+  type BillingInterval,
+} from '../billingService.js';
+import { trySettleZeroAmountBillingIfEligible } from '../../commercial/zeroAmountSettlementService.js';
+import { getActiveGateway } from '../../modules/payments/gatewayProvider.js';
+import { getActiveConfig } from '../paymentGatewayConfigService.js';
+import { resolveAutomaticInvoicePaymentMethod } from '../gatewayPaymentMethodPolicy.js';
+import { calculateNextBillingDate } from '../subscriptionService.js';
+import {
+  BILLING_RECURRING_JOB_OUTCOME,
+  advanceSubscriptionAfterCompletedCycle,
+  completeBillingRecurringJob,
+} from '../billingRecurringJobPersistence.js';
+import { scheduleCollectionPolicyExtensionPoint } from '../collectionPolicy/hook.js';
+import { billingRenewalCorrelationId, tenantBillingCorrelationId } from '../billing2/billingCorrelationId.js';
+import type {
+  BillingRenewalExecutionMode,
+  BillingRenewalJobRef,
+  BillingRenewalResult,
+} from './types.js';
+
+type DbQueryable = {
+  query: (text: string, params?: unknown[]) => Promise<{ rows: any[]; rowCount?: number | null }>;
+};
+
+function nextSubscriptionBillingAfterCycle(periodStartYmd: string, interval: BillingInterval): string {
+  return calculateNextBillingDate(periodStartYmd, interval, null);
+}
+
+function buildSaasRenewalResult(
+  partial: Partial<BillingRenewalResult> &
+    Pick<BillingRenewalResult, 'success' | 'executionMode' | 'correlationId' | 'cycleKey' | 'executionTime' | 'logs'>
+): BillingRenewalResult {
+  return {
+    invoiceId: null,
+    gatewayStatus: null,
+    notificationStatus: 'unknown',
+    timelineStatus: 'not_applicable',
+    historyStatus: 'not_applicable',
+    subscriptionAdvanced: false,
+    completionOutcome: null,
+    ...partial,
+  };
+}
+
+export async function executeSaasRenewal(params: {
+  client: DbQueryable;
+  job: BillingRenewalJobRef;
+  subscription: SubscriptionRow;
+  periodStartYmd: string;
+  executionMode: BillingRenewalExecutionMode;
+  correlationId: string;
+}): Promise<BillingRenewalResult> {
+  const started = Date.now();
+  const logs: string[] = ['saas_renewal_start'];
+  const { client, job } = params;
+  const subscription = params.subscription;
+  const correlationId = params.correlationId;
+  const periodStart = params.periodStartYmd;
+  const interval = (subscription.billing_interval || 'monthly') as BillingInterval;
+  const periodEnd = nextSubscriptionBillingAfterCycle(periodStart, interval);
+
+  const planId = subscription.plan_id;
+  if (!planId) {
+    throw new Error('Subscription saas sem plan_id');
+  }
+
+  const planRow = await pool.query<{
+    name: string;
+    price_cents: number | null;
+    plan_type: string | null;
+    max_whatsapp_instances: number | null;
+  }>('SELECT name, price_cents, plan_type, max_whatsapp_instances FROM plans WHERE id = $1', [planId]);
+  const planName = planRow.rows[0]?.name ?? null;
+  const planType = planRow.rows[0]?.plan_type ?? 'standard';
+  const planIncludedWhatsapp = planRow.rows[0]?.max_whatsapp_instances ?? null;
+
+  const tenantSeats = await pool.query<{
+    max_users_scheduled_next_cycle: number | null;
+    max_whatsapp_instances_override: number | null;
+    max_whatsapp_instances_scheduled_next_cycle: number | null;
+  }>(
+    `SELECT max_users_scheduled_next_cycle,
+            max_whatsapp_instances_override,
+            max_whatsapp_instances_scheduled_next_cycle
+     FROM tenants WHERE id = $1`,
+    [subscription.tenant_id]
+  );
+  const scheduledNext = tenantSeats.rows[0]?.max_users_scheduled_next_cycle;
+  const whatsappOverride = tenantSeats.rows[0]?.max_whatsapp_instances_override ?? null;
+  const whatsappScheduled = tenantSeats.rows[0]?.max_whatsapp_instances_scheduled_next_cycle ?? null;
+  const isCustom = planType === 'custom';
+  let usersForRenewal = subscription.users_count ?? null;
+  if (isCustom && scheduledNext != null && scheduledNext >= 1) {
+    usersForRenewal = scheduledNext;
+  }
+
+  let contractedWhatsappForRenewal: number | null =
+    whatsappOverride != null ? whatsappOverride : planIncludedWhatsapp;
+  if (whatsappScheduled != null && whatsappScheduled >= 1) {
+    contractedWhatsappForRenewal = whatsappScheduled;
+  }
+
+  const renewalPricing = await calculateSaasRenewalInvoiceAmount({
+    planId,
+    billingInterval: interval,
+    planType,
+    planListPriceCents: planRow.rows[0]?.price_cents ?? null,
+    usersForRenewal,
+    contracted_plan_price_cents: subscription.contracted_plan_price_cents,
+    contracted_price_per_user_cents: subscription.contracted_price_per_user_cents,
+    tenantId: subscription.tenant_id,
+  });
+
+  const subPiRow = await pool.query<{ c: number | null }>(
+    `SELECT contracted_price_per_instance_cents AS c FROM subscriptions WHERE id = $1`,
+    [subscription.id]
+  );
+  const unitPrice = await resolveWhatsAppInstanceUnitPriceForRenewal({
+    planId,
+    billingInterval: interval,
+    contractedPricePerInstanceCents: subPiRow.rows[0]?.c ?? null,
+  });
+  const whatsappExtras = computeWhatsAppInstanceRenewalExtrasCents({
+    planIncludedInstances: planIncludedWhatsapp,
+    contractedInstances: contractedWhatsappForRenewal,
+    pricePerInstanceCents: unitPrice,
+  });
+  let amountCents = renewalPricing.amountCents + whatsappExtras.extrasCents;
+  try {
+    const { tryResolveWholesaleRenewalAmount } = await import(
+      '../../partner/partnerWholesaleRecurringService.js'
+    );
+    const wholesale = await tryResolveWholesaleRenewalAmount({
+      tenantId: subscription.tenant_id,
+      subscriptionId: subscription.id,
+    });
+    if (wholesale) {
+      amountCents = wholesale.amountCents;
+      logs.push('wholesale_recurring_override');
+      billingLog('job', 'saas_renewal_wholesale_amount', {
+        jobId: job.id,
+        subscription_id: subscription.id,
+        tenant_id: subscription.tenant_id,
+        amount_cents: amountCents,
+        extra_seats: wholesale.extraSeats,
+        plan_price_cents: wholesale.planPriceCents,
+      });
+    }
+  } catch (wholesaleErr) {
+    console.error('[executeSaasRenewal] wholesale recurring override failed', wholesaleErr);
+  }
+
+  billingLog('job', 'saas_renewal_pricing_source', {
+    jobId: job.id,
+    subscription_id: subscription.id,
+    tenant_id: subscription.tenant_id,
+    amount_cents: amountCents,
+    price_source: renewalPricing.priceSource,
+    whatsapp_extras_count: whatsappExtras.extrasCount,
+    whatsapp_extras_cents: whatsappExtras.extrasCents,
+    whatsapp_unit_cents: unitPrice ?? undefined,
+    whatsapp_contracted: contractedWhatsappForRenewal ?? undefined,
+  });
+
+  const dueDate = periodStart;
+  const config = await getActiveConfig('saas');
+  const gatewayKey = config?.gateway_key ?? 'asaas';
+
+  const invoiceData: CreateInvoiceInput = {
+    tenant_id: subscription.tenant_id,
+    plan_id: planId,
+    billing_interval: interval,
+    amount_cents: amountCents,
+    due_date: dueDate,
+    source: 'self_service',
+    billing_reason: 'plan_renewal',
+    users_count: usersForRenewal,
+    gateway: gatewayKey,
+    subscription_id: subscription.id,
+    period_start: periodStart,
+    period_end: periodEnd,
+    plan_name_snapshot: planName,
+    plan_price_snapshot: renewalPricing.planPriceSnapshotForInvoice,
+  };
+
+  const billing = await createInvoice(invoiceData);
+
+  const zeroSettlement = await trySettleZeroAmountBillingIfEligible({
+    billingId: billing.id,
+    amountCents,
+    source: 'renewal',
+  });
+
+  const gateway = zeroSettlement
+    ? null
+    : await getActiveGateway({ billingType: 'saas', tenantId: subscription.tenant_id });
+  if (gateway) {
+    try {
+      const customerId = await gateway.ensureCustomer?.(subscription.tenant_id);
+      if (customerId) {
+        const idempotencyKey = `saas_renew_${subscription.id}_${periodStart}`;
+        const { isBilling2FlagEnabled } = await import('../billing2/billingFeatureFlags.js');
+        const cardAuto = await isBilling2FlagEnabled('card_auto_renew');
+        const pixAuto = await isBilling2FlagEnabled('pix_automatic');
+        let savedToken: Awaited<
+          ReturnType<
+            typeof import('../billing2/billingCardTokenStore.js').getActiveSaasCardTokenBySubscriptionId
+          >
+        > = null;
+        if (cardAuto) {
+          const { getActiveSaasCardTokenBySubscriptionId } = await import(
+            '../billing2/billingCardTokenStore.js'
+          );
+          savedToken = await getActiveSaasCardTokenBySubscriptionId(subscription.id);
+        }
+
+        // Sprint 10 — com auth ACTIVE + janela, instrução Pix Automático (sem charge avulso).
+        let pixAutoHandled = false;
+        if (pixAuto) {
+          const { shouldCollectionPolicyOwnNotifications } = await import(
+            '../collectionPolicy/hook.js'
+          );
+          const engineOwnsPix = await shouldCollectionPolicyOwnNotifications();
+          if (!engineOwnsPix) {
+            const {
+              createPixAutomaticInstructionForBilling,
+              startPixAutomaticAuthorizationForBilling,
+            } = await import('../billing2/billingPixAutomaticService.js');
+            const { getPixAutomaticAuthBySubscriptionId } = await import(
+              '../billing2/billingPixAutomaticStore.js'
+            );
+            const authRow = await getPixAutomaticAuthBySubscriptionId(subscription.id);
+            if (authRow?.status === 'active' && authRow.authorization_id) {
+              const instr = await createPixAutomaticInstructionForBilling({
+                billingId: billing.id,
+                correlationId: `saas_renew:${subscription.id}:${periodStart}`,
+              });
+              if (instr.ok || instr.detail === 'outside_instruction_window') {
+                pixAutoHandled = instr.ok;
+                if (!instr.ok) {
+                  // Fora da janela: cai no createCharge legado abaixo.
+                  pixAutoHandled = false;
+                }
+              }
+            } else {
+              const started = await startPixAutomaticAuthorizationForBilling({
+                billingId: billing.id,
+                correlationId: `saas_renew:${subscription.id}:${periodStart}`,
+              });
+              if (started.ok) {
+                pixAutoHandled = true;
+              }
+            }
+          }
+        }
+
+        // CA S5 — Assinatura Asaas já gera/cobra o cartão; não criar charge avulsa (anti 2×).
+        let asaasSubOwnsCard = false;
+        if (!pixAutoHandled) {
+          const { shouldSkipSaasCardChargeForAsaasSubscription } = await import(
+            '../saasAsaasSubscriptionSyncService.js'
+          );
+          const skipAsaas = await shouldSkipSaasCardChargeForAsaasSubscription(subscription.id);
+          if (skipAsaas.skip) {
+            asaasSubOwnsCard = true;
+            await updateInvoiceGatewayData(billing.id, {
+              gateway: gatewayKey,
+              payment_method: 'CREDIT_CARD',
+              gateway_reference_id: null,
+              gateway_status: 'PENDING_ASAAS_SUBSCRIPTION',
+              idempotency_key: idempotencyKey,
+              gateway_metadata: {
+                asaas_subscription_id: skipAsaas.asaasSubscriptionId,
+                asaas_subscription_mode: true,
+                card_capture_channel: 'asaas_subscription',
+                renewal_charge_skipped: true,
+                renewal_charge_skip_reason: skipAsaas.reason,
+              },
+            });
+            billingLog('job', 'saas_renewal_skip_charge_asaas_subscription', {
+              jobId: job.id,
+              subscription_id: subscription.id,
+              billing_id: billing.id,
+              asaas_subscription_id: skipAsaas.asaasSubscriptionId,
+              reason: skipAsaas.reason,
+            });
+            logs.push('asaas_subscription_owns_card_renewal_skip_charge');
+          }
+        }
+
+        if (!pixAutoHandled && !asaasSubOwnsCard) {
+          // Com token + flag ON, força CREDIT_CARD na renovação (captura automática abaixo se engine OFF).
+          let renewalPm = resolveAutomaticInvoicePaymentMethod(
+            subscription.default_payment_method as string | null,
+            config
+          );
+          if (cardAuto && savedToken?.card_token) {
+            renewalPm = 'CREDIT_CARD';
+          }
+
+          const chargeResult = await gateway.createCharge({
+            customerId,
+            amountCents,
+            dueDate: periodStart,
+            paymentMethod: renewalPm,
+            description: billing.invoice_number ?? `Renovação ${periodStart}`,
+            idempotencyKey,
+            externalReference: subscription.tenant_id,
+          });
+          await updateInvoiceGatewayData(billing.id, {
+            gateway: gatewayKey,
+            payment_method: renewalPm,
+            gateway_reference_id: chargeResult.paymentId,
+            gateway_status: chargeResult.status,
+            idempotency_key: idempotencyKey,
+          });
+
+          // Captura com token quando flag ON e engine OFF (engine ON → charge_card na policy).
+          const { shouldCollectionPolicyOwnNotifications } = await import(
+            '../collectionPolicy/hook.js'
+          );
+          const engineOwns = await shouldCollectionPolicyOwnNotifications();
+          if (
+            cardAuto &&
+            savedToken?.card_token &&
+            renewalPm === 'CREDIT_CARD' &&
+            !engineOwns &&
+            typeof gateway.payWithCreditCard === 'function'
+          ) {
+            try {
+              const cap = await gateway.payWithCreditCard({
+                paymentId: chargeResult.paymentId,
+                creditCardToken: savedToken.card_token,
+              });
+              const { normalizeGatewayStatus } = await import(
+                '../../modules/payments/webhook/statusNormalizer.js'
+              );
+              const { applyPaymentEvent } = await import(
+                '../../modules/payments/webhook/paymentDomainService.js'
+              );
+              const normalized = normalizeGatewayStatus(gatewayKey, cap.status);
+              await applyPaymentEvent({
+                entityType: 'tenant_billing',
+                entityId: billing.id,
+                currentStatus: billing.status,
+                internalStatus: normalized,
+                gatewayStatus: cap.status,
+                paidAt: normalized === 'paid' ? (cap.paidAt ? new Date(cap.paidAt) : new Date()) : null,
+              });
+            } catch (capErr) {
+              console.error('[executeSaasRenewal] card token capture failed', {
+                billingId: billing.id,
+                error: capErr instanceof Error ? capErr.message : String(capErr),
+              });
+              const { markSaasCardTokenInvalid } = await import('../billing2/billingCardTokenStore.js');
+              await markSaasCardTokenInvalid(subscription.id, 'renewal_capture_failed').catch(
+                () => undefined
+              );
+            }
+          }
+        }
+      }
+    } catch (gatewayErr) {
+      console.error('[recurringBillingJobService] gateway createCharge error', { billingId: billing.id, err: gatewayErr });
+    }
+  }
+
+  // Billing 2.0: com engine OFF (default) → notify legado; com engine ON → engine assume notify (idempotente).
+  const { shouldCollectionPolicyOwnNotifications } = await import('../collectionPolicy/hook.js');
+  const engineOwnsNotify = await shouldCollectionPolicyOwnNotifications();
+  if (!zeroSettlement && !engineOwnsNotify) {
+    await publishPlatformBillingChargeCreated(billing.id);
+  }
+
+  // Billing 2.0 Sprint 3 — extension point (noop enquanto collection_policy_engine_enabled=OFF).
+  scheduleCollectionPolicyExtensionPoint({
+    type: 'renewal.charge_created',
+    occurred_at: new Date().toISOString(),
+    tenant_id: subscription.tenant_id,
+    subscription_id: subscription.id,
+    billing_id: billing.id,
+    job_id: job.id,
+    correlation_id: billingRenewalCorrelationId(subscription.id, periodStart),
+    attempt: 1,
+    metadata: {
+      period_start: periodStart,
+      zero_settlement: zeroSettlement ? true : false,
+      billing_correlation: tenantBillingCorrelationId(billing.id),
+    },
+  });
+
+  // lifecycle shadow observation (future — renewal route Sprint I+)
+  void import('../../lifecycle/lifecycleBillingObserver.js').then(({ observeFutureBillingLifecycleEvent }) =>
+    observeFutureBillingLifecycleEvent(
+      'subscription.renewed',
+      { tenantId: subscription.tenant_id, subscriptionId: subscription.id, invoiceId: billing.id },
+      { source: 'recurring_renewal_invoice' },
+    ),
+  );
+
+  await advanceSubscriptionAfterCompletedCycle(client, {
+    jobId: job.id,
+    subscriptionId: subscription.id,
+    tenantId: subscription.tenant_id,
+    cycleDateYmd: periodStart,
+    source: 'saas_new_invoice',
+    resultInvoiceId: billing.id,
+  });
+
+  if (isCustom && scheduledNext != null && scheduledNext >= 1) {
+    await pool.query(
+      `UPDATE tenants
+       SET max_users_override = $1,
+           max_users_scheduled_next_cycle = NULL,
+           updated_at = now()
+       WHERE id = $2`,
+      [scheduledNext, subscription.tenant_id]
+    );
+    const sync = await changeSubscriptionPlan(subscription.id, subscription.tenant_id, {
+      plan_id: planId,
+      users_count: scheduledNext,
+      billing_interval: interval,
+    });
+    if (!sync.ok) {
+      console.error('[recurringBillingJobService] falha ao aplicar assentos agendados', sync.error);
+    }
+  }
+
+  if (whatsappScheduled != null && whatsappScheduled >= 1) {
+    await pool.query(
+      `UPDATE tenants
+       SET max_whatsapp_instances_override = $1,
+           max_whatsapp_instances_scheduled_next_cycle = NULL,
+           updated_at = now()
+       WHERE id = $2`,
+      [whatsappScheduled, subscription.tenant_id]
+    );
+  }
+
+  await pool.query(
+    `UPDATE subscriptions
+     SET amount_cents = $1::int, updated_at = now()
+     WHERE id = $2::uuid AND tenant_id = $3::uuid`,
+    [amountCents, subscription.id, subscription.tenant_id]
+  );
+
+  await completeBillingRecurringJob(client, {
+    jobId: job.id,
+    resultInvoiceId: billing.id,
+    resultInvoiceType: 'tenant_billing',
+    outcome: BILLING_RECURRING_JOB_OUTCOME.COMPLETED_INVOICE_SAAS,
+    detail: JSON.stringify({ tenant_billing_id: billing.id, period_start: periodStart }),
+  });
+  billingLog('job', 'saas_renewal_invoice_persisted', {
+    jobId: job.id,
+    subscriptionId: subscription.id,
+    tenant_billing_id: billing.id,
+  });
+
+  return buildSaasRenewalResult({
+    success: true,
+    invoiceId: billing.id,
+    gatewayStatus: null,
+    notificationStatus: zeroSettlement ? 'skipped' : 'queued',
+    timelineStatus: 'ok',
+    historyStatus: 'ok',
+    subscriptionAdvanced: true,
+    completionOutcome: BILLING_RECURRING_JOB_OUTCOME.COMPLETED_INVOICE_SAAS,
+    executionMode: params.executionMode,
+    correlationId,
+    cycleKey: periodStart,
+    executionTime: Date.now() - started,
+    logs: [...logs, 'saas_renewal_complete'],
+  });
+}

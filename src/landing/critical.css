@@ -1,0 +1,206 @@
+/**
+ * CSS crítico da landing (above the fold): pinta nav + hero antes do bundle Tailwind.
+ * Mantido alinhado a landingpage.css — variáveis com contraste WCAG mais seguro em links.
+ */
+:root {
+  color-scheme: dark;
+}
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: hsl(222 47% 6%);
+}
+.landing-skip {
+  position: absolute;
+  left: -9999px;
+  z-index: 100;
+  padding: 0.5rem 1rem;
+  background: hsl(210 40% 98%);
+  color: hsl(222 47% 8%);
+  border-radius: 0.375rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+.landing-skip:focus {
+  left: 1rem;
+  top: 1rem;
+  clip: auto;
+  width: auto;
+  height: auto;
+  outline: 2px solid hsl(199 89% 48%);
+  outline-offset: 2px;
+}
+.landing-page,
+.landing-ssr-shell.landing-page {
+  --background: 222 47% 6%;
+  --foreground: 210 40% 96%;
+  --muted-foreground: 215 18% 72%;
+  --primary: 199 89% 48%;
+  --border: 222 30% 22%;
+  --secondary: 222 30% 14%;
+  --card: 222 44% 9%;
+  color: hsl(var(--foreground));
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
+}
+.landing-ssr-shell {
+  min-height: 100vh;
+  padding-top: 4rem;
+}
+.landing-ssr-nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 4rem;
+  border-bottom: 1px solid hsl(var(--border) / 0.55);
+  background: hsl(var(--background) / 0.88);
+  backdrop-filter: blur(12px);
+}
+.landing-ssr-nav-inner {
+  display: flex;
+  width: 100%;
+  max-width: 1280px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1rem;
+  box-sizing: border-box;
+}
+@media (min-width: 1024px) {
+  .landing-ssr-nav-inner {
+    padding: 0 2rem;
+  }
+}
+.landing-ssr-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 700;
+  font-size: 1.125rem;
+  color: hsl(var(--foreground));
+  text-decoration: none;
+}
+.landing-ssr-logo {
+  display: flex;
+  height: 2rem;
+  width: 2rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.5rem;
+  background: hsl(var(--primary));
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 800;
+}
+.landing-ssr-links {
+  display: none;
+  gap: 2rem;
+}
+@media (min-width: 768px) {
+  .landing-ssr-links {
+    display: flex;
+  }
+}
+.landing-ssr-links a {
+  font-size: 0.875rem;
+  color: hsl(var(--muted-foreground));
+  text-decoration: none;
+}
+.landing-ssr-links a:hover {
+  color: hsl(var(--foreground));
+}
+.landing-ssr-ctas {
+  display: none;
+  gap: 0.75rem;
+}
+@media (min-width: 768px) {
+  .landing-ssr-ctas {
+    display: flex;
+    align-items: center;
+  }
+}
+.landing-ssr-ctas a {
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-decoration: none;
+  border-radius: 0.375rem;
+  padding: 0.375rem 0.75rem;
+}
+.landing-ssr-ctas a:first-child {
+  color: hsl(var(--foreground));
+}
+.landing-ssr-ctas a:last-child {
+  background: hsl(var(--primary));
+  color: #fff;
+}
+.landing-ssr-hero {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 3rem 1rem 2rem;
+  box-sizing: border-box;
+}
+@media (min-width: 1024px) {
+  .landing-ssr-hero {
+    padding: 5rem 2rem 3rem;
+  }
+}
+.landing-ssr-hero h1 {
+  margin: 0;
+  font-size: clamp(1.75rem, 4vw, 2.75rem);
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: hsl(var(--foreground));
+}
+.landing-ssr-hero .landing-ssr-gradient {
+  background: linear-gradient(135deg, hsl(199 89% 52%), hsl(185 72% 48%));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.landing-ssr-hero p {
+  margin: 1.25rem 0 0;
+  max-width: 36rem;
+  font-size: 1.05rem;
+  line-height: 1.55;
+  color: hsl(var(--muted-foreground));
+}
+.landing-ssr-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  padding: 0.35rem 1rem;
+  border-radius: 9999px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--secondary));
+  font-size: 0.75rem;
+  color: hsl(var(--muted-foreground));
+}
+.landing-ssr-pill span:first-child {
+  display: inline-block;
+  height: 0.375rem;
+  width: 0.375rem;
+  border-radius: 9999px;
+  background: hsl(var(--primary));
+}
+.landing-ssr-cta-row {
+  margin-top: 2rem;
+}
+.landing-ssr-cta-row a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 2rem;
+  border-radius: 0.5rem;
+  font-weight: 600;
+  font-size: 1rem;
+  background: hsl(var(--primary));
+  color: #fff;
+  text-decoration: none;
+}

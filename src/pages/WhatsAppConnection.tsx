@@ -10,6 +10,7 @@ import ConnectionStatus from "@/components/whatsapp/ConnectionStatus";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { whatsappService } from "@/services/whatsapp";
+import { chatService } from "@/services/chat";
 
 interface ConnectionConfig {
   instanceName?: string;
@@ -64,21 +65,27 @@ const WhatsAppConnection = () => {
         });
         
         // Usar o método correto: createEvolutionInstance em vez de connectEvolution
-        const result = await whatsappService.createEvolutionInstance(instanceName, webhookUrl);
+        const result = await chatService.createInstance({ name: instanceName });
         
-        if (result.success) {
+        if (webhookUrl) {
+          await chatService.configureWebhook(result.id, { url: webhookUrl });
+        }
+        
+        if (result) {
           // Após criar instância, obter QR code
-          const qrResult = await whatsappService.getEvolutionQRCode(instanceName);
+          const connectResponse = await chatService.connectInstance(result.id);
+          // O backend retorna o payload da UazAPI, que pode ter qrcode.base64, code (base64) ou pairingCode
+          const qrData = connectResponse?.qrcode?.base64 || connectResponse?.code || connectResponse?.qrcode;
           
-          if (qrResult.success && qrResult.qrCode) {
-            setQrCode(qrResult.qrCode);
+          if (qrData) {
+            setQrCode(typeof qrData === 'string' ? qrData : JSON.stringify(qrData));
             toast({
               title: "QR Code gerado",
               description: "Escaneie o QR code com o seu WhatsApp",
             });
             
             // Iniciar polling para verificar conexão
-            startConnectionPolling(instanceName);
+            startConnectionPolling(result.id);
           }
         }
       } else if (apiProvider === "webjs") {
@@ -267,39 +274,45 @@ const WhatsAppConnection = () => {
     setSelectedConnection(null);
   };
 
-  const startConnectionPolling = (instanceName: string) => {
+  const startConnectionPolling = (instanceIdOrName: string) => {
     const pollInterval = setInterval(async () => {
       try {
-        const result = await whatsappService.checkEvolutionConnection(instanceName);
+        // Se for ID (UUID), é via chatService. Se for nome, é legacy
+        const isUuid = /^[0-9a-fA-F-]{36}$/.test(instanceIdOrName);
         
-        if (result.success && result.status === "connected") {
-          setConnectionStatus("connected");
-          setQrCode(null);
-          clearInterval(pollInterval);
+        if (isUuid) {
+          const response = await chatService.getInstanceStatus(instanceIdOrName);
+          // O formato da resposta depende da UazAPI, geralmente { instance: { state: 'open' } }
+          const state = response?.instance?.state || response?.status;
           
-          toast({
-            title: "Conectado com sucesso!",
-            description: "Sua conta WhatsApp foi conectada via Evolution API",
-          });
+          if (state === 'open' || state === 'connected') {
+            setConnectionStatus("connected");
+            setQrCode(null);
+            clearInterval(pollInterval);
+            toast({ title: "Conectado com sucesso!", description: "Conectado via Evolution API" });
+          }
+        } else {
+          const result = await whatsappService.checkEvolutionConnection(instanceIdOrName);
+          if (result.success && result.status === "connected") {
+            setConnectionStatus("connected");
+            setQrCode(null);
+            clearInterval(pollInterval);
+            toast({ title: "Conectado com sucesso!", description: "Conectado via Evolution API" });
+          }
         }
       } catch (error) {
         console.error("Erro ao verificar conexão:", error);
       }
-    }, 5000); // Verificar a cada 5 segundos
+    }, 5000);
     
-    // Limpar polling após 5 minutos
     setTimeout(() => {
       clearInterval(pollInterval);
       if (connectionStatus === "connecting") {
-        toast({
-          title: "Timeout na conexão",
-          description: "QR Code expirou. Tente novamente.",
-          variant: "destructive",
-        });
+        toast({ title: "Timeout na conexão", description: "QR Code expirou.", variant: "destructive" });
         setConnectionStatus("disconnected");
         setQrCode(null);
       }
-    }, 300000); // 5 minutos
+    }, 300000);
   };
 
   useEffect(() => {

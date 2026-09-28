@@ -41,10 +41,10 @@ export class CartService {
 
   async updateCartItemQuantity(itemId: string, quantity: number): Promise<void> {
     try {
-      if (quantity <= 0) {
-        await this.removeFromCart(itemId);
-        return;
-      }
+    if (quantity <= 0) {
+      await this.removeFromCart(itemId);
+      return;
+    }
 
       const response = await apiClient.patch(`/api/cart/items/${itemId}`, { quantity });
       if (response.error) throw new Error(response.error);
@@ -102,9 +102,9 @@ export class CartService {
         customer_email: orderData.customerEmail,
         customer_phone: orderData.customerPhone || null,
         items: orderData.items.map(item => ({
-          product_id: item.productId,
-          quantity: item.quantity,
-          unit_price: item.unitPrice,
+        product_id: item.productId,
+        quantity: item.quantity,
+        unit_price: item.unitPrice,
           selected_variation: item.selectedVariation || null,
         })),
         payment_method: orderData.paymentMethod || null,
@@ -119,17 +119,26 @@ export class CartService {
     }
   }
 
-  async getOrders(storeUserId?: string): Promise<Order[]> {
+  async getOrders(options?: { status?: string; paymentStatus?: string }): Promise<Order[]> {
     try {
-      const url = storeUserId ? `/api/orders?storeUserId=${storeUserId}` : '/api/orders';
+      const params = new URLSearchParams();
+      if (options?.status) params.set('status', options.status);
+      if (options?.paymentStatus) params.set('paymentStatus', options.paymentStatus);
+      const qs = params.toString();
+      const url = qs ? `/api/orders?${qs}` : '/api/orders';
       const response = await apiClient.get<any[]>(url);
-      
+
       if (response.error) throw new Error(response.error);
       return (response.data || []) as Order[];
     } catch (error: any) {
       console.error('Error getting orders:', error);
       throw error;
     }
+  }
+
+  async deleteOrder(orderId: string): Promise<void> {
+    const response = await apiClient.delete(`/api/orders/${orderId}`);
+    if (response.error) throw new Error(response.error);
   }
 }
 

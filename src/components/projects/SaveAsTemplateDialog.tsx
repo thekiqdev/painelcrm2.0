@@ -174,7 +174,7 @@ export function SaveAsTemplateDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="tenant">Equipe (Tenant)</SelectItem>
+                <SelectItem value="tenant">Equipe (empresa)</SelectItem>
                 <SelectItem value="private">Privado</SelectItem>
               </SelectContent>
             </Select>

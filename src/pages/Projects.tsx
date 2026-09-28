@@ -1,45 +1,176 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, lazy, Suspense } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, useNavigate, useLocation, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, X, Users, Kanban, ClipboardList, File, DollarSign, Calendar as CalendarIcon2, LayoutGrid, Filter, Settings, MoreVertical } from "lucide-react";
-import { toast } from "sonner";
+import { Plus, X, Users, Kanban, ClipboardList, File, DollarSign, Calendar as CalendarIcon2, LayoutGrid, List as ListIcon, Filter, Settings, MoreVertical, ChevronDown, ChevronUp, Upload } from "lucide-react";
+import { toast } from "@/components/ui/sonner";
 import { format } from "date-fns";
 import { sanitizeHtml } from "@/lib/sanitize";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 
 // Importações de componentes
+import { ProjectsGridView } from "@/components/projects/ProjectsGridView";
 import { ProjectsListView } from "@/components/projects/ProjectsListView";
 import { BoardView } from "@/components/projects/BoardView";
 import { TaskListView } from "@/components/projects/TaskListView";
 import { CalendarView } from "@/components/projects/CalendarView";
-import { TaskDetailDialog } from "@/components/projects/TaskDetailDialog";
-import { NewTaskDialog } from "@/components/projects/NewTaskDialog";
 import { NewListDialog } from "@/components/projects/NewListDialog";
 import { EditListDialog } from "@/components/projects/EditListDialog";
-import { NewProjectDialog, ProjectFormData } from "@/components/projects/NewProjectDialog";
 
 // Importações de tipos e dados
 import { Project, ProjectList, Task, ChecklistItem, TaskStatus } from "@/components/projects/types";
 import { Member } from "@/components/shared/types";
-import { projectsService, Project as ApiProject, ProjectList as ApiProjectList, ProjectTask as ApiProjectTask } from "@/services/projects";
+import { projectsService, Project as ApiProject, ProjectList as ApiProjectList, ProjectTask as ApiProjectTask, type ProjectVersion } from "@/services/projects";
 import { membersService } from "@/services/members";
+import { teamsService, type Team } from "@/services/teams";
 
 // Add import for ProjectFinance
 import { ProjectFinance } from "@/components/projects/ProjectFinance";
-import { ProjectSettingsDialog } from "@/components/projects/ProjectSettingsDialog";
-import { SaveAsTemplateDialog } from "@/components/projects/SaveAsTemplateDialog";
+import { ProjectAreasSection, AreaProgress } from "@/components/projects/ProjectAreasSection";
+import { MoveProjectTaskDialog } from "@/components/projects/MoveProjectTaskDialog";
+import { CopyProjectTaskDialog } from "@/components/projects/CopyProjectTaskDialog";
+import { ProjectHeader } from "@/components/projects/ProjectHeader";
+import { ProjectDriveWorkspace } from "@/components/projects/ProjectDriveWorkspace";
+import { hasAreas, hasVersions } from "@/lib/projectFeatures";
+import {
+  deriveInitialVersionSelection,
+  versionSelectionToQuery,
+  versionSelectionToTaskFilter,
+  versionIdForTaskCreate,
+  normalizeVersionSelection,
+  versionSelectionKey,
+  type ProjectVersionSelection,
+} from "@/lib/projectVersionSelection";
+import type { UnifiedTask } from "@/lib/taskUnified";
+import { projectUITaskToUnified } from "@/lib/taskUnified";
+import { useAuth } from "@/contexts/AuthContext";
+import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { MobilePageHeader } from "@/components/mobile/MobilePageHeader";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { clientsService, type Client } from "@/services/clients";
+import { prepareProjectsFromCsv } from "@/utils/importProjectsCsv";
+import {
+  prepareTasksFromProjectTasksCsv,
+  prepareTasksFromProjectTasksXlsx,
+} from "@/utils/importProjectTasksXlsx";
+import { getProjectUrl } from "@/lib/projectRoutes";
+
+const TaskFormDialog = lazy(() =>
+  import("@/components/tasks").then((m) => ({ default: m.TaskFormDialog })),
+);
+const TaskSidePanel = lazy(() =>
+  import("@/components/tasks").then((m) => ({ default: m.TaskSidePanel })),
+);
+const TaskDetailDialog = lazy(() =>
+  import("@/components/projects/TaskDetailDialog").then((m) => ({ default: m.TaskDetailDialog })),
+);
+const ProjectSettingsDialog = lazy(() =>
+  import("@/components/projects/ProjectSettingsDialog").then((m) => ({ default: m.ProjectSettingsDialog })),
+);
+const ProjectVersionControlPanel = lazy(() =>
+  import("@/components/projects/ProjectVersionControlPanel").then((m) => ({
+    default: m.ProjectVersionControlPanel,
+  })),
+);
+const SaveAsTemplateDialog = lazy(() =>
+  import("@/components/projects/SaveAsTemplateDialog").then((m) => ({ default: m.SaveAsTemplateDialog })),
+);
+const ProjectVersionDialog = lazy(() =>
+  import("@/components/projects/ProjectVersionDialog").then((m) => ({ default: m.ProjectVersionDialog })),
+);
+const ProjectPublishVersionDialog = lazy(() =>
+  import("@/components/projects/ProjectPublishVersionDialog").then((m) => ({
+    default: m.ProjectPublishVersionDialog,
+  })),
+);
+const ProjectDuplicateVersionDialog = lazy(() =>
+  import("@/components/projects/ProjectDuplicateVersionDialog").then((m) => ({
+    default: m.ProjectDuplicateVersionDialog,
+  })),
+);
 
 // Padrão de página única para toda a funcionalidade de projetos
+const MODULE_PROJECTS = "projects";
+const MODULE_TASKS = "tasks";
+
+const PROJECTS_QUERY_KEY = ["projects"] as const;
+const PROJECTS_VIEW_TYPE_KEY = "projects_view_type";
+type ProjectsCatalogViewType = "grid" | "kanban" | "list";
+
+function mapApiProjectTasksToUiTasks(
+  apiTasks: ApiProjectTask[],
+  members: Member[],
+  versionFilter?: { versionId?: string },
+): Task[] {
+  const filtered =
+    versionFilter?.versionId != null
+      ? apiTasks.filter((task) => task.version_id === versionFilter.versionId)
+      : apiTasks;
+  return filtered.map((apiTask) => ({
+    id: apiTask.id,
+    title: apiTask.title,
+    description: apiTask.description || "",
+    status: apiTask.status as TaskStatus,
+    priority: apiTask.priority as Task["priority"],
+    dueDate: apiTask.due_date || undefined,
+    assignee: apiTask.assignee_id ? members.find((m) => m.id === apiTask.assignee_id) : undefined,
+    tags: apiTask.tags || [],
+    customFields: apiTask.custom_fields ?? {},
+    checklist: (apiTask.checklist || []).map(
+      (
+        item: { id?: string; text?: string; title?: string; completed?: boolean },
+        index: number,
+      ) => ({
+        id: item.id || `checklist-${index}`,
+        text: item.text || item.title || "",
+        completed: item.completed || false,
+      }),
+    ),
+  }));
+}
+
+function resolveProjectClientDisplayName(
+  p: { client_id?: string | null; client_name?: string | null },
+  clients: Client[],
+): string | null {
+  const fromApi = typeof p.client_name === "string" ? p.client_name.trim() : "";
+  if (fromApi) return fromApi;
+  const cid = p.client_id != null && p.client_id !== "" ? String(p.client_id).trim() : "";
+  if (!cid) return null;
+  const c = clients.find((x) => x.id === cid);
+  const label = (c?.name || c?.company || c?.email || "").trim();
+  return label || null;
+}
+
 const Projects = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { projectId: routeProjectId } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const restoringFromUrlRef = useRef(false);
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const { canCreate: canCreateProject } = useModulePermissions();
+
   // Estados principais
   const [viewMode, setViewMode] = useState<"list" | "detail">("list");
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [loading, setLoading] = useState(true);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [activeTab, setActiveTab] = useState("board");
-  const [projectsViewType, setProjectsViewType] = useState<"grid" | "kanban">("grid");
+  const [projectsViewType, setProjectsViewType] = useState<ProjectsCatalogViewType>("list");
   const [kanbanStages, setKanbanStages] = useState<ProjectList[]>([
     { id: "backlog", name: "Backlog", tasks: [], order: 0 },
     { id: "in-progress", name: "Em Andamento", tasks: [], order: 1 },
@@ -47,9 +178,27 @@ const Projects = () => {
     { id: "done", name: "Concluído", tasks: [], order: 3 },
   ]);
   const [hideCompletedTasks, setHideCompletedTasks] = useState(false);
+  const [teamFilterSheetOpen, setTeamFilterSheetOpen] = useState(false);
+  const [expandedDescriptions, setExpandedDescriptions] = useState<Record<string, boolean>>({});
+  const projectsCsvInputRef = useRef<HTMLInputElement>(null);
+  const [projectsCsvImportRunning, setProjectsCsvImportRunning] = useState(false);
+  const [projectsCsvImportDialogOpen, setProjectsCsvImportDialogOpen] = useState(false);
+  const [projectsCsvImportSummary, setProjectsCsvImportSummary] = useState<{
+    created: number;
+    failed: { line: number; message: string }[];
+    warnings: string[];
+  } | null>(null);
+  const tasksXlsxInputRef = useRef<HTMLInputElement>(null);
+  const tasksImportListIdRef = useRef<string | null>(null);
+  const [tasksXlsxImportRunning, setTasksXlsxImportRunning] = useState(false);
+  const [tasksXlsxImportDialogOpen, setTasksXlsxImportDialogOpen] = useState(false);
+  const [tasksXlsxImportSummary, setTasksXlsxImportSummary] = useState<{
+    created: number;
+    failed: { line: number; message: string }[];
+    warnings: string[];
+  } | null>(null);
 
   // Estados de diálogos
-  const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
   const [newTaskDialogOpen, setNewTaskDialogOpen] = useState(false);
   const [newListDialogOpen, setNewListDialogOpen] = useState(false);
   const [editListDialogOpen, setEditListDialogOpen] = useState(false);
@@ -58,103 +207,635 @@ const Projects = () => {
   const [editingList, setEditingList] = useState<ProjectList | null>(null);
   const [selectedTask, setSelectedTask] = useState<{task: Task, listId: string} | null>(null);
   const [newChecklistItemText, setNewChecklistItemText] = useState("");
-  const [newTagText, setNewTagText] = useState("");
-  const [tagsInput, setTagsInput] = useState<string[]>([]);
   const [editingTask, setEditingTask] = useState(false);
   const [projectSettingsOpen, setProjectSettingsOpen] = useState(false);
   const [saveAsTemplateOpen, setSaveAsTemplateOpen] = useState(false);
   const [members, setMembers] = useState<Member[]>([]);
+  const [areaProgress, setAreaProgress] = useState<Record<string, AreaProgress>>({});
+  const [teamFilter, setTeamFilter] = useState<string | null>(null);
+  const [fullViewTask, setFullViewTask] = useState<UnifiedTask | null>(null);
+  const [projectVersions, setProjectVersions] = useState<ProjectVersion[]>([]);
+  const [versionSelection, setVersionSelection] = useState<ProjectVersionSelection>({ mode: "none" });
+  const [versionDialogOpen, setVersionDialogOpen] = useState(false);
+  const [editingVersion, setEditingVersion] = useState<ProjectVersion | null>(null);
+  const [versionSaving, setVersionSaving] = useState(false);
+  const [publishVersionOpen, setPublishVersionOpen] = useState(false);
+  const [duplicateVersionOpen, setDuplicateVersionOpen] = useState(false);
+  const [versionActionSaving, setVersionActionSaving] = useState(false);
+  const [moveTaskDialogOpen, setMoveTaskDialogOpen] = useState(false);
+  const [taskToMove, setTaskToMove] = useState<{
+    taskId: string;
+    listId: string;
+    areaId: string | null;
+    versionId: string | null;
+  } | null>(null);
+  const [moveTaskSaving, setMoveTaskSaving] = useState(false);
+  const [copyTaskDialogOpen, setCopyTaskDialogOpen] = useState(false);
+  const [taskToCopy, setTaskToCopy] = useState<{
+    taskId: string;
+    listId: string;
+    areaId: string | null;
+    versionId: string | null;
+  } | null>(null);
+  const [copyTaskSaving, setCopyTaskSaving] = useState(false);
+  const projectDetailsLoadSeq = useRef(0);
+  const prevVersionSelectionKeyRef = useRef<string | null>(null);
 
-  // Carregar membros do backend
-  useEffect(() => {
-    const loadMembers = async () => {
-      try {
-        const membersData = await membersService.getMembers();
-        setMembers(membersData);
-      } catch (error) {
-        console.error('Erro ao carregar membros:', error);
-        // Continuar mesmo se falhar, usando array vazio
-        setMembers([]);
+  // Lista de projetos e equipes em cache – ao voltar na página os dados aparecem na hora
+  const { data: teamsData } = useQuery({
+    queryKey: ["teams"],
+    queryFn: () => teamsService.getTeams(),
+  });
+  const teams = teamsData ?? [];
+  const { data: projectsData, isPending: loading } = useQuery({
+    queryKey: [...PROJECTS_QUERY_KEY, teamFilter],
+    queryFn: async () => {
+      const [teamsList, apiProjects, clients] = await Promise.all([
+        teamsService.getTeams(),
+        projectsService.getProjects(teamFilter ?? undefined),
+        clientsService.getClients(),
+      ]);
+      const teamMap = new Map(teamsList.map((t) => [t.id, t.name]));
+      const clientNameById = new Map<string, string>();
+      for (const c of clients) {
+        const label = (c.name || c.company || c.email || "").trim();
+        if (label) clientNameById.set(c.id, label);
       }
-    };
-
-    loadMembers();
-  }, []);
-
-  // Carregar projetos do backend
-  useEffect(() => {
-    const loadProjects = async () => {
-      try {
-        setLoading(true);
-        const apiProjects = await projectsService.getProjects();
-        
-        // Converter projetos da API para o formato do frontend
-        const convertedProjects: Project[] = apiProjects.map(apiProject => ({
+      return apiProjects.map((apiProject) => {
+        const cid = apiProject.client_id ?? null;
+        const resolvedName =
+          (typeof apiProject.client_name === "string" && apiProject.client_name.trim()) ||
+          (cid ? clientNameById.get(cid) ?? null : null);
+        return {
           id: apiProject.id,
           name: apiProject.name,
           description: apiProject.description || "",
           status: apiProject.status,
           dueDate: apiProject.due_date || undefined,
-          members: [], // Será carregado separadamente se necessário
+          members: [],
           tags: apiProject.tags || [],
-          lists: [], // Será carregado quando o projeto for selecionado
+          lists: [],
           files: [],
           financeItems: [],
-          kanbanStage: apiProject.kanban_stage || "backlog"
-        }));
-        
-        setProjects(convertedProjects);
-      } catch (error) {
-        console.error('Erro ao carregar projetos:', error);
-        toast.error('Erro ao carregar projetos');
-      } finally {
-        setLoading(false);
-      }
-    };
+          kanbanStage: apiProject.kanban_stage || "backlog",
+          project_type: (apiProject.project_type as Project["project_type"]) || "simple",
+          client_id: cid,
+          clientName: resolvedName,
+          areas: [],
+          team_id: apiProject.team_id ?? null,
+          teamName: apiProject.team_id ? teamMap.get(apiProject.team_id) ?? null : null,
+          responsible_ids: apiProject.responsible_ids ?? [],
+          created_at: apiProject.created_at,
+          updated_at: apiProject.updated_at,
+        };
+      }) as Project[];
+    },
+    enabled: true,
+  });
+  const projects = projectsData ?? [];
+  const setProjects = (updater: Project[] | ((prev: Project[]) => Project[])) => {
+    queryClient.setQueryData<Project[]>(
+      [...PROJECTS_QUERY_KEY, teamFilter],
+      (prev) => (typeof updater === "function" ? updater(prev ?? []) : updater)
+    );
+  };
 
-    loadProjects();
+  const canImportProjectsCsv = canCreateProject(MODULE_PROJECTS);
+  const canImportProjectTasksXlsx = canCreateProject(MODULE_TASKS);
+  const currentSelectedVersion =
+    selectedProject && hasVersions(selectedProject.project_type) && versionSelection.versionId
+      ? projectVersions.find((version) => version.id === versionSelection.versionId) ?? null
+      : null;
+  const currentSelectedVersionFrozen = currentSelectedVersion?.frozen === true;
+
+  const handleProjectsCsvChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !canImportProjectsCsv) return;
+
+    setProjectsCsvImportRunning(true);
+    try {
+      const text = await file.text();
+      const [clients, memberRows] = await Promise.all([
+        clientsService.getClients(),
+        membersService.getMembers(),
+      ]);
+
+      const { prepared, skipped } = prepareProjectsFromCsv(text, memberRows, clients);
+      const failed: { line: number; message: string }[] = skipped.map((s) => ({
+        line: s.line,
+        message: s.reason,
+      }));
+      const warnings: string[] = [];
+      let created = 0;
+      const BATCH = 4;
+
+      for (let i = 0; i < prepared.length; i += BATCH) {
+        const chunk = prepared.slice(i, i + BATCH);
+        await Promise.all(
+          chunk.map(async (row) => {
+            try {
+              for (const w of row.warnings) warnings.push(w);
+              const p = row.payload;
+              await projectsService.createProject({
+                name: p.name,
+                status: p.status,
+                project_type: p.project_type,
+                due_date: p.due_date,
+                start_date: p.start_date,
+                end_date: p.end_date,
+                tags: p.tags,
+                client_id: p.client_id,
+                responsible_ids: p.responsible_ids,
+                description: p.description,
+                kanban_stage: null,
+              });
+              created++;
+            } catch (err) {
+              failed.push({
+                line: row.lineNumber,
+                message: err instanceof Error ? err.message : "Erro ao criar projeto",
+              });
+            }
+          }),
+        );
+      }
+
+      await queryClient.invalidateQueries({ queryKey: PROJECTS_QUERY_KEY });
+      setProjectsCsvImportSummary({ created, failed, warnings });
+
+      if (failed.length > 0 || warnings.length > 0 || created === 0) {
+        setProjectsCsvImportDialogOpen(true);
+      }
+
+      if (created > 0 && failed.length === 0 && warnings.length === 0) {
+        toast.success(`${created} projeto${created === 1 ? "" : "s"} importado${created === 1 ? "" : "s"}.`);
+      } else if (created > 0) {
+        toast.warning(`${created} criado(s); há falhas ou avisos — ver relatório.`);
+      } else if (skipped.length > 0 || failed.length > 0) {
+        toast.error("Nenhum projeto criado ou arquivo inválido.");
+      } else {
+        toast.message("Nenhuma linha válida para importar.");
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error(err instanceof Error ? err.message : "Falha ao ler o CSV.");
+    } finally {
+      setProjectsCsvImportRunning(false);
+    }
+  };
+
+  const refreshProjectBoardLists = async (projectId: string) => {
+    const projectForRefresh =
+      selectedProject?.id === projectId
+        ? selectedProject
+        : projects.find((p) => p.id === projectId);
+    const versionFilter =
+      projectForRefresh && hasVersions(projectForRefresh.project_type)
+        ? versionSelectionToTaskFilter(versionSelection, projectVersions)
+        : undefined;
+    const apiLists = await projectsService.getProjectLists(projectId);
+    const listsWithTasks = await Promise.all(
+      apiLists.map(async (apiList) => {
+        const apiTasks = await projectsService.getProjectTasks(apiList.id, versionFilter);
+        const tasks = mapApiProjectTasksToUiTasks(apiTasks, members, versionFilter);
+        return {
+          id: apiList.id,
+          name: apiList.name,
+          tasks,
+          order: apiList.order_position,
+        };
+      }),
+    );
+    setProjects((pall) =>
+      pall.map((p) => (p.id === projectId ? { ...p, lists: listsWithTasks } : p)),
+    );
+    setSelectedProject((prev) => {
+      if (!prev || prev.id !== projectId) return prev;
+      return { ...prev, lists: listsWithTasks };
+    });
+  };
+
+  const handleTasksXlsxChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    const listId = tasksImportListIdRef.current;
+    tasksImportListIdRef.current = null;
+    if (!file || !listId || !selectedProject || !canImportProjectTasksXlsx) return;
+
+    setTasksXlsxImportRunning(true);
+    try {
+      const memberRows = await membersService.getMembers();
+      const lower = file.name.toLowerCase();
+      const isCsv = lower.endsWith(".csv") || lower.endsWith(".txt");
+      const { prepared, skipped } = isCsv
+        ? prepareTasksFromProjectTasksCsv(await file.text(), memberRows)
+        : await prepareTasksFromProjectTasksXlsx(await file.arrayBuffer(), memberRows);
+      const failed: { line: number; message: string }[] = skipped.map((s) => ({
+        line: s.line,
+        message: s.reason,
+      }));
+      const warnings: string[] = [];
+      let created = 0;
+      const BATCH = 4;
+      const importVersionId = hasVersions(selectedProject.project_type)
+        ? versionIdForTaskCreate(versionSelection, projectVersions)
+        : undefined;
+
+      for (let i = 0; i < prepared.length; i += BATCH) {
+        const chunk = prepared.slice(i, i + BATCH);
+        await Promise.all(
+          chunk.map(async (row) => {
+            try {
+              for (const w of row.warnings) warnings.push(w);
+              const p = row.payload;
+              await projectsService.createProjectTask(listId, {
+                title: p.title,
+                status: p.status,
+                priority: p.priority,
+                due_date: p.due_date,
+                start_date: p.start_date,
+                assignee_id: p.assignee_id,
+                tags: p.tags,
+                version_id: importVersionId ?? null,
+              });
+              created++;
+            } catch (err) {
+              failed.push({
+                line: row.lineNumber,
+                message: err instanceof Error ? err.message : "Erro ao criar tarefa",
+              });
+            }
+          }),
+        );
+      }
+
+      await refreshProjectBoardLists(selectedProject.id);
+      setTasksXlsxImportSummary({ created, failed, warnings });
+
+      if (failed.length > 0 || warnings.length > 0 || created === 0) {
+        setTasksXlsxImportDialogOpen(true);
+      }
+
+      if (created > 0 && failed.length === 0 && warnings.length === 0) {
+        toast.success(`${created} tarefa${created === 1 ? "" : "s"} importada${created === 1 ? "" : "s"}.`);
+      } else if (created > 0) {
+        toast.warning(`${created} criada(s); há falhas ou avisos — ver relatório.`);
+      } else if (skipped.length > 0 || failed.length > 0) {
+        toast.error("Nenhuma tarefa criada ou arquivo inválido.");
+      } else {
+        toast.message("Nenhuma linha válida para importar.");
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error(err instanceof Error ? err.message : "Falha ao ler o arquivo.");
+    } finally {
+      setTasksXlsxImportRunning(false);
+    }
+  };
+
+  // Deep state: sincronizar painel da tarefa com URL (restaura ao navegar/atualizar)
+  useEffect(() => {
+    if (restoringFromUrlRef.current) return;
+    if (fullViewTask && selectedProject) {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set("task", fullViewTask.id);
+          next.set("project", selectedProject.id);
+          return next;
+        },
+        { replace: true }
+      );
+    } else if (!fullViewTask && searchParams.get("task")) {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete("task");
+          return next;
+        },
+        { replace: true }
+      );
+    }
+  }, [fullViewTask?.id, selectedProject?.id, searchParams, setSearchParams]);
+
+  // Restaurar painel a partir da URL ao carregar/selecionar projeto
+  useEffect(() => {
+    const taskId = searchParams.get("task");
+    const projectId = searchParams.get("project");
+    if (!taskId || !projectId || !selectedProject || selectedProject.id !== projectId) return;
+    if (fullViewTask?.id === taskId) return;
+    for (const list of selectedProject.lists ?? []) {
+      const task = list.tasks.find((t) => t.id === taskId);
+      if (task) {
+        restoringFromUrlRef.current = true;
+        setFullViewTask(
+          projectUITaskToUnified(task, {
+            listId: list.id,
+            projectId: selectedProject.id,
+            areaId: null,
+          })
+        );
+        setTimeout(() => {
+          restoringFromUrlRef.current = false;
+        }, 0);
+        break;
+      }
+    }
+  }, [searchParams, selectedProject, fullViewTask?.id]);
+
+  // Deep link: /projects?project=id ou /projetos/:projectId abre o projeto em modo detalhe
+  useEffect(() => {
+    const projectId = routeProjectId ?? searchParams.get("project");
+    if (!projectId || projects.length === 0) return;
+    if (selectedProject?.id === projectId) {
+      if (viewMode === "list") setViewMode("detail");
+      return;
+    }
+    const project = projects.find((p) => p.id === projectId);
+    if (project) {
+      setSelectedProject(project);
+      setViewMode("detail");
+      return;
+    }
+    Promise.all([projectsService.getProjectById(projectId), clientsService.getClients()])
+      .then(([apiProject, clients]) => {
+        setSelectedProject({
+          id: apiProject.id,
+          name: apiProject.name,
+          description: apiProject.description || "",
+          status: apiProject.status,
+          dueDate: apiProject.due_date || undefined,
+          members: [],
+          tags: apiProject.tags || [],
+          lists: [],
+          files: [],
+          financeItems: [],
+          kanbanStage: apiProject.kanban_stage || "backlog",
+          project_type: (apiProject.project_type as Project["project_type"]) || "simple",
+          client_id: apiProject.client_id ?? null,
+          clientName: resolveProjectClientDisplayName(apiProject, clients),
+          areas: apiProject.areas || [],
+          versions: apiProject.versions,
+          team_id: apiProject.team_id ?? null,
+          teamName: apiProject.team_id ? teams.find(t => t.id === apiProject.team_id)?.name ?? null : null,
+        });
+        setViewMode("detail");
+      })
+      .catch(() => toast.error("Projeto não encontrado"));
+  }, [routeProjectId, searchParams, projects, selectedProject?.id, viewMode, teams]);
+
+  useEffect(() => {
+    const tab = searchParams.get("tab");
+    if (tab === "financeiro" || tab === "finance") {
+      setActiveTab("finance");
+    } else if (tab === "documentos" || tab === "files") {
+      setActiveTab("files");
+    } else if (tab === "calendario" || tab === "calendar") {
+      setActiveTab("calendar");
+    }
+  }, [searchParams]);
+
+  // Membros em cache para carregamento rápido
+  const { data: membersData } = useQuery({
+    queryKey: ["members"],
+    queryFn: () => membersService.getMembers(),
+  });
+  useEffect(() => {
+    setMembers(membersData ?? []);
+  }, [membersData]);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(PROJECTS_VIEW_TYPE_KEY);
+      if (stored === "grid" || stored === "kanban" || stored === "list") {
+        setProjectsViewType(stored);
+      }
+    } catch {
+      /* ignore */
+    }
   }, []);
 
-  // Carregar listas e tarefas quando um projeto é selecionado
+  useEffect(() => {
+    try {
+      localStorage.setItem(PROJECTS_VIEW_TYPE_KEY, projectsViewType);
+    } catch {
+      /* ignore */
+    }
+  }, [projectsViewType]);
+
+  const canDeleteProject =
+    user?.can_manage_plan === true || user?.is_super_admin === true;
+
+  const openProjectFromCatalog = (project: Project) => {
+    setSelectedProject(project);
+    setViewMode("detail");
+    navigate(getProjectUrl(project.id));
+  };
+
+  const openProjectSettingsFromCatalog = (project: Project) => {
+    setSelectedProject(project);
+    setViewMode("detail");
+    navigate(getProjectUrl(project.id));
+    setProjectSettingsOpen(true);
+  };
+
+  const handleArchiveProjectFromCatalog = async (project: Project) => {
+    try {
+      await projectsService.updateProject(project.id, { status: "archived" });
+      setProjects((prev) =>
+        prev.map((p) => (p.id === project.id ? { ...p, status: "archived" } : p)),
+      );
+      await queryClient.invalidateQueries({ queryKey: PROJECTS_QUERY_KEY });
+      toast.success("Projeto arquivado");
+    } catch {
+      toast.error("Erro ao arquivar projeto");
+    }
+  };
+
+  const handleDeleteProjectFromCatalog = async (project: Project) => {
+    if (
+      !window.confirm(
+        `Excluir o projeto "${project.name}"? Esta ação não pode ser desfeita.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      await projectsService.deleteProject(project.id);
+      setProjects((prev) => prev.filter((p) => p.id !== project.id));
+      if (selectedProject?.id === project.id) {
+        setSelectedProject(null);
+        setViewMode("list");
+      }
+      await queryClient.invalidateQueries({ queryKey: PROJECTS_QUERY_KEY });
+      toast.success("Projeto excluído");
+    } catch {
+      toast.error("Erro ao excluir projeto");
+    }
+  };
+
+  // Em projetos com áreas, as abas Etapas/Tarefas não existem; manter aba válida (Documentos, Calendário ou Financeiro)
+  useEffect(() => {
+    if (!selectedProject) return;
+    if (hasAreas(selectedProject.project_type) && (activeTab === "board" || activeTab === "list")) {
+      setActiveTab("files");
+    }
+  }, [selectedProject?.id, selectedProject?.project_type]);
+
+  // Abrir home do projeto quando voltar da página de uma área (state.openProjectId)
+  useEffect(() => {
+    const openProjectId = (location.state as { openProjectId?: string } | null)?.openProjectId;
+    if (!openProjectId) return;
+    const openProject = async () => {
+      const fromList = projects.find((p) => p.id === openProjectId);
+      if (fromList) {
+        setSelectedProject(fromList);
+        setViewMode("detail");
+      } else {
+        try {
+          const [project, clients] = await Promise.all([
+            projectsService.getProjectById(openProjectId),
+            clientsService.getClients(),
+          ]);
+          const teamName = project.team_id && teams.length ? teams.find(t => t.id === project.team_id)?.name ?? null : null;
+          setSelectedProject({
+            id: project.id,
+            name: project.name,
+            description: project.description || "",
+            status: project.status,
+            dueDate: project.due_date || undefined,
+            members: [],
+            tags: project.tags || [],
+            lists: [],
+            files: [],
+            financeItems: [],
+            kanbanStage: project.kanban_stage || "backlog",
+            project_type: (project.project_type as Project["project_type"]) || "simple",
+            client_id: project.client_id ?? null,
+            clientName: resolveProjectClientDisplayName(project, clients),
+            areas: project.areas || [],
+            team_id: project.team_id ?? null,
+            teamName: teamName ?? null,
+          });
+          setViewMode("detail");
+        } catch (e) {
+          console.error(e);
+        }
+      }
+      navigate("/projects", { replace: true, state: {} });
+    };
+    openProject();
+  }, [location.state, navigate, projects]);
+
+  // Limpa tarefas do quadro ao trocar de versão (evita flash de tarefas da versão anterior)
+  useEffect(() => {
+    if (!selectedProject || hasAreas(selectedProject.project_type)) return;
+    const key = hasVersions(selectedProject.project_type)
+      ? versionSelectionKey(normalizeVersionSelection(versionSelection, projectVersions))
+      : versionSelectionKey(versionSelection);
+    if (prevVersionSelectionKeyRef.current != null && prevVersionSelectionKeyRef.current !== key) {
+      setSelectedProject((prev) =>
+        prev
+          ? {
+              ...prev,
+              lists: prev.lists.map((list) => ({ ...list, tasks: [] })),
+            }
+          : prev,
+      );
+    }
+    prevVersionSelectionKeyRef.current = key;
+  }, [versionSelection, selectedProject?.id, selectedProject?.project_type, projectVersions]);
+
+  // Carregar listas, tarefas, project_type e áreas quando um projeto é selecionado
   useEffect(() => {
     const loadProjectDetails = async () => {
       if (!selectedProject) return;
-      
-      // Verificar se já tem listas carregadas (evitar recarregar desnecessariamente)
-      const projectFromState = projects.find(p => p.id === selectedProject.id);
-      if (projectFromState && projectFromState.lists.length > 0) {
-        // Se o projeto já tem listas no estado, usar essas
-        if (selectedProject.lists.length === 0) {
-          setSelectedProject(projectFromState);
-        }
-        return;
-      }
+      const loadSeq = ++projectDetailsLoadSeq.current;
 
       try {
-        // Carregar listas do projeto
+        const [apiProjectFull, clients] = await Promise.all([
+          projectsService.getProjectById(selectedProject.id),
+          clientsService.getClients(),
+        ]);
+        const resolvedClientName = resolveProjectClientDisplayName(apiProjectFull, clients);
+        const projectType = (apiProjectFull.project_type as Project["project_type"]) || "simple";
+        const versionsList = apiProjectFull.versions ?? [];
+        let effectiveVersionSelection = versionSelection;
+        if (hasVersions(projectType)) {
+          setProjectVersions(versionsList);
+          if (
+            versionSelection.mode !== "all" &&
+            !(
+              versionSelection.mode === "version" &&
+              versionSelection.versionId &&
+              versionsList.some((version) => version.id === versionSelection.versionId && !version.archived_at)
+            )
+          ) {
+            effectiveVersionSelection = deriveInitialVersionSelection(versionsList);
+            setVersionSelection(effectiveVersionSelection);
+          }
+        } else {
+          setProjectVersions([]);
+        }
+        const versionFilter = hasVersions(projectType)
+          ? versionSelectionToTaskFilter(effectiveVersionSelection, versionsList)
+          : undefined;
+
+        // Projetos com áreas: não carregar listas/tarefas na tela principal (só na página da área)
+        if (hasAreas(projectType)) {
+          const areasList = apiProjectFull.areas || [];
+          const teamName = apiProjectFull.team_id && teams.length ? teams.find(t => t.id === apiProjectFull.team_id)?.name ?? null : null;
+          setSelectedProject({
+            ...selectedProject,
+            project_type: projectType,
+            client_id: apiProjectFull.client_id ?? null,
+            clientName: resolvedClientName,
+            areas: areasList,
+            versions: hasVersions(projectType) ? versionsList : undefined,
+            lists: [],
+            team_id: apiProjectFull.team_id ?? null,
+            teamName: teamName ?? null,
+          });
+          // Carregar progresso de tarefas por área para os cards
+          if (loadSeq !== projectDetailsLoadSeq.current) return;
+          if (areasList.length > 0) {
+            const progressMap: Record<string, AreaProgress> = {};
+            await Promise.all(
+              areasList.map(async (a: { id: string }) => {
+                try {
+                  const tasks = await projectsService.getProjectTasksByArea(
+                    selectedProject.id,
+                    a.id,
+                    versionFilter,
+                  );
+                  const versionId = versionFilter?.versionId;
+                  const scopedTasks =
+                    versionId != null
+                      ? tasks.filter((t) => t.version_id === versionId)
+                      : tasks;
+                  const completed = scopedTasks.filter((t) => t.status === "completed").length;
+                  progressMap[a.id] = { total: scopedTasks.length, completed };
+                } catch {
+                  progressMap[a.id] = { total: 0, completed: 0 };
+                }
+              })
+            );
+            if (loadSeq !== projectDetailsLoadSeq.current) return;
+            setAreaProgress(progressMap);
+          } else {
+            setAreaProgress({});
+          }
+          return;
+        }
+        setAreaProgress({});
+
         const apiLists = await projectsService.getProjectLists(selectedProject.id);
-        
-        // Carregar tarefas para cada lista
+
         const listsWithTasks = await Promise.all(
           apiLists.map(async (apiList) => {
-            const apiTasks = await projectsService.getProjectTasks(apiList.id);
-            
-            // Converter tarefas da API para o formato do frontend
-            const tasks: Task[] = apiTasks.map(apiTask => ({
-              id: apiTask.id,
-              title: apiTask.title,
-              description: apiTask.description || "",
-              status: apiTask.status as TaskStatus,
-              priority: apiTask.priority as any,
-              dueDate: apiTask.due_date || undefined,
-              assignee: apiTask.assignee_id ? members.find(m => m.id === apiTask.assignee_id) : undefined,
-              tags: apiTask.tags || [],
-              checklist: (apiTask.checklist || []).map((item: any, index: number) => ({
-                id: item.id || `checklist-${index}`,
-                text: item.text || item.title || "",
-                completed: item.completed || false
-              }))
-            }));
+            const apiTasks = await projectsService.getProjectTasks(apiList.id, versionFilter);
+            const tasks = mapApiProjectTasksToUiTasks(apiTasks, members, versionFilter);
 
             return {
               id: apiList.id,
@@ -165,10 +846,18 @@ const Projects = () => {
           })
         );
 
-        // Atualizar projeto selecionado com listas e tarefas
+        const teamName = apiProjectFull.team_id && teams.length ? teams.find(t => t.id === apiProjectFull.team_id)?.name ?? null : null;
+        if (loadSeq !== projectDetailsLoadSeq.current) return;
         setSelectedProject({
           ...selectedProject,
-          lists: listsWithTasks
+          project_type: (apiProjectFull.project_type as Project["project_type"]) || "simple",
+          client_id: apiProjectFull.client_id ?? null,
+          clientName: resolvedClientName,
+          areas: apiProjectFull.areas || [],
+          versions: hasVersions(projectType) ? versionsList : undefined,
+          lists: listsWithTasks,
+          team_id: apiProjectFull.team_id ?? null,
+          teamName: teamName ?? null,
         });
       } catch (error) {
         console.error('Erro ao carregar detalhes do projeto:', error);
@@ -177,73 +866,254 @@ const Projects = () => {
     };
 
     loadProjectDetails();
+  }, [selectedProject?.id, teams, versionSelection]);
+
+  useEffect(() => {
+    setProjectVersions([]);
+    setVersionSelection({ mode: "none" });
+    prevVersionSelectionKeyRef.current = null;
   }, [selectedProject?.id]);
 
-  // Funções para gestão de projetos
-  const handleCreateProject = async (event: React.FormEvent, data: ProjectFormData) => {
-    event.preventDefault();
-    
+  const reloadProjectVersions = async () => {
+    if (!selectedProject || !hasVersions(selectedProject.project_type)) return;
+    const versions = await projectsService.getProjectVersions(selectedProject.id, true);
+    setProjectVersions(versions);
+    setSelectedProject((prev) => (prev ? { ...prev, versions } : prev));
+    return versions;
+  };
+
+  const refreshAreaProgressMetrics = async (versionsOverride?: ProjectVersion[]) => {
+    if (!selectedProject?.id || !hasAreas(selectedProject.project_type)) return;
+    const areasList = selectedProject.areas ?? [];
+    if (areasList.length === 0) return;
+    const versionsList = versionsOverride ?? projectVersions;
+    const versionFilter = hasVersions(selectedProject.project_type)
+      ? versionSelectionToTaskFilter(versionSelection, versionsList)
+      : undefined;
+    const progressMap: Record<string, AreaProgress> = {};
+    await Promise.all(
+      areasList.map(async (a) => {
+        try {
+          const tasks = await projectsService.getProjectTasksByArea(
+            selectedProject.id,
+            a.id,
+            versionFilter,
+          );
+          const versionId = versionFilter?.versionId;
+          const scopedTasks =
+            versionId != null ? tasks.filter((t) => t.version_id === versionId) : tasks;
+          const completed = scopedTasks.filter((t) => t.status === "completed").length;
+          progressMap[a.id] = { total: scopedTasks.length, completed };
+        } catch {
+          progressMap[a.id] = { total: 0, completed: 0 };
+        }
+      }),
+    );
+    setAreaProgress(progressMap);
+  };
+
+  const refreshTaskDerivedMetrics = async () => {
+    if (!selectedProject) return;
+    if (hasVersions(selectedProject.project_type)) {
+      const versions = await reloadProjectVersions();
+      if (versions) await refreshAreaProgressMetrics(versions);
+    } else {
+      await refreshAreaProgressMetrics();
+    }
+  };
+
+  const handleSaveProjectVersion = async (payload: {
+    name: string;
+    description: string | null;
+    status: ProjectVersion["status"];
+    start_date: string | null;
+    due_date: string | null;
+    is_default?: boolean;
+  }) => {
+    if (!selectedProject) return;
+    setVersionSaving(true);
     try {
-      // Criar projeto no backend
-      const apiProject = await projectsService.createProject({
-        name: data.name,
-        description: data.description || null,
-        status: "active",
-        due_date: data.dueDate ? format(data.dueDate, 'yyyy-MM-dd') : null,
-        tags: data.tags || [],
-        kanban_stage: 'backlog'
-      });
-
-      // Criar listas padrão
-      const defaultLists = [
-        { name: "A Fazer", order_position: 0 },
-        { name: "Em Andamento", order_position: 1 },
-        { name: "Revisão", order_position: 2 },
-        { name: "Concluídos", order_position: 3 },
-      ];
-
-      const createdLists = await Promise.all(
-        defaultLists.map(list => 
-          projectsService.createProjectList(apiProject.id, list)
-        )
-      );
-
-      // Converter para formato do frontend
-      const newProject: Project = {
-        id: apiProject.id,
-        name: apiProject.name,
-        description: apiProject.description || "",
-        status: apiProject.status,
-        dueDate: apiProject.due_date || undefined,
-        members: data.members,
-        tags: apiProject.tags || [],
-        lists: createdLists.map(list => ({
-          id: list.id,
-          name: list.name,
-          tasks: [],
-          order: list.order_position
-        })),
-        files: data.files.map((file, index) => ({
-          id: `f-${Date.now()}-${index}`,
-          name: file.name,
-          type: file.type,
-          size: `${(file.size / 1024).toFixed(1)} KB`,
-          uploadedBy: members[0] || undefined,
-          uploadedAt: new Date().toISOString(),
-          url: URL.createObjectURL(file)
-        })),
-        financeItems: [],
-        kanbanStage: apiProject.kanban_stage || 'backlog'
-      };
-
-      setProjects([...projects, newProject]);
-      setSelectedProject(newProject);
-      setViewMode("detail");
-      setNewProjectDialogOpen(false);
-      toast.success("Projeto criado com sucesso!");
+      if (editingVersion) {
+        await projectsService.updateProjectVersion(selectedProject.id, editingVersion.id, payload);
+        toast.success("Versão atualizada");
+      } else {
+        const created = await projectsService.createProjectVersion(selectedProject.id, payload);
+        setVersionSelection({ mode: "version", versionId: created.id });
+        toast.success("Versão criada");
+      }
+      setVersionDialogOpen(false);
+      setEditingVersion(null);
+      await reloadProjectVersions();
     } catch (error) {
-      console.error('Erro ao criar projeto:', error);
-      toast.error('Erro ao criar projeto');
+      console.error(error);
+      toast.error("Erro ao salvar versão");
+    } finally {
+      setVersionSaving(false);
+    }
+  };
+
+  const handleArchiveProjectVersion = async (version: ProjectVersion) => {
+    if (!selectedProject) return;
+    setVersionSaving(true);
+    try {
+      await projectsService.archiveProjectVersion(selectedProject.id, version.id);
+      toast.success("Versão arquivada");
+      setVersionDialogOpen(false);
+      setEditingVersion(null);
+      if (versionSelection.mode === "version" && versionSelection.versionId === version.id) {
+        setVersionSelection(deriveInitialVersionSelection(projectVersions));
+      }
+      await reloadProjectVersions();
+    } catch (error) {
+      console.error(error);
+      toast.error("Erro ao arquivar versão");
+    } finally {
+      setVersionSaving(false);
+    }
+  };
+
+  const handleUnarchiveProjectVersion = async (version: ProjectVersion) => {
+    if (!selectedProject) return;
+    setVersionSaving(true);
+    try {
+      await projectsService.unarchiveProjectVersion(selectedProject.id, version.id);
+      toast.success("Versão restaurada");
+      setVersionDialogOpen(false);
+      setEditingVersion(null);
+      await reloadProjectVersions();
+    } catch (error) {
+      console.error(error);
+      toast.error("Erro ao desarquivar versão");
+    } finally {
+      setVersionSaving(false);
+    }
+  };
+
+  const handlePublishProjectVersion = async (payload: {
+    move_incomplete_to_version_id?: string | null;
+    archive_after_publish: boolean;
+    freeze_version: boolean;
+    generate_release_notes: boolean;
+  }) => {
+    if (!selectedProject || !currentSelectedVersion) return;
+    setVersionActionSaving(true);
+    try {
+      await projectsService.publishProjectVersion(selectedProject.id, currentSelectedVersion.id, payload);
+      toast.success("Versão publicada");
+      setPublishVersionOpen(false);
+      await reloadProjectVersions();
+    } catch (error) {
+      console.error(error);
+      toast.error("Erro ao publicar versão");
+    } finally {
+      setVersionActionSaving(false);
+    }
+  };
+
+  const handleDuplicateProjectVersion = async (payload: {
+    name: string;
+    copy_open_tasks: boolean;
+    copy_completed_tasks: boolean;
+    copy_checklists: boolean;
+  }) => {
+    if (!selectedProject || !currentSelectedVersion) return;
+    setVersionActionSaving(true);
+    try {
+      const created = await projectsService.duplicateProjectVersion(selectedProject.id, currentSelectedVersion.id, payload);
+      toast.success("Versão duplicada");
+      setVersionSelection({ mode: "version", versionId: created.id });
+      setDuplicateVersionOpen(false);
+      await reloadProjectVersions();
+    } catch (error) {
+      console.error(error);
+      toast.error("Erro ao duplicar versão");
+    } finally {
+      setVersionActionSaving(false);
+    }
+  };
+
+  const handleMoveProjectTask = async (payload: {
+    list_id: string;
+    version_id: string;
+    area_id: string | null;
+  }) => {
+    if (!taskToMove) return;
+    setMoveTaskSaving(true);
+    try {
+      await projectsService.moveProjectTask(taskToMove.taskId, payload);
+      toast.success("Tarefa transferida");
+      setMoveTaskDialogOpen(false);
+      setTaskToMove(null);
+      setFullViewTask(null);
+      if (selectedProject) {
+        const apiProjectFull = await projectsService.getProjectById(selectedProject.id);
+        const projectType = (apiProjectFull.project_type as Project["project_type"]) || "simple";
+        if (!hasAreas(projectType)) {
+          const versionFilter = hasVersions(projectType)
+            ? versionSelectionToTaskFilter(versionSelection, projectVersions)
+            : undefined;
+          const apiLists = await projectsService.getProjectLists(selectedProject.id);
+          const listsWithTasks = await Promise.all(
+            apiLists.map(async (apiList) => {
+              const apiTasks = await projectsService.getProjectTasks(apiList.id, versionFilter);
+              return {
+                id: apiList.id,
+                name: apiList.name,
+                tasks: mapApiProjectTasksToUiTasks(apiTasks, members, versionFilter),
+                order: apiList.order_position,
+              };
+            }),
+          );
+          setSelectedProject((prev) => (prev ? { ...prev, lists: listsWithTasks } : prev));
+        }
+      }
+    } catch (error) {
+      console.error(error);
+      toast.error("Erro ao transferir tarefa");
+    } finally {
+      setMoveTaskSaving(false);
+    }
+  };
+
+  const handleCopyProjectTask = async (payload: {
+    list_id: string;
+    version_id: string;
+    area_id: string | null;
+    copy_checklist: boolean;
+    copy_assignee: boolean;
+    copy_due_date: boolean;
+    copy_metadata: boolean;
+  }) => {
+    if (!taskToCopy) return;
+    setCopyTaskSaving(true);
+    try {
+      await projectsService.copyProjectTask(taskToCopy.taskId, payload);
+      toast.success("Tarefa copiada");
+      setCopyTaskDialogOpen(false);
+      setTaskToCopy(null);
+      if (selectedProject && !hasAreas(selectedProject.project_type)) {
+        const versionFilter = hasVersions(selectedProject.project_type)
+          ? versionSelectionToTaskFilter(versionSelection, projectVersions)
+          : undefined;
+        const apiLists = await projectsService.getProjectLists(selectedProject.id);
+        const listsWithTasks = await Promise.all(
+          apiLists.map(async (apiList) => {
+            const apiTasks = await projectsService.getProjectTasks(apiList.id, versionFilter);
+            return {
+              id: apiList.id,
+              name: apiList.name,
+              tasks: mapApiProjectTasksToUiTasks(apiTasks, members, versionFilter),
+              order: apiList.order_position,
+            };
+          }),
+        );
+        setSelectedProject((prev) => (prev ? { ...prev, lists: listsWithTasks } : prev));
+      }
+    } catch (error) {
+      console.error(error);
+      toast.error("Erro ao copiar tarefa");
+    } finally {
+      setCopyTaskSaving(false);
     }
   };
 
@@ -383,6 +1253,39 @@ const Projects = () => {
     }
   };
 
+  // Áreas do projeto (tipos areas e advanced)
+  const handleCreateArea = async (name: string) => {
+    if (!selectedProject) throw new Error("Projeto não selecionado");
+    const area = await projectsService.createProjectArea(selectedProject.id, { name });
+    toast.success("Área criada com sucesso!");
+    return area;
+  };
+  const handleUpdateArea = async (
+    areaId: string,
+    data: { name: string; responsible_ids?: string[]; team_ids?: string[] }
+  ) => {
+    const area = await projectsService.updateProjectArea(areaId, data);
+    toast.success("Área atualizada!");
+    return area;
+  };
+  const handleDeleteArea = async (areaId: string) => {
+    await projectsService.deleteProjectArea(areaId);
+    toast.success("Área excluída.");
+  };
+  const handleAreasChange = (areas: Project["areas"]) => {
+    if (!selectedProject) return;
+    const updated = { ...selectedProject, areas: areas ?? [] };
+    setSelectedProject(updated);
+    setProjects(projects.map((p) => (p.id === selectedProject.id ? updated : p)));
+    setAreaProgress((prev) => {
+      const next = { ...prev };
+      (areas ?? []).forEach((a) => {
+        if (!next[a.id]) next[a.id] = { total: 0, completed: 0 };
+      });
+      return next;
+    });
+  };
+
   // Mover projeto entre etapas no kanban
   const moveProject = async (projectId: string, newStageId: string) => {
     const projectToMove = projects.find(p => p.id === projectId);
@@ -407,76 +1310,42 @@ const Projects = () => {
     }
   };
 
-  // Funções para gestão de tarefas
-  const handleCreateTask = async (formData: FormData) => {
-    if (!selectedProject || !selectedListId) return;
-    
-    try {
-      // Obter dados do formulário
-      const title = formData.get('title') as string;
-      const description = formData.get('description') as string;
-      const priority = (formData.get('priority') as string) || "medium";
-      const dueDate = formData.get('dueDate') as string;
-      const assigneeId = formData.get('assignee') as string;
-      const tagsJson = formData.get('tags') as string;
-      const tags = tagsJson ? JSON.parse(tagsJson) : [];
-      
-      // Criar tarefa no backend
-      const apiTask = await projectsService.createProjectTask(selectedListId, {
-        title,
-        description: description || null,
-        status: "todo",
-        priority,
-        due_date: dueDate || null,
-        assignee_id: assigneeId || null,
-        tags: tags || [],
-        checklist: []
-      });
-      
-      // Encontrar o membro selecionado
-      let assignee;
-      if (assigneeId) {
-        assignee = members.find(m => m.id === assigneeId);
+  const applyNewProjectTask = (apiTask: ApiProjectTask, listId: string) => {
+    if (!selectedProject) return;
+    if (hasVersions(selectedProject.project_type)) {
+      const versionFilter = versionSelectionToTaskFilter(versionSelection, projectVersions);
+      if (versionFilter?.versionId && apiTask.version_id !== versionFilter.versionId) {
+        return;
       }
-      
-      // Converter para formato do frontend
-      const newTask: Task = {
-        id: apiTask.id,
-        title: apiTask.title,
-        description: apiTask.description || "",
-        status: apiTask.status as TaskStatus,
-        priority: apiTask.priority as any,
-        dueDate: apiTask.due_date || undefined,
-        assignee,
-        tags: apiTask.tags || [],
-        checklist: (apiTask.checklist || []).map((item: any, index: number) => ({
-          id: item.id || `checklist-${index}`,
-          text: item.text || item.title || "",
-          completed: item.completed || false
-        }))
-      };
-      
-      // Atualizar o projeto
-      const updatedProject = {
-        ...selectedProject,
-        lists: selectedProject.lists.map(list => {
-          if (list.id !== selectedListId) return list;
-          
-          return {
-            ...list,
-            tasks: [...list.tasks, newTask]
-          };
-        })
-      };
-      
-      setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
-      setSelectedProject(updatedProject);
-      setNewTaskDialogOpen(false);
-      toast.success("Tarefa criada com sucesso!");
-    } catch (error) {
-      console.error('Erro ao criar tarefa:', error);
-      toast.error('Erro ao criar tarefa');
     }
+    const assignee = apiTask.assignee_id
+      ? members.find((m) => m.id === apiTask.assignee_id)
+      : undefined;
+    const newTask: Task = {
+      id: apiTask.id,
+      title: apiTask.title,
+      description: apiTask.description || "",
+      status: apiTask.status as TaskStatus,
+      priority: apiTask.priority as Task["priority"],
+      dueDate: apiTask.due_date || undefined,
+      assignee,
+      tags: apiTask.tags || [],
+      checklist: (apiTask.checklist || []).map((item: any, index: number) => ({
+        id: item.id || `checklist-${index}`,
+        text: item.text || item.title || "",
+        completed: item.completed || false,
+      })),
+    };
+    const updatedProject = {
+      ...selectedProject,
+      lists: selectedProject.lists.map((list) => {
+        if (list.id !== listId) return list;
+        return { ...list, tasks: [...list.tasks, newTask] };
+      }),
+    };
+    setProjects(projects.map((p) => (p.id === selectedProject.id ? updatedProject : p)));
+    setSelectedProject(updatedProject);
+    void refreshTaskDerivedMetrics();
   };
 
   // Move task between lists
@@ -541,6 +1410,7 @@ const Projects = () => {
       // Update state
       setProjects(projects.map(p => p.id === selectedProject.id ? updatedProject : p));
       setSelectedProject(updatedProject);
+      void refreshTaskDerivedMetrics();
       
       toast.success(`Tarefa movida para ${targetList.name}`);
     } catch (error) {
@@ -603,6 +1473,7 @@ const Projects = () => {
           }
         }
       }
+      void refreshTaskDerivedMetrics();
     } catch (error) {
       console.error('Erro ao atualizar status da tarefa:', error);
       toast.error('Erro ao atualizar status da tarefa');
@@ -636,6 +1507,7 @@ const Projects = () => {
       }
       
       toast.success("Tarefa excluída com sucesso!");
+      void refreshTaskDerivedMetrics();
     } catch (error) {
       console.error('Erro ao deletar tarefa:', error);
       toast.error('Erro ao deletar tarefa');
@@ -702,6 +1574,7 @@ const Projects = () => {
       }
       
       toast.success("Tarefa atualizada com sucesso!");
+      void refreshTaskDerivedMetrics();
     } catch (error) {
       console.error('Erro ao atualizar tarefa:', error);
       toast.error('Erro ao atualizar tarefa');
@@ -768,6 +1641,7 @@ const Projects = () => {
           setSelectedTask({task: updatedTask, listId: selectedTask.listId});
         }
       }
+      void refreshTaskDerivedMetrics();
     } catch (error) {
       console.error('Erro ao atualizar checklist:', error);
       toast.error('Erro ao atualizar checklist');
@@ -895,6 +1769,137 @@ const Projects = () => {
     setTaskDetailOpen(true);
   };
 
+  // Atualizar tarefa a partir do TaskFullView (payload em formato API)
+  const handleFullViewUpdate = async (
+    taskId: string,
+    updates: Record<string, unknown>
+  ) => {
+    if (!selectedProject || !fullViewTask) return;
+    try {
+      const updateData: Record<string, unknown> = {};
+      if (updates.title !== undefined) updateData.title = updates.title;
+      if (updates.description !== undefined)
+        updateData.description = updates.description;
+      if (updates.status !== undefined) updateData.status = updates.status;
+      if (updates.priority !== undefined) updateData.priority = updates.priority;
+      if (updates.due_date !== undefined) updateData.due_date = updates.due_date;
+      if (updates.list_id !== undefined) updateData.list_id = updates.list_id;
+      if (updates.assignee_id !== undefined) updateData.assignee_id = updates.assignee_id;
+      if (updates.assignee_name !== undefined) updateData.assignee_name = updates.assignee_name;
+      if (updates.tags !== undefined) updateData.tags = updates.tags;
+      if (updates.custom_fields !== undefined) updateData.custom_fields = updates.custom_fields;
+      if (updates.checklist !== undefined) updateData.checklist = updates.checklist;
+      if (updates.start_date !== undefined) updateData.start_date = updates.start_date;
+      if (updates.start_time !== undefined) updateData.start_time = updates.start_time;
+      if (updates.end_time !== undefined) updateData.end_time = updates.end_time;
+      if (updates.estimated_effort_hours !== undefined) updateData.estimated_effort_hours = updates.estimated_effort_hours;
+      if (updates.estimated_story_points !== undefined) updateData.estimated_story_points = updates.estimated_story_points;
+      if (updates.watchers !== undefined) updateData.watchers = updates.watchers;
+      if (updates.visibility !== undefined) updateData.visibility = updates.visibility;
+      if (updates.billable !== undefined) updateData.billable = updates.billable;
+      if (updates.hourly_rate !== undefined) updateData.hourly_rate = updates.hourly_rate;
+      if (updates.budget_cap !== undefined) updateData.budget_cap = updates.budget_cap;
+      if (updates.recurrence_rule !== undefined) updateData.recurrence_rule = updates.recurrence_rule;
+      if (updates.meeting_location !== undefined) updateData.meeting_location = updates.meeting_location;
+      if (updates.meeting_link !== undefined) updateData.meeting_link = updates.meeting_link;
+      if (updates.severity !== undefined) updateData.severity = updates.severity;
+
+      if (Object.keys(updateData).length > 0) {
+        await projectsService.updateProjectTask(taskId, updateData);
+      }
+
+      const currentListId = fullViewTask.listId;
+      const targetListId = (updates.list_id as string) ?? currentListId;
+      const taskList = selectedProject.lists.find((l) => l.id === currentListId);
+      const task = taskList?.tasks.find((t) => t.id === taskId);
+      if (!task) return;
+
+      const updatedTask: Task = {
+        ...task,
+        title: (updates.title as string) ?? task.title,
+        description: (updates.description as string) ?? task.description,
+        status: (updates.status as Task["status"]) ?? task.status,
+        priority: (updates.priority as Task["priority"]) ?? task.priority,
+        dueDate: (updates.due_date as string) ?? task.dueDate,
+        tags: (updates.tags as string[]) ?? task.tags,
+        customFields: (updates.custom_fields as Record<string, unknown>) ?? task.customFields,
+        checklist: Array.isArray(updates.checklist)
+          ? (updates.checklist as { id: string; text: string; completed: boolean }[])
+          : task.checklist,
+      };
+
+      const updatedProject: Project = {
+        ...selectedProject,
+        lists: selectedProject.lists.map((list) => {
+          if (list.id === currentListId && currentListId === targetListId) {
+            return {
+              ...list,
+              tasks: list.tasks.map((t) =>
+                t.id === taskId ? updatedTask : t
+              ),
+            };
+          }
+          if (list.id === currentListId) {
+            return {
+              ...list,
+              tasks: list.tasks.filter((t) => t.id !== taskId),
+            };
+          }
+          if (list.id === targetListId) {
+            return {
+              ...list,
+              tasks: [...list.tasks, updatedTask],
+            };
+          }
+          return list;
+        }),
+      };
+
+      setProjects(projects.map((p) => (p.id === selectedProject.id ? updatedProject : p)));
+      setSelectedProject(updatedProject);
+      setFullViewTask((prev) =>
+        prev
+          ? {
+              ...prev,
+              title: updatedTask.title,
+              description: updatedTask.description ?? null,
+              status: updatedTask.status as UnifiedTask["status"],
+              priority: updatedTask.priority as UnifiedTask["priority"],
+              dueDate: (updates.due_date as string) ?? prev.dueDate ?? null,
+              tags: (updates.tags as string[]) ?? prev.tags ?? [],
+              customFields: (updates.custom_fields as Record<string, unknown>) ?? prev.customFields ?? {},
+              checklist: Array.isArray(updates.checklist) ? (updates.checklist as UnifiedTask["checklist"]) : (prev.checklist ?? []),
+              listId: targetListId,
+              clientName: (updates.client_name as string) ?? prev.clientName ?? null,
+              deal: (updates.deal as string) ?? prev.deal ?? null,
+              assigneeId: (updates.assignee_id as string) ?? prev.assigneeId ?? null,
+              assigneeName: (updates.assignee_name as string) ?? prev.assigneeName ?? null,
+              assigneeAvatar: (updates.assignee_name as string)
+                ? (updates.assignee_name as string).split(/\s+/).map((s) => s[0]).join("").toUpperCase().slice(0, 2)
+                : prev.assigneeAvatar ?? null,
+              startDate: (updates.start_date as string) ?? prev.startDate ?? null,
+              startTime: (updates.start_time as string) ?? prev.startTime ?? null,
+              endTime: (updates.end_time as string) ?? prev.endTime ?? null,
+              estimatedEffortHours: (updates.estimated_effort_hours as number) ?? prev.estimatedEffortHours ?? null,
+              estimatedStoryPoints: (updates.estimated_story_points as number) ?? prev.estimatedStoryPoints ?? null,
+              billable: (updates.billable as boolean) ?? prev.billable ?? false,
+              hourlyRate: (updates.hourly_rate as number) ?? prev.hourlyRate ?? null,
+              budgetCap: (updates.budget_cap as number) ?? prev.budgetCap ?? null,
+              recurrenceRule: updates.recurrence_rule ?? prev.recurrenceRule ?? null,
+              meetingLocation: (updates.meeting_location as string) ?? prev.meetingLocation ?? null,
+              meetingLink: (updates.meeting_link as string) ?? prev.meetingLink ?? null,
+              severity: (updates.severity as string) ?? prev.severity ?? null,
+            }
+          : null
+      );
+      toast.success("Tarefa atualizada");
+      void refreshTaskDerivedMetrics();
+    } catch (e) {
+      console.error(e);
+      toast.error("Erro ao atualizar tarefa");
+    }
+  };
+
   // Add function to update project
   const handleUpdateProject = (updatedProject: Project) => {
     const newProjects = projects.map(p => 
@@ -914,138 +1919,335 @@ const Projects = () => {
     }));
   };
 
+  // Função auxiliar para verificar se o texto precisa ser truncado
+  const needsTruncation = (text: string): boolean => {
+    if (!text) return false;
+    // Remove HTML tags para contar caracteres reais
+    const textWithoutHtml = text.replace(/<[^>]*>/g, '');
+    return textWithoutHtml.length > 100;
+  };
+
   // Renderização condicional da interface principal
   const renderProjectDetail = () => {
     if (!selectedProject) {
       return (
         <div className="flex flex-col items-center justify-center h-64">
           <p className="text-lg mb-4 text-muted-foreground">Selecione um projeto ou crie um novo</p>
-          <Button onClick={() => setNewProjectDialogOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            Criar Projeto
+          {canCreateProject(MODULE_PROJECTS) && (
+          <Button asChild>
+            <Link to="/projects/new">
+              <Plus className="mr-2 h-4 w-4" />
+              Criar Projeto
+            </Link>
           </Button>
+          )}
         </div>
       );
     }
 
     // Filtrar listas conforme necessário
     const filteredLists = getFilteredLists(selectedProject.lists);
+    const selectedVersion = currentSelectedVersion;
+    const selectedVersionFrozen = currentSelectedVersionFrozen;
+    const isAdvancedProject = selectedProject.project_type === "advanced";
+
+    const handleBackToProjects = () => {
+      if (routeProjectId) {
+        navigate("/projects", { replace: true });
+        return;
+      }
+      setViewMode("list");
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete("project");
+          next.delete("task");
+          return next;
+        },
+        { replace: true }
+      );
+    };
 
     return (
       <div>
-        <div className="mb-6">
-          <div className="flex items-start justify-between mb-4">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <Button 
-                  variant="outline" 
-                  size="icon" 
-                  onClick={() => setViewMode("list")}
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-                <h2 className="text-xl font-bold">{selectedProject.name}</h2>
-              </div>
-              <div className="flex flex-wrap gap-2 mt-1">
-                {selectedProject.tags && selectedProject.tags.map(tag => (
-                  <span key={tag} className="text-xs bg-muted px-2 py-0.5 rounded">
-                    {tag}
-                  </span>
-                ))}
-              </div>
-              <div className="mt-2" dangerouslySetInnerHTML={{ __html: sanitizeHtml(selectedProject.description) }} />
-            </div>
-            <div className="flex items-center gap-2">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button size="sm" variant="ghost">
-                    <MoreVertical className="h-4 w-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => setSaveAsTemplateOpen(true)}>
-                    <File className="h-4 w-4 mr-2" />
-                    Salvar como Modelo
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-              <Button size="sm" variant="secondary" onClick={() => setProjectSettingsOpen(true)}>
-                <Settings className="h-4 w-4 mr-1" />
-                Configurações do Projeto
-              </Button>
-            </div>
-          </div>
-        
-          <div className="mb-4 flex items-center">
-            <div className="flex items-center space-x-2">
-              <Switch 
-                id="hide-completed" 
-                checked={hideCompletedTasks}
-                onCheckedChange={setHideCompletedTasks}
-              />
-              <Label htmlFor="hide-completed">Ocultar tarefas concluídas</Label>
-            </div>
-          </div>
+        <div className="mb-4 space-y-3">
+          <ProjectHeader
+            project={selectedProject}
+            onBack={handleBackToProjects}
+            onSettings={async () => {
+              if (selectedProject && hasVersions(selectedProject.project_type)) {
+                await reloadProjectVersions();
+              }
+              setProjectSettingsOpen(true);
+            }}
+            onSaveAsTemplate={() => setSaveAsTemplateOpen(true)}
+            onNewVersion={
+              hasVersions(selectedProject.project_type)
+                ? () => {
+                    setEditingVersion(null);
+                    setVersionDialogOpen(true);
+                  }
+                : undefined
+            }
+          />
 
-          <div className="mb-6">
-            <Tabs 
-              defaultValue="board" 
-              value={activeTab}
+          {selectedProject.description ? (
+            <div className="rounded-xl border border-border/60 bg-muted/20 px-3 py-2.5">
+              <div
+                className={`text-sm text-muted-foreground ${
+                  expandedDescriptions[selectedProject.id] ? "" : "line-clamp-2"
+                }`}
+                style={
+                  !expandedDescriptions[selectedProject.id]
+                    ? {
+                        display: "-webkit-box",
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: "vertical",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        wordBreak: "break-word",
+                      }
+                    : { wordBreak: "break-word" }
+                }
+                dangerouslySetInnerHTML={{ __html: sanitizeHtml(selectedProject.description) }}
+              />
+              {needsTruncation(selectedProject.description) ? (
+                <button
+                  type="button"
+                  className="mt-2 inline-flex items-center text-xs text-primary hover:text-primary/80"
+                  onClick={() =>
+                    setExpandedDescriptions((prev) => ({
+                      ...prev,
+                      [selectedProject.id]: !prev[selectedProject.id],
+                    }))
+                  }
+                >
+                  {expandedDescriptions[selectedProject.id] ? (
+                    <>
+                      <ChevronUp className="mr-1 h-3 w-3" />
+                      Ler menos
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="mr-1 h-3 w-3" />
+                      Ler mais
+                    </>
+                  )}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+
+          {hasVersions(selectedProject.project_type) ? (
+            <Suspense fallback={null}>
+              <ProjectVersionControlPanel
+                projectId={selectedProject.id}
+                tenantId={user?.tenant_id ?? null}
+                versions={projectVersions}
+                selection={versionSelection}
+                selectedVersion={selectedVersion}
+                onSelectionChange={(selection) =>
+                  setVersionSelection(normalizeVersionSelection(selection, projectVersions))
+                }
+                onCreateVersion={() => {
+                  setEditingVersion(null);
+                  setVersionDialogOpen(true);
+                }}
+                onEditVersion={(version) => {
+                  setEditingVersion(version);
+                  setVersionDialogOpen(true);
+                }}
+                onPublish={() => setPublishVersionOpen(true)}
+                onDuplicate={() => setDuplicateVersionOpen(true)}
+                onUnfreeze={async () => {
+                  if (!selectedVersion) return;
+                  await projectsService.updateProjectVersion(selectedProject.id, selectedVersion.id, { frozen: false });
+                  toast.success("Versão descongelada");
+                  await reloadProjectVersions();
+                }}
+              />
+            </Suspense>
+          ) : null}
+        
+          {!hasAreas(selectedProject.project_type) && (
+            <div className="mb-4 flex items-center">
+              <div className="flex items-center space-x-2">
+                <Switch 
+                  id="hide-completed" 
+                  checked={hideCompletedTasks}
+                  onCheckedChange={setHideCompletedTasks}
+                />
+                <Label htmlFor="hide-completed">Ocultar tarefas concluídas</Label>
+              </div>
+            </div>
+          )}
+
+          <ProjectAreasSection
+            projectType={selectedProject.project_type}
+            projectId={selectedProject.id}
+            areas={selectedProject.areas ?? []}
+            areaProgress={areaProgress}
+            members={members}
+            teams={teams.map((t) => ({ id: t.id, name: t.name }))}
+            projectResponsibleIds={selectedProject.responsible_ids ?? []}
+            projectTeamIds={selectedProject.team_ids ?? (selectedProject.team_id ? [selectedProject.team_id] : [])}
+            onAreasChange={handleAreasChange}
+            onCreateArea={handleCreateArea}
+            onUpdateArea={handleUpdateArea}
+            onDeleteArea={handleDeleteArea}
+            versionQuery={
+              hasVersions(selectedProject.project_type)
+                ? versionSelectionToQuery(versionSelection)
+                : undefined
+            }
+          />
+
+          {hasAreas(selectedProject.project_type) && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              {isAdvancedProject
+                ? "Clique em uma área para ver e gerenciar as tarefas dessa release."
+                : (
+                    <>
+                      Clique em <strong>Abrir</strong> em uma área para ver e gerenciar as tarefas dessa área.
+                    </>
+                  )}
+            </p>
+          )}
+
+          <Collapsible defaultOpen={!isAdvancedProject} className={isAdvancedProject ? "mb-4 mt-2 rounded-2xl border border-border/70 bg-card/70 shadow-sm" : "mb-4 mt-2 rounded-xl border border-border/70 bg-card/80 shadow-sm"}>
+            <CollapsibleTrigger className={isAdvancedProject ? "flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-muted/25" : "flex w-full items-center justify-between px-3 py-2.5 text-left hover:bg-muted/30"}>
+              <div className="min-w-0">
+                <h3 className={isAdvancedProject ? "text-base font-semibold" : "text-sm font-semibold"}>
+                  {isAdvancedProject ? "Workspace do projeto" : hasAreas(selectedProject.project_type) ? "Complementos do projeto" : "Módulos do projeto"}
+                </h3>
+                <p className={isAdvancedProject ? "mt-0.5 text-xs text-muted-foreground" : "text-xs text-muted-foreground"}>
+                  {isAdvancedProject
+                    ? "Documentos, calendário e financeiro conectados à release ativa."
+                    : "Documentos, calendário e financeiro ficam separados da gestão de releases."}
+                </p>
+              </div>
+              <ChevronDown className="h-4 w-4 text-muted-foreground" />
+            </CollapsibleTrigger>
+            <CollapsibleContent className={isAdvancedProject ? "px-4 pb-4" : "px-3 pb-3"}>
+            {isAdvancedProject ? (
+              <div className="mb-3 grid gap-2 md:grid-cols-3">
+                <div className="rounded-xl border border-border/60 bg-background/60 p-3">
+                  <p className="text-xs font-medium text-muted-foreground">Documentos</p>
+                  <p className="mt-1 text-sm font-semibold">Drive do projeto</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {selectedProject.client_id ? "Upload, pastas e browser Google Drive." : "Vincule um cliente para ativar o Drive."}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-border/60 bg-background/60 p-3">
+                  <p className="text-xs font-medium text-muted-foreground">Calendário</p>
+                  <p className="mt-1 text-sm font-semibold">{selectedVersion?.due_date ? "Entrega prevista" : "Sem entrega definida"}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{selectedVersion?.due_date ?? "Defina prazos na release para montar a agenda."}</p>
+                </div>
+                <div className="rounded-xl border border-border/60 bg-background/60 p-3">
+                  <p className="text-xs font-medium text-muted-foreground">Financeiro</p>
+                  <p className="mt-1 text-sm font-semibold">{selectedProject.financeItems?.length ?? 0} lançamentos</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Resumo financeiro do projeto.</p>
+                </div>
+              </div>
+            ) : null}
+            <Tabs
+              defaultValue="board"
+              value={hasAreas(selectedProject.project_type) && (activeTab === "board" || activeTab === "list") ? "files" : activeTab}
               onValueChange={setActiveTab}
               className="w-full"
             >
-              <TabsList className="grid w-full grid-cols-5">
-                <TabsTrigger value="board">
-                  <Kanban className="h-4 w-4 mr-2" />
-                  Etapas
+              <TabsList className={`${isAdvancedProject ? "flex h-9 w-full justify-start overflow-x-auto rounded-full bg-muted/50 p-1" : `grid h-9 w-full ${hasAreas(selectedProject.project_type) ? 'grid-cols-3' : 'grid-cols-5'}`}`}>
+                {!hasAreas(selectedProject.project_type) && (
+                  <>
+                    <TabsTrigger value="board" className="h-7 text-xs">
+                      <Kanban className="mr-1.5 h-3.5 w-3.5" />
+                      Etapas
+                    </TabsTrigger>
+                    <TabsTrigger value="list" className="h-7 text-xs">
+                      <ClipboardList className="mr-1.5 h-3.5 w-3.5" />
+                      Tarefas
+                    </TabsTrigger>
+                  </>
+                )}
+                <TabsTrigger value="files" className={isAdvancedProject ? "h-7 rounded-full px-3 text-xs" : "h-7 text-xs"}>
+                  <File className="mr-1.5 h-3.5 w-3.5" />
+                  Documentos
                 </TabsTrigger>
-                <TabsTrigger value="list">
-                  <ClipboardList className="h-4 w-4 mr-2" />
-                  Tarefas
-                </TabsTrigger>
-                <TabsTrigger value="files">
-                  <File className="h-4 w-4 mr-2" />
-                  Arquivos
-                </TabsTrigger>
-                <TabsTrigger value="calendar">
-                  <CalendarIcon2 className="h-4 w-4 mr-2" />
+                <TabsTrigger value="calendar" className={isAdvancedProject ? "h-7 rounded-full px-3 text-xs" : "h-7 text-xs"}>
+                  <CalendarIcon2 className="mr-1.5 h-3.5 w-3.5" />
                   Calendário
                 </TabsTrigger>
-                <TabsTrigger value="finance">
-                  <DollarSign className="h-4 w-4 mr-2" />
+                <TabsTrigger value="finance" className={isAdvancedProject ? "h-7 rounded-full px-3 text-xs" : "h-7 text-xs"}>
+                  <DollarSign className="mr-1.5 h-3.5 w-3.5" />
                   Financeiro
                 </TabsTrigger>
               </TabsList>
-              
-              <TabsContent value="board">
-                <BoardView 
-                  lists={filteredLists}
-                  onToggleTaskStatus={toggleTaskStatus}
-                  onTaskClick={openTaskDetail}
-                  onAddTask={(listId) => {
-                    setSelectedListId(listId);
-                    setNewTaskDialogOpen(true);
-                  }}
-                  onEditList={(list) => {
-                    setEditingList(list);
-                    setEditListDialogOpen(true);
-                  }}
-                  onDeleteList={deleteList}
-                  onAddList={() => setNewListDialogOpen(true)}
-                  onMoveTask={moveTask}
-                />
-              </TabsContent>
-              
-              <TabsContent value="list">
-                <TaskListView 
-                  lists={filteredLists}
-                  onToggleTaskStatus={toggleTaskStatus}
-                  onTaskClick={openTaskDetail}
-                />
-              </TabsContent>
-              
+
+              {!hasAreas(selectedProject.project_type) && (
+                <>
+                  <TabsContent value="board">
+                    <BoardView
+                      lists={filteredLists}
+                      onToggleTaskStatus={toggleTaskStatus}
+                      onTaskClick={openTaskDetail}
+                      projectId={selectedProject.id}
+                      onOpenFull={setFullViewTask}
+                      onAddTask={(listId) => {
+                        if (selectedVersionFrozen) {
+                          toast.error("Versão congelada: não é possível criar tarefas.");
+                          return;
+                        }
+                        setSelectedListId(listId);
+                        setNewTaskDialogOpen(true);
+                      }}
+                      onEditList={(list) => {
+                        setEditingList(list);
+                        setEditListDialogOpen(true);
+                      }}
+                      onDeleteList={deleteList}
+                      importTasksDisabled={tasksXlsxImportRunning}
+                      onImportTasks={
+                        canImportProjectTasksXlsx
+                          ? (listId) => {
+                              tasksImportListIdRef.current = listId;
+                              tasksXlsxInputRef.current?.click();
+                            }
+                          : undefined
+                      }
+                      onAddList={() => setNewListDialogOpen(true)}
+                      onMoveTask={selectedVersionFrozen ? undefined : moveTask}
+                    />
+                  </TabsContent>
+                  <TabsContent value="list">
+                    <TaskListView
+                      lists={filteredLists}
+                      onToggleTaskStatus={toggleTaskStatus}
+                      onTaskClick={openTaskDetail}
+                      projectId={selectedProject.id}
+                      onOpenFull={setFullViewTask}
+                    />
+                  </TabsContent>
+                </>
+              )}
+
               <TabsContent value="files">
-                {selectedProject.files && selectedProject.files.length > 0 ? (
+                {isAdvancedProject ? (
+                  selectedProject.client_id ? (
+                    activeTab === "files" ? (
+                      <ProjectDriveWorkspace
+                        projectId={selectedProject.id}
+                        clientId={selectedProject.client_id}
+                        projectName={selectedProject.name}
+                        selectedVersion={selectedVersion}
+                        canUpload={canCreateProject(MODULE_PROJECTS)}
+                      />
+                    ) : null
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-border p-6 text-sm text-muted-foreground">
+                      Vincule este projeto a um cliente para usar a central Google Drive existente do CRM.
+                    </div>
+                  )
+                ) : selectedProject.files && selectedProject.files.length > 0 ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {selectedProject.files.map(file => (
                       <div key={file.id} className="border rounded-md p-4 flex flex-col">
@@ -1072,22 +2274,27 @@ const Projects = () => {
                   </div>
                 )}
               </TabsContent>
-              
+
               <TabsContent value="calendar">
-                <CalendarView 
-                  project={selectedProject}
-                  onTaskClick={openTaskDetail}
-                />
+                {isAdvancedProject && activeTab !== "calendar" ? null : (
+                  <CalendarView
+                    project={selectedProject}
+                    onTaskClick={openTaskDetail}
+                  />
+                )}
               </TabsContent>
-              
+
               <TabsContent value="finance">
-                <ProjectFinance 
-                  project={selectedProject} 
-                  onUpdateProject={handleUpdateProject} 
-                />
+                {isAdvancedProject && activeTab !== "finance" ? null : (
+                  <ProjectFinance
+                    project={selectedProject}
+                    onUpdateProject={handleUpdateProject}
+                  />
+                )}
               </TabsContent>
             </Tabs>
-          </div>
+            </CollapsibleContent>
+          </Collapsible>
         </div>
       </div>
     );
@@ -1095,52 +2302,204 @@ const Projects = () => {
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-6">
+      <input
+        ref={projectsCsvInputRef}
+        type="file"
+        accept=".csv,text/csv,.txt"
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden
+        onChange={handleProjectsCsvChange}
+      />
+      <input
+        ref={tasksXlsxInputRef}
+        type="file"
+        accept=".xlsx,.xls,.csv,.txt,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden
+        onChange={handleTasksXlsxChange}
+      />
+      {viewMode === "list" ? (
+        <>
+          <Sheet open={teamFilterSheetOpen} onOpenChange={setTeamFilterSheetOpen}>
+            <SheetContent
+              side="bottom"
+              className="max-h-[70vh] rounded-t-2xl px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-4 md:hidden"
+            >
+              <SheetHeader className="text-left">
+                <SheetTitle>Equipe</SheetTitle>
+              </SheetHeader>
+              <div className="mt-4">
+                <Select
+                  value={teamFilter ?? "all"}
+                  onValueChange={(v) => {
+                    setTeamFilter(v === "all" ? null : v);
+                  }}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Equipe" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todas as equipes</SelectItem>
+                    {teams.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        {t.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <SheetClose asChild>
+                <Button type="button" className="mt-4 w-full">
+                  Concluir
+                </Button>
+              </SheetClose>
+            </SheetContent>
+          </Sheet>
+          <div className="md:hidden sticky top-0 z-30 -mx-0.5 mb-6 border-b border-border/70 bg-background/95 px-0.5 pb-2 pt-1 backdrop-blur supports-[backdrop-filter]:bg-background/90">
+            <MobilePageHeader
+              title="Projetos"
+              secondaryActions={[
+                ...(canImportProjectsCsv
+                  ? [
+                      {
+                        icon: <Upload className="h-4 w-4" aria-hidden />,
+                        ariaLabel: "Importar projetos (CSV)",
+                        onClick: () => projectsCsvInputRef.current?.click(),
+                        disabled: projectsCsvImportRunning,
+                      },
+                    ]
+                  : []),
+                {
+                  icon: <ListIcon className="h-4 w-4" aria-hidden />,
+                  ariaLabel: "Vista em lista",
+                  onClick: () => setProjectsViewType("list"),
+                },
+                {
+                  icon: <Kanban className="h-4 w-4" aria-hidden />,
+                  ariaLabel: "Vista em kanban",
+                  onClick: () => setProjectsViewType("kanban"),
+                },
+                {
+                  icon: <LayoutGrid className="h-4 w-4" aria-hidden />,
+                  ariaLabel: "Vista em grade",
+                  onClick: () => setProjectsViewType("grid"),
+                },
+                {
+                  icon: <Users className="h-4 w-4" aria-hidden />,
+                  ariaLabel: "Filtrar por equipe",
+                  onClick: () => setTeamFilterSheetOpen(true),
+                },
+              ]}
+              primaryAction={
+                canCreateProject(MODULE_PROJECTS)
+                  ? { label: "Novo projeto", icon: <Plus className="h-4 w-4" aria-hidden />, href: "/projects/new" }
+                  : undefined
+              }
+            />
+          </div>
+        </>
+      ) : null}
+
+      <div
+        className={
+          viewMode === "list"
+            ? "mb-6 hidden md:flex md:items-center md:justify-between"
+            : "mb-6 flex items-center justify-between"
+        }
+      >
         <h1 className="text-2xl font-bold">Gerenciamento de Projetos</h1>
         {viewMode === "list" && (
-          <div className="flex items-center gap-2">
-            <div className="border rounded-md p-0.5 flex">
-              <Button 
-                variant={projectsViewType === "grid" ? "default" : "ghost"} 
-                size="sm" 
-                onClick={() => setProjectsViewType("grid")}
-                className="rounded-r-none"
+          <div className="flex items-center gap-2 flex-wrap">
+            <Select value={teamFilter ?? "all"} onValueChange={(v) => setTeamFilter(v === "all" ? null : v)}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="Equipe" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todas as equipes</SelectItem>
+                {teams.map((t) => (
+                  <SelectItem key={t.id} value={t.id}>
+                    {t.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="inline-flex rounded-md border bg-muted/40 p-0.5">
+              <Button
+                variant={projectsViewType === "list" ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setProjectsViewType("list")}
+                className="gap-1 rounded-r-none"
               >
-                <LayoutGrid className="h-4 w-4 mr-1" />
-                Grade
+                <ListIcon className="h-4 w-4" />
+                Lista
               </Button>
-              <Button 
-                variant={projectsViewType === "kanban" ? "default" : "ghost"} 
-                size="sm" 
+              <Button
+                variant={projectsViewType === "kanban" ? "default" : "ghost"}
+                size="sm"
                 onClick={() => setProjectsViewType("kanban")}
-                className="rounded-l-none"
+                className="gap-1 rounded-none border-x border-border/60"
               >
-                <Kanban className="h-4 w-4 mr-1" />
+                <Kanban className="h-4 w-4" />
                 Kanban
               </Button>
+              <Button
+                variant={projectsViewType === "grid" ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setProjectsViewType("grid")}
+                className="gap-1 rounded-l-none"
+              >
+                <LayoutGrid className="h-4 w-4" />
+                Grade
+              </Button>
             </div>
-            <Button onClick={() => setNewProjectDialogOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              Novo Projeto
-            </Button>
+            {canImportProjectsCsv && (
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                disabled={projectsCsvImportRunning}
+                aria-label="Importar projetos (CSV)"
+                title="Importar projetos (CSV)"
+                onClick={() => projectsCsvInputRef.current?.click()}
+              >
+                <Upload className="h-4 w-4" />
+              </Button>
+            )}
+            {canCreateProject(MODULE_PROJECTS) && (
+              <Button asChild>
+                <Link to="/projects/new">
+                  <Plus className="mr-2 h-4 w-4" />
+                  Novo Projeto
+                </Link>
+              </Button>
+            )}
           </div>
         )}
       </div>
 
       {/* Conteúdo principal */}
-      {loading ? (
+      {loading && projects.length === 0 ? (
         <div className="flex items-center justify-center h-64">
           <p className="text-muted-foreground">Carregando projetos...</p>
         </div>
       ) : viewMode === "list" ? (
         projectsViewType === "grid" ? (
-          <ProjectsListView 
+          <ProjectsGridView
             projects={projects}
-            onViewDetails={(project) => {
-              setSelectedProject(project);
-              setViewMode("detail");
-            }}
-            onNewProject={() => setNewProjectDialogOpen(true)}
+            onViewDetails={openProjectFromCatalog}
+            onNewProject={() => navigate("/projects/new")}
+          />
+        ) : projectsViewType === "list" ? (
+          <ProjectsListView
+            projects={projects}
+            members={members}
+            onOpen={openProjectFromCatalog}
+            onEdit={openProjectSettingsFromCatalog}
+            onArchive={handleArchiveProjectFromCatalog}
+            onDelete={canDeleteProject ? handleDeleteProjectFromCatalog : undefined}
+            canDelete={canDeleteProject}
           />
         ) : (
           <BoardView 
@@ -1156,11 +2515,8 @@ const Projects = () => {
             onAddList={() => setNewListDialogOpen(true)}
             isProjectView={true}
             projects={projects}
-            onProjectClick={(project) => {
-              setSelectedProject(project);
-              setViewMode("detail");
-            }}
-            onAddProject={() => setNewProjectDialogOpen(true)}
+            onProjectClick={openProjectFromCatalog}
+            onAddProject={() => navigate("/projects/new")}
             onMoveProject={moveProject}
           />
         )
@@ -1169,13 +2525,6 @@ const Projects = () => {
       )}
       
       {/* Diálogos */}
-      <NewProjectDialog 
-        open={newProjectDialogOpen}
-        onOpenChange={setNewProjectDialogOpen}
-        onSave={handleCreateProject}
-        availableMembers={members}
-      />
-      
       <NewListDialog
         open={newListDialogOpen}
         onOpenChange={setNewListDialogOpen}
@@ -1189,58 +2538,359 @@ const Projects = () => {
         onSave={handleEditList}
       />
       
-      <NewTaskDialog
-        open={newTaskDialogOpen}
-        onOpenChange={setNewTaskDialogOpen}
-        members={members}
-        onAddTask={handleCreateTask}
-        tagsInput={tagsInput}
-        setTagsInput={setTagsInput}
-        newTagText={newTagText}
-        setNewTagText={setNewTagText}
-      />
+      {selectedProject && selectedListId && newTaskDialogOpen ? (
+        <Suspense fallback={null}>
+          <TaskFormDialog
+            key={selectedListId}
+            open={newTaskDialogOpen}
+            onOpenChange={setNewTaskDialogOpen}
+            canSubmit={canCreateProject(MODULE_TASKS) && !currentSelectedVersionFrozen}
+            context={{
+              origin: "project",
+              projectId: selectedProject.id,
+              listId: selectedListId,
+              areaId: null,
+              versionId: hasVersions(selectedProject.project_type)
+                ? versionIdForTaskCreate(versionSelection, projectVersions)
+                : undefined,
+              projectName: selectedProject.name,
+              teams: teams.map((t) => ({ id: t.id, name: t.name })),
+            }}
+            onSuccess={(r) => {
+              if (r.origin === "project") applyNewProjectTask(r.apiTask, r.listId);
+            }}
+          />
+        </Suspense>
+      ) : null}
       
-      <TaskDetailDialog
-        open={taskDetailOpen}
-        onOpenChange={setTaskDetailOpen}
-        task={selectedTask?.task || null}
-        listId={selectedTask?.listId || null}
-        lists={selectedProject?.lists || []}
-        onToggleTaskStatus={toggleTaskStatus}
-        onToggleChecklistItem={toggleChecklistItem}
-        onAddChecklistItem={addChecklistItem}
-        onDeleteChecklistItem={deleteChecklistItem}
-        newChecklistItemText={newChecklistItemText}
-        setNewChecklistItemText={setNewChecklistItemText}
-        editMode={editingTask}
-        setEditMode={setEditingTask}
-        onUpdateTask={updateTask}
-      />
-      
-      {selectedProject && (
+      {taskDetailOpen ? (
+        <Suspense fallback={null}>
+          <TaskDetailDialog
+            open={taskDetailOpen}
+            onOpenChange={setTaskDetailOpen}
+            task={selectedTask?.task || null}
+            listId={selectedTask?.listId || null}
+            lists={selectedProject?.lists || []}
+            onToggleTaskStatus={toggleTaskStatus}
+            onToggleChecklistItem={toggleChecklistItem}
+            onAddChecklistItem={addChecklistItem}
+            onDeleteChecklistItem={deleteChecklistItem}
+            newChecklistItemText={newChecklistItemText}
+            setNewChecklistItemText={setNewChecklistItemText}
+            editMode={editingTask}
+            setEditMode={setEditingTask}
+            onUpdateTask={updateTask}
+          />
+        </Suspense>
+      ) : null}
+
+      {fullViewTask ? (
+        <Suspense fallback={null}>
+          <TaskSidePanel
+            task={fullViewTask}
+            open={!!fullViewTask}
+            onOpenChange={(open) => !open && setFullViewTask(null)}
+            listName={
+              fullViewTask && selectedProject
+                ? selectedProject.lists.find((l) => l.id === fullViewTask.listId)
+                    ?.name ?? null
+                : null
+            }
+            lists={
+              selectedProject?.lists?.map((l) => ({ id: l.id, name: l.name })) ?? []
+            }
+            members={members.map((m) => ({ id: m.id, name: m.name }))}
+            onUpdate={currentSelectedVersionFrozen ? undefined : handleFullViewUpdate}
+            onDelete={
+              fullViewTask && !currentSelectedVersionFrozen
+                ? (taskId) =>
+                    deleteTask(fullViewTask.listId, taskId).then(() =>
+                      setFullViewTask(null)
+                    )
+                : undefined
+            }
+            onToggleStatus={
+              fullViewTask && !currentSelectedVersionFrozen
+                ? (taskId) => {
+                    toggleTaskStatus(fullViewTask.listId, taskId);
+                    setFullViewTask((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            status:
+                              prev.status === "completed" ? "todo" : "completed",
+                          }
+                        : null
+                    );
+                  }
+                : undefined
+            }
+            onMoveToVersion={
+              fullViewTask &&
+              selectedProject &&
+              hasVersions(selectedProject.project_type) &&
+              !currentSelectedVersionFrozen
+                ? () => {
+                    setTaskToMove({
+                      taskId: fullViewTask.id,
+                      listId: fullViewTask.listId ?? "",
+                      areaId: fullViewTask.areaId ?? null,
+                      versionId: null,
+                    });
+                    setMoveTaskDialogOpen(true);
+                  }
+                : undefined
+            }
+            onCopyToVersion={
+              fullViewTask &&
+              selectedProject &&
+              hasVersions(selectedProject.project_type) &&
+              !currentSelectedVersionFrozen
+                ? () => {
+                    setTaskToCopy({
+                      taskId: fullViewTask.id,
+                      listId: fullViewTask.listId ?? "",
+                      areaId: fullViewTask.areaId ?? null,
+                      versionId: versionSelection.versionId ?? null,
+                    });
+                    setCopyTaskDialogOpen(true);
+                  }
+                : undefined
+            }
+          />
+        </Suspense>
+      ) : null}
+
+      {selectedProject && hasVersions(selectedProject.project_type) ? (
         <>
+          {versionDialogOpen ? (
+            <Suspense fallback={null}>
+              <ProjectVersionDialog
+                open={versionDialogOpen}
+                onOpenChange={setVersionDialogOpen}
+                version={editingVersion}
+                saving={versionSaving}
+                onSave={handleSaveProjectVersion}
+                onArchive={
+                  editingVersion && !editingVersion.archived_at ? handleArchiveProjectVersion : undefined
+                }
+                onUnarchive={
+                  editingVersion?.archived_at ? handleUnarchiveProjectVersion : undefined
+                }
+              />
+            </Suspense>
+          ) : null}
+          {publishVersionOpen ? (
+            <Suspense fallback={null}>
+              <ProjectPublishVersionDialog
+                open={publishVersionOpen}
+                onOpenChange={setPublishVersionOpen}
+                version={currentSelectedVersion}
+                versions={projectVersions}
+                saving={versionActionSaving}
+                onPublish={handlePublishProjectVersion}
+              />
+            </Suspense>
+          ) : null}
+          {duplicateVersionOpen ? (
+            <Suspense fallback={null}>
+              <ProjectDuplicateVersionDialog
+                open={duplicateVersionOpen}
+                onOpenChange={setDuplicateVersionOpen}
+                version={currentSelectedVersion}
+                saving={versionActionSaving}
+                onDuplicate={handleDuplicateProjectVersion}
+              />
+            </Suspense>
+          ) : null}
+          <MoveProjectTaskDialog
+            open={moveTaskDialogOpen}
+            onOpenChange={setMoveTaskDialogOpen}
+            versions={projectVersions}
+            areas={selectedProject.areas ?? []}
+            lists={selectedProject.lists}
+            currentListId={taskToMove?.listId ?? ""}
+            currentAreaId={taskToMove?.areaId}
+            currentVersionId={taskToMove?.versionId}
+            saving={moveTaskSaving}
+            onMove={handleMoveProjectTask}
+          />
+          <CopyProjectTaskDialog
+            open={copyTaskDialogOpen}
+            onOpenChange={setCopyTaskDialogOpen}
+            versions={projectVersions}
+            areas={selectedProject.areas ?? []}
+            lists={selectedProject.lists}
+            currentListId={taskToCopy?.listId ?? ""}
+            currentAreaId={taskToCopy?.areaId}
+            currentVersionId={taskToCopy?.versionId}
+            saving={copyTaskSaving}
+            onCopy={handleCopyProjectTask}
+          />
+        </>
+      ) : null}
+      
+      {selectedProject && projectSettingsOpen ? (
+        <Suspense fallback={null}>
           <ProjectSettingsDialog
             open={projectSettingsOpen}
             onOpenChange={setProjectSettingsOpen}
             project={selectedProject}
             members={members}
-            onSave={(updatedProject) => {
+            canDeleteProject={user?.can_manage_plan === true || user?.is_super_admin === true}
+            onDeleteProject={async () => {
+              await projectsService.deleteProject(selectedProject.id);
+              setProjects(projects.filter((p) => p.id !== selectedProject.id));
+              setSelectedProject(null);
+              setViewMode("list");
+              toast.success("Projeto excluído.");
+            }}
+            teams={teams}
+            versionsConfig={
+              hasVersions(selectedProject.project_type)
+                ? {
+                    versions: projectVersions,
+                    saving: versionSaving,
+                    onCreateVersion: () => {
+                      setEditingVersion(null);
+                      setVersionDialogOpen(true);
+                    },
+                    onEditVersion: (version) => {
+                      setEditingVersion(version);
+                      setVersionDialogOpen(true);
+                    },
+                    onArchiveVersion: handleArchiveProjectVersion,
+                    onUnarchiveVersion: handleUnarchiveProjectVersion,
+                  }
+                : undefined
+            }
+            onSave={async (updatedProject) => {
               setProjects(projects.map(p => 
                 p.id === selectedProject.id 
                   ? { ...p, ...updatedProject }
                   : p
               ));
               setSelectedProject({ ...selectedProject, ...updatedProject } as Project);
+              try {
+                await projectsService.updateProject(selectedProject.id, {
+                  name: updatedProject.name,
+                  description: updatedProject.description ?? null,
+                  status: updatedProject.status,
+                  due_date: updatedProject.dueDate ?? null,
+                  team_id: updatedProject.team_id ?? null,
+                  responsible_ids: updatedProject.responsible_ids,
+                  team_ids: updatedProject.team_ids,
+                });
+              } catch (e) {
+                console.error(e);
+                toast.error("Erro ao salvar configurações no servidor.");
+              }
             }}
           />
-          
+        </Suspense>
+      ) : null}
+
+      {selectedProject && saveAsTemplateOpen ? (
+        <Suspense fallback={null}>
           <SaveAsTemplateDialog
             open={saveAsTemplateOpen}
             onOpenChange={setSaveAsTemplateOpen}
             project={selectedProject}
           />
-        </>
-      )}
+        </Suspense>
+      ) : null}
+
+      <Dialog open={projectsCsvImportDialogOpen} onOpenChange={setProjectsCsvImportDialogOpen}>
+        <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Importação de projetos (CSV)</DialogTitle>
+            <DialogDescription>Resumo do ficheiro enviado.</DialogDescription>
+          </DialogHeader>
+          {projectsCsvImportSummary ? (
+            <div className="space-y-3 text-sm">
+              <p className="text-muted-foreground">
+                <span className="font-medium text-foreground">{projectsCsvImportSummary.created}</span>{" "}
+                projeto(s) criado(s).
+              </p>
+              {projectsCsvImportSummary.warnings.length > 0 ? (
+                <div>
+                  <p className="text-xs font-medium text-amber-800 dark:text-amber-200">Avisos</p>
+                  <ScrollArea className="mt-1 h-[220px] rounded-md border p-3 sm:h-[260px]">
+                    <ul className="list-inside list-disc space-y-1 pr-3 text-xs text-muted-foreground">
+                      {projectsCsvImportSummary.warnings.map((w, i) => (
+                        <li key={i}>{w}</li>
+                      ))}
+                    </ul>
+                  </ScrollArea>
+                </div>
+              ) : null}
+              {projectsCsvImportSummary.failed.length > 0 ? (
+                <ScrollArea className="h-[200px] rounded-md border p-3">
+                  <ul className="space-y-1.5 text-xs">
+                    {projectsCsvImportSummary.failed.map((f, i) => (
+                      <li key={`${f.line}-${i}`}>
+                        Linha {f.line}: {f.message}
+                      </li>
+                    ))}
+                  </ul>
+                </ScrollArea>
+              ) : null}
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" onClick={() => setProjectsCsvImportDialogOpen(false)}>
+              Fechar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={tasksXlsxImportDialogOpen} onOpenChange={setTasksXlsxImportDialogOpen}>
+        <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Importação de tarefas (Excel ou CSV)</DialogTitle>
+            <DialogDescription>
+              As tarefas foram adicionadas à etapa em que escolheu importar.
+            </DialogDescription>
+          </DialogHeader>
+          {tasksXlsxImportSummary ? (
+            <div className="space-y-3 text-sm">
+              <p className="text-muted-foreground">
+                <span className="font-medium text-foreground">{tasksXlsxImportSummary.created}</span>{" "}
+                tarefa(s) criada(s).
+              </p>
+              {tasksXlsxImportSummary.warnings.length > 0 ? (
+                <div>
+                  <p className="text-xs font-medium text-amber-800 dark:text-amber-200">Avisos</p>
+                  <ScrollArea className="mt-1 h-[220px] rounded-md border p-3 sm:h-[260px]">
+                    <ul className="list-inside list-disc space-y-1 pr-3 text-xs text-muted-foreground">
+                      {tasksXlsxImportSummary.warnings.map((w, i) => (
+                        <li key={i}>{w}</li>
+                      ))}
+                    </ul>
+                  </ScrollArea>
+                </div>
+              ) : null}
+              {tasksXlsxImportSummary.failed.length > 0 ? (
+                <ScrollArea className="h-[200px] rounded-md border p-3">
+                  <ul className="space-y-1.5 text-xs">
+                    {tasksXlsxImportSummary.failed.map((f, i) => (
+                      <li key={`${f.line}-${i}`}>
+                        Linha {f.line}: {f.message}
+                      </li>
+                    ))}
+                  </ul>
+                </ScrollArea>
+              ) : null}
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" onClick={() => setTasksXlsxImportDialogOpen(false)}>
+              Fechar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

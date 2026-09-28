@@ -9,6 +9,7 @@ lerna-debug.log*
 
 node_modules
 dist
+dist-landing
 dist-ssr
 *.local
 
@@ -17,6 +18,15 @@ dist-ssr
 .env.local
 .env.*.local
 packages/backend/.env
+
+# Uploads locais de mídia do catálogo (volume em produção)
+packages/backend/uploads/
+
+# Armazenamento local de media service / avatars (não versionar)
+packages/backend/storage/
+
+# Artefatos locais de debug/certificação billing (traces, labs)
+storage/debug/
 
 # Editor directories and files
 .vscode/*

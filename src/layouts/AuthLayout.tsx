@@ -1,41 +1,49 @@
-
+/**
+ * M5 S2 — Auth shell com marca Partner (host) ou Platform.
+ */
 import React from 'react';
+import { usePartnerBrand } from '@/contexts/PartnerBrandContext';
 
 interface AuthLayoutProps {
   children: React.ReactNode;
 }
 
 const AuthLayout = ({ children }: AuthLayoutProps) => {
+  const { displayName, tagline, logoUrl, isPartnerHost } = usePartnerBrand();
+
   return (
-    <div className="flex min-h-screen bg-crm-light">
-      <div className="hidden lg:block lg:w-1/2 bg-gradient-to-r from-crm-primary to-crm-accent">
-        <div className="flex items-center justify-center h-full p-12">
-          <div className="text-white">
-            <h1 className="text-4xl font-bold mb-6">MultiCRM</h1>
-            <p className="text-xl opacity-80 mb-8">Sistema completo de gestão para vendas e relacionamento com clientes.</p>
-            <div className="grid grid-cols-2 gap-6">
-              <div className="flex flex-col items-center p-6 bg-white bg-opacity-10 rounded-lg">
-                <div className="text-3xl font-bold mb-2">+ 50%</div>
-                <div className="text-sm opacity-80">Aumento em conversões</div>
+    <div className="flex min-h-[100dvh] flex-col bg-gradient-to-b from-background via-background to-muted/30 lg:flex-row lg:bg-crm-light">
+      <div className="relative hidden shrink-0 lg:flex lg:min-h-[100dvh] lg:w-1/2 lg:bg-gradient-to-br lg:from-crm-primary lg:to-crm-accent">
+        <div className="flex h-full w-full flex-col justify-center p-10 xl:p-14">
+          <div className="max-w-lg text-white">
+            {logoUrl ? (
+              <img
+                src={logoUrl}
+                alt=""
+                className="mb-6 max-h-14 w-auto max-w-[220px] object-contain"
+              />
+            ) : null}
+            <h1 className="font-display text-3xl font-bold tracking-tight xl:text-4xl">
+              {displayName}
+            </h1>
+            <p className="mt-4 text-lg leading-relaxed text-white/85">{tagline}</p>
+            {!isPartnerHost ? (
+              <div className="mt-10 grid grid-cols-2 gap-4 text-sm">
+                <div className="rounded-xl border border-white/15 bg-white/10 p-4 backdrop-blur-sm">
+                  <div className="text-2xl font-bold">+50%</div>
+                  <div className="mt-1 text-white/75">Conversões</div>
+                </div>
+                <div className="rounded-xl border border-white/15 bg-white/10 p-4 backdrop-blur-sm">
+                  <div className="text-2xl font-bold">−30%</div>
+                  <div className="mt-1 text-white/75">Ciclo de vendas</div>
+                </div>
               </div>
-              <div className="flex flex-col items-center p-6 bg-white bg-opacity-10 rounded-lg">
-                <div className="text-3xl font-bold mb-2">- 30%</div>
-                <div className="text-sm opacity-80">Redução no ciclo de vendas</div>
-              </div>
-              <div className="flex flex-col items-center p-6 bg-white bg-opacity-10 rounded-lg">
-                <div className="text-3xl font-bold mb-2">+ 45%</div>
-                <div className="text-sm opacity-80">Eficiência em processos</div>
-              </div>
-              <div className="flex flex-col items-center p-6 bg-white bg-opacity-10 rounded-lg">
-                <div className="text-3xl font-bold mb-2">+ 200%</div>
-                <div className="text-sm opacity-80">ROI no primeiro ano</div>
-              </div>
-            </div>
+            ) : null}
           </div>
         </div>
       </div>
-      <div className="w-full lg:w-1/2 flex items-center justify-center p-6">
-        <div className="w-full max-w-md">
+      <div className="flex min-h-[100dvh] flex-1 flex-col lg:justify-center lg:overflow-y-auto lg:p-8">
+        <div className="flex w-full flex-1 flex-col px-4 pb-[max(5.5rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] sm:px-6 lg:mx-auto lg:max-w-md lg:justify-center lg:pb-8 lg:pt-8">
           {children}
         </div>
       </div>

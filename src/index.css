@@ -49,44 +49,56 @@
     --sidebar-border: 220 13% 91%;
 
     --sidebar-ring: 217.2 91.2% 59.8%;
+
+    /* Chat flutuante (desktop): canto inferior direito — Messenger-like */
+    --floating-chat-bottom: 16px;
+    --floating-chat-right: 24px;
+
+    /* Desktop /chat: altura útil = 100dvh - topbar - offset + extra (alinhar base ao padding do main). */
+    --app-topbar-height: 5.5rem;
+    --chat-page-offset: 0rem;
+    /* Compensa folga inferior (~padding md:pb-6 do main parcialmente absorvida pelo -m-6). Afinar 0.5–1.5rem se preciso. */
+    --chat-extra-height: 1rem;
   }
 
+  /* Dark: superfícies / profundidade inspiradas na landing (.landing-page); primária = azul PainelCRM (#2563eb) */
   .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
+    --background: 222 47% 6%;
+    --foreground: 210 40% 96%;
 
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
+    --card: 222 44% 9%;
+    --card-foreground: 210 40% 96%;
 
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
+    --popover: 222 44% 9%;
+    --popover-foreground: 210 40% 96%;
 
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
+    --primary: 221 83% 53%;
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
+    --secondary: 222 30% 14%;
+    --secondary-foreground: 210 40% 90%;
 
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
+    --muted: 222 30% 14%;
+    --muted-foreground: 215 20% 55%;
 
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
+    --accent: 222 30% 16%;
+    --accent-foreground: 210 40% 96%;
 
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 224.3 76.3% 48%;
+    --border: 222 30% 18%;
+    --input: 222 30% 18%;
+    --ring: 221 83% 53%;
+
+    --sidebar-background: 222 44% 8%;
+    --sidebar-foreground: 210 40% 92%;
+    --sidebar-primary: 221 83% 53%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --sidebar-accent: 222 30% 17%;
+    --sidebar-accent-foreground: 210 40% 96%;
+    --sidebar-border: 222 30% 17%;
+    --sidebar-ring: 221 83% 53%;
   }
 }
 
@@ -95,7 +107,118 @@
     @apply border-border;
   }
 
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
   body {
     @apply bg-background text-foreground;
+    max-width: 100%;
+    overflow-x: hidden;
+    min-height: 100dvh;
+    min-height: 100vh;
   }
+
+  #root {
+    max-width: 100%;
+    overflow-x: hidden;
+    min-height: 100dvh;
+    min-height: 100vh;
+  }
+
+  /*
+   * Desktop: overflow-x hidden em html/body/#root força overflow-y ≠ visible
+   * (CSS overflow pairing) e cria containing block — position:sticky deixa de
+   * acompanhar o scroll da página. Em lg+ liberamos o eixo X; páginas com
+   * conteúdo largo devem usar overflow-x-auto localmente.
+   */
+  @media (min-width: 1024px) {
+    html,
+    body,
+    #root {
+      overflow-x: visible;
+    }
+  }
+}
+
+/* iOS/Safari: evita zoom no foco quando < 16px; reforça inputs que ainda usam text-sm */
+@media (max-width: 768px) {
+  input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not(
+      [type="range"]
+    ):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="image"]):not(
+      [type="color"]
+    ),
+  textarea,
+  select,
+  [contenteditable="true"] {
+    font-size: 16px !important;
+  }
+}
+
+@layer utilities {
+  @keyframes floating-chat-minimized-pulse {
+    0% {
+      box-shadow: 0 0 0 0 hsl(var(--primary) / 0.35);
+    }
+    70% {
+      box-shadow: 0 0 0 10px hsl(var(--primary) / 0);
+    }
+    100% {
+      box-shadow: 0 0 0 0 hsl(var(--primary) / 0);
+    }
+  }
+
+  .floating-chat-minimized-pulse {
+    animation: floating-chat-minimized-pulse 1.1s ease-out 2;
+  }
+
+  /** Kanban: destaque breve ao receber mensagem (combina com badge de não lidas). */
+  @keyframes kanban-card-unread-attn {
+    0%,
+    100% {
+      box-shadow:
+        0 1px 2px 0 rgb(0 0 0 / 0.05),
+        0 0 0 0 rgb(59 130 246 / 0);
+    }
+    35% {
+      box-shadow:
+        0 1px 2px 0 rgb(0 0 0 / 0.06),
+        0 0 0 2px rgb(59 130 246 / 0.28);
+    }
+  }
+
+  .animate-kanban-card-unread-attn {
+    animation: kanban-card-unread-attn 3.2s ease-out 1;
+  }
+
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    word-break: break-word;
+  }
+  
+  .line-clamp-2 > * {
+    display: inline;
+  }
+}
+
+/* SystemRichEditor: placeholder e conteúdo */
+.system-rich-editor-content .tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: hsl(var(--muted-foreground));
+  pointer-events: none;
+  height: 0;
+}
+.system-rich-editor-content .tiptap pre {
+  @apply rounded-md bg-muted px-3 py-2 text-sm;
+}
+.system-rich-editor-content .tiptap blockquote {
+  @apply border-l-4 border-muted-foreground/30 pl-4 italic text-muted-foreground;
 }

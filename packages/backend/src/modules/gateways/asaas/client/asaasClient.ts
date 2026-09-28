@@ -1,0 +1,583 @@
+/**
+ * Cliente HTTP para a API Asaas v3.
+ * Timeout configurável (padrão 30s — sandbox costuma ser mais lento que 10s).
+ * Retry 2x em timeout/5xx: cada tentativa usa novo AbortController (evita reusar signal já abortado).
+ */
+import type {
+  AsaasConfig,
+  AsaasCustomerRequest,
+  AsaasCustomerResponse,
+  AsaasIdentificationFieldResponse,
+  AsaasPaymentRequest,
+  AsaasPaymentResponse,
+  AsaasPaymentUpdateRequest,
+  AsaasPixQrCodeResponse,
+  AsaasSubscriptionCreateRequest,
+  AsaasSubscriptionCreditCardUpdateRequest,
+  AsaasSubscriptionResponse,
+  AsaasSubscriptionUpdateRequest,
+} from '../asaasTypes.js';
+
+/** Sandbox e sequência de chamadas (ex.: createPayment + getPixQrCode) precisam de folga; timeouts muito baixos geram AbortError. */
+const MIN_HTTP_TIMEOUT_MS = 20_000;
+const DEFAULT_HTTP_TIMEOUT_MS = 40_000;
+
+function defaultHttpTimeoutMs(): number {
+  const raw = process.env.ASAAS_HTTP_TIMEOUT_MS;
+  if (raw != null && raw.trim() !== '') {
+    const n = parseInt(raw, 10);
+    if (Number.isFinite(n) && n >= 5_000 && n <= 120_000) {
+      return Math.max(n, MIN_HTTP_TIMEOUT_MS);
+    }
+  }
+  return DEFAULT_HTTP_TIMEOUT_MS;
+}
+
+/** Timeout/abort do fetch (Node DOMException nem sempre passa em instanceof Error). */
+export function isAbortLikeError(e: unknown): boolean {
+  if (e == null || typeof e !== 'object') return false;
+  const name = 'name' in e ? String((e as { name?: string }).name) : '';
+  return name === 'AbortError';
+}
+
+const HTTP_TIMEOUT_MS = defaultHttpTimeoutMs();
+/** Cartão / Assinatura: documentação Asaas recomenda timeout ≥ 60s para evitar duplicidade. */
+const PAY_WITH_CARD_TIMEOUT_MS = 65_000;
+const SUBSCRIPTION_TIMEOUT_MS = 65_000;
+const HTTP_RETRY_ATTEMPTS = 2;
+const ASAAS_USER_AGENT = process.env.ASAAS_USER_AGENT?.trim() || 'PainelCRM/1.0';
+
+function getBaseUrlFromEnv(): string {
+  const env = process.env.ASAAS_ENV || 'sandbox';
+  if (env === 'production') return 'https://api.asaas.com/v3';
+  return 'https://api-sandbox.asaas.com/v3';
+}
+
+function getBaseUrl(config?: AsaasConfig | null): string {
+  if (config?.base_url) return config.base_url;
+  if (config?.env === 'production') return 'https://api.asaas.com/v3';
+  if (config?.env === 'sandbox') return 'https://api-sandbox.asaas.com/v3';
+  return getBaseUrlFromEnv();
+}
+
+function getApiKey(config?: AsaasConfig | null): string | undefined {
+  if (config?.api_key) return config.api_key;
+  return process.env.ASAAS_API_KEY;
+}
+
+function isRetryable(status: number): boolean {
+  return status >= 500 && status < 600;
+}
+
+type RequestOptions = {
+  timeoutMs?: number;
+  /** Retries só para 5xx (comportamento atual). */
+  maxRetries?: number;
+};
+
+export interface AsaasCreateWebhookRequest {
+  name: string;
+  url: string;
+  email?: string;
+  enabled?: boolean;
+  interrupted?: boolean;
+  apiVersion?: number;
+  authToken?: string;
+  sendType?: 'SEQUENTIALLY' | 'NON_SEQUENTIALLY';
+  events: string[];
+}
+
+export interface AsaasWebhookResponse {
+  id: string;
+  name?: string;
+  url?: string;
+  email?: string;
+  enabled?: boolean;
+  interrupted?: boolean;
+  authToken?: string;
+  sendType?: string;
+  events?: string[];
+  [key: string]: unknown;
+}
+
+export interface AsaasListWebhooksResponse {
+  data?: AsaasWebhookResponse[];
+  [key: string]: unknown;
+}
+
+async function request<T>(
+  method: string,
+  path: string,
+  body?: object,
+  config?: AsaasConfig | null,
+  options?: RequestOptions
+): Promise<T> {
+  const apiKey = getApiKey(config);
+  if (!apiKey) throw new Error('API key Asaas não configurada');
+  const baseUrl = getBaseUrl(config);
+  const url = `${baseUrl}${path}`;
+  const timeoutMs = options?.timeoutMs ?? HTTP_TIMEOUT_MS;
+  const maxRetries = options?.maxRetries ?? HTTP_RETRY_ATTEMPTS;
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          'User-Agent': ASAAS_USER_AGENT,
+          access_token: apiKey,
+        },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      const text = await res.text();
+      if (!res.ok) {
+        if (attempt < maxRetries && isRetryable(res.status)) {
+          lastError = new Error(`Asaas API ${res.status}: ${text}`);
+          continue;
+        }
+        throw new Error(`Asaas API ${res.status}: ${text}`);
+      }
+      if (res.status === 204 || text === '') return undefined as T;
+      return JSON.parse(text) as T;
+    } catch (e: unknown) {
+      clearTimeout(timeoutId);
+      const isAbort = isAbortLikeError(e);
+      const isRetryableErr = isAbort || (e instanceof Error && e.message.includes('5'));
+      if (attempt < maxRetries && isRetryableErr) {
+        lastError = e instanceof Error ? e : new Error(String(e));
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastError ?? new Error('Asaas API request failed');
+}
+
+export async function createCustomer(
+  data: AsaasCustomerRequest,
+  config?: AsaasConfig | null
+): Promise<AsaasCustomerResponse> {
+  return request<AsaasCustomerResponse>('POST', '/customers', data, config);
+}
+
+export async function getCustomer(
+  customerId: string,
+  config?: AsaasConfig | null
+): Promise<AsaasCustomerResponse | null> {
+  try {
+    return await request<AsaasCustomerResponse>('GET', `/customers/${customerId}`, undefined, config);
+  } catch (e: unknown) {
+    if (isAbortLikeError(e)) return null;
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes('404')) return null;
+    throw e;
+  }
+}
+
+export async function updateCustomer(
+  customerId: string,
+  data: AsaasCustomerRequest,
+  config?: AsaasConfig | null
+): Promise<AsaasCustomerResponse> {
+  return request<AsaasCustomerResponse>(
+    'PUT',
+    `/customers/${encodeURIComponent(customerId)}`,
+    data,
+    config
+  );
+}
+
+export async function createPayment(
+  data: AsaasPaymentRequest,
+  config?: AsaasConfig | null
+): Promise<AsaasPaymentResponse> {
+  return request<AsaasPaymentResponse>('POST', '/payments', data, config);
+}
+
+export async function updatePayment(
+  paymentId: string,
+  data: AsaasPaymentUpdateRequest,
+  config?: AsaasConfig | null
+): Promise<AsaasPaymentResponse> {
+  return request<AsaasPaymentResponse>(
+    'PUT',
+    `/payments/${encodeURIComponent(paymentId)}`,
+    data,
+    config
+  );
+}
+
+export async function getPayment(
+  paymentId: string,
+  config?: AsaasConfig | null
+): Promise<AsaasPaymentResponse | null> {
+  try {
+    return await request<AsaasPaymentResponse>('GET', `/payments/${paymentId}`, undefined, config);
+  } catch (e: unknown) {
+    if (isAbortLikeError(e)) return null;
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes('404')) return null;
+    throw e;
+  }
+}
+
+/**
+ * Exclui/cancela cobrança no Asaas (DELETE /v3/payments/:id).
+ * Retorna { deleted: true, id } em sucesso; 404 se já não existir.
+ */
+export async function deletePayment(
+  paymentId: string,
+  config?: AsaasConfig | null
+): Promise<{ deleted: boolean; id: string } | null> {
+  try {
+    return await request<{ deleted: boolean; id: string }>('DELETE', `/payments/${paymentId}`, undefined, config);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes('404')) return null;
+    throw e;
+  }
+}
+
+/**
+ * Obtém QR Code PIX para um pagamento (obrigatório para PIX: POST /payments não retorna QR).
+ * GET /v3/payments/{id}/pixQrCode
+ */
+/**
+ * QR Code PIX pode não existir no instante seguinte ao POST /payments (pixQrCodeId null).
+ * Nesse caso o Asaas costuma responder 400 com code invalid_action até o QR estar pronto.
+ */
+function isPixQrNotYetAvailableError(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (!msg.includes('400')) return false;
+  return msg.includes('invalid_action') || msg.includes('not_yet_available');
+}
+
+export async function getPixQrCode(
+  paymentId: string,
+  config?: AsaasConfig | null
+): Promise<AsaasPixQrCodeResponse | null> {
+  try {
+    return await request<AsaasPixQrCodeResponse>('GET', `/payments/${paymentId}/pixQrCode`, undefined, config);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes('404')) return null;
+    if (isPixQrNotYetAvailableError(e)) return null;
+    throw e;
+  }
+}
+
+/**
+ * POST /v3/payments/{id}/payWithCreditCard — captura cartão em cobrança já criada (Desenho A).
+ * Com `creditCardToken`, PAN/holder não são enviados (Sprint 9).
+ * Sem retry em 4xx; timeout longo conforme doc Asaas.
+ */
+export async function payWithCreditCard(
+  paymentId: string,
+  body: {
+    creditCardToken?: string;
+    creditCard?: {
+      holderName: string;
+      number: string;
+      expiryMonth: string;
+      expiryYear: string;
+      ccv: string;
+    };
+    creditCardHolderInfo?: {
+      name: string;
+      email: string;
+      cpfCnpj: string;
+      postalCode: string;
+      addressNumber: string;
+      addressComplement?: string | null;
+      phone: string;
+      mobilePhone?: string | null;
+    };
+  },
+  config?: AsaasConfig | null
+): Promise<AsaasPaymentResponse> {
+  const payload: Record<string, unknown> = {};
+  if (body.creditCardToken?.trim()) {
+    payload.creditCardToken = body.creditCardToken.trim();
+  } else {
+    if (!body.creditCard || !body.creditCardHolderInfo) {
+      throw new Error('payWithCreditCard requer creditCardToken ou creditCard+holder');
+    }
+    payload.creditCard = body.creditCard;
+    payload.creditCardHolderInfo = body.creditCardHolderInfo;
+  }
+  return request<AsaasPaymentResponse>(
+    'POST',
+    `/payments/${encodeURIComponent(paymentId)}/payWithCreditCard`,
+    payload,
+    config,
+    { timeoutMs: PAY_WITH_CARD_TIMEOUT_MS, maxRetries: 0 }
+  );
+}
+
+export async function getIdentificationField(
+  paymentId: string,
+  config?: AsaasConfig | null
+): Promise<AsaasIdentificationFieldResponse | null> {
+  try {
+    return await request<AsaasIdentificationFieldResponse>(
+      'GET',
+      `/payments/${paymentId}/identificationField`,
+      undefined,
+      config
+    );
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes('404')) return null;
+    throw e;
+  }
+}
+
+export function isConfigured(config?: AsaasConfig | null): boolean {
+  return !!getApiKey(config);
+}
+
+/** Sprint 10 — criar autorização Pix Automático com QR imediato (jornada 3). */
+export async function createPixAutomaticAuthorization(
+  body: {
+    customerId: string;
+    frequency: 'WEEKLY' | 'MONTHLY' | 'QUARTERLY' | 'SEMIANNUALLY' | 'ANNUALLY';
+    contractId: string;
+    startDate: string;
+    value: number;
+    description?: string;
+    immediateValue: number;
+    immediateDueDate: string;
+    immediateDescription?: string;
+    /** Validade do QR imediato em segundos (Asaas exige; default 3600). */
+    immediateExpirationSeconds?: number;
+    /**
+     * Sprint 3 — fim da vigência (YYYY-MM-DD). Omitir = indeterminado (ciclos ilimitados).
+     * Asaas: finishDate opcional na criação; não há update público documentado nesta onda.
+     */
+    finishDate?: string | null;
+  },
+  config?: AsaasConfig | null
+): Promise<Record<string, unknown>> {
+  const payload: Record<string, unknown> = {
+    customerId: body.customerId,
+    frequency: body.frequency,
+    contractId: body.contractId.slice(0, 35),
+    startDate: body.startDate,
+    value: body.value,
+    description: body.description?.slice(0, 35),
+    paymentCreationMode: 'MANUAL',
+    retryPolicy: 'NOT_ALLOWED',
+    immediateQrCode: {
+      /** Valor do 1º pagamento (obrigatório na API atual). */
+      originalValue: body.immediateValue,
+      value: body.immediateValue,
+      dueDate: body.immediateDueDate,
+      description: body.immediateDescription?.slice(0, 35) ?? 'Autorização Pix Automático',
+      /** Validade do QR imediato em segundos (obrigatório). */
+      expirationSeconds: body.immediateExpirationSeconds ?? 3600,
+    },
+  };
+  const finish = body.finishDate?.trim().slice(0, 10);
+  if (finish && /^\d{4}-\d{2}-\d{2}$/.test(finish)) {
+    payload.finishDate = finish;
+  }
+  return request<Record<string, unknown>>(
+    'POST',
+    '/pix/automatic/authorizations',
+    payload,
+    config,
+    { timeoutMs: PAY_WITH_CARD_TIMEOUT_MS, maxRetries: 0 }
+  );
+}
+
+export async function getPixAutomaticAuthorization(
+  authorizationId: string,
+  config?: AsaasConfig | null
+): Promise<Record<string, unknown> | null> {
+  try {
+    return await request<Record<string, unknown>>(
+      'GET',
+      `/pix/automatic/authorizations/${encodeURIComponent(authorizationId)}`,
+      undefined,
+      config
+    );
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes('404')) return null;
+    throw e;
+  }
+}
+
+export async function cancelPixAutomaticAuthorization(
+  authorizationId: string,
+  config?: AsaasConfig | null
+): Promise<void> {
+  await request(
+    'DELETE',
+    `/pix/automatic/authorizations/${encodeURIComponent(authorizationId)}`,
+    undefined,
+    config,
+    { maxRetries: 0 }
+  );
+}
+
+export async function createWebhook(
+  data: AsaasCreateWebhookRequest,
+  config?: AsaasConfig | null
+): Promise<AsaasWebhookResponse> {
+  return request<AsaasWebhookResponse>('POST', '/webhooks', data, config);
+}
+
+/**
+ * CA S1 — POST /v3/subscriptions (cartão). Sem retry (evita duplicar assinatura em timeout).
+ */
+export async function createSubscription(
+  data: AsaasSubscriptionCreateRequest,
+  config?: AsaasConfig | null
+): Promise<AsaasSubscriptionResponse> {
+  return request<AsaasSubscriptionResponse>('POST', '/subscriptions', data, config, {
+    timeoutMs: SUBSCRIPTION_TIMEOUT_MS,
+    maxRetries: 0,
+  });
+}
+
+export async function getSubscription(
+  subscriptionId: string,
+  config?: AsaasConfig | null
+): Promise<AsaasSubscriptionResponse | null> {
+  try {
+    return await request<AsaasSubscriptionResponse>(
+      'GET',
+      `/subscriptions/${encodeURIComponent(subscriptionId)}`,
+      undefined,
+      config
+    );
+  } catch (e: unknown) {
+    if (isAbortLikeError(e)) return null;
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes('404')) return null;
+    throw e;
+  }
+}
+
+export async function updateSubscription(
+  subscriptionId: string,
+  data: AsaasSubscriptionUpdateRequest,
+  config?: AsaasConfig | null
+): Promise<AsaasSubscriptionResponse> {
+  return request<AsaasSubscriptionResponse>(
+    'PUT',
+    `/subscriptions/${encodeURIComponent(subscriptionId)}`,
+    data,
+    config,
+    { timeoutMs: SUBSCRIPTION_TIMEOUT_MS, maxRetries: 0 }
+  );
+}
+
+/**
+ * PUT /v3/subscriptions/{id}/creditCard — troca cartão sem cobrança imediata.
+ */
+export async function updateSubscriptionCreditCard(
+  subscriptionId: string,
+  data: AsaasSubscriptionCreditCardUpdateRequest,
+  config?: AsaasConfig | null
+): Promise<AsaasSubscriptionResponse> {
+  return request<AsaasSubscriptionResponse>(
+    'PUT',
+    `/subscriptions/${encodeURIComponent(subscriptionId)}/creditCard`,
+    data,
+    config,
+    { timeoutMs: SUBSCRIPTION_TIMEOUT_MS, maxRetries: 0 }
+  );
+}
+
+/**
+ * DELETE /v3/subscriptions/{id} — remove/cancela assinatura no Asaas.
+ */
+export async function deleteSubscription(
+  subscriptionId: string,
+  config?: AsaasConfig | null
+): Promise<{ deleted?: boolean; id?: string } | null> {
+  try {
+    return await request<{ deleted?: boolean; id?: string }>(
+      'DELETE',
+      `/subscriptions/${encodeURIComponent(subscriptionId)}`,
+      undefined,
+      config,
+      { timeoutMs: SUBSCRIPTION_TIMEOUT_MS, maxRetries: 0 }
+    );
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes('404')) return null;
+    throw e;
+  }
+}
+
+type AsaasListPaymentsResponse = {
+  data?: AsaasPaymentResponse[];
+  totalCount?: number;
+};
+
+/** GET /v3/subscriptions/{id}/payments — cobranças já geradas pela assinatura. */
+export async function listSubscriptionPayments(
+  subscriptionId: string,
+  config?: AsaasConfig | null,
+  options?: { status?: string }
+): Promise<AsaasPaymentResponse[]> {
+  const qs = new URLSearchParams({ limit: '20', offset: '0' });
+  if (options?.status?.trim()) qs.set('status', options.status.trim());
+  const res = await request<AsaasListPaymentsResponse>(
+    'GET',
+    `/subscriptions/${encodeURIComponent(subscriptionId)}/payments?${qs.toString()}`,
+    undefined,
+    config
+  );
+  return Array.isArray(res?.data) ? res.data : [];
+}
+
+export async function listWebhooks(config?: AsaasConfig | null): Promise<AsaasWebhookResponse[]> {
+  const first = await request<AsaasListWebhooksResponse>('GET', '/webhooks?limit=100&offset=0', undefined, config);
+  return Array.isArray(first?.data) ? first.data : [];
+}
+
+/**
+ * Testa a conexão com a API Asaas (GET /customers?limit=1).
+ * Em caso de 401/403 lança erro com mensagem "Erro de autenticação".
+ */
+export async function testConnection(config?: AsaasConfig | null): Promise<void> {
+  const apiKey = getApiKey(config);
+  if (!apiKey) throw new Error('API key Asaas não configurada');
+  const baseUrl = getBaseUrl(config);
+  const url = `${baseUrl}/customers?limit=1`;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'User-Agent': ASAAS_USER_AGENT,
+        access_token: apiKey,
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    const text = await res.text();
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('Erro de autenticação');
+    }
+    if (!res.ok) {
+      throw new Error(text || `Asaas API ${res.status}`);
+    }
+  } catch (e: unknown) {
+    clearTimeout(timeoutId);
+    throw e;
+  }
+}

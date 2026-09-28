@@ -4,7 +4,7 @@
 
 ### Banco de Dados PostgreSQL
 - `POSTGRES_HOST` - Host do PostgreSQL (padrão: `localhost`)
-- `POSTGRES_PORT` - Porta do PostgreSQL (padrão: `5432`)
+- `POSTGRES_PORT` - Porta do PostgreSQL (padrão: `5432`). **Se você já tem outro PostgreSQL na 5432**, use outra porta (ex.: `5433`, `5434`) no `.env`; o Docker expõe essa porta e o backend conecta nela.
 - `POSTGRES_DB` - Nome do banco de dados (padrão: `painelcrm`)
 - `POSTGRES_USER` - Usuário do PostgreSQL (padrão: `postgres`)
 - `POSTGRES_PASSWORD` - Senha do PostgreSQL (padrão: `postgres`)
@@ -61,6 +61,28 @@ docker-compose up -d postgres
 ```
 
 Ou configure um PostgreSQL local.
+
+### Porta diferente quando há outro PostgreSQL
+
+Se outro projeto ou instalação já usa a porta **5432**, você pode rodar os dois ao mesmo tempo mudando a porta deste projeto:
+
+1. No **`.env`** (na raiz do projeto), defina por exemplo:
+   ```env
+   POSTGRES_PORT=5433
+   ```
+   (ou `5434`, `5435`, etc., o que estiver livre.)
+
+2. O **docker-compose** já usa `${POSTGRES_PORT:-5432}:5432`: o primeiro número é a porta no seu PC, o segundo é a porta dentro do container. Com `POSTGRES_PORT=5433`, o banco fica acessível em `localhost:5433`.
+
+3. O **backend** e os scripts de migração leem `POSTGRES_PORT` do `.env`, então passam a conectar na nova porta.
+
+4. Reinicie o container do banco depois de alterar o `.env`:
+   ```bash
+   docker-compose down
+   docker-compose up -d postgres
+   ```
+
+Assim, um PostgreSQL fica na 5432 (outro projeto) e este na 5433 (ou na porta que você escolher).
 
 ---
 

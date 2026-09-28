@@ -50,6 +50,11 @@ npm run dev
 - Click on "New codespace" to launch a new Codespace environment.
 - Edit files directly within the Codespace and commit and push your changes once you're done.
 
+## Documentação do projeto
+
+- **Planos (padrão e personalizados):** guia operacional (tipos, plano padrão, validações) — [docs/PLANOS-OPERACIONAL.md](docs/PLANOS-OPERACIONAL.md); plano de implementação — [docs/PLANO-PLANOS-PERSONALIZADOS-E-PADRAO.md](docs/PLANO-PLANOS-PERSONALIZADOS-E-PADRAO.md).
+- **Isolamento multi-tenant:** todo dado pertence a um tenant; novos endpoints devem usar `req.tenantId` e o padrão de queries documentado. Ver [CONTRIBUTING.md](CONTRIBUTING.md) (checklist) e [docs/PLANO-ISOLAMENTO-MULTI-TENANT.md](docs/PLANO-ISOLAMENTO-MULTI-TENANT.md).
+
 ## What technologies are used for this project?
 
 This project is built with:

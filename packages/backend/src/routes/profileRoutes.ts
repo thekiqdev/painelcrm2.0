@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import * as profileController from '../controllers/profileController.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { tenantAuth } from '../middleware/auth.js';
 
 const router = Router();
+router.use(...tenantAuth);
 
-router.get('/', authenticateToken, profileController.getProfile);
-router.patch('/', authenticateToken, profileController.updateProfile);
+router.get('/', profileController.getProfile);
+router.patch('/', profileController.updateProfile);
 
 export default router;
 

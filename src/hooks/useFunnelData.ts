@@ -2,89 +2,18 @@
 import { useState, useEffect } from "react";
 import { FunnelType, SalesFunnel, Deal } from "@/components/funnel/types";
 import { fetchFunnels, createFunnel } from "@/components/funnel/utils";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
-
-// Example deals data for development/testing
-const initialDeals: Deal[] = [
-  {
-    id: "D001",
-    title: "Implementação de Sistema ERP",
-    client: "ABC Tecnologia",
-    amount: "R$ 58.000,00",
-    probability: 20,
-    dueDate: "15/06/2023",
-    stage: "stage-1",
-    funnelId: "funnel-1"
-  },
-  {
-    id: "D002",
-    title: "Projeto de Marketing Digital",
-    client: "Construtora XYZ",
-    amount: "R$ 25.000,00",
-    probability: 50,
-    dueDate: "28/06/2023",
-    stage: "stage-1",
-    funnelId: "funnel-1"
-  },
-  {
-    id: "D003",
-    title: "Consultoria Estratégica",
-    client: "Lima & Associados",
-    amount: "R$ 45.000,00",
-    probability: 75,
-    dueDate: "10/07/2023",
-    stage: "stage-2",
-    funnelId: "funnel-1"
-  },
-  {
-    id: "D004",
-    title: "Renovação de Licenças",
-    client: "Tech Solutions",
-    amount: "R$ 12.500,00",
-    probability: 90,
-    dueDate: "30/06/2023",
-    stage: "stage-3",
-    funnelId: "funnel-1"
-  },
-  {
-    id: "D005",
-    title: "Desenvolvimento de Website",
-    client: "Consultoria Global",
-    amount: "R$ 35.000,00",
-    probability: 60,
-    dueDate: "15/07/2023",
-    stage: "stage-4",
-    funnelId: "funnel-1"
-  },
-  {
-    id: "D006",
-    title: "Expansão de Servidor",
-    client: "Supermercados Sul",
-    amount: "R$ 18.000,00",
-    probability: 95,
-    dueDate: "01/07/2023",
-    stage: "stage-5",
-    funnelId: "funnel-1"
-  },
-  {
-    id: "D007",
-    title: "Lead Campanha Email",
-    client: "Loja Virtual",
-    amount: "R$ 30.000,00",
-    probability: 80,
-    dueDate: "25/11/2023",
-    stage: "stage-7",
-    funnelId: "funnel-2"
-  }
-];
+import { proposalsService } from "@/services/proposals";
+import { clientsService } from "@/services/clients";
+import { mapProposalsToDeals } from "@/utils/proposalsToFunnelDeals";
 
 export function useFunnelData() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<FunnelType>("clients");
   const [funnels, setFunnels] = useState<SalesFunnel[]>([]);
-  const [deals] = useState<Deal[]>(initialDeals);
+  const [deals, setDeals] = useState<Deal[]>([]);
   const [activeFunnelId, setActiveFunnelId] = useState<string>("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -134,6 +63,34 @@ export function useFunnelData() {
       setIsLoading(false);
     }
   };
+
+  /** Propostas reais para contagem nos cards do índice de funis (aba Propostas). */
+  useEffect(() => {
+    if (!user) {
+      setDeals([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const [proposalsList, clientsList] = await Promise.all([
+          proposalsService.getProposals(),
+          clientsService.getClients(),
+        ]);
+        if (cancelled) return;
+        const clientMap = new Map(clientsList.map((c) => [c.id, c.name || c.company || "Cliente"]));
+        setDeals(mapProposalsToDeals(proposalsList, clientMap, funnels));
+      } catch {
+        if (!cancelled) {
+          toast.error("Erro ao carregar propostas para o funil");
+          setDeals([]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, funnels]);
 
   const handleViewFunnelDetails = (funnelId: string) => {
     navigate(`/funnel/${funnelId}`);

@@ -1,5 +1,5 @@
 import { apiClient } from '@/integrations/api/client';
-import { Product, StoreProfile, ProductFormData } from '@/types/products';
+import { Product, PublicCatalogProduct, StoreProfile, ProductFormData } from '@/types/products';
 
 export class ProductsService {
   async getProducts(): Promise<Product[]> {
@@ -98,17 +98,38 @@ export class ProductsService {
   }
 
   // Métodos públicos (sem autenticação)
-  async getPublicProducts(userId: string): Promise<Product[]> {
-    const response = await apiClient.get<Product[]>(`/api/products/public/${userId}`);
+  async getPublicProducts(userId: string): Promise<PublicCatalogProduct[]> {
+    const response = await apiClient.get<PublicCatalogProduct[]>(`/api/products/public/${userId}`);
     if (response.error) throw new Error(response.error);
-    
-    return (response.data || []).map(item => ({
+
+    return (response.data || []).map((item) => ({
       ...item,
-      features: (item.features as any) || [],
-      images: (item.images as any) || [],
-      secondary_images: (item.secondary_images as any) || [],
-      variations: (item.variations as any) || []
-    })) as Product[];
+      features: Array.isArray(item.features) ? item.features : [],
+      images: Array.isArray(item.images) ? item.images : [],
+      secondary_images: Array.isArray(item.secondary_images) ? item.secondary_images : [],
+    }));
+  }
+
+  /** Detalhe público por slug da loja + id (V2-1); não usa rota autenticada. */
+  async getPublicProductByStoreSlugAndProductId(
+    storeSlug: string,
+    productId: string
+  ): Promise<PublicCatalogProduct | null> {
+    const path = `/api/products/public/store/${encodeURIComponent(storeSlug)}/product/${encodeURIComponent(productId)}`;
+    const response = await apiClient.get<PublicCatalogProduct>(path);
+    if (response.error) {
+      const status = response.details?.status;
+      if (status === 404) return null;
+      throw new Error(response.error);
+    }
+    if (!response.data) return null;
+    const item = response.data;
+    return {
+      ...item,
+      features: Array.isArray(item.features) ? item.features : [],
+      images: Array.isArray(item.images) ? item.images : [],
+      secondary_images: Array.isArray(item.secondary_images) ? item.secondary_images : [],
+    };
   }
 
   async getPublicStoreProfile(userId: string): Promise<StoreProfile | null> {

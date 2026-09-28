@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect, useRef } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,18 +13,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { ClientSearchCombobox } from '@/components/clients/ClientSearchCombobox';
 import { ticketsService } from '@/services/tickets';
 import { clientsService } from '@/services/clients';
+import { apiClient } from '@/integrations/api/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from '@/hooks/use-toast';
 import { TicketCategory, TicketPriority, ticketPriorityLabels } from '@/types/tickets';
 
 export default function NewTicket() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user } = useAuth();
+  const prefillAppliedRef = useRef(false);
   const [loading, setLoading] = useState(false);
   const [categories, setCategories] = useState<TicketCategory[]>([]);
-  const [clients, setClients] = useState<any[]>([]);
+  const [selectedClientLabel, setSelectedClientLabel] = useState<string | undefined>();
 
   const [formData, setFormData] = useState({
     subject: '',
@@ -41,7 +45,6 @@ export default function NewTicket() {
   useEffect(() => {
     if (user) {
       loadCategories();
-      loadClients();
     }
   }, [user]);
 
@@ -54,27 +57,75 @@ export default function NewTicket() {
     }
   };
 
-  const loadClients = async () => {
+  const handleClientChange = async (clientId: string | null) => {
+    if (!clientId) {
+      setSelectedClientLabel(undefined);
+      setFormData((f) => ({
+        ...f,
+        client_id: '',
+        contact_name: '',
+        contact_email: '',
+        contact_phone: '',
+      }));
+      return;
+    }
     try {
-      const data = await clientsService.getClients();
-      setClients(data);
+      const client = await clientsService.getClientById(clientId);
+      if (client) {
+        setSelectedClientLabel(
+          `${client.name}${client.company ? ` — ${client.company}` : ''}`
+        );
+        setFormData((f) => ({
+          ...f,
+          client_id: clientId,
+          contact_name: client.name,
+          contact_email: client.email || '',
+          contact_phone: client.phone || '',
+        }));
+      }
     } catch (error: any) {
-      console.error('Error loading clients:', error);
+      console.error('Error loading client:', error);
     }
   };
 
-  const handleClientChange = (clientId: string) => {
-    const client = clients.find((c) => c.id === clientId);
-    if (client) {
-      setFormData({
-        ...formData,
-        client_id: clientId,
-        contact_name: client.name,
-        contact_email: client.email || '',
-        contact_phone: client.phone || '',
-      });
+  useEffect(() => {
+    if (prefillAppliedRef.current) return;
+    const clientId = searchParams.get('client_id')?.trim();
+    const leadId = searchParams.get('lead_id')?.trim();
+    if (!clientId && !leadId) return;
+    prefillAppliedRef.current = true;
+
+    if (clientId) {
+      void handleClientChange(clientId);
+      return;
     }
-  };
+
+    void (async () => {
+      try {
+        const res = await apiClient.get<{
+          name?: string;
+          email?: string | null;
+          phone?: string | null;
+          company?: string | null;
+        }>(`/api/leads/${leadId}`);
+        const lead = res.data;
+        if (!lead) return;
+        setFormData((f) => ({
+          ...f,
+          contact_name: lead.name || f.contact_name,
+          contact_email: lead.email || f.contact_email,
+          contact_phone: lead.phone || f.contact_phone,
+        }));
+        if (lead.company) {
+          setSelectedClientLabel(`${lead.name} — ${lead.company}`);
+        } else if (lead.name) {
+          setSelectedClientLabel(lead.name);
+        }
+      } catch (error: unknown) {
+        console.error('Error loading lead for ticket prefill:', error);
+      }
+    })();
+  }, [searchParams]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -82,17 +133,17 @@ export default function NewTicket() {
 
     try {
       const data = await ticketsService.createTicket({
-        contact_name: formData.contact_name,
-        contact_email: formData.contact_email,
+          contact_name: formData.contact_name,
+          contact_email: formData.contact_email,
         contact_phone: formData.contact_phone || undefined,
-        subject: formData.subject,
-        description: formData.description,
+          subject: formData.subject,
+          description: formData.description,
         category_id: formData.category_id || undefined,
-        priority: formData.priority,
+          priority: formData.priority,
         client_id: formData.client_id || undefined,
-        tags: formData.tags,
-        channel: 'internal',
-        status: 'new',
+          tags: formData.tags,
+          channel: 'internal',
+          status: 'new',
       });
 
       toast({
@@ -127,22 +178,15 @@ export default function NewTicket() {
         <form onSubmit={handleSubmit} className="space-y-6">
           {/* Cliente */}
           <div className="space-y-2">
-            <Label htmlFor="client">Cliente</Label>
-            <Select
-              value={formData.client_id}
-              onValueChange={handleClientChange}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Selecione um cliente" />
-              </SelectTrigger>
-              <SelectContent>
-                {clients.map((client) => (
-                  <SelectItem key={client.id} value={client.id}>
-                    {client.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <ClientSearchCombobox
+              id="new-ticket-client"
+              label="Cliente"
+              placeholderTrigger="Buscar ou selecionar cliente..."
+              remoteSearch
+              value={formData.client_id || null}
+              onChange={handleClientChange}
+              selectedLabel={selectedClientLabel}
+            />
           </div>
 
           {/* Contato Manual */}

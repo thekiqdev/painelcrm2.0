@@ -22,7 +22,7 @@ const AdvancedSettings: React.FC = () => {
           </TabsList>
           
           <TabsContent value="templates">
-            <div className="p-6 text-center border rounded-md">
+            <div className="rounded-md border border-border bg-muted/20 p-6 text-center">
               <p className="text-muted-foreground">
                 Configure templates de mensagens para enviar aos seus clientes.
               </p>
@@ -30,7 +30,7 @@ const AdvancedSettings: React.FC = () => {
           </TabsContent>
           
           <TabsContent value="autoresponder">
-            <div className="p-6 text-center border rounded-md">
+            <div className="rounded-md border border-border bg-muted/20 p-6 text-center">
               <p className="text-muted-foreground">
                 Configure respostas automáticas para mensagens recebidas.
               </p>
@@ -38,7 +38,7 @@ const AdvancedSettings: React.FC = () => {
           </TabsContent>
           
           <TabsContent value="webhooks">
-            <div className="p-6 text-center border rounded-md">
+            <div className="rounded-md border border-border bg-muted/20 p-6 text-center">
               <p className="text-muted-foreground">
                 Configure webhooks para receber notificações de novas mensagens.
               </p>

@@ -2,7 +2,13 @@
 import React, { useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { toast } from 'sonner';
+import { toast } from '@/components/ui/sonner';
+import {
+  getPostAuthHomePath,
+  isPartnerChannelUser,
+  isSuperAdminPlatformUser,
+  isTenantCrmPath,
+} from '@/utils/superAdminRedirect';
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -22,8 +28,10 @@ const AuthGuard: React.FC<AuthGuardProps> = ({
   const location = useLocation();
 
   useEffect(() => {
-    // Não faça nada enquanto estamos carregando o estado de autenticação
     if (loading) return;
+
+    const superAdminPlatform = isSuperAdminPlatformUser(user ?? undefined);
+    const partnerChannel = isPartnerChannelUser(user ?? undefined);
 
     if (process.env.NODE_ENV === 'development') {
       console.log('AuthGuard check:', {
@@ -39,47 +47,115 @@ const AuthGuard: React.FC<AuthGuardProps> = ({
     const isRegisterStepsPage = location.pathname === '/register/steps';
     const isRegisterPage = location.pathname === '/register';
     const isLoginPage = location.pathname === '/login' || location.pathname === '/';
+    const isPartnerHome = location.pathname === '/partner' || location.pathname.startsWith('/partner/');
     
     // Ignorar verificações de autenticação para a página de registro
     if (isRegisterPage) {
       return;
     }
     
+    if (
+      requireAuth &&
+      user &&
+      superAdminPlatform &&
+      isTenantCrmPath(location.pathname) &&
+      !location.pathname.startsWith('/superadmin')
+    ) {
+      navigate('/superadmin', { replace: true });
+      return;
+    }
+
+    if (
+      requireAuth &&
+      user &&
+      partnerChannel &&
+      !isPartnerHome &&
+      (isTenantCrmPath(location.pathname) || location.pathname.startsWith('/onboarding'))
+    ) {
+      navigate('/partner', { replace: true });
+      return;
+    }
+
     // Case 1: Usuário não está autenticado, mas a página requer autenticação
     if (requireAuth && !user) {
       console.log('User not authenticated, redirecting to:', redirectTo);
-      if (!isLoginPage && redirectTo !== location.pathname) { // Evita loops de redirecionamento
+      if (!isLoginPage && redirectTo !== location.pathname) {
         toast.error('Você precisa estar logado para acessar esta página');
-        navigate(redirectTo);
+        navigate(redirectTo, {
+          replace: true,
+          state: { from: { pathname: location.pathname, search: location.search } },
+        });
       }
       return;
     }
     
-    // Case 2: Usuário está autenticado mas registro não está completo e a página requer registro completo
-    if (requireAuth && requireComplete && user && !registrationComplete && !isRegisterStepsPage) {
+    if (
+      requireAuth &&
+      requireComplete &&
+      user &&
+      !registrationComplete &&
+      !isRegisterStepsPage &&
+      !superAdminPlatform &&
+      !partnerChannel
+    ) {
       console.log('Registration not complete, redirecting to registration steps');
-      if (!isRegisterStepsPage) { // Evita mensagens repetidas na página de etapas
-        toast.info('Por favor, complete seu cadastro primeiro');
-        navigate('/register/steps');
-      }
+      toast.info('Por favor, complete seu cadastro primeiro');
+      navigate('/register/steps');
+      return;
+    }
+
+    if (user && superAdminPlatform && isRegisterStepsPage) {
+      navigate('/superadmin', { replace: true });
+      return;
+    }
+
+    if (user && partnerChannel && isRegisterStepsPage) {
+      navigate('/partner', { replace: true });
       return;
     }
     
-    // Case 3: Usuário já completou o registro mas está na página de registro
     if (user && registrationComplete && isRegisterStepsPage) {
-      console.log('Registration already complete, redirecting to dashboard');
+      console.log('Registration already complete, redirecting');
       toast.info('Seu cadastro já está completo');
-      navigate('/dashboard');
+      navigate(getPostAuthHomePath(user), { replace: true });
       return;
     }
-    
-    // Case 4: Usuário já está logado mas está tentando acessar a página de login
+
     if (user && isLoginPage) {
       console.log('User already logged in, redirecting to appropriate page');
-      navigate(registrationComplete ? '/dashboard' : '/register/steps');
+      navigate(getPostAuthHomePath(user), { replace: true });
       return;
     }
-    
+
+    const isOnboardingPage =
+      location.pathname === '/onboarding' || location.pathname.startsWith('/onboarding/');
+    /** Fase 1 checkout: onboarding de rota não é obrigatório; ativação leve fica no dashboard. */
+    const needsLegacyOnboarding =
+      import.meta.env.VITE_FORCE_LEGACY_ONBOARDING_ROUTE === 'true' &&
+      !superAdminPlatform &&
+      !partnerChannel &&
+      user?.tenant_status === 'active' &&
+      user?.onboarding_completed === false;
+    if (requireAuth && user && needsLegacyOnboarding && !isOnboardingPage) {
+      navigate('/onboarding', { replace: true });
+      return;
+    }
+
+    if (user && superAdminPlatform && isOnboardingPage) {
+      navigate('/superadmin', { replace: true });
+      return;
+    }
+
+    if (user && partnerChannel && isOnboardingPage) {
+      navigate('/partner', { replace: true });
+      return;
+    }
+
+    if (user && user.onboarding_completed === true && isOnboardingPage) {
+      navigate(getPostAuthHomePath(user), { replace: true });
+      return;
+    }
+
   }, [
     user, 
     loading, 

@@ -44,6 +44,10 @@ CREATE TABLE IF NOT EXISTS public.ticket_sla_policies (
 CREATE TABLE IF NOT EXISTS public.tickets (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   ticket_number TEXT NOT NULL,
+  public_access_token TEXT UNIQUE DEFAULT (
+    replace(gen_random_uuid()::text, '-', '') ||
+    substr(md5(random()::text || clock_timestamp()::text), 1, 16)
+  ),
   user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
   profile_id UUID REFERENCES public.user_profiles(id) ON DELETE SET NULL,
   client_id UUID REFERENCES public.clients(id) ON DELETE SET NULL,

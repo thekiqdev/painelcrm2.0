@@ -14,7 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, Tag, Edit } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 import { Client, ClientTag } from "@/components/funnel/types";
 
 interface ClientDetailsDialogProps {

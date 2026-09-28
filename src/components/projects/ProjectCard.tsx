@@ -1,10 +1,10 @@
 
-import React from "react";
+import React, { useState } from "react";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { CalendarIcon } from "lucide-react";
+import { CalendarIcon, ChevronDown, ChevronUp } from "lucide-react";
 import { Project } from "./types";
 import { formatDate } from "./utils";
 
@@ -14,6 +14,7 @@ interface ProjectCardProps {
 }
 
 export function ProjectCard({ project, onViewDetails }: ProjectCardProps) {
+  const [isExpanded, setIsExpanded] = useState(false);
   // Calculate project progress
   const calculateProgress = () => {
     const allTasks = project.lists.flatMap(list => list.tasks);
@@ -34,7 +35,36 @@ export function ProjectCard({ project, onViewDetails }: ProjectCardProps) {
         </div>
       </CardHeader>
       <CardContent>
-        <p className="text-sm text-muted-foreground mb-3 line-clamp-2">{project.description}</p>
+        {project.description && (
+          <div className="mb-3">
+            <p className={`text-sm text-muted-foreground ${isExpanded ? '' : 'line-clamp-2'}`}>
+              {project.description}
+            </p>
+            {project.description.length > 100 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-1 h-auto p-0 text-xs text-primary hover:text-primary/80"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsExpanded(!isExpanded);
+                }}
+              >
+                {isExpanded ? (
+                  <>
+                    <ChevronUp className="h-3 w-3 mr-1" />
+                    Ler menos
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown className="h-3 w-3 mr-1" />
+                    Ler mais
+                  </>
+                )}
+              </Button>
+            )}
+          </div>
+        )}
         <div className="flex justify-between items-center text-sm">
           <div className="flex items-center">
             <CalendarIcon className="h-4 w-4 mr-1 text-muted-foreground" />

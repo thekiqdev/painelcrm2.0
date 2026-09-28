@@ -1,0 +1,373 @@
+/**
+ * Webhook em 3 camadas: parser → webhookCore (este) → paymentDomainService.
+ * Idempotência via payment_events; lookup por gateway_reference_id.
+ * Fase 3 — PLANO-REFATORACAO-MULTI-GATEWAY.
+ */
+import type { GatewayWebhookParser, ParsedWebhookPayload } from '../paymentGatewayTypes.js';
+import { getInvoiceByGatewayReferenceId } from '../../../services/invoiceService.js';
+import { findCustomerInvoiceByGatewayReference } from '../../../services/customerInvoiceService.js';
+import { findInvoiceAttemptByGatewayReference } from '../../../services/customerInvoicePaymentAttemptsService.js';
+import { findTenantBillingPaymentAttemptByGatewayReference } from '../../../services/tenantBillingPaymentAttemptsService.js';
+import { normalizeGatewayStatus } from './statusNormalizer.js';
+import { insertPaymentEvent, markPaymentEventProcessed } from './paymentEventsService.js';
+import {
+  applyPaymentEvent,
+  applyPaymentAttemptEvent,
+  applyTenantBillingPaymentAttemptEvent,
+} from './paymentDomainService.js';
+
+const parsers = new Map<string, GatewayWebhookParser>();
+
+export function registerGatewayParser(gatewayKey: string, parser: GatewayWebhookParser): void {
+  parsers.set(gatewayKey, parser);
+}
+
+export type BillingOrInvoice =
+  | { entityType: 'tenant_billing'; entityId: string; currentStatus: string; gateway: string | null }
+  | { entityType: 'customer_invoice'; entityId: string; currentStatus: string; gateway: string | null };
+
+/**
+ * Busca em tenant_billing e, se não achar, em customer_invoices por (gateway, gateway_reference_id).
+ */
+export async function findBillingOrCustomerInvoice(
+  gateway: string,
+  referenceId: string
+): Promise<BillingOrInvoice | null> {
+  const billing = await getInvoiceByGatewayReferenceId(gateway, referenceId);
+  if (billing) {
+    return {
+      entityType: 'tenant_billing',
+      entityId: billing.id,
+      currentStatus: billing.status,
+      gateway: billing.gateway,
+    };
+  }
+  const invoice = await findCustomerInvoiceByGatewayReference(gateway, referenceId);
+  if (invoice) {
+    return {
+      entityType: 'customer_invoice',
+      entityId: invoice.id,
+      currentStatus: invoice.status,
+      gateway: invoice.gateway,
+    };
+  }
+  return null;
+}
+
+export interface HandleWebhookResult {
+  status: 200 | 400 | 500;
+  body: { received?: boolean; error?: string };
+}
+
+/**
+ * Processa webhook: idempotência, parse, find, normalizar, aplicar status.
+ * Retorna resultado para o controller responder (200/400/500).
+ */
+export async function handleWebhook(
+  gatewayKey: string,
+  payload: unknown
+): Promise<HandleWebhookResult> {
+  const parser = parsers.get(gatewayKey);
+  if (!parser) {
+    return { status: 400, body: { error: `Gateway desconhecido: ${gatewayKey}` } };
+  }
+
+  let parsed: ParsedWebhookPayload;
+  try {
+    parsed = parser.parsePayload(payload);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { status: 400, body: { error: `Payload inválido: ${msg}` } };
+  }
+
+  const { eventId, referenceId, externalStatus, metadata } = parsed;
+  const payloadObj = (payload && typeof payload === 'object' && !Array.isArray(payload))
+    ? (payload as Record<string, unknown>)
+    : {};
+
+  const { inserted, alreadyProcessed } = await insertPaymentEvent({
+    gateway: gatewayKey,
+    eventId,
+    referenceId,
+    payload: payloadObj,
+  });
+
+  if (!inserted) {
+    return { status: 200, body: { received: true } };
+  }
+
+  const metaObj =
+    metadata && typeof metadata === 'object' ? (metadata as Record<string, unknown>) : {};
+  const eventType =
+    typeof metaObj.eventType === 'string' ? metaObj.eventType : null;
+
+  let internalStatus = normalizeGatewayStatus(gatewayKey, externalStatus);
+  // CA S3 — evento de recusa de cartão mesmo se status bruto ainda for PENDING.
+  if (eventType === 'PAYMENT_CREDIT_CARD_CAPTURE_REFUSED') {
+    internalStatus = 'failed';
+  }
+
+  const paymentMethod =
+    typeof metaObj.paymentMethod === 'string' ? metaObj.paymentMethod : null;
+
+  const attempt = await findInvoiceAttemptByGatewayReference(gatewayKey, referenceId);
+  if (attempt) {
+    const { pool } = await import('../../../utils/db.js');
+    const invoiceRow = await pool.query<{ status: string }>(
+      `SELECT status FROM customer_invoices WHERE id = $1 LIMIT 1`,
+      [attempt.invoice_id]
+    );
+    const invoiceCurrentStatus = invoiceRow.rows[0]?.status ?? 'pending';
+    const processedResult = await applyPaymentAttemptEvent({
+      attemptId: attempt.id,
+      invoiceId: attempt.invoice_id,
+      invoiceCurrentStatus,
+      internalStatus,
+      gatewayStatus: externalStatus,
+      paidAt: internalStatus === 'paid' ? new Date() : undefined,
+    });
+    await markPaymentEventProcessed({
+      gateway: gatewayKey,
+      eventId,
+      processedResult,
+    });
+    return { status: 200, body: { received: true } };
+  }
+
+  const tbAttempt = await findTenantBillingPaymentAttemptByGatewayReference(gatewayKey, referenceId);
+  if (tbAttempt) {
+    const { pool } = await import('../../../utils/db.js');
+    const billingRow = await pool.query<{ status: string }>(
+      `SELECT status FROM tenant_billing WHERE id = $1 LIMIT 1`,
+      [tbAttempt.billing_id]
+    );
+    const billingCurrentStatus = billingRow.rows[0]?.status ?? 'pending';
+    const processedResult = await applyTenantBillingPaymentAttemptEvent({
+      attemptId: tbAttempt.id,
+      billingId: tbAttempt.billing_id,
+      billingCurrentStatus,
+      internalStatus,
+      gatewayStatus: externalStatus,
+      paidAt: internalStatus === 'paid' ? new Date() : undefined,
+    });
+    await markPaymentEventProcessed({
+      gateway: gatewayKey,
+      eventId,
+      processedResult,
+    });
+    return { status: 200, body: { received: true } };
+  }
+
+  let entity = await findBillingOrCustomerInvoice(gatewayKey, referenceId);
+  /** CRM5 — ref avulsa antiga a cancelar após liquidar por conciliation (não cancela auth). */
+  let crmStandaloneRefToCancel: {
+    tenantId: string;
+    gatewayKey: string;
+    gatewayReferenceId: string;
+  } | null = null;
+
+  // CA S3 — payment.subscription sem fatura local: upsert plan_renewal (ou link contratação).
+  if (!entity) {
+    const asaasSubscriptionId =
+      typeof metaObj.asaasSubscriptionId === 'string' ? metaObj.asaasSubscriptionId.trim() : '';
+    if (asaasSubscriptionId && referenceId) {
+      try {
+        const { ensureTenantBillingForAsaasSubscriptionPayment } = await import(
+          '../../../services/saasAsaasSubscriptionRenewalService.js'
+        );
+        const ensured = await ensureTenantBillingForAsaasSubscriptionPayment({
+          asaasSubscriptionId,
+          paymentId: referenceId,
+          gatewayKey,
+          gatewayStatus: externalStatus,
+          paymentMethod,
+          amountCents: typeof metaObj.amountCents === 'number' ? metaObj.amountCents : null,
+          dueDate: typeof metaObj.dueDate === 'string' ? metaObj.dueDate : null,
+          externalReference:
+            typeof metaObj.externalReference === 'string' ? metaObj.externalReference : null,
+          eventType,
+        });
+        if (ensured) {
+          entity = {
+            entityType: 'tenant_billing',
+            entityId: ensured.id,
+            currentStatus: ensured.status,
+            gateway: ensured.gateway,
+          };
+        }
+      } catch (e) {
+        console.error('[webhookCore] CA S3 asaas subscription billing ensure failed', e);
+      }
+    }
+  }
+
+  if (!entity) {
+    const meta =
+      metadata && typeof metadata === 'object'
+        ? (metadata as {
+            conciliationIdentifier?: string;
+            pixQrCodeId?: string;
+          })
+        : {};
+    const conciliationCandidates = [
+      typeof meta.conciliationIdentifier === 'string' ? meta.conciliationIdentifier.trim() : '',
+      typeof meta.pixQrCodeId === 'string' ? meta.pixQrCodeId.trim() : '',
+    ].filter((v, i, arr) => v.length > 0 && arr.indexOf(v) === i);
+
+    for (const conciliationId of conciliationCandidates) {
+      try {
+        const { findTenantBillingByPixAutomaticConciliation } = await import(
+          '../../../services/billing2/billingPixAutomaticService.js'
+        );
+        const { updateInvoiceGatewayData } = await import('../../../services/invoiceService.js');
+        const byConc = await findTenantBillingByPixAutomaticConciliation(conciliationId);
+        if (byConc) {
+          await updateInvoiceGatewayData(byConc.id, {
+            gateway: byConc.gateway ?? gatewayKey,
+            payment_method: 'PIX',
+            gateway_reference_id: referenceId,
+            gateway_status: externalStatus,
+            gateway_metadata: {
+              pix_automatic_conciliation_id: conciliationId,
+              pix_automatic_journey: 'authorization',
+            },
+          });
+          entity = {
+            entityType: 'tenant_billing',
+            entityId: byConc.id,
+            currentStatus: byConc.status,
+            gateway: byConc.gateway,
+          };
+          break;
+        }
+      } catch (e) {
+        console.error('[webhookCore] pix automatic conciliation lookup (saas)', e);
+      }
+
+      // CRM5 / R1A — customer_invoices por conciliation / pixQrCodeId (subscription ou metadata).
+      try {
+        const { findCustomerInvoiceByPixAutomaticConciliation } = await import(
+          '../../../services/crm/crmPixAutomaticService.js'
+        );
+        const { getCustomerInvoiceById, updateCustomerInvoiceGatewayData } = await import(
+          '../../../services/customerInvoiceService.js'
+        );
+        const byConcCrm = await findCustomerInvoiceByPixAutomaticConciliation(conciliationId);
+        if (byConcCrm) {
+          const full = await getCustomerInvoiceById(byConcCrm.id);
+          const prevRef = (full?.gateway_reference_id ?? '').trim();
+          if (prevRef && prevRef !== referenceId) {
+            crmStandaloneRefToCancel = {
+              tenantId: byConcCrm.tenant_id,
+              gatewayKey: byConcCrm.gateway ?? gatewayKey,
+              gatewayReferenceId: prevRef,
+            };
+          }
+          await updateCustomerInvoiceGatewayData(byConcCrm.id, {
+            gateway: byConcCrm.gateway ?? gatewayKey,
+            payment_method: 'PIX',
+            gateway_reference_id: referenceId,
+            gateway_status: externalStatus,
+            gateway_metadata: {
+              pix_automatic_conciliation_id: conciliationId,
+              pix_automatic_journey: 'authorization',
+            },
+          });
+          entity = {
+            entityType: 'customer_invoice',
+            entityId: byConcCrm.id,
+            currentStatus: byConcCrm.status,
+            gateway: byConcCrm.gateway,
+          };
+          break;
+        }
+      } catch (e) {
+        console.error('[webhookCore] pix automatic conciliation lookup (crm)', e);
+      }
+    }
+  }
+  if (!entity) {
+    await markPaymentEventProcessed({
+      gateway: gatewayKey,
+      eventId,
+      processedResult: {
+        previous_status: 'n/a',
+        new_status: normalizeGatewayStatus(gatewayKey, externalStatus),
+        action: 'no_change',
+        reason: 'Entidade não encontrada (tenant_billing nem customer_invoice)',
+      },
+    });
+    return { status: 200, body: { received: true } };
+  }
+
+  const processedResult = await applyPaymentEvent({
+    entityType: entity.entityType,
+    entityId: entity.entityId,
+    currentStatus: entity.currentStatus,
+    internalStatus,
+    gatewayStatus: externalStatus,
+    paidAt: internalStatus === 'paid' ? new Date() : undefined,
+    paymentMethod: paymentMethod ?? undefined,
+  });
+
+  // CA S3 — reforça metadata de recusa com o eventType Asaas.
+  if (
+    entity.entityType === 'tenant_billing' &&
+    (eventType === 'PAYMENT_CREDIT_CARD_CAPTURE_REFUSED' ||
+      internalStatus === 'failed' ||
+      internalStatus === 'overdue')
+  ) {
+    const asaasSubscriptionId =
+      typeof metaObj.asaasSubscriptionId === 'string' ? metaObj.asaasSubscriptionId.trim() : '';
+    if (asaasSubscriptionId || eventType === 'PAYMENT_CREDIT_CARD_CAPTURE_REFUSED') {
+      try {
+        const { markAsaasSubscriptionPaymentFailed } = await import(
+          '../../../services/saasAsaasSubscriptionRenewalService.js'
+        );
+        await markAsaasSubscriptionPaymentFailed({
+          billingId: entity.entityId,
+          gatewayStatus: externalStatus,
+          eventType,
+        });
+      } catch (e) {
+        console.warn('[webhookCore] CA S3 mark card failure', e);
+      }
+    }
+  }
+
+  if (
+    internalStatus === 'paid' &&
+    entity.entityType === 'customer_invoice' &&
+    crmStandaloneRefToCancel
+  ) {
+    try {
+      const { deleteGatewayChargeIfSafe } = await import(
+        '../../../services/billingGatewayChargeService.js'
+      );
+      await deleteGatewayChargeIfSafe({
+        tenantId: crmStandaloneRefToCancel.tenantId,
+        gatewayKey: crmStandaloneRefToCancel.gatewayKey,
+        gatewayReferenceId: crmStandaloneRefToCancel.gatewayReferenceId,
+        gatewayStatusRaw: null,
+        billingType: 'crm',
+        ctx: {
+          invoice_id: entity.entityId,
+          reason: 'cycle_paid_cleanup',
+        },
+      });
+    } catch (e) {
+      console.warn(
+        '[webhookCore] cancel CRM standalone after pix auto paid',
+        e instanceof Error ? e.message : e
+      );
+    }
+  }
+
+  await markPaymentEventProcessed({
+    gateway: gatewayKey,
+    eventId,
+    processedResult,
+  });
+
+  return { status: 200, body: { received: true } };
+}

@@ -1,210 +1,1405 @@
-import { Toaster } from "@/components/ui/toaster";
-import { Toaster as Sonner } from "@/components/ui/sonner";
+import { Suspense, useEffect } from "react";
+import { lazyWithReload } from "@/lib/lazyWithReload";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { queryClient } from "@/lib/queryClient";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AuthProvider } from "./contexts/AuthContext";
-import Index from "./pages/Index";
-import NotFound from "./pages/NotFound";
-import Dashboard from "./pages/Dashboard";
-import Clients from "./pages/Clients";
-import Leads from "./pages/Leads";
-import Funnel from "./pages/Funnel";
-import Tasks from "./pages/Tasks";
-import Projects from "./pages/Projects";
-import ProjectTemplates from "./pages/ProjectTemplates";
-import Products from "./pages/Products";
-import Proposals from "./pages/Proposals";
-import Contracts from "./pages/Contracts";
-import NewContract from "./pages/NewContract";
-import ContractDetails from "./pages/ContractDetails";
-import Billing from "./pages/Billing";
-import Finance from "./pages/Finance";
-import Settings from "./pages/Settings";
-import Login from "./pages/Login";
-import Register from "./pages/Register";
-import Chat from "./pages/Chat";
-import AppLayout from "./layouts/AppLayout";
+import { PartnerBrandProvider } from "./contexts/PartnerBrandContext";
+import { ModulePermissionsProvider } from "./contexts/ModulePermissionsContext";
 import AuthLayout from "./layouts/AuthLayout";
-import AuthWhatsApp from "./pages/AuthWhatsApp";
-import RegistrationSteps from "./pages/Registration/RegistrationSteps";
 import AuthGuard from "./components/AuthGuard";
-import FunnelDetails from "./pages/FunnelDetails";
-import ProposalDetails from "./pages/ProposalDetails";
-import { PublicStore } from "./pages/PublicStore";
-import { PublicProduct } from "./pages/PublicProduct";
-import ProductForm from "./pages/ProductForm";
-import Orders from "./pages/Orders";
-import Tickets from "./pages/Tickets";
-import NewTicket from "./pages/NewTicket";
+import SuperAdminGuard from "./components/SuperAdminGuard";
+import AppLayout from "./layouts/AppLayout.lazy";
+import SuperAdminLayout from "./layouts/SuperAdminLayout.lazy";
+import SettingsLayout from "./layouts/SettingsLayout.lazy";
+import { RouteLoadingFallback as LoadingFallback } from "@/components/RouteLoadingFallback";
+import { PageContentSkeleton } from "@/components/PageContentSkeleton";
+import { markAppBootstrapStart } from "@/lib/devPerfMarks";
+import HomeOrRedirect from "./components/HomeOrRedirect";
+import { ThemeProvider } from "@/components/theme-provider";
+import { Toaster } from "@/components/ui/sonner";
+import { MetaPixelTrackingBridge } from "@/components/MetaPixelTrackingBridge";
+import { ChatQueryPersistBridge } from "@/components/chat/ChatQueryPersistBridge";
+import { ChatRouteFallback } from "@/components/chat/ChatRouteFallback";
+import { ChatRouteTimingListener } from "@/components/chat/ChatRouteTimingListener";
+import { loadChatPage } from "@/pages/chatLazy";
+import { EntityDrawerContainer } from "@/components/entities/EntityDrawerContainer";
+import { ChatImageLightboxHost } from "@/components/chat/ChatImageLightbox";
 
-const queryClient = new QueryClient();
+/**
+ * Fase 2 — bundle inicial do CRM:
+ * - Páginas de domínio (Dashboard, Chat, etc.) já estavam em lazyWithReload.
+ * - Layouts pesados (AppLayout, SuperAdmin, Settings) carregam via *.lazy.tsx + Suspense.
+ * - Auth (login/registo) e NotFound também em lazy para não ir no chunk de entrada.
+ */
+/** Slug antigo em inglês (`whatsapp-official`) → rotas reais `whatsapp-oficial` (preserva query). */
+function SuperadminLegacyWhatsappOfficialRedirect() {
+  const { pathname, search, hash } = useLocation();
+  const dest = pathname.includes("whatsapp-official")
+    ? pathname.replace(/whatsapp-official/g, "whatsapp-oficial")
+    : "/superadmin/conexoes/whatsapp-oficial";
+  return <Navigate to={`${dest}${search}${hash}`} replace />;
+}
+
+const ForgotPasswordWhatsapp = lazyWithReload(() => import("./pages/ForgotPasswordWhatsapp"));
+const AuthWhatsApp = lazyWithReload(() => import("./pages/AuthWhatsApp"));
+const Register = lazyWithReload(() => import("./pages/Register"));
+const TesteGratis = lazyWithReload(() => import("./pages/TesteGratis"));
+const PartnerChannelCheckout = lazyWithReload(() => import("./pages/partner/PartnerChannelCheckout"));
+const CadastroEntry = lazyWithReload(() => import("./pages/CadastroEntry"));
+const AcquisitionPremiumCheckout = lazyWithReload(() => import("./pages/AcquisitionPremiumCheckout"));
+const AcquisitionOperationalOnboarding = lazyWithReload(
+  () => import("./pages/AcquisitionOperationalOnboarding"),
+);
+const SuperAdminSignupAcquisitionPage = lazyWithReload(() => import("./pages/superadmin/SuperAdminSignupAcquisitionPage"));
+const SuperAdminGrowthSignupStrategyPage = lazyWithReload(
+  () => import("./pages/superadmin/SuperAdminGrowthSignupStrategyPage"),
+);
+const OnboardingKickoffPlaceholder = lazyWithReload(() => import("./pages/OnboardingKickoffPlaceholder"));
+const RegistrationSteps = lazyWithReload(() => import("./pages/Registration/RegistrationSteps"));
+const NotFound = lazyWithReload(() => import("./pages/NotFound"));
+
+// Lazy load todas as rotas protegidas para otimizar carregamento inicial
+const Dashboard = lazyWithReload(() => import("./pages/Dashboard"));
+const Clients = lazyWithReload(() => import("./pages/Clients"));
+const ClientProfile = lazyWithReload(() => import("./pages/ClientProfile"));
+const Leads = lazyWithReload(() => import("./pages/Leads"));
+const Funnel = lazyWithReload(() => import("./pages/Funnel"));
+const Tasks = lazyWithReload(() => import("./pages/Tasks"));
+const Agenda = lazyWithReload(() => import("./pages/Agenda"));
+const Projects = lazyWithReload(() => import("./pages/Projects"));
+const ProjectWizardPage = lazyWithReload(() => import("./pages/ProjectWizardPage"));
+const ProjectAreaPage = lazyWithReload(() => import("./pages/ProjectAreaPage"));
+const ProjectTemplates = lazyWithReload(() => import("./pages/ProjectTemplates"));
+const Products = lazyWithReload(() => import("./pages/Products"));
+const StoreSettings = lazyWithReload(() => import("./pages/StoreSettings"));
+const Proposals = lazyWithReload(() => import("./pages/Proposals"));
+const ProposalTemplates = lazyWithReload(() => import("./pages/ProposalTemplates"));
+const ProposalTemplateFormPage = lazyWithReload(() => import("./pages/ProposalTemplateFormPage"));
+const NewProposal = lazyWithReload(() => import("./pages/NewProposal"));
+const EditProposal = lazyWithReload(() => import("./pages/EditProposal"));
+const Contracts = lazyWithReload(() => import("./pages/Contracts"));
+const ContractTemplates = lazyWithReload(() => import("./pages/ContractTemplates"));
+const ContractTemplateFormPage = lazyWithReload(() => import("./pages/ContractTemplateFormPage"));
+const NewContract = lazyWithReload(() => import("./pages/NewContract"));
+const ContractDetails = lazyWithReload(() => import("./pages/ContractDetails"));
+const CustomerInvoices = lazyWithReload(() => import("./pages/CustomerInvoices"));
+const CustomerInvoiceNew = lazyWithReload(() => import("./pages/CustomerInvoiceNew"));
+const CustomerInvoiceDetail = lazyWithReload(() => import("./pages/CustomerInvoiceDetail"));
+const SubscriptionsList = lazyWithReload(() => import("./pages/SubscriptionsList"));
+const SubscriptionDetail = lazyWithReload(() => import("./pages/SubscriptionDetail"));
+const CustomerInvoicePay = lazyWithReload(() => import("./pages/CustomerInvoicePay"));
+const PublicContractView = lazyWithReload(() => import("./pages/PublicContractView"));
+const PublicContractSign = lazyWithReload(() => import("./pages/PublicContractSign"));
+const PublicProposalView = lazyWithReload(() => import("./pages/PublicProposalView"));
+const PublicAppointmentConfirmation = lazyWithReload(() => import("./pages/PublicAppointmentConfirmation"));
+const PublicTicketView = lazyWithReload(() => import("./pages/PublicTicketView"));
+const SuportePublicOrPlatformTicket = lazyWithReload(() => import("./pages/SuportePublicOrPlatformTicket"));
+const CustomerCharges = lazyWithReload(() => import("./pages/CustomerCharges"));
+const CustomerChargeDetail = lazyWithReload(() => import("./pages/CustomerChargeDetail"));
+const Finance = lazyWithReload(() => import("./pages/Finance"));
+const FinanceLayout = lazyWithReload(() => import("./pages/finance/FinanceLayout"));
+const FinanceSummaryPage = lazyWithReload(() => import("./pages/finance/FinanceSummaryPage"));
+const FinanceAccountsPage = lazyWithReload(() => import("./pages/finance/FinanceAccountsPage"));
+const FinanceAccountDetailPage = lazyWithReload(() => import("./pages/finance/FinanceAccountDetailPage"));
+const FinanceIncomesPage = lazyWithReload(() => import("./pages/finance/FinanceIncomesPage"));
+const FinanceExpensesPage = lazyWithReload(() => import("./pages/finance/FinanceExpensesPage"));
+const FinancePlaceholderPage = lazyWithReload(() => import("./pages/finance/FinancePlaceholderPage"));
+const FinancialOverviewPage = lazyWithReload(() => import("./pages/finance/FinancialOverviewPage"));
+const FinancialUnifiedAccountsPage = lazyWithReload(() => import("./pages/finance/FinancialUnifiedAccountsPage"));
+const FinancialUnifiedAccountDetailPage = lazyWithReload(() => import("./pages/finance/FinancialUnifiedAccountDetailPage"));
+const FinancialUnifiedTransactionsPage = lazyWithReload(() => import("./pages/finance/FinancialUnifiedTransactionsPage"));
+const FinancialUnifiedExpensesPage = lazyWithReload(() => import("./pages/finance/FinancialUnifiedExpensesPage"));
+const FinancialCategoriesPage = lazyWithReload(() => import("./pages/finance/FinancialCategoriesPage"));
+const FinancialAccountsPayablePage = lazyWithReload(() => import("./pages/finance/FinancialAccountsPayablePage"));
+const FinanceCreditCardsPage = lazyWithReload(() => import("./pages/finance/FinanceCreditCardsPage"));
+const FinanceCreditCardDetailPage = lazyWithReload(() => import("./pages/finance/FinanceCreditCardDetailPage"));
+const FinanceCreditCardStatementPage = lazyWithReload(() => import("./pages/finance/FinanceCreditCardStatementPage"));
+const FinancialReportsPage = lazyWithReload(() => import("./pages/finance/FinancialReportsPage"));
+const Settings = lazyWithReload(() => import("./pages/Settings"));
+const SettingsIndex = lazyWithReload(() => import("./pages/settings/SettingsIndex"));
+const SettingsSectionPage = lazyWithReload(() => import("./pages/settings/SettingsSectionPage"));
+const PaymentsPanelPage = lazyWithReload(() => import("./pages/settings/PaymentsPanelPage"));
+const GatewayConfigPage = lazyWithReload(() => import("./pages/settings/GatewayConfigPage"));
+const Chat = lazyWithReload(() => loadChatPage('lazy'));
+const ChatKanbanPage = lazyWithReload(() => import("./pages/ChatKanbanPage"));
+const SuperAdminOpsKanbanPage = lazyWithReload(() => import("./pages/superadmin/SuperAdminOpsKanbanPage"));
+const FunnelDetails = lazyWithReload(() => import("./pages/FunnelDetails"));
+const ProposalDetails = lazyWithReload(() => import("./pages/ProposalDetails"));
+const PublicStore = lazyWithReload(() => import("./pages/PublicStore").then(m => ({ default: m.PublicStore })));
+const PublicProduct = lazyWithReload(() => import("./pages/PublicProduct").then(m => ({ default: m.PublicProduct })));
+const StorePublicCheckout = lazyWithReload(() => import("./pages/StorePublicCheckout"));
+const ProductForm = lazyWithReload(() => import("./pages/ProductForm"));
+const Orders = lazyWithReload(() => import("./pages/Orders"));
+const Tickets = lazyWithReload(() => import("./pages/Tickets"));
+const TicketDetail = lazyWithReload(() => import("./pages/TicketDetail"));
+const TicketsKanban = lazyWithReload(() => import("./pages/TicketsKanban"));
+const NewTicket = lazyWithReload(() => import("./pages/NewTicket"));
+const ChatbotFlows = lazyWithReload(() => import("./pages/ChatbotFlows"));
+const ChatbotFlowEditor = lazyWithReload(() => import("./pages/ChatbotFlowEditor"));
+const SuperAdminDashboard = lazyWithReload(() => import("./pages/superadmin/SuperAdminDashboard"));
+const SuperAdminPlans = lazyWithReload(() => import("./pages/superadmin/SuperAdminPlans"));
+const SuperAdminPartnerWholesalePlans = lazyWithReload(
+  () => import("./pages/superadmin/SuperAdminPartnerWholesalePlans")
+);
+const SuperAdminPartnerWholesaleReport = lazyWithReload(
+  () => import("./pages/superadmin/SuperAdminPartnerWholesaleReport")
+);
+const SuperAdminClients = lazyWithReload(() => import("./pages/superadmin/SuperAdminClients"));
+const SuperAdminClientLayout = lazyWithReload(() => import("./pages/superadmin/SuperAdminClientLayout"));
+const SuperAdminClientResumo = lazyWithReload(() => import("./pages/superadmin/SuperAdminClientResumo"));
+const SuperAdminClientConfiguracoes = lazyWithReload(() => import("./pages/superadmin/SuperAdminClientConfiguracoes"));
+const SuperAdminClientFaturamento = lazyWithReload(() => import("./pages/superadmin/SuperAdminClientFaturamento"));
+const SuperAdminClientUsuarios = lazyWithReload(() => import("./pages/superadmin/SuperAdminClientUsuarios"));
+const SuperAdminClientPlaceholder = lazyWithReload(() => import("./pages/superadmin/SuperAdminClientPlaceholder"));
+const SuperAdminClientRecursos = lazyWithReload(() => import("./pages/superadmin/SuperAdminClientRecursos"));
+const SuperAdminClientLimites = lazyWithReload(() => import("./pages/superadmin/SuperAdminClientLimites"));
+const SuperAdminClientCommercial = lazyWithReload(() => import("./pages/superadmin/SuperAdminClientCommercial"));
+const SuperAdminClientObservacoes = lazyWithReload(() => import("./pages/superadmin/SuperAdminClientObservacoes"));
+const SuperAdminClientLogs = lazyWithReload(() => import("./pages/superadmin/SuperAdminClientLogs"));
+const SuperAdminClientNew = lazyWithReload(() => import("./pages/superadmin/SuperAdminClientNew"));
+const SuperAdminPartners = lazyWithReload(() => import("./pages/superadmin/SuperAdminPartners"));
+const SuperAdminPartnerNew = lazyWithReload(() => import("./pages/superadmin/SuperAdminPartnerNew"));
+const SuperAdminPartnerDetail = lazyWithReload(() => import("./pages/superadmin/SuperAdminPartnerDetail"));
+const PartnerLayout = lazyWithReload(() => import("./pages/partner/PartnerLayout"));
+const PartnerOverviewPage = lazyWithReload(() => import("./pages/partner/PartnerOverviewPage"));
+const PartnerIdentityPage = lazyWithReload(() => import("./pages/partner/PartnerIdentityPage"));
+const PartnerBrandPage = lazyWithReload(() => import("./pages/partner/PartnerBrandPage"));
+const PartnerDomainPage = lazyWithReload(() => import("./pages/partner/PartnerDomainPage"));
+const PartnerSaleLinkPage = lazyWithReload(() => import("./pages/partner/PartnerSaleLinkPage"));
+const PartnerPlansPage = lazyWithReload(() => import("./pages/partner/PartnerPlansPage"));
+const PartnerCommissionsPage = lazyWithReload(() => import("./pages/partner/PartnerCommissionsPage"));
+const PartnerCustomersPage = lazyWithReload(() => import("./pages/partner/PartnerCustomersPage"));
+const PartnerSellersPage = lazyWithReload(() => import("./pages/partner/PartnerSellersPage"));
+const PartnerLicensesPage = lazyWithReload(() => import("./pages/partner/PartnerLicensesPage"));
+const PartnerWholesalePage = lazyWithReload(() => import("./pages/partner/PartnerWholesalePage"));
+const PartnerGatewayPage = lazyWithReload(() => import("./pages/partner/PartnerGatewayPage"));
+const PartnerAdminGate = lazyWithReload(() => import("./pages/partner/PartnerAdminGate"));
+const SuperAdminFeatures = lazyWithReload(() => import("./pages/superadmin/SuperAdminFeatures"));
+const SuperAdminPlanFeatures = lazyWithReload(() => import("./pages/superadmin/SuperAdminPlanFeatures"));
+const SuperAdminTenantFeatures = lazyWithReload(() => import("./pages/superadmin/SuperAdminTenantFeatures"));
+const SuperAdminAudit = lazyWithReload(() => import("./pages/superadmin/SuperAdminAudit"));
+const SuperAdminReports = lazyWithReload(() => import("./pages/superadmin/SuperAdminReports"));
+const SuperAdminUsers = lazyWithReload(() => import("./pages/superadmin/SuperAdminUsers"));
+const SuperAdminNotifications = lazyWithReload(() => import("./pages/superadmin/SuperAdminNotifications"));
+const SuperAdminPagamentos = lazyWithReload(() => import("./pages/superadmin/SuperAdminPagamentos"));
+const SuperAdminNotificationsEngineSettings = lazyWithReload(() => import("./pages/superadmin/SuperAdminNotificationsEngineSettings"));
+const SuperAdminCrmNotificationTemplates = lazyWithReload(() => import("./pages/superadmin/SuperAdminCrmNotificationTemplates"));
+const SuperAdminPlatformNotifications = lazyWithReload(() => import("./pages/superadmin/SuperAdminPlatformNotifications"));
+const SuperAdminPlatformBillings = lazyWithReload(() => import("./pages/superadmin/SuperAdminPlatformBillings"));
+const PublicSaasBillingPay = lazyWithReload(() => import("./pages/PublicSaasBillingPay"));
+const SuperAdminSubscriptionCyclesSettings = lazyWithReload(() => import("./pages/superadmin/SuperAdminSubscriptionCyclesSettings"));
+const SuperAdminBillingOperations = lazyWithReload(() => import("./pages/superadmin/SuperAdminBillingOperations"));
+const SuperAdminBilling2FeatureFlags = lazyWithReload(
+  () => import("./pages/superadmin/billing2/SuperAdminBilling2FeatureFlags")
+);
+const SuperAdminBilling2CollectionPolicyPage = lazyWithReload(
+  () => import("./pages/superadmin/billing2/SuperAdminBilling2CollectionPolicyPage")
+);
+const SuperAdminBilling2SubscriptionsPage = lazyWithReload(
+  () => import("./pages/superadmin/billing2/SuperAdminBilling2SubscriptionsPage")
+);
+const SuperAdminBilling2LogsPage = lazyWithReload(
+  () => import("./pages/superadmin/billing2/SuperAdminBilling2LogsPage")
+);
+const SuperAdminBilling2WebhooksPage = lazyWithReload(
+  () => import("./pages/superadmin/billing2/SuperAdminBilling2WebhooksPage")
+);
+const LifecycleDashboard = lazyWithReload(() => import("./pages/superadmin/LifecycleDashboard"));
+const SuperAdminAnnouncements = lazyWithReload(() => import("./pages/superadmin/SuperAdminAnnouncements"));
+const SuperAdminAnnouncementEditor = lazyWithReload(() => import("./pages/superadmin/SuperAdminAnnouncementEditor"));
+const SuperAdminAnnouncementSend = lazyWithReload(() => import("./pages/superadmin/SuperAdminAnnouncementSend"));
+const SuperAdminAnnouncementSends = lazyWithReload(() => import("./pages/superadmin/SuperAdminAnnouncementSends"));
+const SuperAdminAnnouncementSendDetail = lazyWithReload(() => import("./pages/superadmin/SuperAdminAnnouncementSendDetail"));
+const SuperAdminAnnouncementGroups = lazyWithReload(() => import("./pages/superadmin/SuperAdminAnnouncementGroups"));
+const SuperAdminLeads = lazyWithReload(() => import("./pages/superadmin/SuperAdminLeads"));
+const SuperAdminLeadGroups = lazyWithReload(() => import("./pages/superadmin/SuperAdminLeadGroups"));
+const ConnectionsPage = lazyWithReload(() => import("./pages/superadmin/connections/ConnectionsPage"));
+const WhatsappOfficialConnectionPage = lazyWithReload(() => import("./pages/superadmin/connections/WhatsappOfficialConnectionPage"));
+const WhatsappOfficialModelosPage = lazyWithReload(() => import("./pages/superadmin/connections/WhatsappOfficialModelosPage"));
+const UazapiConnectionPage = lazyWithReload(() => import("./pages/superadmin/connections/UazapiConnectionPage"));
+const WhatsappOfficialChatFull = lazyWithReload(() => import("./pages/superadmin/connections/WhatsappOfficialChatFull"));
+const SuperAdminLegalPages = lazyWithReload(() => import("./pages/superadmin/SuperAdminLegalPages"));
+const SuperAdminHubPage = lazyWithReload(() => import("./pages/superadmin/SuperAdminHubPage"));
+const SuperAdminSmtpSettings = lazyWithReload(() => import("./pages/superadmin/SuperAdminSmtpSettings"));
+const SuperAdminTrackingSettings = lazyWithReload(() => import("./pages/superadmin/SuperAdminTrackingSettings"));
+const SignupSuccess = lazyWithReload(() => import("./pages/SignupSuccess"));
+const SuperAdminAdvancedScriptsPage = lazyWithReload(() => import("./pages/superadmin/SuperAdminAdvancedScriptsPage"));
+const SuperAdminAdvancedFeatureFlagsPage = lazyWithReload(() => import("./pages/superadmin/SuperAdminAdvancedFeatureFlagsPage"));
+const SuperAdminChatMigrationFlagsPage = lazyWithReload(() => import("./pages/superadmin/SuperAdminChatMigrationFlagsPage"));
+const PublicPrivacyPolicyPage = lazyWithReload(() =>
+  import("./pages/legal/PublicLegalPage").then((m) => ({ default: m.PublicPrivacyPolicyPage })),
+);
+const PublicTermsOfServicePage = lazyWithReload(() =>
+  import("./pages/legal/PublicLegalPage").then((m) => ({ default: m.PublicTermsOfServicePage })),
+);
+const UpdatesPage = lazyWithReload(() => import("./pages/UpdatesPage"));
+const UpdateDetailPage = lazyWithReload(() => import("./pages/UpdateDetailPage"));
+
+const Profile = lazyWithReload(() => import("./pages/Profile"));
+const MeuPlano = lazyWithReload(() => import("./pages/MeuPlano"));
+const InternalBillingCheckout = lazyWithReload(() => import("./pages/InternalBillingCheckout"));
+const PlanCheckout = lazyWithReload(() => import("./pages/PlanCheckout"));
+const Onboarding = lazyWithReload(() => import("./pages/Onboarding"));
+const PlatformSupport = lazyWithReload(() => import("./pages/PlatformSupport"));
+const SuperAdminPlatformSupport = lazyWithReload(() => import("./pages/superadmin/SuperAdminPlatformSupport"));
+const SuperAdminPlatformSupportTicketDetail = lazyWithReload(
+  () => import("./pages/superadmin/SuperAdminPlatformSupportTicketDetail"),
+);
+
+const LandingPage = lazyWithReload(() => import("./landingpage").then(m => ({ default: m.LandingPage })));
+
+function DevMountLogger({ label }: { label: string }) {
+  useEffect(() => {
+    if (label === "App") markAppBootstrapStart();
+  }, [label]);
+  return null;
+}
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
+    <DevMountLogger label="App" />
     <TooltipProvider>
       <BrowserRouter>
+        <ThemeProvider>
+        <PartnerBrandProvider>
         <AuthProvider>
-          <Toaster />
-          <Sonner />
+          <ChatQueryPersistBridge />
+          <ChatRouteTimingListener />
+          <ModulePermissionsProvider>
+          <MetaPixelTrackingBridge />
+          <Suspense fallback={<LoadingFallback />}>
           <Routes>
-            <Route path="/" element={<AuthWhatsApp />} />
+            <Route path="/" element={<HomeOrRedirect />} />
+            <Route path="/landing" element={<Suspense fallback={<LoadingFallback />}><LandingPage /></Suspense>} />
+            <Route path="/landingpage" element={<Navigate to="/" replace />} />
             
             {/* Alterado: a página de registro não precisa de AuthGuard */}
-            <Route path="/register" element={<AuthLayout><Register /></AuthLayout>} />
-            
-            <Route path="/register/steps" element={
-              <AuthGuard requireAuth={true} requireComplete={false} redirectTo="/login">
+            <Route
+              path="/register"
+              element={
                 <AuthLayout>
-                  <RegistrationSteps />
+                  <Suspense fallback={<LoadingFallback />}>
+                    <Register />
+                  </Suspense>
                 </AuthLayout>
-              </AuthGuard>
-            } />
-            <Route path="/login" element={<AuthLayout><AuthWhatsApp /></AuthLayout>} />
+              }
+            />
+
+            <Route
+              path="/teste-gratis"
+              element={
+                <AuthLayout>
+                  <Suspense fallback={<LoadingFallback />}>
+                    <TesteGratis />
+                  </Suspense>
+                </AuthLayout>
+              }
+            />
+
+            <Route
+              path="/cadastro"
+              element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <CadastroEntry />
+                </Suspense>
+              }
+            />
+            <Route
+              path="/:partnerSlug/cadastro"
+              element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <PartnerChannelCheckout />
+                </Suspense>
+              }
+            />
+            <Route
+              path="/:partnerSlug/:sellerId/cadastro"
+              element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <PartnerChannelCheckout />
+                </Suspense>
+              }
+            />
+
+            <Route
+              path="/onboarding/acquisition"
+              element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <AcquisitionOperationalOnboarding />
+                </Suspense>
+              }
+            />
+
+            <Route
+              path="/ativacao/checkout"
+              element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <AcquisitionPremiumCheckout />
+                </Suspense>
+              }
+            />
+
+            <Route
+              path="/onboarding/kickoff"
+              element={
+                <AuthLayout>
+                  <Suspense fallback={<LoadingFallback />}>
+                    <OnboardingKickoffPlaceholder />
+                  </Suspense>
+                </AuthLayout>
+              }
+            />
             
-            {/* Protected routes */}
+            <Route
+              path="/register/steps"
+              element={
+                <AuthGuard requireAuth={true} requireComplete={false} redirectTo="/login">
+                  <AuthLayout>
+                    <Suspense fallback={<LoadingFallback />}>
+                      <RegistrationSteps />
+                    </Suspense>
+                  </AuthLayout>
+                </AuthGuard>
+              }
+            />
+            <Route
+              path="/login"
+              element={
+                <AuthLayout>
+                  <Suspense fallback={<LoadingFallback />}>
+                    <AuthWhatsApp />
+                  </Suspense>
+                </AuthLayout>
+              }
+            />
+            <Route
+              path="/recuperar-senha"
+              element={
+                <AuthLayout>
+                  <Suspense fallback={<LoadingFallback />}>
+                    <ForgotPasswordWhatsapp />
+                  </Suspense>
+                </AuthLayout>
+              }
+            />
+            <Route path="/checkout" element={<Suspense fallback={<LoadingFallback />}><PlanCheckout /></Suspense>} />
+            <Route
+              path="/signup-success"
+              element={
+                <AuthGuard requireAuth={true} requireComplete={false} redirectTo="/login">
+                  <Suspense fallback={<LoadingFallback />}>
+                    <SignupSuccess />
+                  </Suspense>
+                </AuthGuard>
+              }
+            />
+            <Route
+              path="/suporte"
+              element={
+                <AuthGuard requireAuth={true} redirectTo="/login?redirect=%2Fsuporte">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <PlatformSupport />
+                    </Suspense>
+                  </AppLayout>
+                </AuthGuard>
+              }
+            />
+            <Route
+              path="/suporte/:id"
+              element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <SuportePublicOrPlatformTicket />
+                </Suspense>
+              }
+            />
+            <Route path="/onboarding" element={<Suspense fallback={<LoadingFallback />}><Onboarding /></Suspense>} />
+            <Route path="/pay/:token" element={<Suspense fallback={<LoadingFallback />}><CustomerInvoicePay /></Suspense>} />
+            <Route path="/saas-pay/:token" element={<Suspense fallback={<LoadingFallback />}><PublicSaasBillingPay /></Suspense>} />
+            <Route path="/contract-view/:token" element={<Suspense fallback={<LoadingFallback />}><PublicContractView /></Suspense>} />
+            <Route path="/proposal-view/:token" element={<Suspense fallback={<LoadingFallback />}><PublicProposalView /></Suspense>} />
+            <Route path="/ticket/:token" element={<Suspense fallback={<LoadingFallback />}><PublicTicketView /></Suspense>} />
+            <Route
+              path="/confirmar-compromisso/:token"
+              element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <PublicAppointmentConfirmation />
+                </Suspense>
+              }
+            />
+            <Route path="/contract-sign/:token" element={<Suspense fallback={<LoadingFallback />}><PublicContractSign /></Suspense>} />
+            <Route
+              path="/legal/privacy-policy"
+              element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <PublicPrivacyPolicyPage />
+                </Suspense>
+              }
+            />
+            <Route
+              path="/legal/terms-of-service"
+              element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <PublicTermsOfServicePage />
+                </Suspense>
+              }
+            />
+            <Route path="/admin/configuracoes/legal" element={<Navigate to="/superadmin/configuracoes/legal" replace />} />
+
+              {/* Protected routes - lazy loaded */}
             <Route path="/dashboard" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Dashboard /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <Dashboard />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/updates" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <UpdatesPage />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/updates/:id" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <UpdateDetailPage />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             
             <Route path="/clients" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Clients /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <Clients />
+                    </Suspense>
+                  </AppLayout>
+                </AuthGuard>
+              } />
+              <Route path="/clients/:id" element={
+                <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <ClientProfile />
+                    </Suspense>
+                  </AppLayout>
+                </AuthGuard>
+              } />
+              <Route path="/clients/:id/:tab" element={
+                <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <ClientProfile />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/leads" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Leads /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <Leads />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/funnel" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Funnel /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <Funnel />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/funnel/:funnelId" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><FunnelDetails /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <FunnelDetails />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/funnel/:funnelId/stage/:stageId/proposal/:proposalId" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><ProposalDetails /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <ProposalDetails />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/projects" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Projects /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <Projects />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/projetos/:projectId" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <Projects />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/projects/new" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <ProjectWizardPage />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/projects/:projectId/area/:areaId" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <ProjectAreaPage />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/projetos/:projectId/area/:areaId" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <ProjectAreaPage />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/tasks" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Tasks /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <Tasks />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/agenda" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <Agenda />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/project-templates" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><ProjectTemplates /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <ProjectTemplates />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             {/* Admin Products Routes */}
             <Route path="/admin/products" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Products /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <Products />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/admin/products/new" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><ProductForm /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <ProductForm />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/admin/products/:id/edit" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><ProductForm /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <ProductForm />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/admin/loja" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <StoreSettings />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             
             {/* Legacy routes - redirect to admin */}
             <Route path="/products" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Products /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <Products />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/products/new" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><ProductForm /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <ProductForm />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/products/edit/:id" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><ProductForm /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <ProductForm />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/orders" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Orders /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <Orders />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/proposals" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Proposals /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <Proposals />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/proposals/new" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <NewProposal />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/proposals/:proposalId/edit" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <EditProposal />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/proposals/templates" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <ProposalTemplates />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/proposals/templates/new" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <ProposalTemplateFormPage />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/proposals/templates/:templateId/edit" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <ProposalTemplateFormPage />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/proposals/:proposalId" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <ProposalDetails />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/contracts" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Contracts /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <Contracts />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/contracts/new" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><NewContract /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <NewContract />
+                    </Suspense>
+                  </AppLayout>
+                </AuthGuard>
+              } />
+            <Route path="/contracts/templates" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <ContractTemplates />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/contracts/templates/new" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <ContractTemplateFormPage />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/contracts/templates/:templateId/edit" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <ContractTemplateFormPage />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+              <Route path="/contracts/:id/edit" element={
+                <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <NewContract />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/contracts/:id" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><ContractDetails /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <ContractDetails />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/billing" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Billing /></AppLayout>
+                <Navigate to="/customer-invoices" replace />
+              </AuthGuard>
+            } />
+            <Route path="/customer-invoices" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <CustomerInvoices />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/customer-invoices/new" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <CustomerInvoiceNew />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/customer-invoices/:id/edit" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <CustomerInvoiceNew />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/customer-invoices/:id" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <CustomerInvoiceDetail />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/crm-subscriptions" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <SubscriptionsList />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/crm-subscriptions/:id" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <SubscriptionDetail />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/customer-charges" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <CustomerCharges />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/customer-charges/:id" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <CustomerChargeDetail />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/finance" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Finance /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <FinanceLayout />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            }>
+              <Route index element={<FinancialOverviewPage />} />
+              <Route path="accounts/:accountId" element={<FinancialUnifiedAccountDetailPage />} />
+              <Route path="accounts" element={<FinancialUnifiedAccountsPage />} />
+              <Route path="transactions" element={<FinancialUnifiedTransactionsPage />} />
+              <Route path="expenses" element={<FinancialUnifiedExpensesPage />} />
+              <Route path="accounts-payable" element={<FinancialAccountsPayablePage />} />
+              <Route path="categories" element={<FinancialCategoriesPage />} />
+              <Route
+                path="recurring-expenses"
+                element={<Navigate to={{ pathname: "/finance/accounts-payable", hash: "hub-regras-recorrencia" }} replace />}
+              />
+              <Route path="resumo" element={<FinanceSummaryPage />} />
+              <Route path="contas" element={<FinanceAccountsPage />} />
+              <Route path="contas/:accountId" element={<FinanceAccountDetailPage />} />
+              <Route path="entradas" element={<FinanceIncomesPage />} />
+              <Route path="despesas" element={<FinanceExpensesPage />} />
+              <Route path="credit-cards" element={<FinanceCreditCardsPage />} />
+              <Route path="credit-cards/:cardId" element={<FinanceCreditCardDetailPage />} />
+              <Route path="credit-cards/:cardId/faturas/:statementId" element={<FinanceCreditCardStatementPage />} />
+              <Route path="cartoes" element={<Navigate to="/finance/credit-cards" replace />} />
+              <Route path="relatorios" element={<FinancialReportsPage />} />
+              <Route path="notas-internas" element={<Finance />} />
+            </Route>
+            <Route path="/chat/kanbam" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <ChatKanbanPage />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/chat/:conversationId" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<ChatRouteFallback />}>
+                      <Chat />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/chat" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Chat /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<ChatRouteFallback />}>
+                      <Chat />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/settings" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Settings /></AppLayout>
+                  <AppLayout>
+                    <SettingsLayout />
+                  </AppLayout>
+              </AuthGuard>
+            }>
+              <Route index element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <SettingsIndex />
+                </Suspense>
+              } />
+              <Route path="integrations" element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <Settings />
+                </Suspense>
+              } />
+              <Route path="payments" element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <PaymentsPanelPage />
+                </Suspense>
+              } />
+              <Route path="payments/:gatewayKey" element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <GatewayConfigPage />
+                </Suspense>
+              } />
+              <Route path=":sectionSlug" element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <SettingsSectionPage />
+                </Suspense>
+              } />
+            </Route>
+            <Route path="/profile" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <Profile />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
-            <Route path="/support/tickets" element={
+            <Route path="/meu-plano" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><Tickets /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <MeuPlano />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/plano" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <MeuPlano />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/planos" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <MeuPlano />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/saas-billing/:billingId/pay" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <InternalBillingCheckout />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             <Route path="/support/tickets/new" element={
               <AuthGuard requireAuth={true} redirectTo="/">
-                <AppLayout><NewTicket /></AppLayout>
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <NewTicket />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/support/tickets/kanban" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <TicketsKanban />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/support/tickets/:id" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <TicketDetail />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/support/tickets" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <Tickets />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/chatbot-flows" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <ChatbotFlows />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/chatbot-flows/:id" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <ChatbotFlowEditor />
+                    </Suspense>
+                  </AppLayout>
               </AuthGuard>
             } />
             
-            {/* Public store routes */}
-            <Route path="/:storeSlug/loja" element={<PublicStore />} />
-            <Route path="/:storeSlug/loja/produto/:productId" element={<PublicProduct />} />
+            {/* Partner channel (M5) — Painel do Revendedor */}
+            <Route
+              path="/partner"
+              element={
+                <AuthGuard requireAuth={true} redirectTo="/login">
+                  <Suspense fallback={<LoadingFallback />}>
+                    <PartnerLayout />
+                  </Suspense>
+                </AuthGuard>
+              }
+            >
+              <Route index element={<PartnerOverviewPage />} />
+              <Route path="sales/link" element={<PartnerSaleLinkPage />} />
+              <Route path="commissions" element={<PartnerCommissionsPage />} />
+              <Route
+                path="config/identity"
+                element={
+                  <PartnerAdminGate>
+                    <PartnerIdentityPage />
+                  </PartnerAdminGate>
+                }
+              />
+              <Route
+                path="config/brand"
+                element={
+                  <PartnerAdminGate>
+                    <PartnerBrandPage />
+                  </PartnerAdminGate>
+                }
+              />
+              <Route
+                path="config/domain"
+                element={
+                  <PartnerAdminGate>
+                    <PartnerDomainPage />
+                  </PartnerAdminGate>
+                }
+              />
+              <Route
+                path="plans"
+                element={
+                  <PartnerAdminGate>
+                    <PartnerPlansPage />
+                  </PartnerAdminGate>
+                }
+              />
+              <Route
+                path="customers"
+                element={
+                  <PartnerAdminGate>
+                    <PartnerCustomersPage />
+                  </PartnerAdminGate>
+                }
+              />
+              <Route
+                path="sellers"
+                element={
+                  <PartnerAdminGate>
+                    <PartnerSellersPage />
+                  </PartnerAdminGate>
+                }
+              />
+              <Route
+                path="licenses"
+                element={
+                  <PartnerAdminGate>
+                    <PartnerLicensesPage />
+                  </PartnerAdminGate>
+                }
+              />
+              <Route
+                path="platform-plan"
+                element={
+                  <PartnerAdminGate>
+                    <PartnerWholesalePage />
+                  </PartnerAdminGate>
+                }
+              />
+              <Route
+                path="gateway"
+                element={
+                  <PartnerAdminGate>
+                    <PartnerGatewayPage />
+                  </PartnerAdminGate>
+                }
+              />
+            </Route>
+
+            {/* Super Admin - apenas para usuários com is_super_admin */}
+            <Route path="/superadmin" element={<AuthGuard requireAuth={true} redirectTo="/"><SuperAdminGuard /></AuthGuard>}>
+              <Route element={<SuperAdminLayout />}>
+                <Route index element={<Suspense fallback={<LoadingFallback />}><SuperAdminDashboard /></Suspense>} />
+                <Route path="comercial" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
+                <Route path="financeiro" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
+                <Route path="comunicacao" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
+                <Route path="chat" element={<Suspense fallback={<LoadingFallback />}><Chat scope="platform" /></Suspense>} />
+                <Route path="chat/:conversationId" element={<Suspense fallback={<LoadingFallback />}><Chat scope="platform" /></Suspense>} />
+                <Route
+                  path="operacao/kanbans"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SuperAdminOpsKanbanPage />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="operacoes/lifecycle"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <LifecycleDashboard />
+                    </Suspense>
+                  }
+                />
+                <Route path="conexoes" element={<Suspense fallback={<LoadingFallback />}><ConnectionsPage /></Suspense>} />
+                <Route path="conexoes/whatsapp-oficial" element={<Suspense fallback={<LoadingFallback />}><WhatsappOfficialConnectionPage /></Suspense>} />
+                <Route path="conexoes/whatsapp-oficial/modelos" element={<Suspense fallback={<LoadingFallback />}><WhatsappOfficialModelosPage /></Suspense>} />
+                <Route path="conexoes/whatsapp-oficial/chat" element={<Suspense fallback={<LoadingFallback />}><WhatsappOfficialChatFull /></Suspense>} />
+                <Route path="conexoes/whatsapp-official" element={<SuperadminLegacyWhatsappOfficialRedirect />} />
+                <Route path="conexoes/whatsapp-official/modelos" element={<SuperadminLegacyWhatsappOfficialRedirect />} />
+                <Route path="conexoes/whatsapp-official/chat" element={<SuperadminLegacyWhatsappOfficialRedirect />} />
+                <Route path="conexoes/uazapi" element={<Suspense fallback={<LoadingFallback />}><UazapiConnectionPage /></Suspense>} />
+                <Route path="plataforma" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
+                <Route
+                  path="plataforma/signup-acquisition"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SuperAdminSignupAcquisitionPage />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="configuracoes/growth"
+                  element={<Navigate to="/superadmin/configuracoes/growth/signup-strategy" replace />}
+                />
+                <Route
+                  path="configuracoes/growth/signup-strategy"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SuperAdminGrowthSignupStrategyPage />
+                    </Suspense>
+                  }
+                />
+                <Route path="avancado" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
+                <Route path="avancado/scripts" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAdvancedScriptsPage /></Suspense>} />
+                <Route path="avancado/feature-flags" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAdvancedFeatureFlagsPage /></Suspense>} />
+                <Route path="avancado/feature-flags/chat-optimization" element={<Suspense fallback={<LoadingFallback />}><SuperAdminChatMigrationFlagsPage /></Suspense>} />
+                <Route path="seguranca" element={<Suspense fallback={<LoadingFallback />}><SuperAdminHubPage /></Suspense>} />
+                <Route path="plans" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlans /></Suspense>} />
+                <Route
+                  path="partner-wholesale-plans"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SuperAdminPartnerWholesalePlans />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="partner-wholesale-report"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SuperAdminPartnerWholesaleReport />
+                    </Suspense>
+                  }
+                />
+                <Route path="plans/:id/features" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlanFeatures /></Suspense>} />
+                <Route path="clients" element={<Suspense fallback={<LoadingFallback />}><SuperAdminClients /></Suspense>} />
+                <Route path="clients/new" element={<Suspense fallback={<LoadingFallback />}><SuperAdminClientNew /></Suspense>} />
+                <Route path="partners" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPartners /></Suspense>} />
+                <Route path="partners/new" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPartnerNew /></Suspense>} />
+                <Route path="partners/:id" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPartnerDetail /></Suspense>} />
+                <Route path="clients/:id" element={<Suspense fallback={<LoadingFallback />}><SuperAdminClientLayout /></Suspense>}>
+                  <Route index element={<Navigate to="resumo" replace />} />
+                  <Route path="resumo" element={<SuperAdminClientResumo />} />
+                  <Route path="configuracoes" element={<SuperAdminClientConfiguracoes />} />
+                  <Route path="faturamento" element={<SuperAdminClientFaturamento />} />
+                  <Route path="usuarios" element={<SuperAdminClientUsuarios />} />
+                  <Route path="recursos" element={<SuperAdminClientRecursos />} />
+                  <Route path="limites" element={<SuperAdminClientLimites />} />
+                  <Route path="comercial" element={<SuperAdminClientCommercial />} />
+                  <Route path="observacoes" element={<SuperAdminClientObservacoes />} />
+                  <Route path="logs" element={<SuperAdminClientLogs />} />
+                </Route>
+                <Route path="tenants/:id/features" element={<Suspense fallback={<LoadingFallback />}><SuperAdminTenantFeatures /></Suspense>} />
+                <Route path="features" element={<Suspense fallback={<LoadingFallback />}><SuperAdminFeatures /></Suspense>} />
+                <Route path="audit" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAudit /></Suspense>} />
+                <Route path="reports" element={<Suspense fallback={<LoadingFallback />}><SuperAdminReports /></Suspense>} />
+                <Route path="users" element={<Suspense fallback={<LoadingFallback />}><SuperAdminUsers /></Suspense>} />
+                <Route path="notifications" element={<Suspense fallback={<LoadingFallback />}><SuperAdminNotifications /></Suspense>} />
+                <Route path="pagamentos" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPagamentos /></Suspense>} />
+                <Route path="notifications-engine" element={<Suspense fallback={<LoadingFallback />}><SuperAdminNotificationsEngineSettings /></Suspense>} />
+                <Route
+                  path="notification-templates"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SuperAdminCrmNotificationTemplates />
+                    </Suspense>
+                  }
+                />
+                <Route path="subscription-cycles" element={<Suspense fallback={<LoadingFallback />}><SuperAdminSubscriptionCyclesSettings /></Suspense>} />
+                <Route path="billing/operations" element={<Suspense fallback={<LoadingFallback />}><SuperAdminBillingOperations /></Suspense>} />
+                <Route
+                  path="billing/feature-flags"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SuperAdminBilling2FeatureFlags />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="billing/collection-policy"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SuperAdminBilling2CollectionPolicyPage />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="billing/subscriptions"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SuperAdminBilling2SubscriptionsPage />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="billing/logs"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SuperAdminBilling2LogsPage />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="billing/webhooks"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SuperAdminBilling2WebhooksPage />
+                    </Suspense>
+                  }
+                />
+                <Route path="platform-notifications" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlatformNotifications /></Suspense>} />
+                <Route path="smtp" element={<Suspense fallback={<LoadingFallback />}><SuperAdminSmtpSettings /></Suspense>} />
+                <Route
+                  path="marketing/tracking"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SuperAdminTrackingSettings />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="platform-support"
+                  element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlatformSupport /></Suspense>}
+                />
+                <Route
+                  path="platform-support/tickets/:id"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SuperAdminPlatformSupportTicketDetail />
+                    </Suspense>
+                  }
+                />
+                <Route path="platform-billings" element={<Suspense fallback={<LoadingFallback />}><SuperAdminPlatformBillings /></Suspense>} />
+                <Route path="announcements/groups" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAnnouncementGroups /></Suspense>} />
+                <Route path="announcements/sends/:sendId" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAnnouncementSendDetail /></Suspense>} />
+                <Route path="announcements/sends" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAnnouncementSends /></Suspense>} />
+                <Route path="announcements/new" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAnnouncementEditor /></Suspense>} />
+                <Route path="announcements/:id/edit" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAnnouncementEditor /></Suspense>} />
+                <Route path="announcements/:id/send" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAnnouncementSend /></Suspense>} />
+                <Route path="announcements" element={<Suspense fallback={<LoadingFallback />}><SuperAdminAnnouncements /></Suspense>} />
+                <Route path="leads/groups" element={<Suspense fallback={<LoadingFallback />}><SuperAdminLeadGroups /></Suspense>} />
+                <Route path="leads" element={<Suspense fallback={<LoadingFallback />}><SuperAdminLeads /></Suspense>} />
+                <Route path="whatsapp-oficial" element={<Navigate to="/superadmin/conexoes/whatsapp-oficial" replace />} />
+                <Route
+                  path="configuracoes/legal"
+                  element={
+                    <Suspense fallback={<LoadingFallback />}>
+                      <SuperAdminLegalPages />
+                    </Suspense>
+                  }
+                />
+              </Route>
+            </Route>
             
-            <Route path="*" element={<NotFound />} />
+            {/* Public store routes */}
+              <Route path="/:storeSlug/loja" element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <PublicStore />
+                </Suspense>
+              } />
+              <Route path="/:storeSlug/loja/produto/:productId" element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <PublicProduct />
+                </Suspense>
+              } />
+              <Route path="/:storeSlug/loja/checkout" element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <StorePublicCheckout />
+                </Suspense>
+              } />
+            
+            <Route
+              path="*"
+              element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <NotFound />
+                </Suspense>
+              }
+            />
           </Routes>
+          </Suspense>
+          <EntityDrawerContainer />
+          </ModulePermissionsProvider>
         </AuthProvider>
+        <ChatImageLightboxHost />
+        <Toaster />
+        </PartnerBrandProvider>
+        </ThemeProvider>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>

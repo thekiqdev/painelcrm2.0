@@ -22,9 +22,9 @@ const leadFormSchema = z.object({
   company: z.string().optional(),
   email: z.string().email({ message: "E-mail inválido" }).optional().or(z.literal("")),
   phone: z.string().optional(),
+  cpf_cnpj: z.string().optional(),
   status: z.string(),
   source: z.string(),
-  notes: z.string().optional(),
 });
 
 type LeadFormValues = z.infer<typeof leadFormSchema>;
@@ -51,9 +51,9 @@ const LeadEditDialog: React.FC<LeadEditDialogProps> = ({
       company: lead?.company || "",
       email: lead?.email || "",
       phone: lead?.phone || "",
+      cpf_cnpj: lead?.cpf_cnpj || "",
       status: lead?.status || "Novo",
       source: lead?.source || "Direto",
-      notes: lead?.notes || "",
     },
   });
 
@@ -65,9 +65,9 @@ const LeadEditDialog: React.FC<LeadEditDialogProps> = ({
         company: lead.company || "",
         email: lead.email || "",
         phone: lead.phone || "",
+        cpf_cnpj: lead.cpf_cnpj || "",
         status: lead.status,
         source: lead.source || "Direto",
-        notes: lead.notes || "",
       });
     }
   }, [lead, editLeadForm]);

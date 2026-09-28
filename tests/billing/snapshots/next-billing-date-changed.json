@@ -1,0 +1,281 @@
+{
+  "scenarioId": "next-billing-date-changed",
+  "todayYmd": "2026-06-30",
+  "history": {
+    "rowCount": 1,
+    "rows": [
+      {
+        "cycleId": "c-nbd",
+        "invoiceId": null,
+        "dueYmd": "2026-09-01",
+        "statusPt": "Prevista",
+        "canGenerateNow": true,
+        "isProjected": false,
+        "eventType": "upcoming_cycle"
+      }
+    ],
+    "generateCycleIds": [
+      "c-nbd"
+    ]
+  },
+  "calendar": {
+    "eventCount": 13,
+    "events": [
+      {
+        "id": "sched-c-nbd-2026-09-01",
+        "ymd": "2026-09-01",
+        "cycleId": "c-nbd",
+        "invoiceId": null,
+        "isProjected": false,
+        "supportsGenerate": true,
+        "type": "upcoming_cycle"
+      },
+      {
+        "id": "projected-2026-10-01",
+        "ymd": "2026-10-01",
+        "cycleId": null,
+        "invoiceId": null,
+        "isProjected": true,
+        "supportsGenerate": false,
+        "type": "upcoming_cycle"
+      },
+      {
+        "id": "projected-2026-11-01",
+        "ymd": "2026-11-01",
+        "cycleId": null,
+        "invoiceId": null,
+        "isProjected": true,
+        "supportsGenerate": false,
+        "type": "upcoming_cycle"
+      },
+      {
+        "id": "projected-2026-12-01",
+        "ymd": "2026-12-01",
+        "cycleId": null,
+        "invoiceId": null,
+        "isProjected": true,
+        "supportsGenerate": false,
+        "type": "upcoming_cycle"
+      },
+      {
+        "id": "projected-2027-01-01",
+        "ymd": "2027-01-01",
+        "cycleId": null,
+        "invoiceId": null,
+        "isProjected": true,
+        "supportsGenerate": false,
+        "type": "upcoming_cycle"
+      },
+      {
+        "id": "projected-2027-02-01",
+        "ymd": "2027-02-01",
+        "cycleId": null,
+        "invoiceId": null,
+        "isProjected": true,
+        "supportsGenerate": false,
+        "type": "upcoming_cycle"
+      },
+      {
+        "id": "projected-2027-03-01",
+        "ymd": "2027-03-01",
+        "cycleId": null,
+        "invoiceId": null,
+        "isProjected": true,
+        "supportsGenerate": false,
+        "type": "upcoming_cycle"
+      },
+      {
+        "id": "projected-2027-04-01",
+        "ymd": "2027-04-01",
+        "cycleId": null,
+        "invoiceId": null,
+        "isProjected": true,
+        "supportsGenerate": false,
+        "type": "upcoming_cycle"
+      },
+      {
+        "id": "projected-2027-05-01",
+        "ymd": "2027-05-01",
+        "cycleId": null,
+        "invoiceId": null,
+        "isProjected": true,
+        "supportsGenerate": false,
+        "type": "upcoming_cycle"
+      },
+      {
+        "id": "projected-2027-06-01",
+        "ymd": "2027-06-01",
+        "cycleId": null,
+        "invoiceId": null,
+        "isProjected": true,
+        "supportsGenerate": false,
+        "type": "upcoming_cycle"
+      },
+      {
+        "id": "projected-2027-07-01",
+        "ymd": "2027-07-01",
+        "cycleId": null,
+        "invoiceId": null,
+        "isProjected": true,
+        "supportsGenerate": false,
+        "type": "upcoming_cycle"
+      },
+      {
+        "id": "projected-2027-08-01",
+        "ymd": "2027-08-01",
+        "cycleId": null,
+        "invoiceId": null,
+        "isProjected": true,
+        "supportsGenerate": false,
+        "type": "upcoming_cycle"
+      },
+      {
+        "id": "projected-2027-09-01",
+        "ymd": "2027-09-01",
+        "cycleId": null,
+        "invoiceId": null,
+        "isProjected": true,
+        "supportsGenerate": false,
+        "type": "upcoming_cycle"
+      }
+    ],
+    "projectedCount": 12
+  },
+  "sidebar": {
+    "alertKinds": [],
+    "alertCount": 0,
+    "nextReceiptDate": "1 Set",
+    "openAmount": "R$ 0,00"
+  },
+  "nextInvoice": {
+    "cycleId": "c-nbd",
+    "invoiceId": null,
+    "isProjected": false,
+    "dueYmd": "2026-09-01",
+    "statusLabel": "Prevista",
+    "showGenerate": true
+  },
+  "financialEvents": {
+    "realCount": 1,
+    "projectedCount": 12,
+    "events": [
+      {
+        "id": "sched-c-nbd-2026-09-01",
+        "type": "upcoming_cycle",
+        "kind": "real",
+        "cycleId": "c-nbd",
+        "invoiceId": null,
+        "ymd": "2026-09-01",
+        "dueYmd": "2026-09-01"
+      },
+      {
+        "id": "projected-2026-10-01",
+        "type": "upcoming_cycle",
+        "kind": "projected",
+        "cycleId": null,
+        "invoiceId": null,
+        "ymd": "2026-10-01",
+        "dueYmd": "2026-10-01"
+      },
+      {
+        "id": "projected-2026-11-01",
+        "type": "upcoming_cycle",
+        "kind": "projected",
+        "cycleId": null,
+        "invoiceId": null,
+        "ymd": "2026-11-01",
+        "dueYmd": "2026-11-01"
+      },
+      {
+        "id": "projected-2026-12-01",
+        "type": "upcoming_cycle",
+        "kind": "projected",
+        "cycleId": null,
+        "invoiceId": null,
+        "ymd": "2026-12-01",
+        "dueYmd": "2026-12-01"
+      },
+      {
+        "id": "projected-2027-01-01",
+        "type": "upcoming_cycle",
+        "kind": "projected",
+        "cycleId": null,
+        "invoiceId": null,
+        "ymd": "2027-01-01",
+        "dueYmd": "2027-01-01"
+      },
+      {
+        "id": "projected-2027-02-01",
+        "type": "upcoming_cycle",
+        "kind": "projected",
+        "cycleId": null,
+        "invoiceId": null,
+        "ymd": "2027-02-01",
+        "dueYmd": "2027-02-01"
+      },
+      {
+        "id": "projected-2027-03-01",
+        "type": "upcoming_cycle",
+        "kind": "projected",
+        "cycleId": null,
+        "invoiceId": null,
+        "ymd": "2027-03-01",
+        "dueYmd": "2027-03-01"
+      },
+      {
+        "id": "projected-2027-04-01",
+        "type": "upcoming_cycle",
+        "kind": "projected",
+        "cycleId": null,
+        "invoiceId": null,
+        "ymd": "2027-04-01",
+        "dueYmd": "2027-04-01"
+      },
+      {
+        "id": "projected-2027-05-01",
+        "type": "upcoming_cycle",
+        "kind": "projected",
+        "cycleId": null,
+        "invoiceId": null,
+        "ymd": "2027-05-01",
+        "dueYmd": "2027-05-01"
+      },
+      {
+        "id": "projected-2027-06-01",
+        "type": "upcoming_cycle",
+        "kind": "projected",
+        "cycleId": null,
+        "invoiceId": null,
+        "ymd": "2027-06-01",
+        "dueYmd": "2027-06-01"
+      },
+      {
+        "id": "projected-2027-07-01",
+        "type": "upcoming_cycle",
+        "kind": "projected",
+        "cycleId": null,
+        "invoiceId": null,
+        "ymd": "2027-07-01",
+        "dueYmd": "2027-07-01"
+      },
+      {
+        "id": "projected-2027-08-01",
+        "type": "upcoming_cycle",
+        "kind": "projected",
+        "cycleId": null,
+        "invoiceId": null,
+        "ymd": "2027-08-01",
+        "dueYmd": "2027-08-01"
+      },
+      {
+        "id": "projected-2027-09-01",
+        "type": "upcoming_cycle",
+        "kind": "projected",
+        "cycleId": null,
+        "invoiceId": null,
+        "ymd": "2027-09-01",
+        "dueYmd": "2027-09-01"
+      }
+    ]
+  }
+}

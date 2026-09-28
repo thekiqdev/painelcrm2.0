@@ -1,92 +1,247 @@
-
-import React, { useState } from "react";
-import { SettingsMenu } from "@/components/settings/SettingsMenu";
+import React, { lazy, Suspense, useContext } from "react";
+import { SettingsLayoutContext } from "@/layouts/SettingsLayout";
 import { CompanyDataSection } from "@/components/settings/CompanyDataSection";
-import { UsersSection } from "@/components/settings/UsersSection";
-import { BillingSection } from "@/components/settings/BillingSection";
-import { NotificationsSection } from "@/components/settings/NotificationsSection";
-import { SecuritySection } from "@/components/settings/SecuritySection";
-import { PreferencesSection } from "@/components/settings/PreferencesSection";
-import { LeadsSection } from "@/components/settings/LeadsSection";
-import { ClientGroupsSection } from "@/components/settings/ClientGroupsSection";
-import { WhatsAppSection } from "@/components/settings/WhatsAppSection";
-import { DomainSection } from "@/components/settings/DomainSection";
-import { CollaboratorsSection } from "@/components/settings/CollaboratorsSection";
-import { UserManagementSection } from "@/components/settings/UserManagementSection";
-import { toast } from "sonner";
+import { PageContentSkeleton } from "@/components/PageContentSkeleton";
+import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { toast } from "@/components/ui/sonner";
 
-type SettingSection = 
-  | "companyData" 
-  | "users" 
-  | "userManagement"
-  | "billing" 
-  | "notifications" 
-  | "security" 
-  | "preferences" 
-  | "leadsConfig" 
-  | "clientGroups" 
-  | "collaborators" 
-  | "whatsapp" 
-  | "domain";
+const UsersSection = lazy(() =>
+  import("@/components/settings/UsersSection").then((m) => ({ default: m.UsersSection })),
+);
+const TeamsSection = lazy(() =>
+  import("@/components/settings/TeamsSection").then((m) => ({ default: m.TeamsSection })),
+);
+const UserManagementSection = lazy(() =>
+  import("@/components/settings/UserManagementSection").then((m) => ({ default: m.UserManagementSection })),
+);
+const BillingSection = lazy(() =>
+  import("@/components/settings/BillingSection").then((m) => ({ default: m.BillingSection })),
+);
+const NotificationsSection = lazy(() =>
+  import("@/components/settings/NotificationsSection").then((m) => ({ default: m.NotificationsSection })),
+);
+const SecuritySection = lazy(() =>
+  import("@/components/settings/SecuritySection").then((m) => ({ default: m.SecuritySection })),
+);
+const PreferencesSection = lazy(() =>
+  import("@/components/settings/PreferencesSection").then((m) => ({ default: m.PreferencesSection })),
+);
+const LeadsSection = lazy(() =>
+  import("@/components/settings/LeadsSection").then((m) => ({ default: m.LeadsSection })),
+);
+const ClientGroupsSection = lazy(() =>
+  import("@/components/settings/ClientGroupsSection").then((m) => ({ default: m.ClientGroupsSection })),
+);
+const WhatsAppSection = lazy(() =>
+  import("@/components/settings/WhatsAppSection").then((m) => ({ default: m.WhatsAppSection })),
+);
+const ChatTemplatesSettingsSection = lazy(() =>
+  import("@/components/settings/ChatTemplatesSettingsSection").then((m) => ({
+    default: m.ChatTemplatesSettingsSection,
+  })),
+);
+const DomainSection = lazy(() =>
+  import("@/components/settings/DomainSection").then((m) => ({ default: m.DomainSection })),
+);
+const MessageTemplatesSection = lazy(() =>
+  import("@/components/settings/MessageTemplatesSection").then((m) => ({ default: m.MessageTemplatesSection })),
+);
+const GoogleCalendarSection = lazy(() =>
+  import("@/components/settings/GoogleCalendarSection").then((m) => ({ default: m.GoogleCalendarSection })),
+);
+const GoogleDriveSection = lazy(() =>
+  import("@/components/settings/GoogleDriveSection").then((m) => ({ default: m.GoogleDriveSection })),
+);
+const MediaLibrarySection = lazy(() =>
+  import("@/components/settings/MediaLibrarySection").then((m) => ({ default: m.MediaLibrarySection })),
+);
+const AgendaAvailabilitySection = lazy(() =>
+  import("@/components/settings/AgendaAvailabilitySection").then((m) => ({
+    default: m.AgendaAvailabilitySection,
+  })),
+);
+const ChatAttendanceSettingsSection = lazy(() =>
+  import("@/components/settings/ChatAttendanceSettingsSection").then((m) => ({
+    default: m.ChatAttendanceSettingsSection,
+  })),
+);
+const SupportSettingsSection = lazy(() =>
+  import("@/components/settings/SupportSettingsSection").then((m) => ({ default: m.SupportSettingsSection })),
+);
+const PublicSupportPortalSettingsSection = lazy(() =>
+  import("@/components/settings/PublicSupportPortalSettingsSection").then((m) => ({
+    default: m.PublicSupportPortalSettingsSection,
+  })),
+);
+const ChatAutomationSettingsSection = lazy(() =>
+  import("@/components/settings/ChatAutomationSettings").then((m) => ({
+    default: m.ChatAutomationSettingsSection,
+  })),
+);
+
+const CHAT_AUTOMATION_UI_ENABLED = import.meta.env.VITE_CHAT_AUTOMATION_ENABLED === "true";
+
+function SectionSuspense({ children }: { children: React.ReactNode }) {
+  return <Suspense fallback={<PageContentSkeleton />}>{children}</Suspense>;
+}
 
 const Settings = () => {
-  const [activeSection, setActiveSection] = useState<SettingSection>("companyData");
+  const ctx = useContext(SettingsLayoutContext);
+  const activeSection = ctx?.activeSection ?? "companyData";
 
-  // Default save handler for sections that need it
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     toast.success("Configurações salvas com sucesso!");
   };
 
-  // Renderizar a seção ativa
-  const renderActiveSection = () => {
-    switch (activeSection) {
-      case "companyData":
-        return <CompanyDataSection handleSave={handleSave} />;
-      case "users":
-        return <UsersSection />;
-      case "userManagement":
-        return <UserManagementSection />;
-      case "billing":
-        return <BillingSection />;
-      case "notifications":
-        return <NotificationsSection handleSave={handleSave} />;
-      case "security":
-        return <SecuritySection />;
-      case "preferences":
-        return <PreferencesSection handleSave={handleSave} />;
-      case "leadsConfig":
-        return <LeadsSection handleSave={handleSave} />;
-      case "clientGroups":
-        return <ClientGroupsSection />;
-      case "collaborators":
-        return <CollaboratorsSection />;
-      case "whatsapp":
-        return <WhatsAppSection />;
-      case "domain":
-        return <DomainSection handleSave={handleSave} />;
-      default:
-        return <CompanyDataSection handleSave={handleSave} />;
-    }
-  };
-
-  return (
-    <div className="container mx-auto py-6">
-      <h1 className="text-2xl font-bold mb-6">Configurações</h1>
-      
-      <div className="grid grid-cols-12 gap-6">
-        {/* Menu lateral */}
-        <div className="col-span-3">
-          <SettingsMenu activeSection={activeSection} onSelect={setActiveSection} />
-        </div>
-        
-        {/* Conteúdo da seção ativa */}
-        <div className="col-span-9">
-          {renderActiveSection()}
-        </div>
-      </div>
-    </div>
-  );
+  switch (activeSection) {
+    case "companyData":
+      return <CompanyDataSection handleSave={handleSave} />;
+    case "users":
+      return (
+        <SectionSuspense>
+          <UsersSection />
+        </SectionSuspense>
+      );
+    case "teams":
+      return (
+        <SectionSuspense>
+          <TeamsSection />
+        </SectionSuspense>
+      );
+    case "userManagement":
+      return (
+        <SectionSuspense>
+          <UserManagementSection />
+        </SectionSuspense>
+      );
+    case "billing":
+      return (
+        <SectionSuspense>
+          <BillingSection />
+        </SectionSuspense>
+      );
+    case "notifications":
+      return (
+        <SectionSuspense>
+          <NotificationsSection handleSave={handleSave} />
+        </SectionSuspense>
+      );
+    case "security":
+      return (
+        <SectionSuspense>
+          <SecuritySection />
+        </SectionSuspense>
+      );
+    case "preferences":
+      return (
+        <SectionSuspense>
+          <PreferencesSection handleSave={handleSave} />
+        </SectionSuspense>
+      );
+    case "leadsConfig":
+      return (
+        <SectionSuspense>
+          <LeadsSection handleSave={handleSave} />
+        </SectionSuspense>
+      );
+    case "clientGroups":
+      return (
+        <SectionSuspense>
+          <ClientGroupsSection />
+        </SectionSuspense>
+      );
+    case "whatsapp":
+      return (
+        <SectionSuspense>
+          <WhatsAppSection />
+        </SectionSuspense>
+      );
+    case "chatTemplates":
+      return (
+        <SectionSuspense>
+          <ChatTemplatesSettingsSection />
+        </SectionSuspense>
+      );
+    case "domain":
+      return (
+        <SectionSuspense>
+          <DomainSection handleSave={handleSave} />
+        </SectionSuspense>
+      );
+    case "messageTemplates":
+      return (
+        <SectionSuspense>
+          <MessageTemplatesSection handleSave={handleSave} />
+        </SectionSuspense>
+      );
+    case "paymentGateway":
+      return null;
+    case "googleCalendar":
+      return (
+        <SectionSuspense>
+          <GoogleCalendarSection />
+        </SectionSuspense>
+      );
+    case "googleDrive":
+      return (
+        <SectionSuspense>
+          <GoogleDriveSection />
+        </SectionSuspense>
+      );
+    case "mediaLibrary":
+      return (
+        <SectionSuspense>
+          <MediaLibrarySection />
+        </SectionSuspense>
+      );
+    case "agendaAvailability":
+      return (
+        <SectionSuspense>
+          <AgendaAvailabilitySection />
+        </SectionSuspense>
+      );
+    case "chatAttendance":
+      return (
+        <SectionSuspense>
+          <ChatAttendanceSettingsSection />
+        </SectionSuspense>
+      );
+    case "support":
+      return (
+        <SectionSuspense>
+          <SupportSettingsSection />
+        </SectionSuspense>
+      );
+    case "publicSupportPortal":
+      return (
+        <SectionSuspense>
+          <PublicSupportPortalSettingsSection />
+        </SectionSuspense>
+      );
+    case "chatAutomation":
+      if (!CHAT_AUTOMATION_UI_ENABLED) {
+        return (
+          <Card>
+            <CardHeader>
+              <CardTitle>Automação do chat</CardTitle>
+              <CardDescription>
+                Esta área só aparece quando{" "}
+                <code className="rounded bg-muted px-1">VITE_CHAT_AUTOMATION_ENABLED=true</code> está definido no
+                ambiente de build.
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        );
+      }
+      return (
+        <SectionSuspense>
+          <ChatAutomationSettingsSection />
+        </SectionSuspense>
+      );
+    default:
+      return <CompanyDataSection handleSave={handleSave} />;
+  }
 };
 
 export default Settings;

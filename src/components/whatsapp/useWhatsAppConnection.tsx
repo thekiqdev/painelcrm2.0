@@ -1,6 +1,6 @@
 
 import { useState, useEffect } from "react";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { whatsappService } from "@/services/whatsapp";
 import { connectionDatabaseService, DatabaseConnection } from "@/services/whatsapp/connectionDatabaseService";
