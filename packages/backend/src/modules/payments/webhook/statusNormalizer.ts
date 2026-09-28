@@ -58,6 +58,8 @@ export function normalizeGatewayStatus(
     if (upper === 'REFUNDED') return 'refunded';
     if (upper === 'CANCELED' || upper === 'CANCELLED' || upper === 'DELETED') return 'cancelled';
     if (upper === 'PENDING' || upper.startsWith('AWAITING_')) return 'pending';
+    // CA S3 — captura de cartão recusada ( Assinatura / payWithCreditCard ).
+    if (upper.includes('REFUSED') || upper === 'FAILED') return 'failed';
   }
 
   /** Mercado Pago — status em GET /v1/payments/:id (normalmente minúsculos). */

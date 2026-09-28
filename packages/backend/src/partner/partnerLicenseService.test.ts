@@ -32,7 +32,11 @@ describe('partnerLicenseService', () => {
             {
               wholesale_plan_id: 'wp-1',
               wholesale_status: 'active',
+              wholesale_plan_name: 'Atacado 10',
               unit_overage_cents: 3500,
+              seats_included: 10,
+              price_cents: 99900,
+              billing_interval: 'monthly',
             },
           ],
         };
@@ -53,6 +57,8 @@ describe('partnerLicenseService', () => {
     vi.mocked(getPartnerLicensePool).mockResolvedValue({
       partner_tenant_id: PARTNER_ID,
       purchased_seats: 10,
+      included_seats: 10,
+      extra_seats: 0,
       unit_cost_cents: 5000,
       used_seats_cache: 0,
       updated_at: '',
@@ -80,6 +86,63 @@ describe('partnerLicenseService', () => {
     expect(s.floor_price_cents).toBe(9900);
     expect(s.topup_unit_price_cents).toBe(3500);
     expect(s.topup_price_source).toBe('wholesale_overage');
+    expect(s.topup_available).toBe(true);
+    expect(s.included_seats).toBe(10);
+    expect(s.extra_seats).toBe(0);
+    expect(s.recurring_amount_cents).toBe(99900);
+    expect(s.recurring_plan_price_cents).toBe(99900);
+    expect(s.recurring_extras_cents).toBe(0);
+    expect(s.downgrade_max_qty).toBe(0);
+  });
+
+  it('getPartnerLicenseSummary bloqueia avulso sem Custo seat avulso', async () => {
+    vi.mocked(pool.query).mockImplementation(async (sql: string) => {
+      if (sql.includes('COUNT(*)')) return { rows: [{ c: '0' }] };
+      if (sql.includes('partner_wholesale_plans')) {
+        return {
+          rows: [
+            {
+              wholesale_plan_id: 'wp-1',
+              wholesale_status: 'active',
+              wholesale_plan_name: 'Atacado',
+              unit_overage_cents: null,
+              seats_included: 10,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    vi.mocked(getPartnerLicensePool).mockResolvedValue({
+      partner_tenant_id: PARTNER_ID,
+      purchased_seats: 10,
+      included_seats: 10,
+      extra_seats: 0,
+      unit_cost_cents: 5000,
+      used_seats_cache: 0,
+      updated_at: '',
+    });
+    vi.mocked(getPartnerProfile).mockResolvedValue({
+      partner_tenant_id: PARTNER_ID,
+      program_type: 'license_pool',
+      program_config_json: {},
+      public_name: 'P',
+      product_name: 'P',
+      custom_domain: null,
+      domain_status: 'none',
+      domain_verification_token: null,
+      logo_url: null,
+      theme_json: {},
+      payout_cadence_preference: 'monthly',
+      status: 'active',
+      created_at: '',
+      updated_at: '',
+    });
+
+    const s = await getPartnerLicenseSummary(PARTNER_ID);
+    expect(s.topup_available).toBe(false);
+    expect(s.topup_price_source).toBe('unavailable');
+    expect(s.topup_unit_price_cents).toBeNull();
   });
 
   it('assertPartnerPoolAllowsNewUser bloqueia quando cheio', async () => {

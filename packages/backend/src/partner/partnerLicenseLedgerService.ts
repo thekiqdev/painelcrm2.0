@@ -11,6 +11,7 @@ export type PartnerLicenseLedgerReason =
   | 'plan_activate'
   | 'plan_renewal'
   | 'topup_purchase'
+  | 'topup_downgrade'
   | 'clawback'
   | 'admin_adjust'
   | 'legacy_manual';
@@ -62,8 +63,15 @@ export async function applyPartnerLicenseDelta(
   try {
     if (ownTx) await (db as typeof pool).query('BEGIN');
 
-    const poolRow = await db.query<{ purchased_seats: number; used_seats_cache: number }>(
-      `SELECT purchased_seats, used_seats_cache
+    const poolRow = await db.query<{
+      purchased_seats: number;
+      used_seats_cache: number;
+      included_seats: number | null;
+      extra_seats: number | null;
+    }>(
+      `SELECT purchased_seats, used_seats_cache,
+              COALESCE(included_seats, 0) AS included_seats,
+              COALESCE(extra_seats, 0) AS extra_seats
        FROM partner_license_pool
        WHERE partner_tenant_id = $1
        FOR UPDATE`,
@@ -86,11 +94,31 @@ export async function applyPartnerLicenseDelta(
       );
     }
 
+    const includedBefore = Number(poolRow.rows[0].included_seats ?? 0);
+    const extraBefore = Number(poolRow.rows[0].extra_seats ?? 0);
+    const breakdown = nextSeatBreakdown({
+      included: includedBefore,
+      extra: extraBefore,
+      delta,
+      reason: input.reason,
+      wholesalePlanId: input.wholesalePlanId ?? null,
+    });
+    if (input.reason === 'topup_downgrade' && breakdown.included < includedBefore) {
+      throw new PartnerAdminError(
+        'Downgrade só pode reduzir licenças avulsas, não o pacote do plano',
+        'DOWNGRADE_INCLUDED_FORBIDDEN',
+        409
+      );
+    }
+
     await db.query(
       `UPDATE partner_license_pool
-       SET purchased_seats = $1, updated_at = now()
-       WHERE partner_tenant_id = $2`,
-      [balanceAfter, input.partnerTenantId]
+       SET purchased_seats = $1,
+           included_seats = $2,
+           extra_seats = $3,
+           updated_at = now()
+       WHERE partner_tenant_id = $4`,
+      [balanceAfter, breakdown.included, breakdown.extra, input.partnerTenantId]
     );
 
     const led = await db.query<{ id: string }>(
@@ -144,6 +172,43 @@ export async function applyPartnerLicenseDelta(
     }
     throw err;
   }
+}
+
+function seatBucket(
+  reason: PartnerLicenseLedgerReason,
+  wholesalePlanId: string | null
+): 'included' | 'extra' {
+  if (reason === 'topup_purchase' || reason === 'topup_downgrade') return 'extra';
+  if ((reason === 'plan_activate' || reason === 'plan_renewal' || reason === 'grant') && wholesalePlanId) {
+    return 'included';
+  }
+  return 'extra';
+}
+
+/** Ajusta included/extra após delta. Redução come extra primeiro (base do downgrade). */
+export function nextSeatBreakdown(input: {
+  included: number;
+  extra: number;
+  delta: number;
+  reason: PartnerLicenseLedgerReason;
+  wholesalePlanId: string | null;
+}): { included: number; extra: number } {
+  let included = Math.max(0, Math.floor(input.included));
+  let extra = Math.max(0, Math.floor(input.extra));
+  if (input.delta > 0) {
+    if (seatBucket(input.reason, input.wholesalePlanId) === 'included') {
+      included += input.delta;
+    } else {
+      extra += input.delta;
+    }
+  } else {
+    let remain = -input.delta;
+    const fromExtra = Math.min(extra, remain);
+    extra -= fromExtra;
+    remain -= fromExtra;
+    included = Math.max(0, included - remain);
+  }
+  return { included, extra };
 }
 
 export async function listPartnerLicenseLedger(

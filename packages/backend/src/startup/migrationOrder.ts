@@ -526,5 +526,11 @@ export const MIGRATION_ORDER = [
   '333_partner_wholesale_block_s1.sql',
   /** M5-W Block S3 — override block_after_days por Partner */
   '334_partner_wholesale_block_s3.sql',
+  /** License S1 — included_seats / extra_seats no pool */
+  '335_partner_license_seat_breakdown_s1.sql',
+  /** License S3 — ledger reason topup_downgrade */
+  '336_partner_license_downgrade_s3.sql',
+  /** CA S2 — asaas_subscription_id em subscriptions SaaS */
+  '337_subscriptions_asaas_subscription_id_ca_s2.sql',
   'create-admin-user.sql',
 ];

@@ -44,6 +44,11 @@ function intervalLabel(i: string): string {
   return 'mês';
 }
 
+function averagePerSeatBrl(priceCents: number, seats: number): string | null {
+  if (!Number.isFinite(priceCents) || !Number.isFinite(seats) || seats <= 0) return null;
+  return (Math.round(priceCents / seats) / 100).toFixed(2).replace('.', ',');
+}
+
 const NONE_PLAN = '__none__';
 
 export default function SuperAdminPartnerNew() {
@@ -268,18 +273,28 @@ export default function SuperAdminPartnerNew() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={NONE_PLAN}>Partner escolhe depois</SelectItem>
-                  {wholesalePlans.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.name} · {p.seats_included} seats · R${' '}
-                      {(p.price_cents / 100).toFixed(2)}/{intervalLabel(p.billing_interval)}
-                    </SelectItem>
-                  ))}
+                  {wholesalePlans.map((p) => {
+                    const avg = averagePerSeatBrl(p.price_cents, p.seats_included);
+                    return (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name} · {p.seats_included} seats · R${' '}
+                        {(p.price_cents / 100).toFixed(2)}/{intervalLabel(p.billing_interval)}
+                        {avg ? ` · R$ ${avg}/usuário` : ''}
+                      </SelectItem>
+                    );
+                  })}
                 </SelectContent>
               </Select>
               {selectedWholesale ? (
                 <p className="text-[11px] text-muted-foreground">
-                  Grant: {selectedWholesale.seats_included} licenças do pacote. Envelope técnico vem
-                  do plano atacado.
+                  Grant: {selectedWholesale.seats_included} licenças
+                  {averagePerSeatBrl(
+                    selectedWholesale.price_cents,
+                    selectedWholesale.seats_included
+                  )
+                    ? ` · média R$ ${averagePerSeatBrl(selectedWholesale.price_cents, selectedWholesale.seats_included)} por usuário incluso`
+                    : ''}
+                  .
                 </p>
               ) : (
                 <p className="text-[11px] text-muted-foreground">

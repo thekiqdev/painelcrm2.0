@@ -1489,6 +1489,8 @@ export async function payTenantBillingWithCard(
     tenantId: string | null;
     inlinePayToken: string | null;
     body: PayWithCardRequestBody;
+    /** CA S2 — IP do dispositivo do pagador (Asaas remoteIp). */
+    remoteIp?: string | null;
   }
 ): Promise<Record<string, unknown>> {
   const idem = options.body.idempotency_key.trim();
@@ -1521,7 +1523,12 @@ export async function payTenantBillingWithCard(
 
 async function executeTenantBillingPayWithCard(
   billingId: string,
-  options: { tenantId: string | null; inlinePayToken: string | null; body: PayWithCardRequestBody },
+  options: {
+    tenantId: string | null;
+    inlinePayToken: string | null;
+    body: PayWithCardRequestBody;
+    remoteIp?: string | null;
+  },
   idempotencyKey: string
 ): Promise<Record<string, unknown>> {
   const billing = await getTenantBillingById(billingId);
@@ -1591,6 +1598,32 @@ async function executeTenantBillingPayWithCard(
   const gateway = await getActiveGateway({ billingType: 'saas', tenantId: billing.tenant_id });
   if (!gateway) {
     throw new PayWithCardError('Gateway de pagamento não configurado', 502, 'gateway_error');
+  }
+
+  // CA S2 — contratação/upgrade/manual: Assinatura Asaas em vez de payWithCreditCard avulso.
+  {
+    const { shouldUseAsaasSubscriptionForSaasCardCheckout, executeSaasCardCheckoutViaAsaasSubscription } =
+      await import('./saasAsaasSubscriptionCheckoutService.js');
+    if (
+      shouldUseAsaasSubscriptionForSaasCardCheckout(billing) &&
+      typeof gateway.createSubscription === 'function'
+    ) {
+      const orphanPaymentId =
+        (attempt?.gateway_reference_id ?? billing.gateway_reference_id)?.trim() || null;
+      const result = await executeSaasCardCheckoutViaAsaasSubscription({
+        billing,
+        billingId,
+        gateway,
+        gatewayKey,
+        body: options.body,
+        remoteIp: (options.remoteIp ?? '').trim(),
+        attempt,
+        billingMeta,
+        orphanPaymentId,
+      });
+      await savePayWithCardIdempotentResponse(billingId, idempotencyKey, result);
+      return result;
+    }
   }
 
   if (typeof gateway.payWithCreditCard !== 'function') {

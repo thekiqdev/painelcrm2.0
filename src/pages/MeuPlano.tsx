@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dialog';
 import { apiClient } from '@/integrations/api/client';
 import { formatDateYmdOrInstantPtBr } from '@/lib/formatInvoiceDates';
+import { resolveSubscriptionCommercialDisplayCents } from '@/lib/resolveSubscriptionCommercialDisplayCents';
 import { toast } from '@/components/ui/sonner';
 import { PixAutomaticConsentSwitch } from '@/components/billing/PixAutomaticConsentSwitch';
 import {
@@ -211,6 +212,9 @@ interface SaasSubscriptionPayload {
   plan_slug: string | null;
   plan_type: string | null;
   amount_cents: number;
+  /** CS S3 — snapshot contratado (preferido sobre catálogo). */
+  contracted_plan_price_cents?: number | null;
+  contracted_price_per_user_cents?: number | null;
   billing_interval: string;
   status: string;
   next_billing_date: string | null;
@@ -223,6 +227,12 @@ interface SaasSubscriptionPayload {
   will_cancel_at_period_end: boolean;
   /** Sprint C — SSOT Pix Automático */
   pix_automatic?: PixAutomaticPreference | null;
+  /** CA S4 — cartão recorrente via Assinatura Asaas */
+  asaas_card_subscription?: {
+    linked: boolean;
+    asaas_subscription_id: string | null;
+    gateway: string | null;
+  } | null;
   channel?: 'partner';
   partner_commercial?: boolean;
 }
@@ -800,13 +810,14 @@ export default function MeuPlano() {
       return;
     }
     setSaving(true);
-    const res = await apiClient.put('/api/me/tenant/plan', { plan_id: planId });
+    // CS S3: PATCH subscription sincroniza amount + snapshot (PUT /plan só muda tenants.plan_id).
+    const res = await apiClient.patch('/api/me/tenant/subscription', { plan_id: planId });
     setSaving(false);
     if (res.error) {
       toast.error(res.error);
       return;
     }
-    toast.success('Plano alterado.');
+    toast.success('Plano alterado. A próxima renovação usará o novo valor contratado.');
     await refreshAfterMutation();
   };
 
@@ -1027,6 +1038,15 @@ export default function MeuPlano() {
                   Cancelamento ao fim do período já está agendado nesta assinatura.
                 </p>
               )}
+              {subscription.asaas_card_subscription?.linked && (
+                <p className="text-muted-foreground text-xs pt-1">
+                  Renovação no cartão via Assinatura Asaas ativa
+                  {subscription.asaas_card_subscription.asaas_subscription_id
+                    ? ` (${subscription.asaas_card_subscription.asaas_subscription_id})`
+                    : ''}
+                  .
+                </p>
+              )}
             </CardContent>
           </Card>
         )}
@@ -1149,6 +1169,33 @@ export default function MeuPlano() {
       : isCustom && priceRow
         ? priceRow.price_per_user_cents * contractedSeats
         : plan.price_cents;
+  /** CS S3: hero / previsão usam snapshot contratado (não catálogo solto). */
+  const subscriptionCommercialCents =
+    subscription != null
+      ? resolveSubscriptionCommercialDisplayCents({
+          planType: subscription.plan_type ?? plan.plan_type,
+          amountCents: subscription.amount_cents,
+          contractedPlanPriceCents: subscription.contracted_plan_price_cents,
+          contractedPricePerUserCents: subscription.contracted_price_per_user_cents,
+          usersCount: subscription.users_count ?? contractedSeats,
+        })
+      : null;
+  const scheduledSeatsNext = myPlan.max_users_scheduled_next_cycle;
+  const nextRenewalForecastCents = (() => {
+    if (isPartnerChannel || myPlan.partner_sell_plan_id) return currentPriceCents;
+    if (
+      scheduledSeatsNext != null &&
+      scheduledSeatsNext >= 1 &&
+      subscription?.contracted_price_per_user_cents != null &&
+      subscription.contracted_price_per_user_cents >= 0
+    ) {
+      return Math.round(subscription.contracted_price_per_user_cents * scheduledSeatsNext);
+    }
+    if (subscriptionCommercialCents != null && subscriptionCommercialCents > 0) {
+      return subscriptionCommercialCents;
+    }
+    return currentPriceCents;
+  })();
   const otherPlans = allPlans.filter((p) => {
     const catalogId = p.partner_sell_plan_id || p.id;
     const currentId = myPlan.partner_sell_plan_id || plan.partner_sell_plan_id || plan.id;
@@ -1303,8 +1350,8 @@ export default function MeuPlano() {
   const mainDisplayPriceCents =
     isPartnerChannel || myPlan.partner_sell_plan_id
       ? currentPriceCents
-      : subscription != null && subscription.amount_cents > 0
-        ? subscription.amount_cents
+      : subscriptionCommercialCents != null && subscriptionCommercialCents > 0
+        ? subscriptionCommercialCents
         : currentPriceCents;
   const nextBillingLine =
     subscription?.next_billing_date != null ? formatDate(subscription.next_billing_date) : '—';
@@ -1949,11 +1996,7 @@ export default function MeuPlano() {
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="text-xs text-muted-foreground">Valor previsto</span>
                     <span className="text-lg font-bold tabular-nums text-foreground">
-                      {formatPrice(
-                        isPartnerChannel || myPlan.partner_sell_plan_id
-                          ? currentPriceCents
-                          : subscription.amount_cents
-                      )}
+                      {formatPrice(nextRenewalForecastCents)}
                     </span>
                   </div>
                   <div className="flex items-baseline justify-between gap-2">
@@ -2270,7 +2313,20 @@ export default function MeuPlano() {
               {isCustom
                 ? `usuários em uso (${limitsUsers?.current ?? '—'})`
                 : `os ${plan.max_users ?? '—'} inclusos no plano ou o uso atual (${limitsUsers?.current ?? '—'})`}
-              .
+              . O valor previsto usa o <strong>preço contratado</strong> da assinatura (não o catálogo público).
+              {subscription?.contracted_price_per_user_cents != null &&
+              subscription.contracted_price_per_user_cents >= 0 ? (
+                <>
+                  {' '}
+                  Estimativa com {downgradeTarget} assentos:{' '}
+                  <strong>
+                    {formatPrice(
+                      Math.round(subscription.contracted_price_per_user_cents * downgradeTarget)
+                    )}
+                  </strong>
+                  .
+                </>
+              ) : null}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2 py-2">

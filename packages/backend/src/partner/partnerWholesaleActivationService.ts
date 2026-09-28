@@ -262,6 +262,10 @@ export async function activatePartnerWholesaleFromBilling(
         billingId: billing.id,
       });
       await linkWholesaleSubscription(partnerTenantId, subId);
+      const { syncPartnerWholesaleRecurringAmount } = await import(
+        './partnerWholesaleRecurringService.js'
+      );
+      await syncPartnerWholesaleRecurringAmount(partnerTenantId);
     } catch (e) {
       console.error('[WHOLESALE] falha ao criar snapshot subscription', e);
     }
@@ -365,6 +369,10 @@ export async function assignWholesalePlanGrant(input: {
         billingId: null,
       });
       await linkWholesaleSubscription(input.partnerTenantId, subId);
+      const { syncPartnerWholesaleRecurringAmount } = await import(
+        './partnerWholesaleRecurringService.js'
+      );
+      await syncPartnerWholesaleRecurringAmount(input.partnerTenantId);
     } catch (e) {
       console.error('[WHOLESALE] falha snapshot subscription (grant)', e);
     }

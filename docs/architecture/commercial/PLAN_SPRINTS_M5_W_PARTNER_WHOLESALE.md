@@ -8,7 +8,7 @@
 | **Nome** | **M5-W — Partner Wholesale** (planos atacado + licenças avulsas + renovação) |
 | **Escopo** | Relação comercial **Platform → Partner**: catálogo de planos que o Partner **contrata**; Super Admin **atrelar** Partner a plano; Partner **comprar licenças avulsas**; cobrança/renovação via Asaas **Platform** creditando o pool |
 | **Fora de escopo** | Alterar checkout WL do cliente final · `revenue_share` · NF (D19) · L2 · mudar modelo 1 licença = 1 usuário |
-| **Status** | **Sprint 4 feita** (2026-09-08) · MVP wholesale fechado |
+| **Status** | **Sprint 4 feita** (2026-09-08) · License S1–S3 feitas (2026-09-23) |
 | **MVP** | **Sprint 4** (renovação + política de inadimplência mínima) |
 | **Kickoff** | Em chat: sprints M5-W concluídas |
 
@@ -101,7 +101,7 @@ Fechar o fluxo de dinheiro **Platform ← Partner** que o M5 §8.2 descreveu e o
 | **W4** | Partner sem plano ativo | **Permitido** (setup marca/gateway); pool pode ser 0 |
 | **W5** | Criação Partner | **Não exige** mais `purchased_seats ≥ 1` pago; grant/cortesia explícito ou 0 |
 | **W6** | Unidade | Continua **1 licença = 1 usuário** (D20) |
-| **W7** | Preço avulso | Do wholesale plan (`unit_overage_cents` / pack) ou fallback `partner_license_pool.unit_cost_cents` |
+| **W7** | Preço avulso | **Só** `unit_overage_cents` do plano atacado. Sem valor → `TOPUP_OVERAGE_REQUIRED` (não cai no `unit_cost` do pool) |
 | **W8** | Inadimplência MVP | Grace → bloqueia **novas** vendas / novos users; **não** derruba customer_tenants de imediato |
 | **W9** | Admin atrelar | Pode **grant** (sem Asaas) ou **gerar cobrança** (mesmo activate path) |
 | **W10** | Ledger | Todo crédito/débito de seats passa por `partner_license_ledger` |
@@ -390,6 +390,48 @@ Cliente → Asaas Partner → sell plan → consome pool (assertPartnerPoolAllow
 
 ---
 
+## 7c. Extensão — Preço avulso + reajuste + downgrade
+
+| Sprint | Foco | Status |
+|--------|------|--------|
+| **License S1** | Avulso = Custo seat avulso; persistir incluídas vs extras; UI Licenças | **Feito** (2026-09-23) |
+| **License S2** | Upgrade: fatura da diferença + reajuste da assinatura Asaas Platform | **Feito** (2026-09-23) |
+| **License S3** | Downgrade: UI + regra (não abaixo do usado) + próximo ciclo menor + ledger | **Feito** (2026-09-23) |
+
+### License Sprint 1 — DoD
+
+- [x] Quote/top-up com plano atacado exige `unit_overage_cents` (`TOPUP_OVERAGE_REQUIRED`)
+- [x] `GET /api/partner/licenses` expõe `topup_unit_price_cents`, `topup_available`, incluídas/extras
+- [x] Pool persiste `included_seats` / `extra_seats` (migration `335`)
+- [x] Top-up incrementa extras; activate/grant com plano incrementa incluídas
+- [x] UI Licenças: preço = Custo seat avulso; breakdown pacote vs avulsas; bloqueio se overage vazio
+- [x] Hint no cadastro do plano Super Admin (campo Custo seat avulso)
+
+**Kickoff chat:** `ok sprint 1` (preço avulso)
+
+### License Sprint 2 — DoD
+
+- [x] Após top-up pago: valor recorrente = preço do plano + extras × `unit_overage`
+- [x] Partner paga a diferença agora (one-shot = extras × overage; fatura `partner_license_topup`)
+- [x] Snapshot `subscriptions.amount_cents` + `contracted_plan_price_cents` (`partner_wholesale`)
+- [x] Renovação Asaas Platform (`executeSaasRenewal`) usa o amount atacado, não o catálogo envelope
+- [x] Sem mexer no valor do pacote base (`price_cents` do wholesale plan)
+- [x] UI Licenças: paga agora + próximo ciclo
+
+**Kickoff chat:** `ok sprint 2` (reajuste recorrente)
+
+### License Sprint 3 — DoD
+
+- [x] Partner reduz extras na tela Licenças (não abaixo de used; não reduz o pacote)
+- [x] Ledger `topup_downgrade` + breakdown (extras primeiro)
+- [x] Próximo ciclo menor (`syncPartnerWholesaleRecurringAmount`)
+- [x] Política fechada: **sem estorno** do período já pago (`next_cycle_no_refund`)
+- [x] Migration `336_partner_license_downgrade_s3.sql`
+
+**Kickoff chat:** `ok sprint 3` (downgrade)
+
+---
+
 ## 8. APIs (alvo)
 
 ### Super Admin
@@ -411,6 +453,7 @@ Cliente → Asaas Partner → sell plan → consome pool (assertPartnerPoolAllow
 | GET | `/api/partner/wholesale/me` | 2 |
 | POST | `/api/partner/wholesale/subscribe` | 2 |
 | POST | `/api/partner/licenses/purchase` | 3 |
+| POST | `/api/partner/licenses/downgrade` | License S3 |
 | GET | `/api/partner/licenses/ledger` | 3 |
 
 ### Público / billing
@@ -441,6 +484,8 @@ Cliente → Asaas Partner → sell plan → consome pool (assertPartnerPoolAllow
 2. **`ok sprint 2`** — atrelar + contratar  
 3. **`ok sprint 3`** — licenças avulsas  
 4. **`ok sprint 4`** — renovação + freeze + relatório  
+
+Extensão License (pós-MVP): **`ok sprint 1`** (preço avulso) → **`ok sprint 2`** (reajuste) → **`ok sprint 3`** (downgrade).
 
 Ao concluir cada sprint: marcar DoD neste doc (checkboxes) e, se útil, abrir `SPRINT_M5_W_S{n}_….md` no mesmo estilo das S0–S7.
 

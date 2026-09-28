@@ -18,7 +18,28 @@ export const ASAAS_EVENT = {
   PAYMENT_DUNNING_REQUESTED: 'PAYMENT_DUNNING_REQUESTED',
   PAYMENT_BANK_SLIP_VIEWED: 'PAYMENT_BANK_SLIP_VIEWED',
   PAYMENT_CHECKOUT_VIEWED: 'PAYMENT_CHECKOUT_VIEWED',
+  /** Cartão recusado na captura — relevante para Assinatura Asaas (CA S3). */
+  PAYMENT_CREDIT_CARD_CAPTURE_REFUSED: 'PAYMENT_CREDIT_CARD_CAPTURE_REFUSED',
 } as const;
+
+/**
+ * CA S0 — eventos de ciclo de vida da Assinatura Asaas (`/subscriptions`).
+ * Hoje: apenas reconhecidos no webhook (ACK); handler de negócio entra em S3/S4.
+ */
+export const ASAAS_SUBSCRIPTION_EVENT = {
+  CREATED: 'SUBSCRIPTION_CREATED',
+  UPDATED: 'SUBSCRIPTION_UPDATED',
+  INACTIVATED: 'SUBSCRIPTION_INACTIVATED',
+  DELETED: 'SUBSCRIPTION_DELETED',
+  SPLIT_DISABLED: 'SUBSCRIPTION_SPLIT_DISABLED',
+  SPLIT_DIVERGENCE_BLOCK: 'SUBSCRIPTION_SPLIT_DIVERGENCE_BLOCK',
+  SPLIT_DIVERGENCE_BLOCK_FINISHED: 'SUBSCRIPTION_SPLIT_DIVERGENCE_BLOCK_FINISHED',
+} as const;
+
+/** Nomes a provisionar no webhook Asaas (painel) para CA. */
+export const ASAAS_SUBSCRIPTION_WEBHOOK_EVENT_NAMES = Object.values(
+  ASAAS_SUBSCRIPTION_EVENT
+) as readonly string[];
 
 /** Sprint 10 / CRM0 — Pix Automático (não passam pelo path payment_id). */
 export const ASAAS_PIX_AUTOMATIC_EVENT = {
@@ -43,6 +64,8 @@ export const ASAAS_PIX_AUTOMATIC_WEBHOOK_EVENT_NAMES = Object.values(
 export type AsaasEventType = (typeof ASAAS_EVENT)[keyof typeof ASAAS_EVENT];
 export type AsaasPixAutomaticEventType =
   (typeof ASAAS_PIX_AUTOMATIC_EVENT)[keyof typeof ASAAS_PIX_AUTOMATIC_EVENT];
+export type AsaasSubscriptionEventType =
+  (typeof ASAAS_SUBSCRIPTION_EVENT)[keyof typeof ASAAS_SUBSCRIPTION_EVENT];
 
 export function isAsaasPaymentEvent(value: string): value is AsaasEventType {
   return Object.values(ASAAS_EVENT).includes(value as AsaasEventType);
@@ -50,4 +73,8 @@ export function isAsaasPaymentEvent(value: string): value is AsaasEventType {
 
 export function isAsaasPixAutomaticEvent(value: string): value is AsaasPixAutomaticEventType {
   return Object.values(ASAAS_PIX_AUTOMATIC_EVENT).includes(value as AsaasPixAutomaticEventType);
+}
+
+export function isAsaasSubscriptionEvent(value: string): value is AsaasSubscriptionEventType {
+  return Object.values(ASAAS_SUBSCRIPTION_EVENT).includes(value as AsaasSubscriptionEventType);
 }

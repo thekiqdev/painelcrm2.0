@@ -41,6 +41,9 @@ import {
   getOpenSaasSubscriptionByTenant,
   promoteSaasTrialingSubscriptionToActive,
   patchActiveSaasSubscriptionIncompletePeriods,
+  syncActiveSaasSubscriptionCommercialFromPaidActivation,
+  syncOpenSaasSubscriptionCommercialFromBilling,
+  isSaasContractActivationBillingReason,
   toYmd,
 } from './billingSubscriptionService.js';
 import { applySubscriptionCommercialMetadataFromPaidBilling } from '../commercial/subscriptionCommercialMetadata.js';
@@ -48,6 +51,10 @@ import {
   trySettleZeroAmountBillingIfEligible,
   type ZeroAmountSettlementSource,
 } from '../commercial/zeroAmountSettlementService.js';
+import {
+  reconcileOpenPlanRenewalsAfterContractChange,
+  resolveExpectedRenewalAmountCents,
+} from './saasContractRenewalReconcileService.js';
 import { getBillingSettings } from './billingSettingsService.js';
 import {
   isPhase2TrialCrmGateEnabled,
@@ -275,6 +282,11 @@ async function ensureSaasSubscriptionAfterPaidActivation(params: {
       }
     }
 
+    const billingFreshEarly = await getInvoiceById(billingId);
+    const contractActivation = isSaasContractActivationBillingReason(
+      billingFreshEarly?.billing_reason
+    );
+
     if (activeSub && periodStartStr && periodEndStr) {
       const incomplete = !activeSub.current_period_start || !activeSub.current_period_end;
       if (incomplete) {
@@ -288,10 +300,22 @@ async function ensureSaasSubscriptionAfterPaidActivation(params: {
           amountCents,
           usersCount,
         });
+      } else if (contractActivation) {
+        // CS S1: sub já ativa com períodos — ainda assim espelhar valor/plano da fatura paga.
+        await syncActiveSaasSubscriptionCommercialFromPaidActivation({
+          tenantId,
+          subscriptionId: activeSub.id,
+          planId,
+          billingInterval,
+          amountCents,
+          usersCount,
+          periodStart: periodStartStr,
+          periodEnd: periodEndStr,
+        });
       }
     }
 
-    const billingFresh = await getInvoiceById(billingId);
+    const billingFresh = billingFreshEarly ?? (await getInvoiceById(billingId));
     const subAfter = await getActiveSaasSubscriptionByTenant(tenantId);
     if (subAfter && billingFresh && !billingFresh.subscription_id) {
       await setBillingSubscriptionId(billingId, subAfter.id);
@@ -404,6 +428,55 @@ export async function ensureUsableSaasSubscriptionForActivePaidTenant(tenantId: 
     usersCount: billing.users_count != null ? billing.users_count : null,
     billingId: billing.id,
   });
+}
+
+/**
+ * CS S2 — após ativação contratual paga, cancela renovações abertas no valor antigo
+ * e recria a próxima competência no valor do snapshot (fail-open).
+ */
+async function maybeReconcileOpenRenewalsAfterContractActivation(params: {
+  tenantId: string;
+  billingId: string;
+  billingReason: string | undefined;
+  planId: string;
+  billingInterval: BillingInterval;
+  usersCount: number | null;
+  fallbackNextPeriodStart: string;
+}): Promise<void> {
+  if (!isSaasContractActivationBillingReason(params.billingReason)) return;
+  try {
+    const sub = await getActiveSaasSubscriptionByTenant(params.tenantId);
+    if (!sub?.plan_id) return;
+    const nextStart =
+      toYmd(sub.next_billing_date) ??
+      toYmd(sub.current_period_end) ??
+      params.fallbackNextPeriodStart;
+    if (!nextStart) return;
+    const nextEndDate = addInterval(new Date(`${nextStart}T12:00:00`), params.billingInterval);
+    const nextEnd = toYmd(nextEndDate);
+    if (!nextEnd) return;
+    const expectedAmountCents = resolveExpectedRenewalAmountCents({
+      amountCents: sub.amount_cents,
+      contractedPlanPriceCents: sub.contracted_plan_price_cents,
+    });
+    await reconcileOpenPlanRenewalsAfterContractChange({
+      tenantId: params.tenantId,
+      subscriptionId: sub.id,
+      planId: params.planId,
+      billingInterval: params.billingInterval,
+      usersCount: params.usersCount,
+      expectedAmountCents,
+      nextPeriodStart: nextStart,
+      nextPeriodEnd: nextEnd,
+      exceptBillingId: params.billingId,
+    });
+  } catch (e) {
+    console.error('[CS S2] reconcileOpenPlanRenewalsAfterContractChange failed', {
+      tenantId: params.tenantId,
+      billingId: params.billingId,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
 }
 
 /**
@@ -613,14 +686,28 @@ export async function activatePlanFromBilling(billingId: string): Promise<void> 
 
   const billingReason = billing.billing_reason ?? 'plan_purchase';
   if (billingReason === 'plan_renewal') {
+    // CA S3 — renovação (incl. Assinatura Asaas): avança ciclo sem resetar contrato / 1ª compra.
     try {
-      const { maybeConfirmPartnerWholesaleRenewal } = await import(
-        '../partner/partnerWholesaleRenewalService.js'
+      const { confirmSaasRenewalFromAsaasPayment } = await import(
+        './saasAsaasSubscriptionRenewalService.js'
       );
-      await maybeConfirmPartnerWholesaleRenewal(billing);
+      const r = await confirmSaasRenewalFromAsaasPayment(billingId);
+      console.log('[SUBSCRIPTION] activatePlanFromBilling: plan_renewal confirm', {
+        billingId,
+        ...r,
+      });
     } catch (e) {
-      console.error('[SUBSCRIPTION] wholesale renewal confirm failed', e);
+      console.error('[SUBSCRIPTION] plan_renewal confirm failed', e);
+      try {
+        const { maybeConfirmPartnerWholesaleRenewal } = await import(
+          '../partner/partnerWholesaleRenewalService.js'
+        );
+        await maybeConfirmPartnerWholesaleRenewal(billing);
+      } catch (wErr) {
+        console.error('[SUBSCRIPTION] wholesale renewal confirm failed', wErr);
+      }
     }
+    return;
   }
   if (billingReason === 'seat_addon') {
     await activateSeatAddonFromBilling(billing);
@@ -700,6 +787,15 @@ export async function activatePlanFromBilling(billingId: string): Promise<void> 
         usersCount: billing.users_count != null ? billing.users_count : null,
         billingId,
       });
+      await maybeReconcileOpenRenewalsAfterContractActivation({
+        tenantId: billing.tenant_id,
+        billingId,
+        billingReason,
+        planId: planIdForSync,
+        billingInterval,
+        usersCount: billing.users_count != null ? billing.users_count : null,
+        fallbackNextPeriodStart: periodEndStr,
+      });
     } else {
       console.warn('[SUBSCRIPTION] activatePlanFromBilling: não foi possível derivar plan_period para sincronizar assinatura', {
         tenantId: billing.tenant_id,
@@ -759,6 +855,16 @@ export async function activatePlanFromBilling(billingId: string): Promise<void> 
     amountCents: billing.amount_cents,
     usersCount,
     billingId,
+  });
+
+  await maybeReconcileOpenRenewalsAfterContractActivation({
+    tenantId,
+    billingId,
+    billingReason,
+    planId,
+    billingInterval,
+    usersCount,
+    fallbackNextPeriodStart: periodEndStr,
   });
 
   schedulePublishPlatformPlanActivated({ tenantId, billingId });
@@ -1181,13 +1287,32 @@ export async function ensureSaasSubscriptionLinkedToOpenBilling(
     }
     return null;
   }
+
+  const syncCommercialFromOpenBilling = async (subscriptionId: string): Promise<void> => {
+    if (!isSaasContractActivationBillingReason(reason)) return;
+    const interval = (billing.billing_interval || 'monthly') as BillingInterval;
+    await syncOpenSaasSubscriptionCommercialFromBilling({
+      tenantId: billing.tenant_id,
+      subscriptionId,
+      planId: billing.plan_id,
+      billingInterval: interval,
+      amountCents: billing.amount_cents,
+      usersCount: billing.users_count ?? null,
+    });
+  };
+
   if (billing.subscription_id) {
+    // CS S1: fatura já linkada — ainda assim alinhar amount ao valor atual do checkout.
+    await withTenantRlsContext(billing.tenant_id, async () => {
+      await syncCommercialFromOpenBilling(billing.subscription_id!);
+    });
     return { subscriptionId: billing.subscription_id, created: false };
   }
 
   return withTenantRlsContext(billing.tenant_id, async () => {
     const existing = await getOpenSaasSubscriptionByTenant(billing.tenant_id);
     if (existing) {
+      await syncCommercialFromOpenBilling(existing.id);
       await setBillingSubscriptionId(billingId, existing.id);
       return { subscriptionId: existing.id, created: false };
     }

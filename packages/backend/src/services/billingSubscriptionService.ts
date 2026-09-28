@@ -676,6 +676,18 @@ export async function cancelSubscription(
     } catch (e) {
       console.warn('[cancelSubscription] pix automatic cancel skipped', e);
     }
+    // CA S4 — inativa Assinatura Asaas (fail-open).
+    try {
+      const { cancelAsaasSubscriptionForLocal } = await import(
+        './saasAsaasSubscriptionSyncService.js'
+      );
+      await cancelAsaasSubscriptionForLocal({
+        subscriptionId,
+        reason: 'cancel_immediate',
+      });
+    } catch (e) {
+      console.warn('[cancelSubscription] CA S4 asaas cancel skipped', e);
+    }
     // lifecycle shadow observation
     const { observeBillingLifecycleEventWithKanbanActual } = await import('../lifecycle/lifecycleBillingObserver.js');
     void observeBillingLifecycleEventWithKanbanActual(
@@ -707,6 +719,18 @@ export async function cancelSubscription(
       });
     } catch (e) {
       console.warn('[cancelSubscription] pix automatic cancel (period end) skipped', e);
+    }
+    // CA S4 — para de cobrar no Asaas agora; acesso local segue até o fim do período.
+    try {
+      const { cancelAsaasSubscriptionForLocal } = await import(
+        './saasAsaasSubscriptionSyncService.js'
+      );
+      await cancelAsaasSubscriptionForLocal({
+        subscriptionId,
+        reason: 'cancel_at_period_end',
+      });
+    } catch (e) {
+      console.warn('[cancelSubscription] CA S4 asaas cancel (period end) skipped', e);
     }
   }
   return { ok: true };
@@ -743,6 +767,17 @@ export async function expireCancelledSubscriptions(): Promise<number> {
         });
       } catch (e) {
         console.warn('[expireCancelledSubscriptions] pix automatic cancel skipped', e);
+      }
+      try {
+        const { cancelAsaasSubscriptionForLocal } = await import(
+          './saasAsaasSubscriptionSyncService.js'
+        );
+        await cancelAsaasSubscriptionForLocal({
+          subscriptionId: sub.id,
+          reason: 'expire_cancelled',
+        });
+      } catch (e) {
+        console.warn('[expireCancelledSubscriptions] CA S4 asaas cancel skipped', e);
       }
       // lifecycle shadow observation
       void observeBillingLifecycleEventWithKanbanActual(
@@ -797,7 +832,9 @@ export function deriveCheckoutContractPricingFromBilling(params: {
 /**
  * Define se um modo de persistência de snapshot deve rodar para este `billing_reason`.
  * - `checkout_initial`: primeira contratação (exclui seat_addon e renovação).
- * - `explicit`: upgrade/downgrade/troca paga (exclui renovação e primeira compra `plan_purchase`).
+ * - `explicit`: mudança contratual paga — inclui `plan_purchase` (CS S1: recontratação com
+ *   `contracted_at` já preenchido; `checkout_initial` sozinho seria no-op).
+ *   Exclui só renovação (`plan_renewal`).
  */
 export function shouldPersistContractSnapshotMode(
   billingReason: string | undefined,
@@ -807,7 +844,94 @@ export function shouldPersistContractSnapshotMode(
   if (mode === 'checkout_initial') {
     return r !== 'seat_addon' && r !== 'plan_renewal';
   }
-  return r !== 'plan_renewal' && r !== 'plan_purchase';
+  return r !== 'plan_renewal';
+}
+
+/** Motivos de fatura que definem/redefinem o contrato comercial da assinatura SaaS (CS S1). */
+export function isSaasContractActivationBillingReason(reason: string | undefined): boolean {
+  const r = reason ?? 'plan_purchase';
+  return r === 'plan_purchase' || r === 'plan_upgrade' || r === 'manual_charge';
+}
+
+/**
+ * CS S1 — alinha campos comerciais da assinatura ativa ao valor pago na ativação.
+ * Cobre o gap em que a sub já tinha períodos preenchidos e o activate não tocava `amount_cents`.
+ */
+export async function syncActiveSaasSubscriptionCommercialFromPaidActivation(params: {
+  tenantId: string;
+  subscriptionId: string;
+  planId: string;
+  billingInterval: string;
+  amountCents: number;
+  usersCount: number | null;
+  periodStart: string;
+  periodEnd: string;
+}): Promise<boolean> {
+  const amount = Math.max(0, Math.trunc(params.amountCents));
+  const r = await pool.query(
+    `UPDATE subscriptions
+     SET plan_id = $1,
+         amount_cents = $2,
+         billing_interval = $3,
+         users_count = COALESCE($4, users_count),
+         current_period_start = $5,
+         current_period_end = $6,
+         next_billing_date = $6,
+         updated_at = now()
+     WHERE id = $7::uuid
+       AND tenant_id = $8::uuid
+       AND type = 'saas'
+       AND status = 'active'
+     RETURNING id`,
+    [
+      params.planId,
+      amount,
+      params.billingInterval,
+      params.usersCount,
+      params.periodStart,
+      params.periodEnd,
+      params.subscriptionId,
+      params.tenantId,
+    ]
+  );
+  return (r.rowCount ?? 0) > 0;
+}
+
+/**
+ * CS S1 — alinha `amount_cents` (e plano/intervalo) de sub open/trialing/active à fatura aberta
+ * antes do pagamento (draft link / reuso de checkout).
+ */
+export async function syncOpenSaasSubscriptionCommercialFromBilling(params: {
+  tenantId: string;
+  subscriptionId: string;
+  planId: string;
+  billingInterval: string;
+  amountCents: number;
+  usersCount: number | null;
+}): Promise<boolean> {
+  const amount = Math.max(0, Math.trunc(params.amountCents));
+  const r = await pool.query(
+    `UPDATE subscriptions
+     SET plan_id = COALESCE($1, plan_id),
+         amount_cents = $2,
+         billing_interval = $3,
+         users_count = COALESCE($4, users_count),
+         updated_at = now()
+     WHERE id = $5::uuid
+       AND tenant_id = $6::uuid
+       AND type = 'saas'
+       AND status IN ('trialing', 'active')
+     RETURNING id`,
+    [
+      params.planId,
+      amount,
+      params.billingInterval,
+      params.usersCount,
+      params.subscriptionId,
+      params.tenantId,
+    ]
+  );
+  return (r.rowCount ?? 0) > 0;
 }
 
 function pricingSnapshotSourceForPaidBilling(
@@ -816,6 +940,8 @@ function pricingSnapshotSourceForPaidBilling(
 ): string {
   if (mode === 'checkout_initial') return 'checkout';
   switch (billingReason) {
+    case 'plan_purchase':
+      return 'contract_change';
     case 'plan_upgrade':
       return 'contract_change';
     case 'manual_charge':
@@ -830,8 +956,8 @@ function pricingSnapshotSourceForPaidBilling(
 /**
  * Grava snapshot contratual a partir da linha `tenant_billing` paga.
  * - `checkout_initial`: só quando `contracted_at IS NULL` (checkout / primeira linha contratual).
- * - `explicit`: sobrescreve snapshot em mudança contratual paga (upgrade, manual_charge, seat_addon, etc.).
- * Renovação (`plan_renewal`) nunca passa pelos filtros acima.
+ * - `explicit`: sobrescreve snapshot em mudança contratual paga (plan_purchase recontratação,
+ *   upgrade, manual_charge, seat_addon, etc.). Renovação (`plan_renewal`) nunca passa.
  */
 export async function persistContractSnapshotFromPaidBilling(params: {
   tenantId: string;
@@ -908,6 +1034,23 @@ export async function persistContractSnapshotFromPaidBilling(params: {
      WHERE id = $3::uuid`,
     [prow.name, billing.amount_cents, billing.id]
   );
+
+  // CA S4 — upgrade/manual pago: alinhamento Asaas no mesmo commit lógico do snapshot CS.
+  if (mode === 'explicit') {
+    try {
+      const { syncAsaasSubscriptionFromLocalContract } = await import(
+        './saasAsaasSubscriptionSyncService.js'
+      );
+      await syncAsaasSubscriptionFromLocalContract({
+        subscriptionId,
+        amountCents: billing.amount_cents,
+        billingInterval: interval,
+        reason: `persist_contract_snapshot:${reason}`,
+      });
+    } catch (e) {
+      console.warn('[persistContractSnapshot] CA S4 asaas sync skipped', e);
+    }
+  }
 }
 
 /**
@@ -1035,6 +1178,14 @@ export async function changeSubscriptionPlan(
     [data.plan_id, amountCents, interval, data.users_count ?? null, subscriptionId, tenantId]
   );
 
+  // CS S3: manter tenants.plan_id alinhado à assinatura (Meu Plano / limites leem o tenant).
+  if (data.plan_id !== sub.plan_id) {
+    await pool.query(
+      `UPDATE tenants SET plan_id = $1, updated_at = now() WHERE id = $2::uuid`,
+      [data.plan_id, tenantId]
+    );
+  }
+
   if (options?.syncContractSnapshot) {
     await updateSubscriptionContractSnapshotFromCalculatedContract({
       tenantId,
@@ -1044,6 +1195,21 @@ export async function changeSubscriptionPlan(
       amountCents,
       usersCount: data.users_count ?? sub.users_count ?? null,
     });
+  }
+
+  // CA S4 — espelha valor/ciclo na Assinatura Asaas (fail-open).
+  try {
+    const { syncAsaasSubscriptionFromLocalContract } = await import(
+      './saasAsaasSubscriptionSyncService.js'
+    );
+    await syncAsaasSubscriptionFromLocalContract({
+      subscriptionId,
+      amountCents,
+      billingInterval: interval,
+      reason: 'change_subscription_plan',
+    });
+  } catch (e) {
+    console.warn('[changeSubscriptionPlan] CA S4 asaas sync skipped', e);
   }
 
   return { ok: true };

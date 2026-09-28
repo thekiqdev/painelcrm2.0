@@ -14,6 +14,8 @@ export type GatewayCapabilities = {
   cardToken: boolean;
   /** Pix Automático / débito autorizado (S10) */
   pixAutomatic: boolean;
+  /** CA S1 — Assinatura nativa Asaas (`/subscriptions`) para cartão recorrente */
+  asaasSubscription: boolean;
   /** getPayment / reconciliação L2 */
   getPayment: boolean;
   /** updateCharge */
@@ -30,6 +32,7 @@ export const EMPTY_GATEWAY_CAPABILITIES: GatewayCapabilities = {
   creditCard: false,
   cardToken: false,
   pixAutomatic: false,
+  asaasSubscription: false,
   getPayment: false,
   updateCharge: false,
   cancelPayment: false,
@@ -44,6 +47,7 @@ export const GATEWAY_CAPABILITIES_CATALOG: Record<string, GatewayCapabilities> =
     creditCard: true,
     cardToken: true,
     pixAutomatic: true,
+    asaasSubscription: true,
     getPayment: true,
     updateCharge: true,
     cancelPayment: true,
@@ -56,6 +60,7 @@ export const GATEWAY_CAPABILITIES_CATALOG: Record<string, GatewayCapabilities> =
     creditCard: true,
     cardToken: true,
     pixAutomatic: false,
+    asaasSubscription: false,
     getPayment: true,
     updateCharge: false,
     cancelPayment: true,

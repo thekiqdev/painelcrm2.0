@@ -67,9 +67,16 @@ export async function applyPaymentEvent(params: ApplyPaymentEventParams): Promis
   }
 
   if (entityType === 'tenant_billing') {
+    const statusForDb =
+      internalStatus === 'failed' || internalStatus === 'refunded'
+        ? ('overdue' as const)
+        : internalStatus === 'waiting_payment' || internalStatus === 'processing'
+          ? ('pending' as const)
+          : (internalStatus as 'pending' | 'paid' | 'overdue' | 'cancelled');
+
     await updateInvoiceStatus(
       entityId,
-      internalStatus as 'pending' | 'paid' | 'overdue' | 'cancelled',
+      statusForDb,
       internalStatus === 'paid' ? paidAt ?? new Date() : undefined,
       paymentMethod ?? null,
       gatewayStatus
@@ -143,6 +150,25 @@ export async function applyPaymentEvent(params: ApplyPaymentEventParams): Promis
           payment_method: paymentMethod ?? null,
         },
       });
+    } else if (internalStatus === 'failed' || internalStatus === 'overdue') {
+      // CA S3 — recusa/overdue cartão Assinatura: metadata + past_due sem corromper CS.
+      try {
+        const { getInvoiceById } = await import('../../../services/invoiceService.js');
+        const inv = await getInvoiceById(entityId);
+        const meta = (inv?.gateway_metadata as Record<string, unknown> | null) ?? {};
+        if (meta.asaas_subscription_id || meta.asaas_subscription_mode) {
+          const { markAsaasSubscriptionPaymentFailed } = await import(
+            '../../../services/saasAsaasSubscriptionRenewalService.js'
+          );
+          await markAsaasSubscriptionPaymentFailed({
+            billingId: entityId,
+            gatewayStatus,
+            eventType: null,
+          });
+        }
+      } catch (failErr) {
+        console.warn('[applyPaymentEvent] CA S3 card failure mark skipped', failErr);
+      }
     }
     return {
       previous_status: currentStatus,

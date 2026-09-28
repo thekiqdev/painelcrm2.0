@@ -10,12 +10,14 @@ import { listRegisteredGatewayKeys, isGatewayRegistered } from './gatewayRegistr
 import { getStripeSaasSkeletonGateway, StripeSaasSkeletonError } from '../gateways/stripe/stripeSaasSkeleton.js';
 
 describe('gatewayCapabilities (Sprint 11)', () => {
-  it('Asaas declara pix + cardToken + pixAutomatic', () => {
+  it('Asaas declara pix + cardToken + pixAutomatic + asaasSubscription', () => {
     const c = getGatewayCapabilities('asaas');
     expect(c.pix).toBe(true);
     expect(c.cardToken).toBe(true);
     expect(c.pixAutomatic).toBe(true);
+    expect(c.asaasSubscription).toBe(true);
     expect(gatewaySupports('asaas', 'pixAutomatic')).toBe(true);
+    expect(gatewaySupports('asaas', 'asaasSubscription')).toBe(true);
   });
 
   it('Stripe skeleton não declara pixAutomatic', () => {

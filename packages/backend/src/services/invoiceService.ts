@@ -358,7 +358,9 @@ export async function ensureTenantBillingInlinePayToken(billingId: string): Prom
 }
 
 /**
- * Verifica se já existe fatura para a assinatura e período (idempotência).
+ * Verifica se já existe fatura utilizável para a assinatura e período (idempotência do job).
+ * Ignora `cancelled` — CS S2: após mudança contratual as renovações antigas são canceladas
+ * e o job deve poder criar/usar uma nova linha no valor atualizado.
  */
 export async function findInvoiceBySubscriptionAndPeriod(
   subscriptionId: string,
@@ -371,7 +373,10 @@ export async function findInvoiceBySubscriptionAndPeriod(
        period_start, period_end, subscription_id, plan_name_snapshot, plan_price_snapshot,
        users_count, source, billing_reason, created_at, updated_at
      FROM tenant_billing
-     WHERE subscription_id = $1 AND period_start = $2
+     WHERE subscription_id = $1
+       AND period_start = $2
+       AND status <> 'cancelled'
+     ORDER BY CASE WHEN status = 'paid' THEN 0 ELSE 1 END, created_at DESC
      LIMIT 1`,
     [subscriptionId, periodStart]
   );
@@ -556,4 +561,39 @@ export async function cancelOpenInstanceAddonBillingsExcept(
      WHERE id = $1 AND instance_addon_pending_billing_id = ANY($2::uuid[])`,
     [tenantId, ids]
   );
+}
+
+export type CancelledOpenPlanRenewalRow = {
+  id: string;
+  amount_cents: number;
+  gateway: string | null;
+  gateway_reference_id: string | null;
+  period_start: string | null;
+  period_end: string | null;
+};
+
+/**
+ * CS S2 — cancela faturas `plan_renewal` abertas do tenant (valor/período podem estar obsoletos
+ * após recontratação/upgrade pago). Retorna linhas canceladas para best-effort no gateway.
+ */
+export async function cancelOpenPlanRenewalBillingsForTenant(
+  tenantId: string,
+  exceptBillingId?: string | null
+): Promise<CancelledOpenPlanRenewalRow[]> {
+  const r = await pool.query<CancelledOpenPlanRenewalRow>(
+    `UPDATE tenant_billing
+     SET status = 'cancelled', updated_at = now()
+     WHERE tenant_id = $1::uuid
+       AND COALESCE(billing_reason, '') = 'plan_renewal'
+       AND status = ANY($2::text[])
+       AND ($3::uuid IS NULL OR id <> $3::uuid)
+     RETURNING id,
+               amount_cents,
+               gateway,
+               gateway_reference_id,
+               period_start::text AS period_start,
+               period_end::text AS period_end`,
+    [tenantId, SAAS_PLAN_SIBLING_OPEN_STATUSES, exceptBillingId ?? null]
+  );
+  return r.rows;
 }

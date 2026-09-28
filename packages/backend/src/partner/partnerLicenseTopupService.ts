@@ -17,8 +17,12 @@ import { trySettleZeroAmountBillingIfEligible } from '../commercial/zeroAmountSe
 import { yyyyMmDdFromDbDateValue } from '../utils/calendarDateBr.js';
 import { PartnerAdminError } from './partnerErrors.js';
 import { applyPartnerLicenseDelta } from './partnerLicenseLedgerService.js';
-import { getPartnerDetail, resolveDefaultPlanId } from './partnerRepository.js';
+import { getPartnerDetail, getPartnerLicensePool, resolveDefaultPlanId } from './partnerRepository.js';
 import { getWholesalePlan } from './partnerWholesalePlanService.js';
+import {
+  computeWholesaleRecurringAmountCents,
+  syncPartnerWholesaleRecurringAmount,
+} from './partnerWholesaleRecurringService.js';
 
 export const LICENSE_TOPUP_PACKS: Record<string, number> = {
   '10': 10,
@@ -36,6 +40,12 @@ export type LicenseTopupQuote = {
   price_source: 'wholesale_overage' | 'pool_unit_cost';
   wholesale_plan_id: string | null;
   wholesale_status: string;
+  included_seats?: number;
+  extra_seats?: number;
+  extra_seats_after?: number;
+  current_recurring_amount_cents?: number | null;
+  next_recurring_amount_cents?: number | null;
+  recurring_delta_cents?: number | null;
 };
 
 export type LicenseTopupCheckoutResult = {
@@ -85,7 +95,8 @@ function resolveQty(input: { qty?: number; pack_id?: string }): number {
 }
 
 /**
- * Preço unitário: unit_overage_cents do plano atacado ativo, senão unit_cost_cents do pool (W7).
+ * Preço unitário: com plano atacado, só unit_overage_cents (W7). Sem overage → 409.
+ * Sem plano atacado, cai no unit_cost_cents do pool (grant legado).
  */
 export async function quotePartnerLicenseTopup(
   partnerTenantId: string,
@@ -100,20 +111,48 @@ export async function quotePartnerLicenseTopup(
   let unit = detail.unit_cost_cents;
   let priceSource: LicenseTopupQuote['price_source'] = 'pool_unit_cost';
   let wholesalePlanId = detail.wholesale_plan_id;
+  let wholesalePlan: Awaited<ReturnType<typeof getWholesalePlan>> = null;
 
   if (detail.wholesale_plan_id) {
-    const plan = await getWholesalePlan(detail.wholesale_plan_id);
-    if (plan && plan.unit_overage_cents != null && plan.unit_overage_cents >= 0) {
-      unit = plan.unit_overage_cents;
-      priceSource = 'wholesale_overage';
+    wholesalePlan = await getWholesalePlan(detail.wholesale_plan_id);
+    if (!wholesalePlan) {
+      throw new PartnerAdminError('Plano atacado não encontrado', 'WHOLESALE_NOT_FOUND', 404);
     }
+    if (wholesalePlan.unit_overage_cents == null || !Number.isFinite(wholesalePlan.unit_overage_cents)) {
+      throw new PartnerAdminError(
+        'Defina o Custo seat avulso no plano atacado para vender licenças extras',
+        'TOPUP_OVERAGE_REQUIRED',
+        409
+      );
+    }
+    unit = wholesalePlan.unit_overage_cents;
+    priceSource = 'wholesale_overage';
   }
 
   if (!Number.isFinite(unit) || unit < 0) {
     throw new PartnerAdminError('Preço unitário inválido', 'TOPUP_PRICE_INVALID');
   }
-  if (unit === 0) {
-    // permitido (cortesia / zero) — settlement automático
+
+  const poolRow = await getPartnerLicensePool(partnerTenantId);
+  const extraNow = Number(poolRow?.extra_seats ?? 0);
+  const included = Number(poolRow?.included_seats ?? 0);
+  const extraAfter = extraNow + qty;
+
+  let currentRecurring: number | null = null;
+  let nextRecurring: number | null = null;
+  let recurringDelta: number | null = null;
+  if (wholesalePlan) {
+    currentRecurring = computeWholesaleRecurringAmountCents({
+      planPriceCents: wholesalePlan.price_cents,
+      extraSeats: extraNow,
+      unitOverageCents: wholesalePlan.unit_overage_cents,
+    }).recurring_amount_cents;
+    nextRecurring = computeWholesaleRecurringAmountCents({
+      planPriceCents: wholesalePlan.price_cents,
+      extraSeats: extraAfter,
+      unitOverageCents: wholesalePlan.unit_overage_cents,
+    }).recurring_amount_cents;
+    recurringDelta = nextRecurring - currentRecurring;
   }
 
   return {
@@ -123,6 +162,12 @@ export async function quotePartnerLicenseTopup(
     price_source: priceSource,
     wholesale_plan_id: wholesalePlanId,
     wholesale_status: detail.wholesale_status,
+    included_seats: included,
+    extra_seats: extraNow,
+    extra_seats_after: extraAfter,
+    current_recurring_amount_cents: currentRecurring,
+    next_recurring_amount_cents: nextRecurring,
+    recurring_delta_cents: recurringDelta,
   };
 }
 
@@ -245,6 +290,9 @@ export async function createPartnerLicenseTopupCheckout(input: {
         price_source: quote.price_source,
         wholesale_plan_id: quote.wholesale_plan_id,
         charge_scope: 'platform',
+        current_recurring_amount_cents: quote.current_recurring_amount_cents ?? null,
+        next_recurring_amount_cents: quote.next_recurring_amount_cents ?? null,
+        recurring_delta_cents: quote.recurring_delta_cents ?? null,
       }),
       billing.id,
     ]
@@ -323,6 +371,9 @@ export async function activatePartnerLicenseTopupFromBilling(
   );
   if (existing.rows.length > 0) {
     console.log('[TOPUP] activate idempotent', { billingId: billing.id });
+    await syncPartnerWholesaleRecurringAmount(billing.tenant_id).catch((e) => {
+      console.error('[TOPUP] recurring sync failed (idempotent)', e);
+    });
     return;
   }
 
@@ -351,6 +402,10 @@ export async function activatePartnerLicenseTopupFromBilling(
       unit_price_cents: meta.unit_price_cents ?? null,
       price_source: meta.price_source ?? null,
     },
+  });
+
+  await syncPartnerWholesaleRecurringAmount(billing.tenant_id).catch((e) => {
+    console.error('[TOPUP] recurring sync failed', e);
   });
 
   console.log('[TOPUP] seats creditados', {

@@ -96,11 +96,19 @@ export async function handleWebhook(
     return { status: 200, body: { received: true } };
   }
 
-  const internalStatus = normalizeGatewayStatus(gatewayKey, externalStatus);
+  const metaObj =
+    metadata && typeof metadata === 'object' ? (metadata as Record<string, unknown>) : {};
+  const eventType =
+    typeof metaObj.eventType === 'string' ? metaObj.eventType : null;
+
+  let internalStatus = normalizeGatewayStatus(gatewayKey, externalStatus);
+  // CA S3 — evento de recusa de cartão mesmo se status bruto ainda for PENDING.
+  if (eventType === 'PAYMENT_CREDIT_CARD_CAPTURE_REFUSED') {
+    internalStatus = 'failed';
+  }
+
   const paymentMethod =
-    metadata && typeof metadata === 'object' && typeof (metadata as { paymentMethod?: string }).paymentMethod === 'string'
-      ? (metadata as { paymentMethod: string }).paymentMethod
-      : null;
+    typeof metaObj.paymentMethod === 'string' ? metaObj.paymentMethod : null;
 
   const attempt = await findInvoiceAttemptByGatewayReference(gatewayKey, referenceId);
   if (attempt) {
@@ -157,6 +165,41 @@ export async function handleWebhook(
     gatewayKey: string;
     gatewayReferenceId: string;
   } | null = null;
+
+  // CA S3 — payment.subscription sem fatura local: upsert plan_renewal (ou link contratação).
+  if (!entity) {
+    const asaasSubscriptionId =
+      typeof metaObj.asaasSubscriptionId === 'string' ? metaObj.asaasSubscriptionId.trim() : '';
+    if (asaasSubscriptionId && referenceId) {
+      try {
+        const { ensureTenantBillingForAsaasSubscriptionPayment } = await import(
+          '../../../services/saasAsaasSubscriptionRenewalService.js'
+        );
+        const ensured = await ensureTenantBillingForAsaasSubscriptionPayment({
+          asaasSubscriptionId,
+          paymentId: referenceId,
+          gatewayKey,
+          gatewayStatus: externalStatus,
+          paymentMethod,
+          amountCents: typeof metaObj.amountCents === 'number' ? metaObj.amountCents : null,
+          dueDate: typeof metaObj.dueDate === 'string' ? metaObj.dueDate : null,
+          externalReference:
+            typeof metaObj.externalReference === 'string' ? metaObj.externalReference : null,
+          eventType,
+        });
+        if (ensured) {
+          entity = {
+            entityType: 'tenant_billing',
+            entityId: ensured.id,
+            currentStatus: ensured.status,
+            gateway: ensured.gateway,
+          };
+        }
+      } catch (e) {
+        console.error('[webhookCore] CA S3 asaas subscription billing ensure failed', e);
+      }
+    }
+  }
 
   if (!entity) {
     const meta =
@@ -266,6 +309,31 @@ export async function handleWebhook(
     paidAt: internalStatus === 'paid' ? new Date() : undefined,
     paymentMethod: paymentMethod ?? undefined,
   });
+
+  // CA S3 — reforça metadata de recusa com o eventType Asaas.
+  if (
+    entity.entityType === 'tenant_billing' &&
+    (eventType === 'PAYMENT_CREDIT_CARD_CAPTURE_REFUSED' ||
+      internalStatus === 'failed' ||
+      internalStatus === 'overdue')
+  ) {
+    const asaasSubscriptionId =
+      typeof metaObj.asaasSubscriptionId === 'string' ? metaObj.asaasSubscriptionId.trim() : '';
+    if (asaasSubscriptionId || eventType === 'PAYMENT_CREDIT_CARD_CAPTURE_REFUSED') {
+      try {
+        const { markAsaasSubscriptionPaymentFailed } = await import(
+          '../../../services/saasAsaasSubscriptionRenewalService.js'
+        );
+        await markAsaasSubscriptionPaymentFailed({
+          billingId: entity.entityId,
+          gatewayStatus: externalStatus,
+          eventType,
+        });
+      } catch (e) {
+        console.warn('[webhookCore] CA S3 mark card failure', e);
+      }
+    }
+  }
 
   if (
     internalStatus === 'paid' &&

@@ -38,7 +38,19 @@ export type LicenseSummary = {
   purchased_seats: number;
   used_seats: number;
   available_seats: number;
+  included_seats?: number;
+  extra_seats?: number;
   unit_cost_cents: number;
+  topup_unit_price_cents?: number | null;
+  topup_price_source?: string;
+  topup_available?: boolean;
+  topup_blocked_reason?: string | null;
+  wholesale_plan_name?: string | null;
+  recurring_plan_price_cents?: number | null;
+  recurring_extras_cents?: number | null;
+  recurring_amount_cents?: number | null;
+  recurring_billing_interval?: string | null;
+  downgrade_max_qty?: number;
   floor_price_cents: number | null;
 };
 

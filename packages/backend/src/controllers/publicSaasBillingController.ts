@@ -23,6 +23,16 @@ import { yyyyMmDdFromDbDateValue } from '../utils/calendarDateBr.js';
 import { ASAAS_CPF_CNPJ_USER_MESSAGE } from '../services/subscriptionService.js';
 import { resolveTransactionalBrandName } from '../partner/partnerBrandResolver.js';
 
+/** CA S2 — Asaas exige remoteIp na criação de Assinatura com cartão. */
+function clientIpForPayWithCard(req: Request): string {
+  const xff = req.headers['x-forwarded-for'];
+  if (typeof xff === 'string' && xff.length > 0) {
+    return xff.split(',')[0].trim();
+  }
+  const rip = req.socket.remoteAddress;
+  return rip && rip.length > 0 ? rip : '0.0.0.0';
+}
+
 function billingReasonLabel(reason: string): string {
   switch (reason) {
     case 'seat_addon':
@@ -378,6 +388,7 @@ export async function postPublicSaasBillingPayWithCard(req: Request, res: Respon
       tenantId: null,
       inlinePayToken: parsed.data.inline_pay_token.trim(),
       body,
+      remoteIp: clientIpForPayWithCard(req),
     });
     res.status(200).json(result);
   } catch (err) {

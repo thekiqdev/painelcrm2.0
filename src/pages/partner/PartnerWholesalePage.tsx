@@ -37,6 +37,9 @@ type WholesaleStatus = {
   purchased_seats: number;
   used_seats_cache: number;
   plan: WholesalePlan | null;
+  recurring_amount_cents?: number | null;
+  recurring_extras_cents?: number | null;
+  extra_seats?: number | null;
   paywall_active?: boolean;
   pending_billing: {
     id: string;
@@ -67,6 +70,11 @@ function intervalLabel(i: string): string {
 function reasonLabel(reason: string): string {
   if (reason === 'partner_license_topup') return 'Licenças avulsas';
   return 'Plano atacado';
+}
+
+function averagePerSeatCents(priceCents: number, seats: number): number | null {
+  if (!Number.isFinite(priceCents) || !Number.isFinite(seats) || seats <= 0) return null;
+  return Math.round(priceCents / seats);
 }
 
 function billingPath(inv: { id: string; billing_reason?: string | null }): string {
@@ -311,6 +319,15 @@ export default function PartnerWholesalePage() {
               <p className="text-muted-foreground">
                 Pool: {status.used_seats_cache} / {status.purchased_seats} licenças
               </p>
+              {status.recurring_amount_cents != null && status.plan ? (
+                <p className="text-muted-foreground">
+                  Recorrente: {formatBrlCents(status.recurring_amount_cents)}/
+                  {intervalLabel(status.plan.billing_interval)}
+                  {status.recurring_extras_cents
+                    ? ` · inclui ${formatBrlCents(status.recurring_extras_cents)} de ${status.extra_seats ?? 0} avulsas`
+                    : ''}
+                </p>
+              ) : null}
               {!paywall && status.pending_billing ? (
                 <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs">
                   Cobrança pendente de {formatBrlCents(status.pending_billing.amount_cents)} (
@@ -420,6 +437,16 @@ export default function PartnerWholesalePage() {
                       /{intervalLabel(plan.billing_interval)}
                     </span>
                   </p>
+                  {averagePerSeatCents(plan.price_cents, plan.seats_included) != null ? (
+                    <p className="text-sm text-muted-foreground">
+                      {formatBrlCents(averagePerSeatCents(plan.price_cents, plan.seats_included)!)}{' '}
+                      por usuário incluso
+                      <span className="text-xs">
+                        {' '}
+                        ({plan.seats_included} licenças no pacote)
+                      </span>
+                    </p>
+                  ) : null}
                   <Button
                     className="w-full"
                     disabled={isCurrent || subscribing === plan.id}

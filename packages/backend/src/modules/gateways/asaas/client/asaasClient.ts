@@ -12,6 +12,10 @@ import type {
   AsaasPaymentResponse,
   AsaasPaymentUpdateRequest,
   AsaasPixQrCodeResponse,
+  AsaasSubscriptionCreateRequest,
+  AsaasSubscriptionCreditCardUpdateRequest,
+  AsaasSubscriptionResponse,
+  AsaasSubscriptionUpdateRequest,
 } from '../asaasTypes.js';
 
 /** Sandbox e sequência de chamadas (ex.: createPayment + getPixQrCode) precisam de folga; timeouts muito baixos geram AbortError. */
@@ -37,9 +41,11 @@ export function isAbortLikeError(e: unknown): boolean {
 }
 
 const HTTP_TIMEOUT_MS = defaultHttpTimeoutMs();
-/** Cartão: documentação Asaas recomenda timeout ≥ 60s para evitar duplicidade. */
+/** Cartão / Assinatura: documentação Asaas recomenda timeout ≥ 60s para evitar duplicidade. */
 const PAY_WITH_CARD_TIMEOUT_MS = 65_000;
+const SUBSCRIPTION_TIMEOUT_MS = 65_000;
 const HTTP_RETRY_ATTEMPTS = 2;
+const ASAAS_USER_AGENT = process.env.ASAAS_USER_AGENT?.trim() || 'PainelCRM/1.0';
 
 function getBaseUrlFromEnv(): string {
   const env = process.env.ASAAS_ENV || 'sandbox';
@@ -121,6 +127,8 @@ async function request<T>(
         method,
         headers: {
           'Content-Type': 'application/json',
+          Accept: 'application/json',
+          'User-Agent': ASAAS_USER_AGENT,
           access_token: apiKey,
         },
         body: body ? JSON.stringify(body) : undefined,
@@ -426,6 +434,113 @@ export async function createWebhook(
   return request<AsaasWebhookResponse>('POST', '/webhooks', data, config);
 }
 
+/**
+ * CA S1 — POST /v3/subscriptions (cartão). Sem retry (evita duplicar assinatura em timeout).
+ */
+export async function createSubscription(
+  data: AsaasSubscriptionCreateRequest,
+  config?: AsaasConfig | null
+): Promise<AsaasSubscriptionResponse> {
+  return request<AsaasSubscriptionResponse>('POST', '/subscriptions', data, config, {
+    timeoutMs: SUBSCRIPTION_TIMEOUT_MS,
+    maxRetries: 0,
+  });
+}
+
+export async function getSubscription(
+  subscriptionId: string,
+  config?: AsaasConfig | null
+): Promise<AsaasSubscriptionResponse | null> {
+  try {
+    return await request<AsaasSubscriptionResponse>(
+      'GET',
+      `/subscriptions/${encodeURIComponent(subscriptionId)}`,
+      undefined,
+      config
+    );
+  } catch (e: unknown) {
+    if (isAbortLikeError(e)) return null;
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes('404')) return null;
+    throw e;
+  }
+}
+
+export async function updateSubscription(
+  subscriptionId: string,
+  data: AsaasSubscriptionUpdateRequest,
+  config?: AsaasConfig | null
+): Promise<AsaasSubscriptionResponse> {
+  return request<AsaasSubscriptionResponse>(
+    'PUT',
+    `/subscriptions/${encodeURIComponent(subscriptionId)}`,
+    data,
+    config,
+    { timeoutMs: SUBSCRIPTION_TIMEOUT_MS, maxRetries: 0 }
+  );
+}
+
+/**
+ * PUT /v3/subscriptions/{id}/creditCard — troca cartão sem cobrança imediata.
+ */
+export async function updateSubscriptionCreditCard(
+  subscriptionId: string,
+  data: AsaasSubscriptionCreditCardUpdateRequest,
+  config?: AsaasConfig | null
+): Promise<AsaasSubscriptionResponse> {
+  return request<AsaasSubscriptionResponse>(
+    'PUT',
+    `/subscriptions/${encodeURIComponent(subscriptionId)}/creditCard`,
+    data,
+    config,
+    { timeoutMs: SUBSCRIPTION_TIMEOUT_MS, maxRetries: 0 }
+  );
+}
+
+/**
+ * DELETE /v3/subscriptions/{id} — remove/cancela assinatura no Asaas.
+ */
+export async function deleteSubscription(
+  subscriptionId: string,
+  config?: AsaasConfig | null
+): Promise<{ deleted?: boolean; id?: string } | null> {
+  try {
+    return await request<{ deleted?: boolean; id?: string }>(
+      'DELETE',
+      `/subscriptions/${encodeURIComponent(subscriptionId)}`,
+      undefined,
+      config,
+      { timeoutMs: SUBSCRIPTION_TIMEOUT_MS, maxRetries: 0 }
+    );
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes('404')) return null;
+    throw e;
+  }
+}
+
+type AsaasListPaymentsResponse = {
+  data?: AsaasPaymentResponse[];
+  totalCount?: number;
+};
+
+/** GET /v3/subscriptions/{id}/payments — cobranças já geradas pela assinatura. */
+export async function listSubscriptionPayments(
+  subscriptionId: string,
+  config?: AsaasConfig | null,
+  options?: { status?: string }
+): Promise<AsaasPaymentResponse[]> {
+  const qs = new URLSearchParams({ limit: '20', offset: '0' });
+  if (options?.status?.trim()) qs.set('status', options.status.trim());
+  const res = await request<AsaasListPaymentsResponse>(
+    'GET',
+    `/subscriptions/${encodeURIComponent(subscriptionId)}/payments?${qs.toString()}`,
+    undefined,
+    config
+  );
+  return Array.isArray(res?.data) ? res.data : [];
+}
+
 export async function listWebhooks(config?: AsaasConfig | null): Promise<AsaasWebhookResponse[]> {
   const first = await request<AsaasListWebhooksResponse>('GET', '/webhooks?limit=100&offset=0', undefined, config);
   return Array.isArray(first?.data) ? first.data : [];
@@ -447,6 +562,8 @@ export async function testConnection(config?: AsaasConfig | null): Promise<void>
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'User-Agent': ASAAS_USER_AGENT,
         access_token: apiKey,
       },
       signal: controller.signal,

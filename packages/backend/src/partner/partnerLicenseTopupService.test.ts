@@ -8,8 +8,21 @@ vi.mock('../utils/db.js', () => ({
 
 vi.mock('./partnerRepository.js', () => ({
   getPartnerDetail: vi.fn(),
+  getPartnerLicensePool: vi.fn().mockResolvedValue({
+    extra_seats: 0,
+    included_seats: 10,
+    purchased_seats: 10,
+  }),
   resolveDefaultPlanId: vi.fn().mockResolvedValue('plan-default'),
 }));
+
+vi.mock('./partnerWholesaleRecurringService.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./partnerWholesaleRecurringService.js')>();
+  return {
+    ...actual,
+    syncPartnerWholesaleRecurringAmount: vi.fn().mockResolvedValue(null),
+  };
+});
 
 vi.mock('./partnerWholesalePlanService.js', () => ({
   getWholesalePlan: vi.fn(),
@@ -47,6 +60,7 @@ vi.mock('../commercial/zeroAmountSettlementService.js', () => ({
 import { getPartnerDetail } from './partnerRepository.js';
 import { getWholesalePlan } from './partnerWholesalePlanService.js';
 import { applyPartnerLicenseDelta } from './partnerLicenseLedgerService.js';
+import { syncPartnerWholesaleRecurringAmount } from './partnerWholesaleRecurringService.js';
 import {
   activatePartnerLicenseTopupFromBilling,
   createPartnerLicenseTopupCheckout,
@@ -73,9 +87,22 @@ describe('partnerLicenseTopupService', () => {
     vi.mocked(getWholesalePlan).mockResolvedValue({
       id: WHOLESALE_ID,
       unit_overage_cents: 3000,
+      price_cents: 99900,
       envelope_plan_id: 'env-1',
       status: 'active',
     } as never);
+  });
+
+  it('quote rejeita plano sem Custo seat avulso', async () => {
+    vi.mocked(getWholesalePlan).mockResolvedValue({
+      id: WHOLESALE_ID,
+      unit_overage_cents: null,
+      envelope_plan_id: 'env-1',
+      status: 'active',
+    } as never);
+    await expect(quotePartnerLicenseTopup(PARTNER_ID, { qty: 2 })).rejects.toMatchObject({
+      code: 'TOPUP_OVERAGE_REQUIRED',
+    });
   });
 
   it('quote usa unit_overage do plano atacado', async () => {
@@ -84,6 +111,10 @@ describe('partnerLicenseTopupService', () => {
     expect(q.unit_price_cents).toBe(3000);
     expect(q.amount_cents).toBe(30000);
     expect(q.price_source).toBe('wholesale_overage');
+    expect(q.current_recurring_amount_cents).toBe(99900);
+    expect(q.next_recurring_amount_cents).toBe(129900);
+    expect(q.recurring_delta_cents).toBe(30000);
+    expect(q.extra_seats_after).toBe(10);
   });
 
   it('quote aceita pack_id', async () => {
@@ -183,6 +214,7 @@ describe('partnerLicenseTopupService', () => {
         wholesalePlanId: WHOLESALE_ID,
       })
     );
+    expect(syncPartnerWholesaleRecurringAmount).toHaveBeenCalledWith(PARTNER_ID);
   });
 
   it('activate é idempotente por billing_id', async () => {

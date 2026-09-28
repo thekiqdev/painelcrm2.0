@@ -33,25 +33,44 @@ type LicenseApi = {
   purchased_seats: number;
   used_seats: number;
   available_seats: number;
+  included_seats?: number;
+  extra_seats?: number;
   unit_cost_cents: number;
-  topup_unit_price_cents?: number;
+  topup_unit_price_cents?: number | null;
   topup_price_source?: string;
+  topup_available?: boolean;
+  topup_blocked_reason?: string | null;
+  wholesale_plan_name?: string | null;
   wholesale_status?: string | null;
+  recurring_plan_price_cents?: number | null;
+  recurring_extras_cents?: number | null;
+  recurring_amount_cents?: number | null;
+  recurring_billing_interval?: string | null;
+  downgrade_max_qty?: number;
   floor_price_cents: number | null;
   topup_packs?: Array<{ id: string; qty: number }>;
 };
+
+function intervalShort(i: string | null | undefined): string {
+  if (i === 'yearly') return 'ano';
+  if (i === 'semi_annual') return 'semestre';
+  if (i === 'quarterly') return 'trimestre';
+  return 'mês';
+}
 
 export default function PartnerLicensesPage() {
   const { licenses, reload: refreshPanel } = usePartnerPanel();
   const [licenseApi, setLicenseApi] = useState<LicenseApi | null>(null);
   const [ledger, setLedger] = useState<LedgerRow[]>([]);
   const [qty, setQty] = useState('10');
+  const [downQty, setDownQty] = useState('1');
   const [buying, setBuying] = useState(false);
+  const [downgrading, setDowngrading] = useState(false);
   const [paymentUrls, setPaymentUrls] = useState<PaymentUrls | null>(null);
   const [billingId, setBillingId] = useState<string | null>(null);
 
-  const unitPrice =
-    licenseApi?.topup_unit_price_cents ?? licenses?.unit_cost_cents ?? 0;
+  const unitPrice = licenseApi?.topup_unit_price_cents ?? null;
+  const canBuy = licenseApi?.topup_available !== false && unitPrice != null;
 
   const loadExtras = useCallback(async () => {
     const [lic, led] = await Promise.all([
@@ -104,12 +123,39 @@ export default function PartnerLicensesPage() {
 
   const qtyNum = Math.trunc(Number(qty));
   const previewTotal =
-    Number.isFinite(qtyNum) && qtyNum > 0 ? unitPrice * qtyNum : 0;
+    canBuy && Number.isFinite(qtyNum) && qtyNum > 0 ? (unitPrice ?? 0) * qtyNum : 0;
+  const included = licenseApi?.included_seats ?? licenses?.included_seats ?? 0;
+  const extra = licenseApi?.extra_seats ?? licenses?.extra_seats ?? 0;
+  const planPrice =
+    licenseApi?.recurring_plan_price_cents ?? licenses?.recurring_plan_price_cents ?? null;
+  const extraAfter =
+    Number.isFinite(qtyNum) && qtyNum > 0 ? extra + qtyNum : extra;
+  const nextRecurring =
+    canBuy && unitPrice != null && planPrice != null
+      ? planPrice + extraAfter * unitPrice
+      : licenseApi?.recurring_amount_cents ?? licenses?.recurring_amount_cents ?? null;
+  const currentRecurring =
+    licenseApi?.recurring_amount_cents ?? licenses?.recurring_amount_cents ?? null;
+  const downMax =
+    licenseApi?.downgrade_max_qty ??
+    Math.min(extra, Math.max(0, (licenses?.purchased_seats ?? 0) - (licenses?.used_seats ?? 0)));
+  const downNum = Math.trunc(Number(downQty));
+  const canDowngrade = downMax > 0;
+  const extraAfterDown =
+    Number.isFinite(downNum) && downNum > 0 ? Math.max(0, extra - downNum) : extra;
+  const nextRecurringDown =
+    canDowngrade && unitPrice != null && planPrice != null && Number.isFinite(downNum) && downNum > 0
+      ? planPrice + extraAfterDown * unitPrice
+      : currentRecurring;
 
   const purchase = async (overrideQty?: number) => {
     const n = overrideQty ?? qtyNum;
     if (!Number.isInteger(n) || n < 1) {
       toast.error('Informe uma quantidade válida');
+      return;
+    }
+    if (!canBuy) {
+      toast.error(licenseApi?.topup_blocked_reason || 'Custo seat avulso não configurado no plano');
       return;
     }
     if (licenseApi?.wholesale_status === 'past_due') {
@@ -144,6 +190,41 @@ export default function PartnerLicensesPage() {
     toast.success('Cobrança gerada — pague via PIX (Platform)');
   };
 
+  const downgrade = async () => {
+    if (!Number.isInteger(downNum) || downNum < 1) {
+      toast.error('Informe quantas avulsas reduzir');
+      return;
+    }
+    if (downNum > downMax) {
+      toast.error(
+        downMax === 0
+          ? 'Não há avulsas livres para reduzir'
+          : `Máximo agora: ${downMax} (não pode ficar abaixo das usadas)`
+      );
+      return;
+    }
+    setDowngrading(true);
+    const res = await apiClient.post<{
+      extra_seats: number;
+      purchased_seats: number;
+      quote: { next_recurring_amount_cents: number | null };
+    }>('/api/partner/licenses/downgrade', { qty: downNum });
+    setDowngrading(false);
+    if (res.error) {
+      toast.error(res.error || 'Falha no downgrade');
+      return;
+    }
+    toast.success(
+      `−${downNum} avulsas. Próximo ciclo: ${
+        res.data?.quote.next_recurring_amount_cents != null
+          ? formatBrlCents(res.data.quote.next_recurring_amount_cents)
+          : 'reajustado'
+      }. Sem estorno deste período.`
+    );
+    await loadExtras();
+    await refreshPanel();
+  };
+
   return (
     <div className="space-y-6">
       <PartnerSectionHeader
@@ -170,8 +251,8 @@ export default function PartnerLicensesPage() {
           iconClassName="text-emerald-600"
         />
         <StatCard
-          label="Preço avulso"
-          value={formatBrlCents(unitPrice)}
+          label="Custo seat avulso"
+          value={canBuy && unitPrice != null ? formatBrlCents(unitPrice) : '—'}
           icon={KeyRound}
           iconClassName="text-amber-600"
         />
@@ -194,6 +275,21 @@ export default function PartnerLicensesPage() {
             <p className="text-sm text-muted-foreground">{pct}%</p>
           </div>
           <Progress value={pct} className="h-3" />
+          <p className="text-xs text-muted-foreground">
+            Pacote do plano: {included} inclusas
+            {licenseApi?.wholesale_plan_name ? ` (${licenseApi.wholesale_plan_name})` : ''}
+            {' · '}
+            Avulsas: {extra}
+          </p>
+          {currentRecurring != null ? (
+            <p className="text-xs text-muted-foreground">
+              Recorrente atual: {formatBrlCents(currentRecurring)}/
+              {intervalShort(licenseApi?.recurring_billing_interval)}
+              {planPrice != null
+                ? ` (pacote ${formatBrlCents(planPrice)} + ${extra} avulsas)`
+                : ''}
+            </p>
+          ) : null}
           {licenses?.floor_price_cents != null ? (
             <p className="text-xs text-muted-foreground">
               Piso comercial do programa: {formatBrlCents(licenses.floor_price_cents)}
@@ -212,16 +308,20 @@ export default function PartnerLicensesPage() {
         <CardHeader>
           <CardTitle className="text-base">Comprar licenças</CardTitle>
           <CardDescription>
-            One-shot via Asaas Platform
-            {licenseApi?.topup_price_source === 'wholesale_overage'
-              ? ' · preço do plano atacado (overage)'
-              : ' · preço unitário do pool'}
+            {canBuy && unitPrice != null
+              ? `Cada seat extra custa ${formatBrlCents(unitPrice)} — o Custo seat avulso do plano atacado.`
+              : 'Preço avulso vem do campo Custo seat avulso do plano Platform.'}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {licenseApi?.wholesale_status === 'past_due' ? (
             <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
               Plano atacado em atraso — compra avulsa bloqueada até regularizar.
+            </p>
+          ) : null}
+          {!canBuy && licenseApi?.topup_blocked_reason ? (
+            <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs">
+              {licenseApi.topup_blocked_reason}
             </p>
           ) : null}
           <div className="flex flex-wrap gap-2">
@@ -235,13 +335,14 @@ export default function PartnerLicensesPage() {
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={buying}
+                disabled={buying || !canBuy}
                 onClick={() => {
                   setQty(String(p.qty));
                   void purchase(p.qty);
                 }}
               >
-                +{p.qty} · {formatBrlCents(unitPrice * p.qty)}
+                +{p.qty}
+                {canBuy && unitPrice != null ? ` · ${formatBrlCents(unitPrice * p.qty)}` : ''}
               </Button>
             ))}
           </div>
@@ -258,13 +359,20 @@ export default function PartnerLicensesPage() {
               />
             </div>
             <div className="space-y-1 text-sm">
-              <p className="text-muted-foreground">Total estimado</p>
+              <p className="text-muted-foreground">Paga agora (diferença)</p>
               <p className="font-semibold">{formatBrlCents(previewTotal)}</p>
             </div>
-            <Button onClick={() => void purchase()} disabled={buying}>
+            <Button onClick={() => void purchase()} disabled={buying || !canBuy}>
               {buying ? 'Gerando cobrança…' : 'Comprar'}
             </Button>
           </div>
+          {canBuy && nextRecurring != null && Number.isFinite(qtyNum) && qtyNum > 0 ? (
+            <p className="text-xs text-muted-foreground">
+              Após o pagamento o plano passa a {formatBrlCents(nextRecurring)}/
+              {intervalShort(licenseApi?.recurring_billing_interval)} ({included} inclusas + {extraAfter}{' '}
+              avulsas). O catálogo do plano atacado não muda.
+            </p>
+          ) : null}
 
           {paymentUrls?.pixCopyPaste || paymentUrls?.pixQrCode ? (
             <div className="space-y-3 rounded-md border border-border/60 p-3">
@@ -304,8 +412,51 @@ export default function PartnerLicensesPage() {
 
       <Card className="border-border/80 shadow-sm">
         <CardHeader>
+          <CardTitle className="text-base">Reduzir licenças avulsas</CardTitle>
+          <CardDescription>
+            Só extras livres. O pacote do plano não reduz. Sem estorno do período já pago — o
+            próximo ciclo baixa.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-xs text-muted-foreground">
+            Disponíveis para reduzir: {downMax}
+            {extra > 0 ? ` (${extra} avulsas no pool)` : ''}
+          </p>
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="space-y-2">
+              <Label>Quantidade</Label>
+              <Input
+                type="number"
+                min={1}
+                max={Math.max(1, downMax)}
+                className="w-28"
+                value={downQty}
+                onChange={(e) => setDownQty(e.target.value)}
+                disabled={!canDowngrade}
+              />
+            </div>
+            <div className="space-y-1 text-sm">
+              <p className="text-muted-foreground">Próximo ciclo</p>
+              <p className="font-semibold">
+                {nextRecurringDown != null ? formatBrlCents(nextRecurringDown) : '—'}
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => void downgrade()}
+              disabled={downgrading || !canDowngrade}
+            >
+              {downgrading ? 'Reduzindo…' : 'Reduzir'}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-border/80 shadow-sm">
+        <CardHeader>
           <CardTitle className="text-base">Histórico do ledger</CardTitle>
-          <CardDescription>Grants, ativações de plano e compras avulsas</CardDescription>
+          <CardDescription>Grants, ativações, compras e downgrades de avulsas</CardDescription>
         </CardHeader>
         <CardContent>
           {ledger.length === 0 ? (

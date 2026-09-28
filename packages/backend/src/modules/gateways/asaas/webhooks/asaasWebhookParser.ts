@@ -22,6 +22,7 @@ export function parseAsaasWebhookPayload(payload: unknown): ParsedWebhookPayload
     throw new Error('Payload deve ser um objeto');
   }
   const eventId = typeof body.id === 'string' ? body.id : '';
+  const eventType = typeof body.event === 'string' ? body.event : '';
   const payment = body.payment as Record<string, unknown> | null | undefined;
   const referenceId = payment && typeof payment.id === 'string' ? payment.id : '';
   const externalStatus = payment && typeof payment.status === 'string' ? payment.status : null;
@@ -29,6 +30,7 @@ export function parseAsaasWebhookPayload(payload: unknown): ParsedWebhookPayload
   const paymentMethod = mapAsaasBillingTypeToPaymentMethod(billingType);
 
   const metadata: Record<string, unknown> = {};
+  if (eventType) metadata.eventType = eventType;
   if (paymentMethod) metadata.paymentMethod = paymentMethod;
   // Sprint 10 — conciliation do 1º pagamento da jornada Pix Automático.
   // Asaas docs: immediateQrCode.conciliationIdentifier reaparece no payment.
@@ -42,6 +44,20 @@ export function parseAsaasWebhookPayload(payload: unknown): ParsedWebhookPayload
     if (!metadata.conciliationIdentifier) {
       metadata.conciliationIdentifier = payment.pixQrCodeId;
     }
+  }
+  // CA S0/S3 — cobrancas geradas por Assinatura Asaas trazem `subscription` (id sub_…).
+  if (payment && typeof payment.subscription === 'string' && payment.subscription.trim()) {
+    metadata.asaasSubscriptionId = payment.subscription.trim();
+  }
+  if (payment && typeof payment.externalReference === 'string' && payment.externalReference.trim()) {
+    metadata.externalReference = payment.externalReference.trim();
+  }
+  if (payment && typeof payment.dueDate === 'string' && payment.dueDate.trim()) {
+    metadata.dueDate = payment.dueDate.trim();
+  }
+  // Asaas value em reais (number) → centavos.
+  if (payment && typeof payment.value === 'number' && Number.isFinite(payment.value)) {
+    metadata.amountCents = Math.round(payment.value * 100);
   }
 
   return {

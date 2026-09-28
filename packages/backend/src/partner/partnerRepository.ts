@@ -72,6 +72,8 @@ export async function getPartnerLicensePool(
   const db = dbOf(options?.db);
   const result = await db.query<PartnerLicensePoolRow>(
     `SELECT partner_tenant_id, purchased_seats, unit_cost_cents, used_seats_cache,
+            COALESCE(included_seats, 0) AS included_seats,
+            COALESCE(extra_seats, 0) AS extra_seats,
             updated_at::text
      FROM partner_license_pool
      WHERE partner_tenant_id = $1`,

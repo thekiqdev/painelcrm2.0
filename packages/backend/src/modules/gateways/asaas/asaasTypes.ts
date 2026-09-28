@@ -88,3 +88,89 @@ export interface AsaasIdentificationFieldResponse {
   nossoNumero?: string;
   barCode?: string;
 }
+
+/** Ciclos aceitos pela API de Assinaturas Asaas. */
+export type AsaasSubscriptionCycle =
+  | 'WEEKLY'
+  | 'BIWEEKLY'
+  | 'MONTHLY'
+  | 'BIMONTHLY'
+  | 'QUARTERLY'
+  | 'SEMIANNUALLY'
+  | 'YEARLY';
+
+export interface AsaasCreditCardPayload {
+  holderName: string;
+  number: string;
+  expiryMonth: string;
+  expiryYear: string;
+  ccv: string;
+}
+
+export interface AsaasCreditCardHolderInfoPayload {
+  name: string;
+  email: string;
+  cpfCnpj: string;
+  postalCode: string;
+  addressNumber: string;
+  addressComplement?: string | null;
+  phone: string;
+  mobilePhone?: string | null;
+}
+
+/**
+ * POST /v3/subscriptions — assinatura com cartão (CA S1).
+ * Preferir `creditCardToken` quando disponível; senão `creditCard` + `creditCardHolderInfo`.
+ */
+export interface AsaasSubscriptionCreateRequest {
+  customer: string;
+  billingType: 'CREDIT_CARD' | 'BOLETO' | 'PIX' | 'UNDEFINED';
+  nextDueDate: string;
+  value: number;
+  cycle: AsaasSubscriptionCycle;
+  description?: string;
+  externalReference?: string;
+  /** IP do dispositivo do pagador (não do servidor). */
+  remoteIp?: string;
+  creditCardToken?: string;
+  creditCard?: AsaasCreditCardPayload;
+  creditCardHolderInfo?: AsaasCreditCardHolderInfoPayload;
+}
+
+export interface AsaasSubscriptionUpdateRequest {
+  value?: number;
+  nextDueDate?: string;
+  cycle?: AsaasSubscriptionCycle;
+  description?: string;
+  billingType?: 'CREDIT_CARD' | 'BOLETO' | 'PIX' | 'UNDEFINED';
+  updatePendingPayments?: boolean;
+  status?: 'ACTIVE' | 'INACTIVE';
+  externalReference?: string;
+}
+
+export interface AsaasSubscriptionCreditCardUpdateRequest {
+  remoteIp?: string;
+  creditCardToken?: string;
+  creditCard?: AsaasCreditCardPayload;
+  creditCardHolderInfo?: AsaasCreditCardHolderInfoPayload;
+}
+
+export interface AsaasSubscriptionResponse {
+  id: string;
+  customer?: string;
+  billingType?: string;
+  value?: number;
+  nextDueDate?: string;
+  cycle?: string;
+  description?: string | null;
+  status?: string;
+  deleted?: boolean;
+  externalReference?: string | null;
+  dateCreated?: string;
+  creditCard?: {
+    creditCardNumber?: string;
+    creditCardBrand?: string;
+    creditCardToken?: string;
+  };
+  [key: string]: unknown;
+}

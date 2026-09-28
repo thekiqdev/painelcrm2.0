@@ -63,10 +63,12 @@ export async function partnerGetWholesaleStatus(
     const { getPartnerWholesalePaywallState, isPartnerWholesalePaywallActive } = await import(
       './partnerWholesalePaywallService.js'
     );
+    const { quoteWholesaleRecurringAmount } = await import('./partnerWholesaleRecurringService.js');
     const paywall = await getPartnerWholesalePaywallState(partnerId);
     const pending = paywall.open_invoices.find((i) => i.billing_reason === 'partner_wholesale')
       ?? paywall.open_invoices[0]
       ?? null;
+    const recurring = await quoteWholesaleRecurringAmount(partnerId);
 
     res.json({
       wholesale_status: detail.wholesale_status,
@@ -75,6 +77,9 @@ export async function partnerGetWholesaleStatus(
       wholesale_subscription_id: detail.wholesale_subscription_id,
       purchased_seats: detail.purchased_seats,
       used_seats_cache: detail.used_seats_cache,
+      recurring_amount_cents: recurring?.recurring_amount_cents ?? null,
+      recurring_extras_cents: recurring?.extras_cents ?? null,
+      extra_seats: recurring?.extra_seats ?? null,
       plan,
       pending_billing: pending
         ? {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   deriveCheckoutContractPricingFromBilling,
+  isSaasContractActivationBillingReason,
   shouldPersistContractSnapshotMode,
 } from './billingSubscriptionService.js';
 
@@ -12,12 +13,27 @@ describe('shouldPersistContractSnapshotMode', () => {
     expect(shouldPersistContractSnapshotMode('plan_renewal', 'checkout_initial')).toBe(false);
   });
 
-  it('explicit: permite upgrade / manual_charge / seat_addon e bloqueia plan_purchase / plan_renewal', () => {
+  it('explicit: permite plan_purchase (CS S1 recontratação), upgrade, manual_charge, seat_addon; bloqueia plan_renewal', () => {
+    expect(shouldPersistContractSnapshotMode('plan_purchase', 'explicit')).toBe(true);
     expect(shouldPersistContractSnapshotMode('plan_upgrade', 'explicit')).toBe(true);
     expect(shouldPersistContractSnapshotMode('manual_charge', 'explicit')).toBe(true);
     expect(shouldPersistContractSnapshotMode('seat_addon', 'explicit')).toBe(true);
-    expect(shouldPersistContractSnapshotMode('plan_purchase', 'explicit')).toBe(false);
     expect(shouldPersistContractSnapshotMode('plan_renewal', 'explicit')).toBe(false);
+  });
+});
+
+describe('isSaasContractActivationBillingReason (CS S1)', () => {
+  it('aceita plan_purchase, plan_upgrade, manual_charge', () => {
+    expect(isSaasContractActivationBillingReason('plan_purchase')).toBe(true);
+    expect(isSaasContractActivationBillingReason(undefined)).toBe(true);
+    expect(isSaasContractActivationBillingReason('plan_upgrade')).toBe(true);
+    expect(isSaasContractActivationBillingReason('manual_charge')).toBe(true);
+  });
+
+  it('rejeita renovação e add-ons', () => {
+    expect(isSaasContractActivationBillingReason('plan_renewal')).toBe(false);
+    expect(isSaasContractActivationBillingReason('seat_addon')).toBe(false);
+    expect(isSaasContractActivationBillingReason('instance_addon')).toBe(false);
   });
 });
 
@@ -75,6 +91,20 @@ describe('deriveCheckoutContractPricingFromBilling (checkout snapshot)', () => {
     ).toEqual({
       contracted_plan_price_cents: 4500,
       contracted_price_per_user_cents: 1500,
+    });
+  });
+
+  it('CS S1: recontratação standard usa amount pago (500_00) como flat contratado', () => {
+    expect(
+      deriveCheckoutContractPricingFromBilling({
+        planType: 'standard',
+        billingAmountCents: 50000,
+        billingUsersCount: 1,
+        catalogPricePerUserCents: null,
+      })
+    ).toEqual({
+      contracted_plan_price_cents: 50000,
+      contracted_price_per_user_cents: null,
     });
   });
 });

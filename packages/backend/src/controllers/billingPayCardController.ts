@@ -2,7 +2,7 @@
  * POST /api/billing/:billingId/pay-with-card — captura inline (Desenho A), mesmo fluxo das faturas CRM.
  * Autenticação: JWT com tenant da cobrança OU `inline_pay_token` retornado no plan-purchase (checkout anônimo).
  */
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import { z } from 'zod';
 import type { AuthRequest } from '../middleware/auth.js';
 import {
@@ -10,6 +10,16 @@ import {
   PayWithCardError,
 } from '../services/customerBillingService.js';
 import { getMyTenantAndPrimary } from './myTenantPlanController.js';
+
+/** CA S2 — Asaas exige remoteIp na criação de Assinatura com cartão. */
+function clientIpForPayWithCard(req: Request): string {
+  const xff = req.headers['x-forwarded-for'];
+  if (typeof xff === 'string' && xff.length > 0) {
+    return xff.split(',')[0].trim();
+  }
+  const rip = req.socket.remoteAddress;
+  return rip && rip.length > 0 ? rip : '0.0.0.0';
+}
 
 const payWithCardBodySchema = z
   .object({
@@ -93,6 +103,7 @@ export async function postTenantBillingPayWithCard(req: AuthRequest, res: Respon
       tenantId,
       inlinePayToken,
       body,
+      remoteIp: clientIpForPayWithCard(req),
     });
     res.status(200).json(result);
   } catch (err) {

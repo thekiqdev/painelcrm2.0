@@ -13,6 +13,7 @@ import {
   LICENSE_TOPUP_PACKS,
   quotePartnerLicenseTopup,
 } from './partnerLicenseTopupService.js';
+import { downgradePartnerLicenseExtras } from './partnerLicenseDowngradeService.js';
 import { getInvoiceById } from '../services/invoiceService.js';
 import { getSaasBillingCheckoutPresentation } from '../services/subscriptionService.js';
 import {
@@ -110,6 +111,37 @@ export async function partnerPurchaseLicenses(
       paymentUrls: checkout.paymentUrls ?? null,
       settled: checkout.settled === true,
     });
+  } catch (err) {
+    handleErr(err, res);
+  }
+}
+
+const downgradeSchema = z.object({
+  qty: z.number().int(),
+});
+
+/** POST /api/partner/licenses/downgrade */
+export async function partnerDowngradeLicenses(
+  req: PartnerAuthRequest,
+  res: Response
+): Promise<void> {
+  try {
+    const id = req.partnerContext?.partnerTenantId;
+    if (!id) {
+      res.status(403).json({ error: 'Partner context missing' });
+      return;
+    }
+    const parsed = downgradeSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Payload inválido', details: parsed.error.flatten() });
+      return;
+    }
+    const result = await downgradePartnerLicenseExtras({
+      partnerTenantId: id,
+      qty: parsed.data.qty,
+      actorUserId: req.user?.id ?? null,
+    });
+    res.json(result);
   } catch (err) {
     handleErr(err, res);
   }

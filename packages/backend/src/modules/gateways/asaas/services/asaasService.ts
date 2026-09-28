@@ -15,7 +15,14 @@ import type {
   UpdateChargeInput,
   UpdateChargeResult,
   PaymentMethod,
+  CreateGatewaySubscriptionInput,
+  CreateGatewaySubscriptionResult,
+  UpdateGatewaySubscriptionInput,
+  UpdateGatewaySubscriptionResult,
+  UpdateGatewaySubscriptionCreditCardInput,
+  UpdateGatewaySubscriptionCreditCardResult,
 } from '../../../payments/paymentGatewayTypes.js';
+import { getGatewayCapabilities } from '../../../payments/gatewayCapabilities.js';
 import { logGatewayOperation } from '../../../payments/gatewayLogger.js';
 import { getPaymentCustomer, createPaymentCustomer } from '../../../../services/paymentCustomersService.js';
 import { getAsaasDisableCustomerNotifications } from '../../../../services/asaasCustomerNotificationConfigService.js';
@@ -25,7 +32,8 @@ import { isValidCpfOrCnpj, onlyDigits } from '../../../../utils/cpfCnpj.js';
 import { handleWebhook } from '../../../payments/webhook/webhookCore.js';
 import * as asaasClient from '../client/asaasClient.js';
 import * as asaasMapper from '../mappers/asaasMapper.js';
-import type { AsaasPaymentRequest } from '../asaasTypes.js';
+import * as asaasSubscriptionMapper from '../mappers/asaasSubscriptionMapper.js';
+import type { AsaasPaymentRequest, AsaasSubscriptionResponse } from '../asaasTypes.js';
 
 const GATEWAY_KEY = 'asaas';
 
@@ -84,10 +92,36 @@ function withLog<T>(
     });
 }
 
+function mapAsaasSubscriptionResult(res: AsaasSubscriptionResponse): CreateGatewaySubscriptionResult {
+  const cc =
+    res.creditCard && typeof res.creditCard === 'object'
+      ? (res.creditCard as Record<string, unknown>)
+      : null;
+  const token =
+    (cc && typeof cc.creditCardToken === 'string' ? cc.creditCardToken : null) ||
+    (typeof (res as { creditCardToken?: string }).creditCardToken === 'string'
+      ? (res as { creditCardToken?: string }).creditCardToken
+      : null) ||
+    null;
+  const value =
+    typeof res.value === 'number' && Number.isFinite(res.value) ? Math.round(res.value * 100) : null;
+  return {
+    subscriptionId: res.id,
+    status: res.status ?? '',
+    nextDueDate: res.nextDueDate ?? null,
+    cycle: res.cycle ?? null,
+    valueCents: value,
+    creditCardToken: token,
+    cardBrand: cc && typeof cc.creditCardBrand === 'string' ? cc.creditCardBrand : null,
+    cardLast4: cc && typeof cc.creditCardNumber === 'string' ? cc.creditCardNumber : null,
+  };
+}
+
 function buildGateway(config?: AsaasConfig | null): PaymentGateway {
   const disableNativeCustomerNotifications = config?.disableCustomerNotifications !== false;
 
   return {
+    capabilities: getGatewayCapabilities(GATEWAY_KEY),
     async createCustomer(input: CreateCustomerInput): Promise<CreateCustomerResult> {
       return withLog('createCustomer', undefined, async () => {
         const raw = asaasMapper.toAsaasCustomer(input);
@@ -336,6 +370,111 @@ function buildGateway(config?: AsaasConfig | null): PaymentGateway {
         });
         throw e;
       }
+    },
+    async createSubscription(
+      input: CreateGatewaySubscriptionInput
+    ): Promise<CreateGatewaySubscriptionResult> {
+      const start = Date.now();
+      try {
+        const body = asaasSubscriptionMapper.toAsaasSubscriptionCreateRequest(input);
+        console.log(
+          '[asaasService] createSubscription',
+          asaasSubscriptionMapper.summarizeSubscriptionCreateForLog(body)
+        );
+        const res = await asaasClient.createSubscription(body, config);
+        logGatewayOperation({
+          gateway: GATEWAY_KEY,
+          tenantId: undefined,
+          operation: 'createSubscription',
+          durationMs: Date.now() - start,
+          status: 'success',
+        });
+        return mapAsaasSubscriptionResult(res);
+      } catch (e: unknown) {
+        logGatewayOperation({
+          gateway: GATEWAY_KEY,
+          tenantId: undefined,
+          operation: 'createSubscription',
+          durationMs: Date.now() - start,
+          status: 'error',
+          error: 'Asaas createSubscription failed',
+        });
+        throw e;
+      }
+    },
+    async updateSubscription(
+      subscriptionId: string,
+      input: UpdateGatewaySubscriptionInput
+    ): Promise<UpdateGatewaySubscriptionResult> {
+      return withLog('updateSubscription', undefined, async () => {
+        const body = asaasSubscriptionMapper.toAsaasSubscriptionUpdateRequest(input);
+        const res = await asaasClient.updateSubscription(subscriptionId, body, config);
+        const mapped = mapAsaasSubscriptionResult(res);
+        return {
+          subscriptionId: mapped.subscriptionId,
+          status: mapped.status,
+          nextDueDate: mapped.nextDueDate,
+          valueCents: mapped.valueCents,
+        };
+      });
+    },
+    async updateSubscriptionCreditCard(
+      subscriptionId: string,
+      input: UpdateGatewaySubscriptionCreditCardInput
+    ): Promise<UpdateGatewaySubscriptionCreditCardResult> {
+      const start = Date.now();
+      try {
+        const body = asaasSubscriptionMapper.toAsaasSubscriptionCreditCardUpdateRequest(input);
+        const res = await asaasClient.updateSubscriptionCreditCard(subscriptionId, body, config);
+        const mapped = mapAsaasSubscriptionResult(res);
+        logGatewayOperation({
+          gateway: GATEWAY_KEY,
+          tenantId: undefined,
+          operation: 'updateSubscriptionCreditCard',
+          durationMs: Date.now() - start,
+          status: 'success',
+        });
+        return {
+          subscriptionId: mapped.subscriptionId,
+          creditCardToken: mapped.creditCardToken,
+          cardBrand: mapped.cardBrand,
+          cardLast4: mapped.cardLast4,
+        };
+      } catch (e: unknown) {
+        logGatewayOperation({
+          gateway: GATEWAY_KEY,
+          tenantId: undefined,
+          operation: 'updateSubscriptionCreditCard',
+          durationMs: Date.now() - start,
+          status: 'error',
+          error: 'Asaas updateSubscriptionCreditCard failed',
+        });
+        throw e;
+      }
+    },
+    async cancelSubscription(subscriptionId: string): Promise<void> {
+      return withLog('cancelSubscription', undefined, async () => {
+        await asaasClient.deleteSubscription(subscriptionId, config);
+      });
+    },
+    async getSubscription(subscriptionId: string): Promise<CreateGatewaySubscriptionResult | null> {
+      return withLog('getSubscription', undefined, async () => {
+        const res = await asaasClient.getSubscription(subscriptionId, config);
+        if (!res) return null;
+        return mapAsaasSubscriptionResult(res);
+      });
+    },
+    async listSubscriptionPayments(
+      subscriptionId: string
+    ): Promise<Array<{ paymentId: string; status: string; paidAt?: string | null }>> {
+      return withLog('listSubscriptionPayments', undefined, async () => {
+        const rows = await asaasClient.listSubscriptionPayments(subscriptionId, config);
+        return rows.map((p) => ({
+          paymentId: p.id,
+          status: p.status ?? '',
+          paidAt: p.paymentDate ?? (p as { clientPaymentDate?: string }).clientPaymentDate ?? null,
+        }));
+      });
     },
   };
 }

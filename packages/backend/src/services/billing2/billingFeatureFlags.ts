@@ -33,6 +33,7 @@ export const BILLING2_FLAG_KEYS = [
   'dunning_enabled',
   'collection_policy_db_read',
   'multi_gateway',
+  'asaas_subscription_owns_card_renewal',
 ] as const;
 
 export type Billing2FlagKey = (typeof BILLING2_FLAG_KEYS)[number];
@@ -182,6 +183,15 @@ export const BILLING2_FLAG_CATALOG: readonly Billing2FlagMeta[] = [
     defaultEnabled: false,
     destructive: true,
     introducedInSprint: 11,
+    source: 'implementation_plan',
+  },
+  {
+    key: 'asaas_subscription_owns_card_renewal',
+    label: 'CA — Assinatura Asaas cobra renovação (skip charge avulsa)',
+    /** Default ON = seguro (evita cobrança dupla). OFF = rollback legado (perigoso). */
+    defaultEnabled: true,
+    destructive: false,
+    introducedInSprint: 12,
     source: 'implementation_plan',
   },
 ] as const;

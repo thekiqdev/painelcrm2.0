@@ -144,7 +144,30 @@ export async function executeSaasRenewal(params: {
     contractedInstances: contractedWhatsappForRenewal,
     pricePerInstanceCents: unitPrice,
   });
-  const amountCents = renewalPricing.amountCents + whatsappExtras.extrasCents;
+  let amountCents = renewalPricing.amountCents + whatsappExtras.extrasCents;
+  try {
+    const { tryResolveWholesaleRenewalAmount } = await import(
+      '../../partner/partnerWholesaleRecurringService.js'
+    );
+    const wholesale = await tryResolveWholesaleRenewalAmount({
+      tenantId: subscription.tenant_id,
+      subscriptionId: subscription.id,
+    });
+    if (wholesale) {
+      amountCents = wholesale.amountCents;
+      logs.push('wholesale_recurring_override');
+      billingLog('job', 'saas_renewal_wholesale_amount', {
+        jobId: job.id,
+        subscription_id: subscription.id,
+        tenant_id: subscription.tenant_id,
+        amount_cents: amountCents,
+        extra_seats: wholesale.extraSeats,
+        plan_price_cents: wholesale.planPriceCents,
+      });
+    }
+  } catch (wholesaleErr) {
+    console.error('[executeSaasRenewal] wholesale recurring override failed', wholesaleErr);
+  }
 
   billingLog('job', 'saas_renewal_pricing_source', {
     jobId: job.id,
@@ -250,7 +273,41 @@ export async function executeSaasRenewal(params: {
           }
         }
 
+        // CA S5 — Assinatura Asaas já gera/cobra o cartão; não criar charge avulsa (anti 2×).
+        let asaasSubOwnsCard = false;
         if (!pixAutoHandled) {
+          const { shouldSkipSaasCardChargeForAsaasSubscription } = await import(
+            '../saasAsaasSubscriptionSyncService.js'
+          );
+          const skipAsaas = await shouldSkipSaasCardChargeForAsaasSubscription(subscription.id);
+          if (skipAsaas.skip) {
+            asaasSubOwnsCard = true;
+            await updateInvoiceGatewayData(billing.id, {
+              gateway: gatewayKey,
+              payment_method: 'CREDIT_CARD',
+              gateway_reference_id: null,
+              gateway_status: 'PENDING_ASAAS_SUBSCRIPTION',
+              idempotency_key: idempotencyKey,
+              gateway_metadata: {
+                asaas_subscription_id: skipAsaas.asaasSubscriptionId,
+                asaas_subscription_mode: true,
+                card_capture_channel: 'asaas_subscription',
+                renewal_charge_skipped: true,
+                renewal_charge_skip_reason: skipAsaas.reason,
+              },
+            });
+            billingLog('job', 'saas_renewal_skip_charge_asaas_subscription', {
+              jobId: job.id,
+              subscription_id: subscription.id,
+              billing_id: billing.id,
+              asaas_subscription_id: skipAsaas.asaasSubscriptionId,
+              reason: skipAsaas.reason,
+            });
+            logs.push('asaas_subscription_owns_card_renewal_skip_charge');
+          }
+        }
+
+        if (!pixAutoHandled && !asaasSubOwnsCard) {
           // Com token + flag ON, força CREDIT_CARD na renovação (captura automática abaixo se engine OFF).
           let renewalPm = resolveAutomaticInvoicePaymentMethod(
             subscription.default_payment_method as string | null,

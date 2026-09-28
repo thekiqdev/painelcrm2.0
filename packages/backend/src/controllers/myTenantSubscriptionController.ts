@@ -11,6 +11,7 @@ import {
   changeSubscriptionPlan,
 } from '../services/billingSubscriptionService.js';
 import { ensureUsableSaasSubscriptionForActivePaidTenant } from '../services/subscriptionService.js';
+import { resolveSubscriptionCommercialDisplayCents } from '../services/saasContractRenewalReconcileService.js';
 import { z } from 'zod';
 
 async function getMyTenantId(req: AuthRequest): Promise<string | null> {
@@ -119,6 +120,31 @@ export async function getMySubscription(req: AuthRequest, res: Response): Promis
       pix_automatic = null;
     }
 
+    let asaas_card_subscription: {
+      linked: boolean;
+      asaas_subscription_id: string | null;
+      gateway: string | null;
+    } | null = null;
+    try {
+      const { getAsaasSubscriptionStatusForLocal } = await import(
+        '../services/saasAsaasSubscriptionSyncService.js'
+      );
+      asaas_card_subscription = await getAsaasSubscriptionStatusForLocal(subscription.id);
+    } catch {
+      asaas_card_subscription = null;
+    }
+
+    const planType = partnerCommercial ? 'standard' : (pl?.plan_type ?? null);
+    const commercialAmountCents = partnerCommercial
+      ? (partnerCommercial.amount_cents ?? subscription.amount_cents)
+      : resolveSubscriptionCommercialDisplayCents({
+          planType,
+          amountCents: subscription.amount_cents,
+          contractedPlanPriceCents: subscription.contracted_plan_price_cents,
+          contractedPricePerUserCents: subscription.contracted_price_per_user_cents,
+          usersCount: subscription.users_count,
+        });
+
     res.status(200).json({
       subscription: {
         id: subscription.id,
@@ -127,8 +153,14 @@ export async function getMySubscription(req: AuthRequest, res: Response): Promis
           : subscription.plan_id,
         plan_name: partnerCommercial?.plan_name ?? pl?.name ?? null,
         plan_slug: partnerCommercial ? null : (pl?.slug ?? null),
-        plan_type: partnerCommercial ? 'standard' : (pl?.plan_type ?? null),
-        amount_cents: partnerCommercial?.amount_cents ?? subscription.amount_cents,
+        plan_type: planType,
+        amount_cents: commercialAmountCents,
+        contracted_plan_price_cents: partnerCommercial
+          ? null
+          : (subscription.contracted_plan_price_cents ?? null),
+        contracted_price_per_user_cents: partnerCommercial
+          ? null
+          : (subscription.contracted_price_per_user_cents ?? null),
         billing_interval: partnerCommercial?.billing_interval ?? subscription.billing_interval,
         status: subscription.status,
         next_billing_date: subscription.next_billing_date,
@@ -141,6 +173,7 @@ export async function getMySubscription(req: AuthRequest, res: Response): Promis
         will_cancel_at_period_end:
           subscription.status === 'active' && subscription.cancel_at_period_end === true,
         pix_automatic,
+        asaas_card_subscription,
         ...(partnerCommercial
           ? { channel: 'partner' as const, partner_commercial: true }
           : isPartnerCustomer
@@ -247,6 +280,41 @@ export async function patchMySubscription(req: AuthRequest, res: Response): Prom
       res.status(400).json({ error: result.error });
       return;
     }
+
+    // CS S3: troca de plano sem checkout também deve alinhar renovações abertas.
+    try {
+      const refreshed = await getActiveSaasSubscriptionByTenantAutoRepair(tenantId);
+      if (refreshed?.plan_id && refreshed.next_billing_date) {
+        const { addInterval } = await import('../services/subscriptionService.js');
+        const { toYmd } = await import('../services/billingSubscriptionService.js');
+        const {
+          reconcileOpenPlanRenewalsAfterContractChange,
+          resolveExpectedRenewalAmountCents,
+        } = await import('../services/saasContractRenewalReconcileService.js');
+        const nextStart = toYmd(refreshed.next_billing_date) ?? String(refreshed.next_billing_date).slice(0, 10);
+        const interval = (refreshed.billing_interval || 'monthly') as import('../services/billingService.js').BillingInterval;
+        const nextEndDate = addInterval(new Date(`${nextStart}T12:00:00`), interval);
+        const nextEnd = toYmd(nextEndDate);
+        if (nextEnd) {
+          await reconcileOpenPlanRenewalsAfterContractChange({
+            tenantId,
+            subscriptionId: refreshed.id,
+            planId: refreshed.plan_id,
+            billingInterval: interval,
+            usersCount: refreshed.users_count,
+            expectedAmountCents: resolveExpectedRenewalAmountCents({
+              amountCents: refreshed.amount_cents,
+              contractedPlanPriceCents: refreshed.contracted_plan_price_cents,
+            }),
+            nextPeriodStart: nextStart,
+            nextPeriodEnd: nextEnd,
+          });
+        }
+      }
+    } catch (reconcileErr) {
+      console.warn('[patchMySubscription] CS S2/S3 reconcile renewals skipped', reconcileErr);
+    }
+
     res.status(200).json({
       ok: true,
       message:

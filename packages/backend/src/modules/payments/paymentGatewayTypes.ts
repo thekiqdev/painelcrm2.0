@@ -106,6 +106,75 @@ export interface PayWithCreditCardResult {
   cardLast4?: string | null;
 }
 
+/** CA S1 — ciclo comercial mapeável para Assinatura Asaas. */
+export type GatewaySubscriptionCycle =
+  | 'weekly'
+  | 'monthly'
+  | 'quarterly'
+  | 'semi_annual'
+  | 'yearly';
+
+export type GatewayCreditCardPayload = NonNullable<PayWithCreditCardInput['creditCard']>;
+export type GatewayCreditCardHolderInfo = NonNullable<PayWithCreditCardInput['creditCardHolderInfo']>;
+
+/** Criar assinatura recorrente no gateway (Asaas `/subscriptions`). */
+export interface CreateGatewaySubscriptionInput {
+  customerId: string;
+  amountCents: number;
+  /** YYYY-MM-DD — 1ª cobrança (hoje = captura imediata possível). */
+  nextDueDate: string;
+  cycle: GatewaySubscriptionCycle;
+  description?: string;
+  externalReference?: string;
+  /** IP real do pagador (obrigatório Asaas cartão). */
+  remoteIp: string;
+  creditCardToken?: string;
+  creditCard?: GatewayCreditCardPayload;
+  creditCardHolderInfo?: GatewayCreditCardHolderInfo;
+}
+
+export interface CreateGatewaySubscriptionResult {
+  subscriptionId: string;
+  status: string;
+  nextDueDate?: string | null;
+  cycle?: string | null;
+  valueCents?: number | null;
+  creditCardToken?: string | null;
+  cardBrand?: string | null;
+  cardLast4?: string | null;
+}
+
+export interface UpdateGatewaySubscriptionInput {
+  amountCents?: number;
+  nextDueDate?: string;
+  cycle?: GatewaySubscriptionCycle;
+  description?: string | null;
+  updatePendingPayments?: boolean;
+  status?: 'ACTIVE' | 'INACTIVE';
+  externalReference?: string;
+}
+
+export interface UpdateGatewaySubscriptionResult {
+  subscriptionId: string;
+  status: string;
+  nextDueDate?: string | null;
+  valueCents?: number | null;
+}
+
+export interface UpdateGatewaySubscriptionCreditCardInput {
+  remoteIp: string;
+  creditCardToken?: string;
+  creditCard?: GatewayCreditCardPayload;
+  creditCardHolderInfo?: GatewayCreditCardHolderInfo;
+}
+
+export interface UpdateGatewaySubscriptionCreditCardResult {
+  subscriptionId: string;
+  creditCardToken?: string | null;
+  cardBrand?: string | null;
+  cardLast4?: string | null;
+}
+
 /**
  * Dados do gateway para persistência (customer_invoices / tenant_billing).
  * Fase 2 multi-gateway: uso de gateway_reference_id + gateway_metadata + gateway_status;
@@ -179,6 +248,26 @@ export interface PaymentGateway {
    * e o backend retorna indisponível — pivot possível para Desenho B mantendo o contrato público.
    */
   payWithCreditCard?(input: PayWithCreditCardInput): Promise<PayWithCreditCardResult>;
+  /**
+   * CA S1 — cria Assinatura recorrente com cartão (Asaas `/subscriptions`).
+   * Opcional; checkout cartão SaaS passa a usar em CA S2.
+   */
+  createSubscription?(input: CreateGatewaySubscriptionInput): Promise<CreateGatewaySubscriptionResult>;
+  updateSubscription?(
+    subscriptionId: string,
+    input: UpdateGatewaySubscriptionInput
+  ): Promise<UpdateGatewaySubscriptionResult>;
+  updateSubscriptionCreditCard?(
+    subscriptionId: string,
+    input: UpdateGatewaySubscriptionCreditCardInput
+  ): Promise<UpdateGatewaySubscriptionCreditCardResult>;
+  /** Inativa/remove assinatura no gateway (DELETE Asaas). */
+  cancelSubscription?(subscriptionId: string): Promise<void>;
+  getSubscription?(subscriptionId: string): Promise<CreateGatewaySubscriptionResult | null>;
+  /** CA S2 — listar cobranças já geradas pela assinatura (1ª captura / conciliação). */
+  listSubscriptionPayments?(
+    subscriptionId: string
+  ): Promise<Array<{ paymentId: string; status: string; paidAt?: string | null }>>;
 }
 
 export type BillingType = 'saas' | 'crm';

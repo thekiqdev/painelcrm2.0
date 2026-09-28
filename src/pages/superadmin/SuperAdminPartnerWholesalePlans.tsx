@@ -67,6 +67,12 @@ function brlToCents(raw: string): number {
   return Math.round(n * 100);
 }
 
+/** Média do pacote: preço do plano ÷ seats incluídos. */
+function averagePerSeatCents(priceCents: number, seats: number): number | null {
+  if (!Number.isFinite(priceCents) || !Number.isFinite(seats) || seats <= 0) return null;
+  return Math.round(priceCents / seats);
+}
+
 const emptyForm = {
   name: '',
   slug: '',
@@ -355,6 +361,7 @@ export default function SuperAdminPartnerWholesalePlans() {
                   <TableHead>Nome</TableHead>
                   <TableHead>Seats</TableHead>
                   <TableHead>Preço</TableHead>
+                  <TableHead>Média/usuário</TableHead>
                   <TableHead>Intervalo</TableHead>
                   <TableHead>Envelope</TableHead>
                   <TableHead>Status</TableHead>
@@ -370,6 +377,11 @@ export default function SuperAdminPartnerWholesalePlans() {
                     </TableCell>
                     <TableCell>{p.seats_included}</TableCell>
                     <TableCell>R$ {centsToBrl(p.price_cents)}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {averagePerSeatCents(p.price_cents, p.seats_included) != null
+                        ? `R$ ${centsToBrl(averagePerSeatCents(p.price_cents, p.seats_included)!)}`
+                        : '—'}
+                    </TableCell>
                     <TableCell>
                       {INTERVALS.find((i) => i.key === p.billing_interval)?.label ||
                         p.billing_interval}
@@ -475,6 +487,22 @@ export default function SuperAdminPartnerWholesalePlans() {
                 onChange={(e) => setForm((f) => ({ ...f, price_brl: e.target.value }))}
               />
             </div>
+            {(() => {
+              const seats = Number(form.seats_included);
+              const price = brlToCents(form.price_brl);
+              const avg = averagePerSeatCents(price, seats);
+              if (avg == null) return null;
+              return (
+                <div className="sm:col-span-2 rounded-md border border-dashed bg-muted/40 px-3 py-2 text-sm">
+                  Média:{' '}
+                  <strong>R$ {centsToBrl(avg)}</strong> por usuário incluso
+                  <span className="text-muted-foreground">
+                    {' '}
+                    (R$ {form.price_brl || '0'} ÷ {seats} seats)
+                  </span>
+                </div>
+              );
+            })()}
             <div className="space-y-2">
               <Label>Intervalo</Label>
               <Select
@@ -496,10 +524,14 @@ export default function SuperAdminPartnerWholesalePlans() {
             <div className="space-y-2">
               <Label>Custo seat avulso (R$)</Label>
               <Input
-                placeholder="Opcional"
+                placeholder="Obrigatório para vender extras"
                 value={form.unit_overage_brl}
                 onChange={(e) => setForm((f) => ({ ...f, unit_overage_brl: e.target.value }))}
               />
+              <p className="text-xs text-muted-foreground">
+                Preço de cada seat extra em Licenças. Sem este valor o Partner não consegue
+                comprar avulsas.
+              </p>
             </div>
             <div className="space-y-2 sm:col-span-2">
               <Label>Plano envelope (features)</Label>

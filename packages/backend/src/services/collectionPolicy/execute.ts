@@ -340,6 +340,22 @@ async function execChargeCard(
     return { type: 'charge_card', status: 'skipped', detail: 'already_paid' };
   }
 
+  // CA S5 — Assinatura Asaas cobra; engine não duplica capture avulsa.
+  {
+    const subId = ctx.subscriptionId ?? inv.subscription_id ?? null;
+    const { shouldSkipSaasCardChargeForAsaasSubscription } = await import(
+      '../saasAsaasSubscriptionSyncService.js'
+    );
+    const skipAsaas = await shouldSkipSaasCardChargeForAsaasSubscription(subId);
+    if (skipAsaas.skip) {
+      return {
+        type: 'charge_card',
+        status: 'skipped',
+        detail: 'asaas_subscription_owns_card_renewal',
+      };
+    }
+  }
+
   const {
     getActiveSaasCardTokenBySubscriptionId,
     getActiveSaasCardTokenByTenantId,

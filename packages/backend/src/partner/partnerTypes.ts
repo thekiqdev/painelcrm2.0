@@ -51,6 +51,8 @@ export type PartnerMembershipRow = {
 export type PartnerLicensePoolRow = {
   partner_tenant_id: string;
   purchased_seats: number;
+  included_seats?: number;
+  extra_seats?: number;
   unit_cost_cents: number;
   used_seats_cache: number;
   updated_at: string;

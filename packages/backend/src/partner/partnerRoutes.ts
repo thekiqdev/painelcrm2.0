@@ -24,6 +24,7 @@ import {
 import {
   partnerArchiveSellPlan,
   partnerCreateSellPlan,
+  partnerDowngradeLicenses,
   partnerGetLicenseLedger,
   partnerGetLicenses,
   partnerGetLicenseTopupBilling,
@@ -79,6 +80,7 @@ router.get('/licenses', requirePartnerAdmin, partnerGetLicenses);
 router.get('/licenses/ledger', requirePartnerAdmin, partnerGetLicenseLedger);
 router.get('/licenses/quote', requirePartnerAdmin, partnerQuoteLicensePurchase);
 router.post('/licenses/purchase', requirePartnerAdmin, requirePartnerWholesaleNotFrozen, partnerPurchaseLicenses);
+router.post('/licenses/downgrade', requirePartnerAdmin, partnerDowngradeLicenses);
 router.get('/licenses/billing/:billingId', requirePartnerAdmin, partnerGetLicenseTopupBilling);
 router.get('/gateway', requirePartnerAdmin, partnerGetGateway);
 router.put('/gateway', requirePartnerAdmin, partnerPutGateway);

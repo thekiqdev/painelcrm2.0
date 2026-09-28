@@ -516,12 +516,21 @@ export default function SuperAdminPartnerDetail() {
                 {wholesalePlans.length === 0 ? (
                   <option value="">Nenhum plano cadastrado</option>
                 ) : (
-                  wholesalePlans.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} · {p.seats_included} seats · R${' '}
-                      {(p.price_cents / 100).toFixed(2)}
-                    </option>
-                  ))
+                  wholesalePlans.map((p) => {
+                    const avg =
+                      p.seats_included > 0
+                        ? (Math.round(p.price_cents / p.seats_included) / 100)
+                            .toFixed(2)
+                            .replace('.', ',')
+                        : null;
+                    return (
+                      <option key={p.id} value={p.id}>
+                        {p.name} · {p.seats_included} seats · R${' '}
+                        {(p.price_cents / 100).toFixed(2)}
+                        {avg ? ` · R$ ${avg}/usuário` : ''}
+                      </option>
+                    );
+                  })
                 )}
               </select>
             </div>

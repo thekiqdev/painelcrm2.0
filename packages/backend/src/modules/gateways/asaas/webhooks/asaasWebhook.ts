@@ -6,7 +6,7 @@ import type { Request, Response, NextFunction } from 'express';
 import { createHash } from 'crypto';
 import { pool } from '../../../../utils/db.js';
 import { upsertWebhookEvent } from '../../../../services/paymentWebhookEventsService.js';
-import { isAsaasPaymentEvent, isAsaasPixAutomaticEvent } from '../asaasEvents.js';
+import { isAsaasPaymentEvent, isAsaasPixAutomaticEvent, isAsaasSubscriptionEvent } from '../asaasEvents.js';
 import { handleWebhook, registerGatewayParser } from '../../../payments/webhook/webhookCore.js';
 import { asaasWebhookParser } from './asaasWebhookParser.js';
 import { handlePixAutomaticWebhookEvent } from '../../../../services/billing2/billingPixAutomaticService.js';
@@ -246,6 +246,36 @@ export async function asaasWebhookHandler(
         gatewayKey: GATEWAY_KEY,
         eventId,
         payloadSummary: { ...payloadSummary, pix_automatic: true },
+        status: 'processed',
+        externalReference,
+      });
+      res.status(200).json({ received: true });
+      return;
+    }
+
+    // CA S0 — Assinatura Asaas: ACK + log (handler de negócio = S3/S4).
+    if (isAsaasSubscriptionEvent(eventType)) {
+      const sub = obj.subscription as Record<string, unknown> | undefined;
+      const asaasSubscriptionId =
+        sub && typeof sub.id === 'string' ? sub.id : null;
+      console.log('[CA S0] SUBSCRIPTION webhook received (ack only — no business handler yet)', {
+        eventType,
+        eventId,
+        asaasSubscriptionId,
+        status: sub && typeof sub.status === 'string' ? sub.status : null,
+      });
+      await pool.query(
+        `UPDATE asaas_webhook_events SET status = 'processed', processed_at = now() WHERE event_id = $1`,
+        [eventId]
+      );
+      await upsertWebhookEvent({
+        gatewayKey: GATEWAY_KEY,
+        eventId,
+        payloadSummary: {
+          ...payloadSummary,
+          asaas_subscription: true,
+          asaas_subscription_id: asaasSubscriptionId,
+        },
         status: 'processed',
         externalReference,
       });
