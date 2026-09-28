@@ -250,16 +250,24 @@ export default function SuperAdminPlans() {
               }))
           : form.plan_type !== 'custom'
             ? (form.interval_prices ?? [])
-                .filter(
-                  (ip) =>
-                    ip.billing_interval &&
-                    ip.price_per_instance_cents != null &&
-                    ip.price_per_instance_cents > 0
-                )
+                .filter((ip) => {
+                  if (!ip.billing_interval) return false;
+                  const hasUser =
+                    ip.price_per_user_cents != null && ip.price_per_user_cents > 0;
+                  const hasInst =
+                    ip.price_per_instance_cents != null && ip.price_per_instance_cents > 0;
+                  return hasUser || hasInst;
+                })
                 .map((ip) => ({
                   billing_interval: ip.billing_interval,
-                  price_per_user_cents: 0,
-                  price_per_instance_cents: ip.price_per_instance_cents ?? null,
+                  price_per_user_cents:
+                    ip.price_per_user_cents != null && ip.price_per_user_cents > 0
+                      ? ip.price_per_user_cents
+                      : 0,
+                  price_per_instance_cents:
+                    ip.price_per_instance_cents != null && ip.price_per_instance_cents > 0
+                      ? ip.price_per_instance_cents
+                      : null,
                 }))
             : undefined,
       benefits: (form.benefits ?? [])
@@ -399,7 +407,27 @@ export default function SuperAdminPlans() {
                           <span className="text-muted-foreground">Por usuário</span>
                         )
                       ) : (
-                        `${formatPrice(plan.price_cents)}/${plan.billing_interval === 'yearly' ? 'ano' : 'mês'}`
+                        <span className="text-sm">
+                          <span className="block">
+                            {`${formatPrice(plan.price_cents)}/${plan.billing_interval === 'yearly' ? 'ano' : 'mês'}`}
+                          </span>
+                          {(() => {
+                            const row =
+                              plan.interval_prices?.find((ip) => ip.billing_interval === plan.billing_interval) ??
+                              plan.interval_prices?.[0];
+                            const parts: string[] = [];
+                            if (row?.price_per_user_cents != null && row.price_per_user_cents > 0) {
+                              parts.push(`${formatPrice(row.price_per_user_cents)}/usuário avulso`);
+                            }
+                            if (row?.price_per_instance_cents != null && row.price_per_instance_cents > 0) {
+                              parts.push(`${formatPrice(row.price_per_instance_cents)}/conexão`);
+                            }
+                            if (parts.length === 0) return null;
+                            return (
+                              <span className="block text-xs text-muted-foreground">{parts.join(' · ')}</span>
+                            );
+                          })()}
+                        </span>
                       )}
                     </TableCell>
                     <TableCell>
@@ -585,6 +613,44 @@ export default function SuperAdminPlans() {
                       onChange={(e) => setForm((f) => ({ ...f, max_whatsapp_instances: e.target.value === '' ? null : parseInt(e.target.value, 10) }))}
                     />
                   </div>
+                </div>
+                <div className="grid gap-2">
+                  <Label>Valor por usuário avulso (vazio = não vendável)</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Preço unitário para usuários além do máximo incluso, na periodicidade do plano.
+                    Exibido na vitrine e usado no Meu Plano (SE S2).
+                  </p>
+                  <Input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="0,00"
+                    value={(() => {
+                      const interval = form.billing_interval ?? 'monthly';
+                      const row = (form.interval_prices ?? []).find((ip) => ip.billing_interval === interval);
+                      const cents = row?.price_per_user_cents ?? 0;
+                      return cents > 0 ? `R$ ${centsToReaisInput(cents)}` : '';
+                    })()}
+                    onChange={(e) => {
+                      const raw = e.target.value.replace(/\D/g, '');
+                      const nextCents = raw === '' ? 0 : parseInt(raw, 10);
+                      const cents = !isNaN(nextCents) ? nextCents : 0;
+                      setForm((f) => {
+                        const interval = f.billing_interval ?? 'monthly';
+                        const list = [...(f.interval_prices ?? [])];
+                        const idx = list.findIndex((ip) => ip.billing_interval === interval);
+                        if (idx >= 0) {
+                          list[idx] = { ...list[idx], price_per_user_cents: cents };
+                        } else {
+                          list.push({
+                            billing_interval: interval,
+                            price_per_user_cents: cents,
+                            price_per_instance_cents: null,
+                          });
+                        }
+                        return { ...f, interval_prices: list };
+                      });
+                    }}
+                  />
                 </div>
                 <div className="grid gap-2">
                   <Label>Valor por conexão WhatsApp extra (vazio = não vendável)</Label>

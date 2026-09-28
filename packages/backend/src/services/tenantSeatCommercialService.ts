@@ -1,5 +1,6 @@
 /**
- * Regras comerciais de assentos (plano custom): upgrade pago via checkout e downgrade no próximo ciclo.
+ * Regras comerciais de assentos: upgrade pago via checkout e downgrade no próximo ciclo.
+ * SE S2: também planos standard com teto (`max_users`) + preço avulso (`price_per_user_cents`).
  */
 import { pool } from '../utils/db.js';
 import {
@@ -14,6 +15,7 @@ import {
   subscribeSeatAddon,
 } from './subscriptionService.js';
 import type { PaymentMethod } from '../modules/payments/paymentGatewayTypes.js';
+import { getTenantLimit } from './tenantLimitService.js';
 
 const OPEN_SEAT_ADDON_STATUSES = ['pending', 'waiting_payment', 'processing', 'overdue'] as const;
 
@@ -36,12 +38,56 @@ export async function repairSeatAddonPendingPointer(tenantId: string): Promise<v
   }
 }
 
+/** Assentos contratados (custom): override ou users_count da assinatura. */
 export function effectiveContractedSeats(params: {
   max_users_override: number | null;
   subscription_users_count: number | null;
 }): number {
   const v = params.max_users_override ?? params.subscription_users_count ?? 1;
   return Math.max(1, v);
+}
+
+/**
+ * Assentos contratados efetivos.
+ * - standard: override || max_users do plano (ilimitado = null → extras não se aplicam)
+ * - custom: override || users_count da assinatura
+ */
+export async function resolveEffectiveContractedSeats(params: {
+  tenantId: string;
+  planType: string;
+  subscriptionUsersCount: number | null;
+}): Promise<number> {
+  const { tenantId, planType, subscriptionUsersCount } = params;
+  if (planType === 'standard') {
+    const limit = await getTenantLimit(tenantId, 'max_users', 'max_users_override');
+    if (limit == null) {
+      throw new Error(
+        'Este plano não tem limite de usuários (ilimitado). Defina um máximo no plano antes de vender extras.'
+      );
+    }
+    return Math.max(1, limit);
+  }
+  const trow = await pool.query<{ max_users_override: number | null }>(
+    `SELECT max_users_override FROM tenants WHERE id = $1`,
+    [tenantId]
+  );
+  return effectiveContractedSeats({
+    max_users_override: trow.rows[0]?.max_users_override ?? null,
+    subscription_users_count: subscriptionUsersCount,
+  });
+}
+
+function assertSeatAddonPlanAllowed(planType: string, planMaxUsers: number | null): void {
+  if (planType === 'custom') return;
+  if (planType === 'standard') {
+    if (planMaxUsers == null) {
+      throw new Error(
+        'Este plano não tem limite de usuários (ilimitado). Defina um máximo no plano antes de vender extras.'
+      );
+    }
+    return;
+  }
+  throw new Error('Contratação incremental de assentos não está disponível para este tipo de plano');
 }
 
 export async function previewSeatAddonPurchase(params: {
@@ -56,9 +102,6 @@ export async function previewSeatAddonPurchase(params: {
   billing_interval: BillingInterval;
 }> {
   const { tenantId, planId, planType, additionalSeats } = params;
-  if (planType !== 'custom') {
-    throw new Error('Contratação incremental de assentos aplica-se apenas a planos por usuário');
-  }
   if (!Number.isInteger(additionalSeats) || additionalSeats < 1) {
     throw new Error('Informe um número inteiro de novos assentos (mínimo 1)');
   }
@@ -71,25 +114,22 @@ export async function previewSeatAddonPurchase(params: {
     );
   }
 
-  const [trow, planRow] = await Promise.all([
-    pool.query<{ max_users_override: number | null }>(
-      `SELECT max_users_override FROM tenants WHERE id = $1`,
-      [tenantId]
-    ),
-    pool.query<{ max_users: number | null }>(
-      `SELECT max_users FROM plans WHERE id = $1`,
-      [planId]
-    ),
-  ]);
-  const currentContracted = effectiveContractedSeats({
-    max_users_override: trow.rows[0]?.max_users_override ?? null,
-    subscription_users_count: sub.users_count ?? null,
+  const planRow = await pool.query<{ max_users: number | null }>(
+    `SELECT max_users FROM plans WHERE id = $1`,
+    [planId]
+  );
+  const planMaxUsers = planRow.rows[0]?.max_users ?? null;
+  assertSeatAddonPlanAllowed(planType, planMaxUsers);
+
+  const currentContracted = await resolveEffectiveContractedSeats({
+    tenantId,
+    planType,
+    subscriptionUsersCount: sub.users_count ?? null,
   });
   const newTotal = currentContracted + additionalSeats;
 
-  // Valida limite do plano (max_users NULL = sem limite)
-  const planMaxUsers = planRow.rows[0]?.max_users ?? null;
-  if (planMaxUsers !== null && newTotal > planMaxUsers) {
+  // Custom: max_users do catálogo é teto rígido (se definido). Standard: max_users = incluso (extras livres).
+  if (planType === 'custom' && planMaxUsers !== null && newTotal > planMaxUsers) {
     throw new Error(
       `Este plano suporta no máximo ${planMaxUsers} assentos. ` +
         `Você possui ${currentContracted} e está tentando adicionar ${additionalSeats} (total: ${newTotal}).`
@@ -97,13 +137,36 @@ export async function previewSeatAddonPurchase(params: {
   }
 
   const billingInterval = (sub.billing_interval ?? 'monthly') as BillingInterval;
+
+  if (planType === 'standard') {
+    const catalog = await pool.query<{ price_per_user_cents: number }>(
+      `SELECT price_per_user_cents FROM plan_interval_prices
+       WHERE plan_id = $1 AND billing_interval = $2`,
+      [planId, billingInterval]
+    );
+    const unit = catalog.rows[0]?.price_per_user_cents ?? 0;
+    const contractedUnit = sub.contracted_price_per_user_cents;
+    const effectiveUnit =
+      contractedUnit != null && contractedUnit > 0 ? contractedUnit : unit;
+    if (effectiveUnit <= 0) {
+      throw new Error(
+        'Este plano não tem valor por usuário avulso configurado. Defina o preço no catálogo (Super Admin) antes de vender extras.'
+      );
+    }
+  }
+
   const breakdown = await calculateSeatAddonProrata(
     planId,
     billingInterval,
     additionalSeats,
     sub.current_period_start,
     sub.current_period_end,
-    { contractedPricePerUserCents: sub.contracted_price_per_user_cents ?? null }
+    {
+      contractedPricePerUserCents:
+        sub.contracted_price_per_user_cents != null && sub.contracted_price_per_user_cents > 0
+          ? sub.contracted_price_per_user_cents
+          : null,
+    }
   );
 
   return {
@@ -172,8 +235,8 @@ export async function scheduleSeatDowngradeNextCycle(params: {
   usersInUse: number;
 }): Promise<{ scheduled: number | null }> {
   const { tenantId, planType, targetSeats, usersInUse } = params;
-  if (planType !== 'custom') {
-    throw new Error('Redução agendada de assentos aplica-se apenas a planos por usuário');
+  if (planType !== 'custom' && planType !== 'standard') {
+    throw new Error('Redução agendada de assentos não está disponível para este tipo de plano');
   }
 
   await repairSeatAddonPendingPointer(tenantId);
@@ -204,14 +267,33 @@ export async function scheduleSeatDowngradeNextCycle(params: {
     );
   }
 
-  const sub = await getActiveSaasSubscriptionByTenantAutoRepair(tenantId);
-  const trow = await pool.query<{ max_users_override: number | null }>(
-    `SELECT max_users_override FROM tenants WHERE id = $1`,
+  const planRow = await pool.query<{ max_users: number | null }>(
+    `SELECT p.max_users
+     FROM tenants t
+     JOIN plans p ON p.id = t.plan_id
+     WHERE t.id = $1`,
     [tenantId]
   );
-  const currentContracted = effectiveContractedSeats({
-    max_users_override: trow.rows[0]?.max_users_override ?? null,
-    subscription_users_count: sub?.users_count ?? null,
+  const planIncluded = planRow.rows[0]?.max_users ?? null;
+
+  if (planType === 'standard') {
+    if (planIncluded == null) {
+      throw new Error(
+        'Este plano não tem limite de usuários (ilimitado). Redução agendada não se aplica.'
+      );
+    }
+    if (targetSeats < planIncluded) {
+      throw new Error(
+        `Não é possível agendar abaixo dos ${planIncluded} usuários inclusos no plano. Para menos, altere o plano.`
+      );
+    }
+  }
+
+  const sub = await getActiveSaasSubscriptionByTenantAutoRepair(tenantId);
+  const currentContracted = await resolveEffectiveContractedSeats({
+    tenantId,
+    planType,
+    subscriptionUsersCount: sub?.users_count ?? null,
   });
 
   if (targetSeats >= currentContracted) {

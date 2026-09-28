@@ -145,8 +145,9 @@ export async function listPublicPlans(_req: Request, res: Response): Promise<voi
     const plans = result.rows;
     for (const plan of plans) {
       if (!Array.isArray(plan.benefits)) plan.benefits = [];
-      if (plan.plan_type === 'custom') {
-        plan.interval_prices = await loadIntervalPricesForPlan(plan.id);
+      plan.interval_prices = await loadIntervalPricesForPlan(plan.id);
+      if (!plan.interval_prices || plan.interval_prices.length === 0) {
+        delete plan.interval_prices;
       }
     }
     res.json(plans);

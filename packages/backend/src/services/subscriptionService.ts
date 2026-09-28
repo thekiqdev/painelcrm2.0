@@ -442,8 +442,32 @@ async function activateSeatAddonFromBilling(billing: TenantBillingRow): Promise<
     return;
   }
 
+  const meta =
+    billing.gateway_metadata && typeof billing.gateway_metadata === 'object'
+      ? (billing.gateway_metadata as Record<string, unknown>)
+      : {};
+  const breakdown =
+    meta.seat_addon_breakdown && typeof meta.seat_addon_breakdown === 'object'
+      ? (meta.seat_addon_breakdown as Record<string, unknown>)
+      : {};
+  const unitPrice = breakdown.price_per_user_full_period_cents;
+
   const sub = await getActiveSaasSubscriptionByTenant(billing.tenant_id);
   if (sub) {
+    // Congela unitário antes de sync da assinatura (custom recalcula amount = unit × seats).
+    if (typeof unitPrice === 'number' && unitPrice >= 0) {
+      try {
+        await pool.query(
+          `UPDATE subscriptions
+           SET contracted_price_per_user_cents = $1, updated_at = now()
+           WHERE id = $2`,
+          [Math.trunc(unitPrice), sub.id]
+        );
+      } catch (e) {
+        console.warn('[SUBSCRIPTION] seat_addon: falha ao gravar contracted_price_per_user_cents', e);
+      }
+    }
+
     const sync = await changeSubscriptionPlan(sub.id, billing.tenant_id, {
       plan_id: billing.plan_id,
       users_count: newTotal,
@@ -452,14 +476,41 @@ async function activateSeatAddonFromBilling(billing: TenantBillingRow): Promise<
     if (!sync.ok) {
       console.error('[SUBSCRIPTION] seat_addon: falha ao sincronizar subscriptions', sync.error);
     } else {
-      await persistContractSnapshotFromPaidBilling({
-        tenantId: billing.tenant_id,
-        subscriptionId: sub.id,
-        billing,
-        mode: 'explicit',
-      });
+      const planTypeRow = await pool.query<{ plan_type: string | null }>(
+        `SELECT plan_type FROM plans WHERE id = $1`,
+        [billing.plan_id]
+      );
+      const planType = planTypeRow.rows[0]?.plan_type ?? 'standard';
+      // Custom: snapshot explícito ainda ajuda a alinhar contracted_plan_price.
+      // Standard: NÃO sobrescrever contracted_plan_price_cents com o pró-rata do addon (SE S2 / WI4 mirror).
+      if (planType === 'custom') {
+        await persistContractSnapshotFromPaidBilling({
+          tenantId: billing.tenant_id,
+          subscriptionId: sub.id,
+          billing,
+          mode: 'explicit',
+        });
+        // Restaura unitário do breakdown (snapshot explicit deriva amount/users e corromperia o unit).
+        if (typeof unitPrice === 'number' && unitPrice >= 0) {
+          try {
+            await pool.query(
+              `UPDATE subscriptions
+               SET contracted_price_per_user_cents = $1, updated_at = now()
+               WHERE id = $2`,
+              [Math.trunc(unitPrice), sub.id]
+            );
+          } catch (e) {
+            console.warn('[SUBSCRIPTION] seat_addon: re-freeze unit após snapshot', e);
+          }
+        }
+      }
     }
   }
+  console.log('[SUBSCRIPTION] seat_addon aplicado', {
+    tenantId: billing.tenant_id,
+    billingId: billing.id,
+    newTotal,
+  });
 }
 
 function resolveInstanceAddonNewTotal(billing: TenantBillingRow): number | null {

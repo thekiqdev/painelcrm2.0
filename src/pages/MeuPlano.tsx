@@ -602,22 +602,37 @@ export default function MeuPlano() {
 
   /** Preview de assentos adicionais: atualiza automaticamente ao alterar a quantidade (sem botão “Calcular”). */
   useEffect(() => {
-    if (!seatAddonInlineExpanded || commercialMode !== 'active' || !myPlan || myPlan.plan.plan_type !== 'custom') {
+    if (!seatAddonInlineExpanded || commercialMode !== 'active' || !myPlan) {
+      return;
+    }
+    const isCustomPlan = myPlan.plan.plan_type === 'custom';
+    const priceRowPreview = (myPlan.plan.interval_prices ?? []).find(
+      (p) => p.billing_interval === myPlan.plan.billing_interval
+    );
+    const unitCents = priceRowPreview?.price_per_user_cents ?? 0;
+    const canPreviewStandard =
+      !isCustomPlan &&
+      myPlan.plan.max_users != null &&
+      unitCents > 0;
+    if (!isCustomPlan && !canPreviewStandard) {
       return;
     }
     if (seatAddonExtra < 1) {
       setSeatAddonPreview(null);
       return;
     }
-    const contracted = Math.max(1, subscription?.users_count ?? myPlan.max_users_override ?? 1);
-    const cap = myPlan.plan.max_users ?? null;
-    if (cap != null && contracted + seatAddonExtra > cap) {
-      setSeatAddonPreview(null);
-      setSeatAddonLoading(false);
-      toast.error(
-        `Este plano suporta no máximo ${cap} assentos. Você possui ${contracted} e está tentando adicionar ${seatAddonExtra}.`
-      );
-      return;
+    // Custom: teto rígido do catálogo. Standard: max_users = incluso (extras livres).
+    if (isCustomPlan) {
+      const contracted = Math.max(1, subscription?.users_count ?? myPlan.max_users_override ?? 1);
+      const cap = myPlan.plan.max_users ?? null;
+      if (cap != null && contracted + seatAddonExtra > cap) {
+        setSeatAddonPreview(null);
+        setSeatAddonLoading(false);
+        toast.error(
+          `Este plano suporta no máximo ${cap} assentos. Você possui ${contracted} e está tentando adicionar ${seatAddonExtra}.`
+        );
+        return;
+      }
     }
     const seq = ++seatAddonPreviewSeq.current;
     const timer = setTimeout(async () => {
@@ -644,6 +659,8 @@ export default function MeuPlano() {
     myPlan?.tenant_id,
     myPlan?.plan.plan_type,
     myPlan?.plan.max_users,
+    myPlan?.plan.billing_interval,
+    myPlan?.plan.interval_prices,
     myPlan?.max_users_override,
     subscription?.users_count,
     commercialMode,
@@ -1087,10 +1104,27 @@ export default function MeuPlano() {
   const isCustom = plan.plan_type === 'custom';
   const prices = plan.interval_prices ?? [];
   const priceRow = prices.find((p) => p.billing_interval === plan.billing_interval);
-  const contractedSeats = Math.max(1, subscription?.users_count ?? myPlan.max_users_override ?? 1);
+  const seatUnitCents = priceRow?.price_per_user_cents ?? 0;
+  /** SE S2: standard com teto + preço avulso também vende extras (espelho WhatsApp). */
+  const canBuySeatExtras =
+    commercialMode === 'active' &&
+    canManage &&
+    (isCustom ||
+      (plan.max_users != null &&
+        plan.max_users > 0 &&
+        seatUnitCents > 0 &&
+        limitsUsers?.limit != null));
+  const contractedSeats = isCustom
+    ? Math.max(1, subscription?.users_count ?? myPlan.max_users_override ?? 1)
+    : Math.max(1, limitsUsers?.limit ?? myPlan.max_users_override ?? plan.max_users ?? 1);
+  /** Custom: teto rígido do catálogo. Standard: sem teto de compra (max_users = incluso). */
   const planMaxUsers = isCustom ? plan.max_users ?? null : null;
   const seatAddonCapacityReached = planMaxUsers != null && contractedSeats >= planMaxUsers;
-  const canScheduleSeatDowngrade = isCustom && contractedSeats > (limitsUsers?.current ?? 1);
+  const seatDowngradeFloor = isCustom
+    ? Math.max(1, limitsUsers?.current ?? 1)
+    : Math.max(plan.max_users ?? 1, limitsUsers?.current ?? 1);
+  const canScheduleSeatDowngrade =
+    canBuySeatExtras && contractedSeats > seatDowngradeFloor;
   const instancePriceCents = priceRow?.price_per_instance_cents;
   const canBuyWhatsappExtras =
     commercialMode === 'active' &&
@@ -1571,7 +1605,7 @@ export default function MeuPlano() {
                 >
                   Trocar plano
                 </Button>
-                {isCustom && (
+                {canBuySeatExtras && (
                   <Button
                     type="button"
                     variant="secondary"
@@ -1642,14 +1676,18 @@ export default function MeuPlano() {
                   <p className="mt-1 text-xs text-muted-foreground">Sem teto numérico neste plano.</p>
                 )}
               </div>
-              {isCustom && (
+              {canBuySeatExtras && (
                 <div className="rounded-2xl bg-muted/50 px-3.5 py-2.5 md:px-4 md:py-3">
                   <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                     Assentos contratados
                   </p>
                   <p className="mt-0.5 text-lg font-semibold tabular-nums">{contractedSeats} contratados</p>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Próxima renovação:{' '}
+                    {isCustom
+                      ? 'Próxima renovação: '
+                      : plan.max_users != null
+                        ? `${plan.max_users} inclusos no plano · renovação: `
+                        : 'Próxima renovação: '}
                     {subscription?.next_billing_date
                       ? formatDate(subscription.next_billing_date)
                       : myPlan.plan_period_end
@@ -1658,7 +1696,7 @@ export default function MeuPlano() {
                   </p>
                 </div>
               )}
-              {isCustom && myPlan.max_users_scheduled_next_cycle != null && (
+              {canBuySeatExtras && myPlan.max_users_scheduled_next_cycle != null && (
                 <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 sm:col-span-2 lg:col-span-1 md:px-4 md:py-3">
                   <p className="text-[10px] font-medium uppercase tracking-wide text-amber-950 dark:text-amber-100">
                     Redução agendada
@@ -1713,14 +1751,17 @@ export default function MeuPlano() {
             </div>
           )}
 
-          {!isCustom && (
+          {!canBuySeatExtras && !isCustom && (
             <p className="text-muted-foreground">
-              Seu plano tem limite fixo no catálogo. Para mais lugares, faça upgrade — a contratação com pagamento é feita
-              na tela de pagamento.
+              {plan.max_users == null
+                ? 'Seu plano não tem limite numérico de usuários. Para mais lugares em outro pacote, faça upgrade.'
+                : seatUnitCents <= 0
+                  ? 'Seu plano tem limite fixo no catálogo. Para mais lugares, faça upgrade — a contratação com pagamento é feita na tela de pagamento.'
+                  : 'Ative o plano pago para contratar usuários adicionais.'}
             </p>
           )}
 
-          {isCustom && commercialMode === 'active' && canManage && (
+          {canBuySeatExtras && (
             <div className="space-y-4 pt-2 border-t">
               <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start">
                 <Button
@@ -1753,7 +1794,7 @@ export default function MeuPlano() {
                   variant="outline"
                   disabled={saving || !!myPlan.pending_seat_addon_billing || !canScheduleSeatDowngrade}
                   onClick={() => {
-                    const def = Math.max(limitsUsers?.current ?? 1, contractedSeats - 1);
+                    const def = Math.max(seatDowngradeFloor, contractedSeats - 1);
                     setDowngradeTarget(def);
                     setDowngradeOpen(true);
                   }}
@@ -1762,8 +1803,9 @@ export default function MeuPlano() {
                 </Button>
                 {!canScheduleSeatDowngrade && (
                   <p className="text-xs text-muted-foreground w-full">
-                    Só é possível agendar a redução quando existem assentos contratados além do uso real (ou remova
-                    utilizadores antes).
+                    {isCustom
+                      ? 'Só é possível agendar a redução quando existem assentos contratados além do uso real (ou remova utilizadores antes).'
+                      : `Só é possível reduzir até os ${plan.max_users ?? '—'} usuários inclusos no plano (ou até o uso atual, o que for maior).`}
                   </p>
                 )}
               </div>
@@ -1777,8 +1819,8 @@ export default function MeuPlano() {
                     <h3 className="text-base font-semibold text-foreground">Adicionar assentos</h3>
                     <p className="text-sm text-muted-foreground mt-1">
                       Quantos <strong>novos</strong> lugares você deseja além dos {contractedSeats} já contratados? O valor
-                      único de hoje é proporcional ao tempo restante do período atual; a renovação passa a refletir o novo
-                      total.
+                      único de hoje é proporcional ao tempo restante do período atual
+                      {isCustom ? '; a renovação passa a refletir o novo total.' : '.'}
                     </p>
                   </div>
                   <div className="space-y-2 max-w-xs">
@@ -1851,19 +1893,28 @@ export default function MeuPlano() {
                         <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                           Próximos ciclos
                         </p>
-                        <p>
-                          Novo valor por período ({billingIntervalLabelPt(seatAddonPreview.billing_interval)}):{' '}
-                          <strong className="text-lg text-foreground">
-                            {formatPrice(
-                              seatAddonPreview.new_total *
-                                seatAddonPreview.breakdown.price_per_user_full_period_cents
-                            )}
-                          </strong>
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          Valor da renovação após confirmar o pagamento dos novos assentos, enquanto não houver outras
-                          alterações ou promoções.
-                        </p>
+                        {isCustom ? (
+                          <>
+                            <p>
+                              Novo valor por período ({billingIntervalLabelPt(seatAddonPreview.billing_interval)}):{' '}
+                              <strong className="text-lg text-foreground">
+                                {formatPrice(
+                                  seatAddonPreview.new_total *
+                                    seatAddonPreview.breakdown.price_per_user_full_period_cents
+                                )}
+                              </strong>
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              Valor da renovação após confirmar o pagamento dos novos assentos, enquanto não houver outras
+                              alterações ou promoções.
+                            </p>
+                          </>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">
+                            A renovação incluirá o valor base do plano mais os usuários extras. O detalhe automático na
+                            próxima cobrança será concluído no próximo ciclo de entrega (SE S3).
+                          </p>
+                        )}
                       </div>
                       <Button
                         type="button"
@@ -2215,7 +2266,11 @@ export default function MeuPlano() {
             <DialogTitle>Reduzir assentos na próxima renovação</DialogTitle>
             <DialogDescription>
               Sem estorno. A quantidade menor só vale na <strong>próxima cobrança</strong>. Até lá você mantém os{' '}
-              {contractedSeats} assentos atuais. Não pode ser menor que usuários em uso ({limitsUsers?.current ?? '—'}).
+              {contractedSeats} assentos atuais. Não pode ser menor que{' '}
+              {isCustom
+                ? `usuários em uso (${limitsUsers?.current ?? '—'})`
+                : `os ${plan.max_users ?? '—'} inclusos no plano ou o uso atual (${limitsUsers?.current ?? '—'})`}
+              .
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2 py-2">
@@ -2225,14 +2280,14 @@ export default function MeuPlano() {
             <Input
               id="downgrade-target"
               type="number"
-              min={limitsUsers?.current ?? 1}
-              max={Math.max(limitsUsers?.current ?? 1, contractedSeats - 1)}
+              min={seatDowngradeFloor}
+              max={Math.max(seatDowngradeFloor, contractedSeats - 1)}
               step={1}
               value={downgradeTarget}
               onChange={(e) =>
                 setDowngradeTarget(
                   Math.min(
-                    Math.max(limitsUsers?.current ?? 1, parseInt(e.target.value, 10) || 1),
+                    Math.max(seatDowngradeFloor, parseInt(e.target.value, 10) || 1),
                     contractedSeats - 1
                   )
                 )

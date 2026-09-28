@@ -77,12 +77,22 @@ interface Plan {
   description: string | null;
   price_cents: number;
   billing_interval: string;
+  /** Assentos inclusos; null = ilimitado. */
+  max_users?: number | null;
   plan_type: "standard" | "custom";
   is_default: boolean;
   is_free?: boolean;
   free_access_days?: number | null;
   benefits?: PlanBenefit[];
   interval_prices?: IntervalPrice[];
+}
+
+function formatMoneyBRLFromCents(cents: number): string {
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
+}
+
+function seatsIncludedLabel(maxUsers: number): string {
+  return maxUsers === 1 ? "1 usuário incluso" : `Até ${maxUsers} usuários`;
 }
 
 const Pricing = () => {
@@ -225,6 +235,29 @@ const Pricing = () => {
                   {plan.description && (
                     <p className="mt-1 text-sm text-muted-foreground">{plan.description}</p>
                   )}
+
+                  {/* S1 SE: plano com teto de usuários — destaque na vitrine */}
+                  {!isCustom && plan.max_users != null && plan.max_users > 0 ? (
+                    <div className="mt-3 space-y-1">
+                      <div className="inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary">
+                        <Users className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                        {seatsIncludedLabel(plan.max_users)}
+                      </div>
+                      {(() => {
+                        const avulso =
+                          prices.find((ip) => ip.billing_interval === plan.billing_interval)
+                            ?.price_per_user_cents ??
+                          prices[0]?.price_per_user_cents ??
+                          0;
+                        if (avulso <= 0) return null;
+                        return (
+                          <p className="text-xs text-muted-foreground">
+                            + {formatMoneyBRLFromCents(avulso)} por usuário adicional
+                          </p>
+                        );
+                      })()}
+                    </div>
+                  ) : null}
 
                   {/* Preço + seletor de intervalo (setas) */}
                   <div className="mt-4 flex flex-wrap items-center gap-2">
