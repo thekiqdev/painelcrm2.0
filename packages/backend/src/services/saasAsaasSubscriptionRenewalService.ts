@@ -366,7 +366,7 @@ export async function confirmSaasRenewalFromAsaasPayment(billingId: string): Pro
   }
 
   await updateInvoiceGatewayData(billingId, {
-    gateway: billing.gateway,
+    gateway: billing.gateway ?? 'asaas',
     payment_method: billing.payment_method,
     gateway_reference_id: billing.gateway_reference_id,
     gateway_status: billing.gateway_status,
@@ -403,7 +403,7 @@ export async function markAsaasSubscriptionPaymentFailed(params: {
 
   const meta = (billing.gateway_metadata as Record<string, unknown> | null) ?? {};
   await updateInvoiceGatewayData(params.billingId, {
-    gateway: billing.gateway,
+    gateway: billing.gateway ?? 'asaas',
     payment_method: billing.payment_method ?? 'CREDIT_CARD',
     gateway_reference_id: billing.gateway_reference_id,
     gateway_status: params.gatewayStatus ?? billing.gateway_status,

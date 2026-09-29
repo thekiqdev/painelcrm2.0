@@ -300,8 +300,8 @@ export async function executeSaasRenewal(params: {
               jobId: job.id,
               subscription_id: subscription.id,
               billing_id: billing.id,
-              asaas_subscription_id: skipAsaas.asaasSubscriptionId,
-              reason: skipAsaas.reason,
+              asaas_subscription_id: skipAsaas.asaasSubscriptionId ?? undefined,
+              reason: skipAsaas.reason ?? undefined,
             });
             logs.push('asaas_subscription_owns_card_renewal_skip_charge');
           }

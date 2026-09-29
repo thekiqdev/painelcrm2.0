@@ -420,8 +420,13 @@ export async function executeSaasCardCheckoutViaAsaasSubscription(
   billingLog('invoice', 'saas_asaas_subscription_card_checkout', {
     billing_id: billingId,
     asaas_subscription_id: asaasSubscriptionId,
-    payment_id: firstPay?.paymentId ?? null,
-    billing_status: responseBody.billing_status,
+    payment_id: firstPay?.paymentId ?? undefined,
+    billing_status:
+      typeof responseBody.billing_status === 'string' ||
+      typeof responseBody.billing_status === 'number' ||
+      typeof responseBody.billing_status === 'boolean'
+        ? responseBody.billing_status
+        : undefined,
   });
 
   return responseBody;

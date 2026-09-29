@@ -284,7 +284,7 @@ async function ensureSaasSubscriptionAfterPaidActivation(params: {
 
     const billingFreshEarly = await getInvoiceById(billingId);
     const contractActivation = isSaasContractActivationBillingReason(
-      billingFreshEarly?.billing_reason
+      billingFreshEarly?.billing_reason ?? undefined
     );
 
     if (activeSub && periodStartStr && periodEndStr) {

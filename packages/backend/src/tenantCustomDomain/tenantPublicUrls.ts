@@ -3,10 +3,8 @@
  * Preferem host `active` do papel; senão path na base da plataforma.
  */
 
-import {
-  getTenantHostByRole,
-  type TenantHostRole,
-} from './tenantDomainService.js';
+import { getTenantHostByRole } from './tenantDomainService.js';
+import type { TenantHostRole } from './tenantDomainFlags.js';
 import { resolvePlatformPublicAppBaseUrl } from '../utils/platformPublicUrls.js';
 
 function joinUrlPath(base: string, pathSegment: string): string {
