@@ -47,17 +47,22 @@
 
 ## Rollout por flag
 
-| Ambiente | `tenant.custom_domain_v1` | `tenant.domain_verify_bypass` | DNS recheck |
-|----------|---------------------------|-------------------------------|-------------|
-| Dev | **ON (default)** | ON (ok) | off ou on |
-| Staging | **ON (default)** | OFF | opcional `TENANT_CUSTOM_DOMAIN_DNS_RECHECK=1` |
-| Produção | **ON (default)** | **NUNCA** | opcional após monitoramento |
+## Rollout por flag
 
-1. Flag já vem **Enabled + global** (migration `341`). Para desligar: Super Admin → Feature Flags → `tenant.custom_domain_v1` OFF, ou kill switch `tenant.master_off`.
-2. Confirmar `TENANT_CUSTOM_DOMAIN_CNAME_TARGET` (ou Partner WL) no edge
-3. CORS dinâmico já cobre hosts `active` (S4)
-4. Validar E2E S4 checklist
-5. (Opcional) ligar recheck DNS e acompanhar logs `dns_recheck`
+| Ambiente | Domínio personalizado | `tenant.domain_verify_bypass` | DNS recheck |
+|----------|----------------------|-------------------------------|-------------|
+| Dev | **ON (código + migration)** | ON (ok) | off ou on |
+| Staging | **ON** | OFF | opcional |
+| Produção | **ON** | **NUNCA** | opcional |
+
+**Ativação:** não exige env. CNAME target = `TENANT_CUSTOM_DOMAIN_CNAME_TARGET` → `PARTNER_WL_CNAME_TARGET` → host de `FRONTEND_URL`/`PUBLIC_APP_URL` → `painelcrm.com`.
+
+**Desligar:** kill switch `tenant.master_off` **ou** `TENANT_CUSTOM_DOMAIN_V1=false`.
+
+1. Migrations até `346` aplicadas
+2. Edge deve aceitar Host do subdomínio do cliente (mesmo app que `FRONTEND_URL`)
+3. Cliente cria TXT + CNAME; Verifica DNS na Settings
+
 
 ---
 

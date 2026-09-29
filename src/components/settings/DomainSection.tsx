@@ -61,22 +61,22 @@ function DnsBlock({ item }: { item: TenantDomainInstructions }) {
   return (
     <div className="space-y-2 rounded-md border bg-muted/40 p-3 text-xs">
       <p className="font-medium text-foreground">Instruções DNS</p>
+      <p className="text-muted-foreground">
+        Crie os dois registros abaixo no DNS do seu domínio. O TXT valida a propriedade; o CNAME
+        aponta o subdomínio para a plataforma.
+      </p>
       <div>
-        <strong>TXT host:</strong> {item.txt_host}
+        <strong>1) TXT host:</strong> {item.txt_host}
       </div>
       <div className="break-all">
         <strong>TXT value:</strong> {item.txt_value}
       </div>
-      {item.cname_target ? (
-        <>
-          <div>
-            <strong>CNAME host:</strong> {item.cname_host}
-          </div>
-          <div>
-            <strong>CNAME target:</strong> {item.cname_target}
-          </div>
-        </>
-      ) : null}
+      <div className="pt-1">
+        <strong>2) CNAME host:</strong> {item.cname_host}
+      </div>
+      <div>
+        <strong>CNAME target:</strong> {item.cname_target}
+      </div>
       {item.bypass_enabled ? (
         <p className="text-amber-700 dark:text-amber-300">
           Bypass de verificação DNS ativo neste ambiente (dev).
@@ -441,7 +441,7 @@ export const DomainSection: React.FC<SettingsSectionProps> = () => {
             <ol className="list-decimal list-inside space-y-1">
               <li>Escolha o uso (loja ou chamados) no card correspondente.</li>
               <li>Informe o subdomínio e salve.</li>
-              <li>Crie o registro TXT (e CNAME, se indicado) no seu DNS.</li>
+              <li>Crie o registro TXT e o CNAME no seu DNS (ambos são necessários).</li>
               <li>Clique em Verificar DNS. Quando ativo, clientes abrem a superfície pública nesse host.</li>
             </ol>
           </div>

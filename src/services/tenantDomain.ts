@@ -12,7 +12,7 @@ export type TenantDomainInstructions = {
   txt_host: string;
   txt_value: string;
   cname_host: string;
-  cname_target: string | null;
+  cname_target: string;
   canonical_public_url?: string | null;
   bypass_enabled: boolean;
 };

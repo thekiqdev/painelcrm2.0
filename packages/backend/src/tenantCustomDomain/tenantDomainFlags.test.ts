@@ -8,6 +8,7 @@ vi.mock('../platform/featureFlagRegistry.js', () => ({
 
 import { featureFlagRegistry } from '../platform/featureFlagRegistry.js';
 import {
+  TENANT_CUSTOM_DOMAIN_CNAME_FALLBACK,
   getTenantCustomDomainBlockedHosts,
   getTenantCustomDomainCnameTarget,
   isTenantCustomDomainEnabled,
@@ -15,7 +16,7 @@ import {
   isTenantHostRole,
 } from './tenantDomainFlags.js';
 
-describe('tenantDomainFlags (TD S0)', () => {
+describe('tenantDomainFlags', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     delete process.env.TENANT_CUSTOM_DOMAIN_V1;
@@ -23,6 +24,15 @@ describe('tenantDomainFlags (TD S0)', () => {
     delete process.env.TENANT_CUSTOM_DOMAIN_BLOCKED_HOSTS;
     delete process.env.TENANT_CUSTOM_DOMAIN_CNAME_TARGET;
     delete process.env.PARTNER_WL_CNAME_TARGET;
+    delete process.env.PUBLIC_APP_URL;
+    delete process.env.FRONTEND_URL;
+    delete process.env.FRONTEND_URLS;
+    vi.mocked(featureFlagRegistry.resolve).mockResolvedValue({
+      key: 'tenant.master_off',
+      enabled: false,
+      shadow: false,
+      reason: 'rollout_off',
+    });
   });
 
   it('isTenantHostRole aceita store|support', () => {
@@ -32,56 +42,57 @@ describe('tenantDomainFlags (TD S0)', () => {
     expect(isTenantHostRole(null)).toBe(false);
   });
 
-  it('custom_domain: Enabled ON no Super Admin', async () => {
-    vi.mocked(featureFlagRegistry.resolve).mockResolvedValue({
-      key: 'tenant.custom_domain_v1',
-      enabled: true,
-      shadow: false,
-      reason: 'rollout_global',
-    });
+  it('custom_domain: ON por padrão (sem env)', async () => {
     await expect(isTenantCustomDomainEnabled()).resolves.toBe(true);
   });
 
-  it('custom_domain: Enabled OFF ignora env', async () => {
-    process.env.TENANT_CUSTOM_DOMAIN_V1 = 'true';
+  it('custom_domain: kill switch master_off desliga', async () => {
     vi.mocked(featureFlagRegistry.resolve).mockResolvedValue({
-      key: 'tenant.custom_domain_v1',
-      enabled: false,
+      key: 'tenant.master_off',
+      enabled: true,
       shadow: false,
-      reason: 'rollout_off',
+      reason: 'rollout_global',
     });
     await expect(isTenantCustomDomainEnabled()).resolves.toBe(false);
   });
 
-  it('custom_domain: env só se flag ausente no DB', async () => {
-    process.env.TENANT_CUSTOM_DOMAIN_V1 = 'true';
-    vi.mocked(featureFlagRegistry.resolve).mockResolvedValue({
-      key: 'tenant.custom_domain_v1',
-      enabled: false,
-      shadow: false,
-      reason: 'unknown_flag',
-    });
-    await expect(isTenantCustomDomainEnabled()).resolves.toBe(true);
-  });
-
-  it('custom_domain: ausente no DB e sem env → ON por padrão', async () => {
-    vi.mocked(featureFlagRegistry.resolve).mockResolvedValue({
-      key: 'tenant.custom_domain_v1',
-      enabled: false,
-      shadow: false,
-      reason: 'unknown_flag',
-    });
-    await expect(isTenantCustomDomainEnabled()).resolves.toBe(true);
+  it('custom_domain: TENANT_CUSTOM_DOMAIN_V1=false desliga', async () => {
+    process.env.TENANT_CUSTOM_DOMAIN_V1 = 'false';
+    await expect(isTenantCustomDomainEnabled()).resolves.toBe(false);
   });
 
   it('domain bypass: Super Admin ON', async () => {
-    vi.mocked(featureFlagRegistry.resolve).mockResolvedValue({
-      key: 'tenant.domain_verify_bypass',
-      enabled: true,
-      shadow: false,
-      reason: 'rollout_global',
+    vi.mocked(featureFlagRegistry.resolve).mockImplementation(async (key: string) => {
+      if (key === 'tenant.domain_verify_bypass') {
+        return {
+          key,
+          enabled: true,
+          shadow: false,
+          reason: 'rollout_global' as const,
+        };
+      }
+      return { key, enabled: false, shadow: false, reason: 'rollout_off' as const };
     });
     await expect(isTenantDomainVerifyBypassEnabled()).resolves.toBe(true);
+  });
+
+  it('cname target: env tenant tem prioridade', () => {
+    process.env.TENANT_CUSTOM_DOMAIN_CNAME_TARGET = 'edge.custom.com';
+    expect(getTenantCustomDomainCnameTarget()).toBe('edge.custom.com');
+  });
+
+  it('cname target: PARTNER_WL_CNAME_TARGET se tenant env vazio', () => {
+    process.env.PARTNER_WL_CNAME_TARGET = 'edge.parceiro-target.com';
+    expect(getTenantCustomDomainCnameTarget()).toBe('edge.parceiro-target.com');
+  });
+
+  it('cname target: hostname de FRONTEND_URL sem env CNAME', () => {
+    process.env.FRONTEND_URL = 'https://painelcrm.com';
+    expect(getTenantCustomDomainCnameTarget()).toBe('painelcrm.com');
+  });
+
+  it('cname target: fallback painelcrm.com sem env', () => {
+    expect(getTenantCustomDomainCnameTarget()).toBe(TENANT_CUSTOM_DOMAIN_CNAME_FALLBACK);
   });
 
   it('blocked hosts inclui defaults + env + cname target', () => {
@@ -91,10 +102,5 @@ describe('tenantDomainFlags (TD S0)', () => {
     expect(hosts).toContain('localhost');
     expect(hosts).toContain('staging.example.com');
     expect(hosts).toContain('wl.plataforma.com');
-  });
-
-  it('cname target reusa PARTNER_WL_CNAME_TARGET se tenant env vazio', () => {
-    process.env.PARTNER_WL_CNAME_TARGET = 'edge.parceiro-target.com';
-    expect(getTenantCustomDomainCnameTarget()).toBe('edge.parceiro-target.com');
   });
 });

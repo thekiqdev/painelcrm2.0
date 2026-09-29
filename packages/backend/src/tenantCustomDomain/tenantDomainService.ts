@@ -44,7 +44,7 @@ export type TenantDomainInstructions = {
   txt_host: string;
   txt_value: string;
   cname_host: string;
-  cname_target: string | null;
+  cname_target: string;
   bypass_enabled: boolean;
   /** TD S4 — URL pública preferida quando status=active */
   canonical_public_url: string | null;
@@ -302,7 +302,6 @@ async function checkTxt(hostname: string, token: string): Promise<boolean> {
 
 async function checkCname(hostname: string): Promise<boolean> {
   const target = getTenantCustomDomainCnameTarget();
-  if (!target) return false;
   try {
     const records = await dns.resolveCname(hostname);
     return records.some((r) => normalizeHostname(r) === target);

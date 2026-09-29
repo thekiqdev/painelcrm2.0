@@ -540,5 +540,15 @@ export const MIGRATION_ORDER = [
   '340_store_profiles_catalog_types.sql',
   /** TD — custom domain ON por padrão para todos os tenants */
   '341_tenant_custom_domain_default_on.sql',
+  /** PV S1 — product_variants + has_variants / track_inventory + cart/order.variant_id */
+  '342_product_variants_pv_s1.sql',
+  /** PV S3 — products.external_id para upsert import Woo */
+  '343_products_external_id_pv_s3.sql',
+  /** Loja — compra via WhatsApp (além do checkout) */
+  '344_store_profiles_whatsapp_purchase.sql',
+  /** Loja — template da mensagem de compra via WhatsApp */
+  '345_store_whatsapp_purchase_message.sql',
+  /** TD — domínio personalizado always-on + CNAME sem env dedicada */
+  '346_tenant_custom_domain_always_on.sql',
   'create-admin-user.sql',
 ];
