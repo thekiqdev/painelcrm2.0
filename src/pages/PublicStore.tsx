@@ -5,12 +5,14 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Package, Wrench, Phone, Mail, MessageSquare, Clock, ShoppingCart, ImageOff } from "lucide-react";
-import { PublicCatalogProduct, StoreProfile, resolvePublicCatalogUnitPrice } from "@/types/products";
+import { PublicCatalogProduct, StoreProfile, formatPublicCatalogListPrice, resolvePublicCatalogUnitPrice } from "@/types/products";
 import { productsService } from "@/services/products";
 import { resolveStorefrontTheme } from "@/themes/registry";
 import { getPublicProductThumbnailUrl } from "@/utils/publicCatalogImages";
-import { canUseStoreCheckout } from "@/utils/storeCheckoutVisibility";
+import { canUseStoreCheckout, canUseStoreWhatsAppPurchase } from "@/utils/storeCheckoutVisibility";
 import { useStorefrontSlug } from "@/hooks/useStorefrontSlug";
+import { productDescriptionPlainText } from "@/utils/productRichText";
+import { buildStoreWhatsAppPurchaseMessage } from "@/utils/storeWhatsAppPurchaseMessage";
 
 export const PublicStore = () => {
   const { storeSlug, href } = useStorefrontSlug();
@@ -55,15 +57,20 @@ export const PublicStore = () => {
     if (!storeProfile?.contact_whatsapp) return;
 
     const phone = storeProfile.contact_whatsapp.replace(/\D/g, "");
-    let message = `Olá! Gostaria de saber mais sobre`;
+    let message: string;
 
     if (product) {
-      message += ` o ${product.type === "product" ? "produto" : "serviço"} "${product.name}"`;
+      message = buildStoreWhatsAppPurchaseMessage(
+        storeProfile.store_whatsapp_purchase_message,
+        {
+          productName: product.name,
+          productType: product.type,
+          storeName: storeProfile.store_name,
+        }
+      );
     } else {
-      message += ` os produtos/serviços da ${storeProfile.store_name}`;
+      message = `Olá! Gostaria de saber mais sobre os produtos/serviços da ${storeProfile.store_name}. Pode me ajudar?`;
     }
-
-    message += `. Pode me ajudar?`;
 
     const whatsappUrl = `https://wa.me/55${phone}?text=${encodeURIComponent(message)}`;
     window.open(whatsappUrl, "_blank");
@@ -98,6 +105,7 @@ export const PublicStore = () => {
   const logoUrl = storeProfile.store_logo?.trim() || null;
   const bannerUrl = storeProfile.store_banner_url?.trim() || null;
   const storeAllowsCheckout = canUseStoreCheckout(storeProfile);
+  const storeAllowsWhatsAppPurchase = canUseStoreWhatsAppPurchase(storeProfile);
 
   return (
     <ListShell
@@ -157,7 +165,9 @@ export const PublicStore = () => {
               {products.map((product) => {
                 const thumb = getPublicProductThumbnailUrl(product);
                 const unitPrice = resolvePublicCatalogUnitPrice(product);
-                const showCardCheckout = storeAllowsCheckout && unitPrice != null;
+                const listPriceLabel = formatPublicCatalogListPrice(product);
+                const showCardCheckout =
+                  storeAllowsCheckout && unitPrice != null && !product.has_variants;
                 return (
                   <Card
                     key={product.id}
@@ -199,15 +209,16 @@ export const PublicStore = () => {
                         </Link>
                       </CardTitle>
                       <CardDescription className="line-clamp-3">
-                        {product.description}
+                        {product.short_description?.trim() ||
+                          productDescriptionPlainText(product.description)}
                       </CardDescription>
                     </CardHeader>
 
                     <CardContent className="space-y-4">
-                      {unitPrice != null && (
+                      {listPriceLabel != null && (
                         <div>
                           <p className="text-2xl font-bold text-primary">
-                            R$ {unitPrice.toFixed(2)}
+                            {listPriceLabel}
                           </p>
                           {product.type === "service" && product.duration_hours && (
                             <div className="flex items-center gap-1 text-sm text-muted-foreground">
@@ -248,14 +259,23 @@ export const PublicStore = () => {
                         </Button>
                       )}
 
-                      {storeProfile.contact_whatsapp && (
+                      {product.has_variants && (
+                        <Button className="w-full" asChild>
+                          <Link to={href(`/produto/${product.id}`)}>
+                            <ShoppingCart className="mr-2 h-4 w-4" />
+                            Ver opções
+                          </Link>
+                        </Button>
+                      )}
+
+                      {storeAllowsWhatsAppPurchase && (
                         <Button
                           className="w-full"
                           variant={showCardCheckout ? "outline" : "default"}
                           onClick={() => handleWhatsAppContact(product)}
                         >
                           <MessageSquare className="mr-2 h-4 w-4" />
-                          Solicitar via WhatsApp
+                          Comprar via WhatsApp
                         </Button>
                       )}
                     </CardContent>

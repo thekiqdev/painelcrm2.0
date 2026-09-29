@@ -1,0 +1,103 @@
+{
+  "description": "Fixture PV S0 — contrato alvo create/GET produto simples e variável (Cor × Tamanho)",
+  "products": [
+    {
+      "name": "Bolsa Tote Demo",
+      "type": "product",
+      "has_variants": false,
+      "track_inventory": true,
+      "sku": "TOTE-001",
+      "price": 189.99,
+      "stock_quantity": 12,
+      "min_stock_quantity": 2,
+      "currency": "BRL",
+      "category": "Bolsas",
+      "status": "active",
+      "is_public": true,
+      "images": ["https://example.com/media/tote-cover.jpg"],
+      "secondary_images": [],
+      "variations": [],
+      "variants": []
+    },
+    {
+      "name": "Boné Demo — Signature Cap",
+      "type": "product",
+      "has_variants": true,
+      "track_inventory": true,
+      "sku": null,
+      "price": 69.9,
+      "stock_quantity": 10,
+      "currency": "BRL",
+      "category": "Bonés",
+      "status": "active",
+      "is_public": true,
+      "images": ["https://example.com/media/bone-pai.jpg"],
+      "secondary_images": [],
+      "variations": [
+        { "name": "Cor", "values": ["Azul claro", "Preto"] },
+        { "name": "Tamanho", "values": ["P", "M"] }
+      ],
+      "variants": [
+        {
+          "sku": "BON-AZUL-P",
+          "option1_name": "Cor",
+          "option1_value": "Azul claro",
+          "option2_name": "Tamanho",
+          "option2_value": "P",
+          "price": 69.9,
+          "stock_quantity": 2,
+          "min_stock_quantity": 1,
+          "images": ["https://example.com/media/bone-azul.jpg"],
+          "is_active": true,
+          "position": 0,
+          "external_id": "1976"
+        },
+        {
+          "sku": "BON-AZUL-M",
+          "option1_name": "Cor",
+          "option1_value": "Azul claro",
+          "option2_name": "Tamanho",
+          "option2_value": "M",
+          "price": 69.9,
+          "stock_quantity": 3,
+          "images": ["https://example.com/media/bone-azul.jpg"],
+          "is_active": true,
+          "position": 1,
+          "external_id": "1977"
+        },
+        {
+          "sku": "BON-PRETO-P",
+          "option1_name": "Cor",
+          "option1_value": "Preto",
+          "option2_name": "Tamanho",
+          "option2_value": "P",
+          "price": 74.9,
+          "stock_quantity": 1,
+          "images": ["https://example.com/media/bone-preto.jpg"],
+          "is_active": true,
+          "position": 2,
+          "external_id": "1978"
+        },
+        {
+          "sku": "BON-PRETO-M",
+          "option1_name": "Cor",
+          "option1_value": "Preto",
+          "option2_name": "Tamanho",
+          "option2_value": "M",
+          "price": 74.9,
+          "discount_price": 69.9,
+          "stock_quantity": 4,
+          "images": ["https://example.com/media/bone-preto.jpg"],
+          "is_active": true,
+          "position": 3,
+          "external_id": "1979"
+        }
+      ]
+    }
+  ],
+  "notes": [
+    "stock_quantity do pai variável = soma das variantes ativas (2+3+1+4 = 10)",
+    "price do pai variável = min das variantes ativas (69.9)",
+    "PV12: no form, has_variants false|true é a 1ª escolha Estrutura = Simples|Variável"
+  ]
+}

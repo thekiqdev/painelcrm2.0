@@ -17,6 +17,11 @@ import { resolveStorefrontTheme } from "@/themes/registry";
 import { canUseStoreCheckout } from "@/utils/storeCheckoutVisibility";
 import { getPublicProductThumbnailUrl } from "@/utils/publicCatalogImages";
 import { useStorefrontSlug } from "@/hooks/useStorefrontSlug";
+import {
+  isVariantPurchasable,
+  resolveVariantUnitPrice,
+  variantDisplayLabel,
+} from "@/utils/publicProductVariants";
 
 function checkoutProductTeaser(product: PublicCatalogProduct): string {
   const short = product.short_description?.trim();
@@ -34,6 +39,7 @@ const StorePublicCheckout = () => {
   const { storeSlug, href } = useStorefrontSlug();
   const [searchParams] = useSearchParams();
   const productId = (searchParams.get("productId") || "").trim();
+  const variantId = (searchParams.get("variantId") || "").trim();
 
   const idempotencyKeyRef = useRef<string | null>(null);
   if (!idempotencyKeyRef.current) {
@@ -58,7 +64,7 @@ const StorePublicCheckout = () => {
 
   useEffect(() => {
     void load();
-  }, [storeSlug, productId]);
+  }, [storeSlug, productId, variantId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -123,10 +129,24 @@ const StorePublicCheckout = () => {
         setNotFound(true);
         return;
       }
-      const unit = resolvePublicCatalogUnitPrice(productData);
-      if (unit == null) {
-        setNotFound(true);
-        return;
+
+      if (productData.has_variants) {
+        const variant = (productData.variants || []).find((v) => v.id === variantId);
+        if (!variant || !isVariantPurchasable(variant, productData.track_inventory !== false)) {
+          setNotFound(true);
+          return;
+        }
+        const unit = resolveVariantUnitPrice(variant);
+        if (unit == null) {
+          setNotFound(true);
+          return;
+        }
+      } else {
+        const unit = resolvePublicCatalogUnitPrice(productData);
+        if (unit == null) {
+          setNotFound(true);
+          return;
+        }
       }
       setStoreProfile(store as StoreProfile);
       setProduct(productData);
@@ -142,8 +162,21 @@ const StorePublicCheckout = () => {
     e.preventDefault();
     if (!storeSlug || !product || !storeProfile) return;
 
-    const unit = resolvePublicCatalogUnitPrice(product);
+    const selectedVariant =
+      product.has_variants
+        ? (product.variants || []).find((v) => v.id === variantId) ?? null
+        : null;
+    const unit = product.has_variants
+      ? selectedVariant
+        ? resolveVariantUnitPrice(selectedVariant)
+        : null
+      : resolvePublicCatalogUnitPrice(product);
     if (unit == null) return;
+
+    if (product.has_variants && !selectedVariant) {
+      setSubmitError("Selecione uma variante do produto.");
+      return;
+    }
 
     const email = customerEmail.trim();
     const phone = customerPhone.trim();
@@ -194,6 +227,7 @@ const StorePublicCheckout = () => {
         {
           store_slug: storeSlug,
           product_id: product.id,
+          variant_id: selectedVariant?.id ?? null,
           quantity: 1,
           customer_name: name,
           customer_email: email,
@@ -258,10 +292,21 @@ const StorePublicCheckout = () => {
 
   const theme = resolveStorefrontTheme(storeProfile.theme_key);
   const Shell = theme.ProductShell;
-  const unitPrice = resolvePublicCatalogUnitPrice(product);
+  const checkoutVariant =
+    product.has_variants
+      ? (product.variants || []).find((v) => v.id === variantId) ?? null
+      : null;
+  const unitPrice = product.has_variants
+    ? checkoutVariant
+      ? resolveVariantUnitPrice(checkoutVariant)
+      : null
+    : resolvePublicCatalogUnitPrice(product);
   const displayPrice = unitPrice != null ? unitPrice.toFixed(2) : "—";
-  const thumb = getPublicProductThumbnailUrl(product);
+  const thumb =
+    (checkoutVariant?.images?.[0] && checkoutVariant.images[0].trim()) ||
+    getPublicProductThumbnailUrl(product);
   const teaser = checkoutProductTeaser(product);
+  const variantLabel = checkoutVariant ? variantDisplayLabel(checkoutVariant) : null;
 
   return (
     <Shell
@@ -310,6 +355,9 @@ const StorePublicCheckout = () => {
                   </div>
                   <div className="min-w-0 flex-1 space-y-2">
                     <h2 className="font-semibold text-lg leading-snug">{product.name}</h2>
+                    {variantLabel && (
+                      <p className="text-sm text-muted-foreground">{variantLabel}</p>
+                    )}
                     {product.type === "service" ? (
                       <span className="inline-flex text-xs font-medium text-muted-foreground uppercase tracking-wide">
                         Serviço

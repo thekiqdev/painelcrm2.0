@@ -11,7 +11,11 @@ export class ProductsService {
       features: (item.features as any) || [],
       images: (item.images as any) || [],
       secondary_images: (item.secondary_images as any) || [],
-      variations: (item.variations as any) || []
+      variations: (item.variations as any) || [],
+      variants: (item.variants as any) || [],
+      has_variants: Boolean(item.has_variants),
+      track_inventory: item.track_inventory == null ? true : Boolean(item.track_inventory),
+      external_id: item.external_id ?? null,
     })) as Product[];
   }
 
@@ -25,7 +29,12 @@ export class ProductsService {
       features: (response.data.features as any) || [],
       images: (response.data.images as any) || [],
       secondary_images: (response.data.secondary_images as any) || [],
-      variations: (response.data.variations as any) || []
+      variations: (response.data.variations as any) || [],
+      variants: (response.data.variants as any) || [],
+      has_variants: Boolean(response.data.has_variants),
+      track_inventory:
+        response.data.track_inventory == null ? true : Boolean(response.data.track_inventory),
+      external_id: response.data.external_id ?? null,
     } as Product;
   }
 
@@ -36,6 +45,10 @@ export class ProductsService {
         images: productData.images as any,
         secondary_images: productData.secondary_images as any,
         variations: productData.variations as any,
+        variants: productData.variants as any,
+        has_variants: productData.has_variants ?? false,
+        track_inventory: productData.track_inventory ?? true,
+        external_id: productData.external_id ?? undefined,
         // PIA1: respeitar status explícito (ex.: import Publicado=0 → draft)
         status: productData.status ?? 'active',
     });
@@ -48,7 +61,12 @@ export class ProductsService {
       features: (response.data.features as any) || [],
       images: (response.data.images as any) || [],
       secondary_images: (response.data.secondary_images as any) || [],
-      variations: (response.data.variations as any) || []
+      variations: (response.data.variations as any) || [],
+      variants: (response.data.variants as any) || [],
+      has_variants: Boolean(response.data.has_variants),
+      track_inventory:
+        response.data.track_inventory == null ? true : Boolean(response.data.track_inventory),
+      external_id: response.data.external_id ?? null,
     } as Product;
   }
 
@@ -58,6 +76,7 @@ export class ProductsService {
     if (productData.images) updateData.images = productData.images as any;
     if (productData.secondary_images) updateData.secondary_images = productData.secondary_images as any;
     if (productData.variations) updateData.variations = productData.variations as any;
+    if (productData.variants) updateData.variants = productData.variants as any;
 
     const response = await apiClient.patch<Product>(`/api/products/${id}`, updateData);
 
@@ -69,7 +88,12 @@ export class ProductsService {
       features: (response.data.features as any) || [],
       images: (response.data.images as any) || [],
       secondary_images: (response.data.secondary_images as any) || [],
-      variations: (response.data.variations as any) || []
+      variations: (response.data.variations as any) || [],
+      variants: (response.data.variants as any) || [],
+      has_variants: Boolean(response.data.has_variants),
+      track_inventory:
+        response.data.track_inventory == null ? true : Boolean(response.data.track_inventory),
+      external_id: response.data.external_id ?? null,
     } as Product;
   }
 
@@ -108,6 +132,9 @@ export class ProductsService {
       features: Array.isArray(item.features) ? item.features : [],
       images: Array.isArray(item.images) ? item.images : [],
       secondary_images: Array.isArray(item.secondary_images) ? item.secondary_images : [],
+      has_variants: Boolean(item.has_variants),
+      track_inventory: item.track_inventory == null ? true : Boolean(item.track_inventory),
+      variants: Array.isArray(item.variants) ? item.variants : undefined,
     }));
   }
 
@@ -130,6 +157,9 @@ export class ProductsService {
       features: Array.isArray(item.features) ? item.features : [],
       images: Array.isArray(item.images) ? item.images : [],
       secondary_images: Array.isArray(item.secondary_images) ? item.secondary_images : [],
+      has_variants: Boolean(item.has_variants),
+      track_inventory: item.track_inventory == null ? true : Boolean(item.track_inventory),
+      variants: Array.isArray(item.variants) ? item.variants : undefined,
     };
   }
 

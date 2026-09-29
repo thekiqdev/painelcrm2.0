@@ -1,18 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  ChevronLeft,
   ChevronRight,
   Heart,
   Menu,
   MessageCircle,
-  Minus,
-  Plus,
-  RotateCcw,
   Search,
-  Shield,
   ShoppingBag,
-  Truck,
   User,
   X,
 } from 'lucide-react';
@@ -172,83 +166,52 @@ export function LuzmodasListShell({ storeProfile, bannerUrl, storeSlug, products
   );
 }
 
+/**
+ * Detalhe: chrome Luzmodas + corpo real de PublicProduct (variantes, preço, checkout).
+ * Não usar mock de tamanhos — a grade Cor/Tamanho vem do seletor em children.
+ */
 export function LuzmodasProductShell({
   storeProfile,
   storeSlug,
   product,
-  gallery = [],
   relatedProducts = [],
   children,
 }: StorefrontProductThemeProps) {
-  if (!product) return <div className="storefront-theme-luzmodas">{children}</div>;
+  if (!product) {
+    return <div className="storefront-theme-luzmodas min-h-screen bg-white">{children as ReactNode}</div>;
+  }
   const storePath = storeSlug ? `/${storeSlug}/loja` : '/';
-  const [selectedImage, setSelectedImage] = useState(0);
-  const [selectedSize, setSelectedSize] = useState<string | null>(null);
-  const [quantity, setQuantity] = useState(1);
-  const images = gallery.length ? gallery : [getPublicProductThumbnailUrl(product)].filter(Boolean) as string[];
 
   return (
     <div className="storefront-theme-luzmodas min-h-screen bg-white">
       <LuzHeader storeName={storeProfile.store_name || 'LUZMODAS'} storePath={storePath} />
-      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 md:py-10">
-        <nav className="mb-6 flex items-center gap-2 text-sm text-zinc-500 md:mb-10">
-          <Link to={storePath}>Home</Link><ChevronRight className="h-3.5 w-3.5" /><span>{product.category || 'Produto'}</span><ChevronRight className="h-3.5 w-3.5" /><span className="font-medium text-zinc-900">{product.name}</span>
-        </nav>
-        <div className="grid grid-cols-1 gap-8 lg:grid-cols-2 lg:gap-16">
-          <div className="space-y-4">
-            <div className="relative aspect-[3/4] overflow-hidden rounded-2xl bg-[var(--lz-muted)]">
-              {images[selectedImage] ? <img src={images[selectedImage]} alt={product.name} className="h-full w-full object-cover" /> : <div className="h-full w-full bg-zinc-100" />}
-              {images.length > 1 ? (
-                <>
-                  <button onClick={() => setSelectedImage((p) => (p === 0 ? images.length - 1 : p - 1))} className="absolute left-3 top-1/2 -translate-y-1/2 rounded-full bg-white/80 p-2 shadow-md"><ChevronLeft className="h-5 w-5" /></button>
-                  <button onClick={() => setSelectedImage((p) => (p === images.length - 1 ? 0 : p + 1))} className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-white/80 p-2 shadow-md"><ChevronRight className="h-5 w-5" /></button>
-                </>
-              ) : null}
-            </div>
-            {images.length > 1 ? <div className="flex gap-3">{images.map((img, i) => <button key={`${img}-${i}`} onClick={() => setSelectedImage(i)} className={`relative aspect-[3/4] w-20 overflow-hidden rounded-xl border-2 ${selectedImage === i ? 'border-[var(--lz-primary)]' : 'border-transparent opacity-60'}`}><img src={img} alt="" className="h-full w-full object-cover" /></button>)}</div> : null}
-          </div>
-
-          <div className="flex flex-col">
-            <span className="text-xs font-medium uppercase tracking-widest text-zinc-500">{product.category}</span>
-            <h1 className="lz-heading mt-2 text-3xl font-bold leading-tight md:text-4xl">{product.name}</h1>
-            <div className="mt-4 flex items-baseline gap-3"><span className="text-3xl font-bold">{formatPrice(product.price)}</span></div>
-            <div className="my-6 border-t border-[var(--lz-border)]" />
-            <div className="mt-2 flex gap-2.5">
-              {[...(product.features || []).slice(0, 4), 'P', 'M', 'G'].slice(0, 4).map((size) => (
-                <button key={size} onClick={() => setSelectedSize(size)} className={`h-11 min-w-[3rem] rounded-xl border px-4 text-sm font-medium ${selectedSize === size ? 'border-zinc-900 bg-zinc-900 text-white' : 'border-[var(--lz-border)]'}`}>{size}</button>
-              ))}
-            </div>
-            <div className="mt-8 flex gap-3">
-              <div className="flex items-center overflow-hidden rounded-xl border border-[var(--lz-border)]">
-                <button onClick={() => setQuantity(Math.max(1, quantity - 1))} className="p-3"><Minus className="h-4 w-4" /></button>
-                <span className="w-10 text-center text-sm font-semibold">{quantity}</span>
-                <button onClick={() => setQuantity(quantity + 1)} className="p-3"><Plus className="h-4 w-4" /></button>
-              </div>
-              <button className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[var(--lz-primary)] py-3.5 text-sm font-semibold uppercase tracking-wider text-white"><ShoppingBag className="h-4 w-4" />Solicitar</button>
-              <button className="rounded-xl border border-[var(--lz-border)] p-3.5"><Heart className="h-5 w-5" /></button>
-            </div>
-            <div className="mt-8 grid grid-cols-3 gap-4">
-              <div className="rounded-xl bg-pink-50 p-3 text-center"><Truck className="mx-auto mb-1.5 h-5 w-5 text-[var(--lz-primary)]" /><span className="text-[10px] font-medium">Frete Grátis</span></div>
-              <div className="rounded-xl bg-pink-50 p-3 text-center"><RotateCcw className="mx-auto mb-1.5 h-5 w-5 text-[var(--lz-primary)]" /><span className="text-[10px] font-medium">Troca Fácil</span></div>
-              <div className="rounded-xl bg-pink-50 p-3 text-center"><Shield className="mx-auto mb-1.5 h-5 w-5 text-[var(--lz-primary)]" /><span className="text-[10px] font-medium">Compra Segura</span></div>
-            </div>
-            {product.description ? <div className="mt-8 border-t border-[var(--lz-border)] pt-6 text-sm leading-relaxed text-zinc-600">{product.description}</div> : null}
-          </div>
+      <main>
+        <div className="mx-auto max-w-7xl px-4 pt-6 sm:px-6 md:pt-10">
+          <nav className="mb-4 flex items-center gap-2 text-sm text-zinc-500 md:mb-6">
+            <Link to={storePath}>Home</Link>
+            <ChevronRight className="h-3.5 w-3.5" />
+            <span>{product.category || 'Produto'}</span>
+            <ChevronRight className="h-3.5 w-3.5" />
+            <span className="font-medium text-zinc-900">{product.name}</span>
+          </nav>
         </div>
-
+        {children as ReactNode}
         {relatedProducts.length > 0 ? (
-          <section className="mt-20 md:mt-28">
+          <section className="mx-auto max-w-7xl px-4 pb-16 pt-8 sm:px-6 md:pb-28 md:pt-12">
             <h2 className="lz-heading mb-8 text-2xl font-bold md:text-3xl">Você também pode gostar</h2>
             <div className="grid grid-cols-2 gap-4 md:grid-cols-4 md:gap-6">
-              {relatedProducts.map((p) => <ProductCard key={p.id} p={p} storePath={storePath} />)}
+              {relatedProducts.map((p) => (
+                <ProductCard key={p.id} p={p} storePath={storePath} />
+              ))}
             </div>
           </section>
         ) : null}
       </main>
       <footer className="lz-footer">
-        <div className="mx-auto max-w-7xl px-4 py-12 text-xs text-white/60 sm:px-6">© {new Date().getFullYear()} {storeProfile.store_name}. Todos os direitos reservados.</div>
+        <div className="mx-auto max-w-7xl px-4 py-12 text-xs text-white/60 sm:px-6">
+          © {new Date().getFullYear()} {storeProfile.store_name}. Todos os direitos reservados.
+        </div>
       </footer>
-      <div className="hidden">{children}</div>
     </div>
   );
 }

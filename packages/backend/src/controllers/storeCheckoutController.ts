@@ -42,6 +42,10 @@ export async function postStoreCheckoutCreate(req: Request, res: Response) {
 
   const store_slug = typeof body.store_slug === 'string' ? body.store_slug.trim() : '';
   const product_id = typeof body.product_id === 'string' ? body.product_id.trim() : '';
+  const variant_id =
+    typeof body.variant_id === 'string' && body.variant_id.trim()
+      ? body.variant_id.trim()
+      : null;
   const quantity = Number(body.quantity);
   const customer_name = typeof body.customer_name === 'string' ? body.customer_name.trim() : '';
   const customer_email = typeof body.customer_email === 'string' ? body.customer_email.trim() : '';
@@ -80,6 +84,7 @@ export async function postStoreCheckoutCreate(req: Request, res: Response) {
     const result = await createStorePublicCheckout({
       store_slug,
       product_id,
+      variant_id,
       quantity,
       customer_name,
       customer_email,

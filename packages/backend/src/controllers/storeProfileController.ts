@@ -41,6 +41,10 @@ const storeProfileSchema = z.object({
   is_active: z.boolean().default(true),
   /** Opt-in: checkout online na vitrine (requer flags globais no deploy). */
   store_checkout_enabled: z.boolean().default(false),
+  /** Compra via WhatsApp na vitrine (pode coexistir com checkout). */
+  store_whatsapp_purchase_enabled: z.boolean().default(true),
+  /** Template da mensagem de compra via WhatsApp (placeholders {{product_name}} etc.). */
+  store_whatsapp_purchase_message: optStrNullable,
   /** Catálogo: habilitar produtos e/ou serviços (pelo menos um). */
   enable_products: z.boolean().default(true),
   enable_services: z.boolean().default(true),
@@ -104,9 +108,11 @@ export async function createStoreProfile(req: AuthRequest, res: Response): Promi
       `INSERT INTO store_profiles (
         user_id, store_name, store_description, store_logo, store_banner_url,
         contact_phone, contact_email, contact_whatsapp,
-        store_slug, is_active, store_checkout_enabled, enable_products, enable_services,
+        store_slug, is_active, store_checkout_enabled, store_whatsapp_purchase_enabled,
+        store_whatsapp_purchase_message,
+        enable_products, enable_services,
         theme_key, theme_options
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb)
       RETURNING *`,
       [
         userId,
@@ -120,6 +126,8 @@ export async function createStoreProfile(req: AuthRequest, res: Response): Promi
         storeData.store_slug,
         storeData.is_active,
         storeData.store_checkout_enabled,
+        storeData.store_whatsapp_purchase_enabled,
+        storeData.store_whatsapp_purchase_message ?? null,
         storeData.enable_products,
         storeData.enable_services,
         storeData.theme_key,
@@ -188,6 +196,10 @@ export async function updateStoreProfile(req: AuthRequest, res: Response): Promi
         if (key === 'theme_options') {
           updates.push(`theme_options = $${paramIndex}::jsonb`);
           values.push(JSON.stringify(value ?? {}));
+        } else if (key === 'store_whatsapp_purchase_message') {
+          updates.push(`${key} = $${paramIndex}`);
+          const msg = typeof value === 'string' ? value.trim() : value;
+          values.push(msg || null);
         } else {
           updates.push(`${key} = $${paramIndex}`);
           values.push(value);

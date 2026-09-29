@@ -20,16 +20,23 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Plus, Package, Wrench, Eye, Edit, Trash2, Store, ExternalLink, Upload } from "lucide-react";
+import { Plus, Package, Wrench, Eye, Edit, Trash2, Store, ExternalLink, Upload, ImageIcon } from "lucide-react";
 import { Product, StoreProfile } from "@/types/products";
 import { productsService } from "@/services/products";
 import { useToast } from "@/hooks/use-toast";
 import { ProductImportDialog } from "@/components/products/ProductImportDialog";
+import { normalizeCatalogMediaUrlForBrowser } from "@/services/catalogMediaUpload";
 import { resolveCanonicalStoreUrl } from "@/lib/tenantCanonicalUrls";
 
 type StatusFilter = "all" | "active" | "inactive" | "draft";
 type CategoryFilter = "all" | "__none__" | string;
 type CatalogTab = "all" | "product" | "service";
+
+function productCoverUrl(product: Product): string | null {
+  const raw = product.images?.[0]?.trim();
+  if (!raw) return null;
+  return normalizeCatalogMediaUrlForBrowser(raw);
+}
 
 function formatTablePrice(product: Product): string {
   const rawPrice = product.price != null ? Number(product.price) : null;
@@ -202,39 +209,6 @@ const Products = () => {
         }}
       />
 
-      <Card>
-        <CardContent className="pt-6">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-2 min-w-0">
-              <Store className="h-5 w-5 shrink-0 text-muted-foreground" />
-              <div className="min-w-0">
-                <p className="font-medium truncate">
-                  {storeProfile?.store_name ?? "Loja ainda não configurada"}
-                </p>
-                {getStoreUrl() ? (
-                  <p className="text-sm text-muted-foreground truncate">{getStoreUrl()}</p>
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    Defina sua loja em Configurar Loja
-                  </p>
-                )}
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" size="sm" onClick={() => navigate("/admin/loja")}>
-                Gerenciar loja
-              </Button>
-              {getStoreUrl() && (
-                <Button variant="outline" size="sm" onClick={() => openStorefront()}>
-                  <Eye className="mr-2 h-4 w-4" />
-                  Visualizar loja
-                </Button>
-              )}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
       {products.length === 0 ? (
         <Card>
           <CardContent className="flex items-center justify-center p-10">
@@ -260,19 +234,15 @@ const Products = () => {
         </Card>
       ) : (
         <div className="space-y-4">
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as CatalogTab)}>
-            <TabsList
-              className={`grid w-full max-w-md ${
-                enableProducts && enableServices ? "grid-cols-3" : "grid-cols-1"
-              }`}
-            >
-              {enableProducts && enableServices ? (
+          {enableProducts && enableServices ? (
+            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as CatalogTab)}>
+              <TabsList className="grid w-full max-w-md grid-cols-3">
                 <TabsTrigger value="all">Todos</TabsTrigger>
-              ) : null}
-              {enableProducts ? <TabsTrigger value="product">Produtos</TabsTrigger> : null}
-              {enableServices ? <TabsTrigger value="service">Serviços</TabsTrigger> : null}
-            </TabsList>
-          </Tabs>
+                <TabsTrigger value="product">Produtos</TabsTrigger>
+                <TabsTrigger value="service">Serviços</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          ) : null}
 
           <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-end">
             <div className="flex-1 min-w-[200px]">
@@ -323,6 +293,7 @@ const Products = () => {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-[64px]">Foto</TableHead>
                   <TableHead>Nome</TableHead>
                   <TableHead>Tipo</TableHead>
                   <TableHead>Status</TableHead>
@@ -335,13 +306,29 @@ const Products = () => {
               <TableBody>
                 {filteredProducts.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center text-muted-foreground py-10">
+                    <TableCell colSpan={8} className="text-center text-muted-foreground py-10">
                       Nenhum item corresponde aos filtros da aba selecionada.
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filteredProducts.map((product) => (
+                  filteredProducts.map((product) => {
+                    const cover = productCoverUrl(product);
+                    return (
                     <TableRow key={product.id}>
+                      <TableCell>
+                        {cover ? (
+                          <img
+                            src={cover}
+                            alt=""
+                            className="h-11 w-11 rounded-md object-cover border bg-muted"
+                            loading="lazy"
+                          />
+                        ) : (
+                          <div className="h-11 w-11 rounded-md border border-dashed bg-muted/40 flex items-center justify-center text-muted-foreground">
+                            <ImageIcon className="h-4 w-4" />
+                          </div>
+                        )}
+                      </TableCell>
                       <TableCell className="font-medium max-w-[220px]">
                         <span className="line-clamp-2">{product.name}</span>
                       </TableCell>
@@ -404,7 +391,8 @@ const Products = () => {
                         </div>
                       </TableCell>
                     </TableRow>
-                  ))
+                    );
+                  })
                 )}
               </TableBody>
             </Table>

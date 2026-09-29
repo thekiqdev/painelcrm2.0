@@ -9,8 +9,13 @@ import type { StorefrontThemeId } from "@/themes/types";
 import { productsService } from "@/services/products";
 import { useToast } from "@/hooks/use-toast";
 import { uploadCatalogImageFile } from "@/services/catalogMediaUpload";
-import { ImageIcon, Trash2, Upload } from "lucide-react";
+import { ImageIcon, MessageCircle, Pencil, Trash2, Upload } from "lucide-react";
 import { resolveCanonicalStoreUrl } from "@/lib/tenantCanonicalUrls";
+import {
+  DEFAULT_STORE_WHATSAPP_PURCHASE_MESSAGE,
+  previewStoreWhatsAppPurchaseMessage,
+  resolveStoreWhatsAppPurchaseTemplate,
+} from "@/utils/storeWhatsAppPurchaseMessage";
 
 function normalizeThemeKeyForPayload(profile: StoreProfile | null): StorefrontThemeId {
   const k = profile?.theme_key;
@@ -42,6 +47,8 @@ export const StoreSettingsForm = ({ storeProfile, onSuccess }: StoreSettingsForm
     contact_whatsapp: "",
     is_active: true,
     store_checkout_enabled: false,
+    store_whatsapp_purchase_enabled: true,
+    store_whatsapp_purchase_message: DEFAULT_STORE_WHATSAPP_PURCHASE_MESSAGE,
     enable_products: true,
     enable_services: true,
   });
@@ -51,8 +58,10 @@ export const StoreSettingsForm = ({ storeProfile, onSuccess }: StoreSettingsForm
   const [loading, setLoading] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [uploadingBanner, setUploadingBanner] = useState(false);
+  const [editingWhatsAppMessage, setEditingWhatsAppMessage] = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
   const bannerInputRef = useRef<HTMLInputElement>(null);
+  const whatsappMessageRef = useRef<HTMLTextAreaElement>(null);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -66,11 +75,16 @@ export const StoreSettingsForm = ({ storeProfile, onSuccess }: StoreSettingsForm
         contact_whatsapp: storeProfile.contact_whatsapp || "",
         is_active: storeProfile.is_active,
         store_checkout_enabled: storeProfile.store_checkout_enabled === true,
+        store_whatsapp_purchase_enabled: storeProfile.store_whatsapp_purchase_enabled !== false,
+        store_whatsapp_purchase_message: resolveStoreWhatsAppPurchaseTemplate(
+          storeProfile.store_whatsapp_purchase_message
+        ),
         enable_products: storeProfile.enable_products !== false,
         enable_services: storeProfile.enable_services !== false,
       });
       setLogoUrl(storeProfile.store_logo?.trim() || null);
       setBannerUrl(storeProfile.store_banner_url?.trim() || null);
+      setEditingWhatsAppMessage(false);
     } else {
       setFormData({
         store_name: "",
@@ -81,14 +95,22 @@ export const StoreSettingsForm = ({ storeProfile, onSuccess }: StoreSettingsForm
         contact_whatsapp: "",
         is_active: true,
         store_checkout_enabled: false,
+        store_whatsapp_purchase_enabled: true,
+        store_whatsapp_purchase_message: DEFAULT_STORE_WHATSAPP_PURCHASE_MESSAGE,
         enable_products: true,
         enable_services: true,
       });
       setLogoUrl(null);
       setBannerUrl(null);
+      setEditingWhatsAppMessage(false);
     }
   }, [storeProfile]);
 
+  useEffect(() => {
+    if (!editingWhatsAppMessage) return;
+    const t = window.setTimeout(() => whatsappMessageRef.current?.focus(), 50);
+    return () => window.clearTimeout(t);
+  }, [editingWhatsAppMessage]);
   useEffect(() => {
     let cancelled = false;
     void resolveCanonicalStoreUrl(formData.store_slug || storeProfile?.store_slug).then((url) => {
@@ -129,6 +151,8 @@ export const StoreSettingsForm = ({ storeProfile, onSuccess }: StoreSettingsForm
 
   const buildPayload = () => ({
     ...formData,
+    store_whatsapp_purchase_message:
+      formData.store_whatsapp_purchase_message.trim() || DEFAULT_STORE_WHATSAPP_PURCHASE_MESSAGE,
     store_logo: logoUrl || null,
     store_banner_url: bannerUrl || null,
     theme_key: normalizeThemeKeyForPayload(storeProfile),
@@ -361,25 +385,15 @@ export const StoreSettingsForm = ({ storeProfile, onSuccess }: StoreSettingsForm
           </div>
 
           <div>
-            <Label htmlFor="contact_whatsapp">WhatsApp</Label>
+            <Label htmlFor="contact_email">E-mail</Label>
             <Input
-              id="contact_whatsapp"
-              value={formData.contact_whatsapp}
-              onChange={(e) => setFormData((prev) => ({ ...prev, contact_whatsapp: e.target.value }))}
-              placeholder="(11) 99999-9999"
+              id="contact_email"
+              type="email"
+              value={formData.contact_email}
+              onChange={(e) => setFormData((prev) => ({ ...prev, contact_email: e.target.value }))}
+              placeholder="contato@minhaloja.com"
             />
           </div>
-        </div>
-
-        <div>
-          <Label htmlFor="contact_email">E-mail</Label>
-          <Input
-            id="contact_email"
-            type="email"
-            value={formData.contact_email}
-            onChange={(e) => setFormData((prev) => ({ ...prev, contact_email: e.target.value }))}
-            placeholder="contato@minhaloja.com"
-          />
         </div>
 
         <div className="flex items-center justify-between rounded-lg border p-4">
@@ -399,7 +413,7 @@ export const StoreSettingsForm = ({ storeProfile, onSuccess }: StoreSettingsForm
             <Label htmlFor="store_checkout_enabled">Ativar compra online com checkout</Label>
             <p className="text-sm text-muted-foreground">
               Quando ativado, produtos com preço exibem <strong className="font-medium">Comprar</strong> e o
-              fluxo de pagamento online. Quando desativado, a vitrine segue com WhatsApp e orçamento.
+              fluxo de pagamento online.
             </p>
           </div>
           <Switch
@@ -409,6 +423,130 @@ export const StoreSettingsForm = ({ storeProfile, onSuccess }: StoreSettingsForm
               setFormData((prev) => ({ ...prev, store_checkout_enabled: checked }))
             }
           />
+        </div>
+
+        <div className="rounded-lg border p-4 space-y-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-medium flex items-center gap-2">
+                <MessageCircle className="h-4 w-4 text-emerald-600" />
+                WhatsApp
+              </h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                Número e mensagem automática enviados quando o cliente clica em{" "}
+                <strong className="font-medium">Comprar via WhatsApp</strong>.
+              </p>
+            </div>
+          </div>
+
+          <div>
+            <Label htmlFor="contact_whatsapp">Número do WhatsApp</Label>
+            <Input
+              id="contact_whatsapp"
+              value={formData.contact_whatsapp}
+              onChange={(e) => setFormData((prev) => ({ ...prev, contact_whatsapp: e.target.value }))}
+              placeholder="(11) 99999-9999"
+            />
+          </div>
+
+          <div className="flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-3">
+            <div className="pr-2 space-y-0.5">
+              <Label htmlFor="store_whatsapp_purchase_enabled">Ativar compra por WhatsApp</Label>
+              <p className="text-xs text-muted-foreground">
+                Exibe o botão na vitrine (pode ficar ligado junto com o checkout).
+              </p>
+            </div>
+            <Switch
+              id="store_whatsapp_purchase_enabled"
+              checked={formData.store_whatsapp_purchase_enabled}
+              onCheckedChange={(checked) =>
+                setFormData((prev) => ({ ...prev, store_whatsapp_purchase_enabled: checked }))
+              }
+            />
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <Label htmlFor="store_whatsapp_purchase_message">Mensagem automática</Label>
+              {!editingWhatsAppMessage ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 px-2"
+                  onClick={() => setEditingWhatsAppMessage(true)}
+                >
+                  <Pencil className="h-3.5 w-3.5 mr-1.5" />
+                  Editar
+                </Button>
+              ) : (
+                <div className="flex items-center gap-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 px-2 text-xs"
+                    onClick={() => {
+                      setFormData((prev) => ({
+                        ...prev,
+                        store_whatsapp_purchase_message: DEFAULT_STORE_WHATSAPP_PURCHASE_MESSAGE,
+                      }));
+                    }}
+                  >
+                    Restaurar padrão
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 px-2"
+                    onClick={() => setEditingWhatsAppMessage(false)}
+                  >
+                    Pronto
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            {editingWhatsAppMessage ? (
+              <Textarea
+                ref={whatsappMessageRef}
+                id="store_whatsapp_purchase_message"
+                value={formData.store_whatsapp_purchase_message}
+                onChange={(e) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    store_whatsapp_purchase_message: e.target.value.slice(0, 1000),
+                  }))
+                }
+                rows={4}
+                className="font-normal"
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => setEditingWhatsAppMessage(true)}
+                className="w-full rounded-md border bg-muted/30 px-3 py-3 text-left text-sm leading-relaxed hover:bg-muted/50 transition-colors"
+              >
+                <span className="whitespace-pre-wrap">
+                  {formData.store_whatsapp_purchase_message.trim() ||
+                    DEFAULT_STORE_WHATSAPP_PURCHASE_MESSAGE}
+                </span>
+              </button>
+            )}
+
+            <p className="text-xs text-muted-foreground">
+              Use{" "}
+              <code className="rounded bg-muted px-1 py-0.5">{"{{product_name}}"}</code>,{" "}
+              <code className="rounded bg-muted px-1 py-0.5">{"{{product_type}}"}</code>,{" "}
+              <code className="rounded bg-muted px-1 py-0.5">{"{{variant}}"}</code> e{" "}
+              <code className="rounded bg-muted px-1 py-0.5">{"{{store_name}}"}</code>.
+            </p>
+            <div className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">Prévia: </span>
+              {previewStoreWhatsAppPurchaseMessage(formData.store_whatsapp_purchase_message)}
+            </div>
+          </div>
         </div>
 
         <div className="rounded-lg border p-4 space-y-4">

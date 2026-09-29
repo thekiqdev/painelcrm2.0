@@ -9,45 +9,27 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Package, Wrench, ArrowLeft, Plus, X, Upload, FileText, Image as ImageIcon, Trash2, ChevronUp, ChevronDown, Images } from "lucide-react";
-import { Product, ProductFormData, ProductVariation, VariationPrice } from "@/types/products";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Package, Wrench, ArrowLeft, Plus, X, Upload, FileText, Image as ImageIcon, Trash2, ChevronUp, ChevronDown, Images, Layers, Box } from "lucide-react";
+import { Product, ProductFormData } from "@/types/products";
 import { productsService } from "@/services/products";
 import { useToast } from "@/hooks/use-toast";
 import { uploadCatalogImageFile, normalizeCatalogMediaUrlForBrowser } from "@/services/catalogMediaUpload";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { MediaPickerDialog } from "@/components/media/MediaPickerDialog";
 import type { MediaLibraryAsset } from "@/services/mediaLibrary";
-
-// Variações predefinidas com cores reais
-const COLOR_MAP: Record<string, string> = {
-  'Branco': '#FFFFFF',
-  'Preto': '#000000',
-  'Azul': '#0066CC',
-  'Vermelho': '#FF0000',
-  'Verde': '#00CC66',
-  'Amarelo': '#FFCC00',
-  'Rosa': '#FF69B4',
-  'Cinza': '#808080',
-  'Marrom': '#8B4513',
-  'Roxo': '#9933CC',
-  'Laranja': '#FF8800',
-  'Bege': '#F5F5DC'
-};
-
-const PREDEFINED_VARIATIONS = {
-  cor: {
-    name: 'Cor',
-    suggestions: Object.keys(COLOR_MAP)
-  },
-  tamanho: {
-    name: 'Tamanho',
-    suggestions: ['PP', 'P', 'M', 'G', 'GG', 'XG', 'XXG']
-  },
-  peso: {
-    name: 'Peso',
-    suggestions: ['100g', '250g', '500g', '1kg', '2kg', '5kg', '10kg']
-  }
-};
+import { ProductVariantsEditor } from "@/components/products/ProductVariantsEditor";
+import { axesFromVariants } from "@/utils/productVariantsForm";
+import { SystemRichEditor } from "@/components/editor";
 
 const MAX_PRODUCT_IMAGES = 10;
 
@@ -78,8 +60,9 @@ const ProductForm = () => {
     images: [],
     secondary_images: [],
     variations: [],
-    pricing_mode: 'fixed',
-    variation_prices: [],
+    has_variants: false,
+    track_inventory: true,
+    variants: [],
     duration_hours: undefined,
     responsible_id: undefined,
     contract_template: '',
@@ -91,13 +74,10 @@ const ProductForm = () => {
 
   const [categorySuggestions, setCategorySuggestions] = useState<string[]>([]);
   const [newFeature, setNewFeature] = useState('');
-  const [variationType, setVariationType] = useState<'cor' | 'tamanho' | 'peso' | 'custom'>('cor');
-  const [newVariation, setNewVariation] = useState({ name: '', values: [''] });
-  const [customColorName, setCustomColorName] = useState('');
-  const [customColorValue, setCustomColorValue] = useState('#000000');
   const productImagesInputRef = useRef<HTMLInputElement>(null);
   const [uploadingImages, setUploadingImages] = useState(false);
   const [mediaPickerOpen, setMediaPickerOpen] = useState(false);
+  const [pendingStructure, setPendingStructure] = useState<'simple' | 'variable' | null>(null);
 
   useEffect(() => {
     if (isEditing && id) {
@@ -178,9 +158,13 @@ const ProductForm = () => {
           features: productData.features,
           images: productData.images,
           secondary_images: productData.secondary_images || [],
-          variations: productData.variations || [],
-          pricing_mode: productData.pricing_mode || 'fixed',
-          variation_prices: productData.variation_prices || [],
+          variations:
+            productData.variations?.length
+              ? productData.variations
+              : axesFromVariants(productData.variants),
+          has_variants: Boolean(productData.has_variants),
+          track_inventory: productData.track_inventory !== false,
+          variants: productData.variants || [],
           duration_hours: productData.duration_hours,
           responsible_id: productData.responsible_id,
           contract_template: productData.contract_template || '',
@@ -284,12 +268,60 @@ const ProductForm = () => {
       return;
     }
 
+    const isVariableProduct = formData.type === 'product' && Boolean(formData.has_variants);
+    if (isVariableProduct && (!formData.variants || formData.variants.length === 0)) {
+      toast({
+        title: "Grade incompleta",
+        description: "Gere ao menos uma combinação de variantes antes de salvar.",
+        variant: "destructive"
+      });
+      return;
+    }
+    if (isVariableProduct) {
+      const missingPrice = formData.variants!.some(
+        (v) => v.is_active !== false && (v.price == null || Number.isNaN(Number(v.price)))
+      );
+      if (missingPrice) {
+        toast({
+          title: "Preço das variantes",
+          description: "Informe o preço de venda em todas as variantes ativas.",
+          variant: "destructive"
+        });
+        return;
+      }
+    }
+    if (!isVariableProduct && formData.type === 'product' && (formData.price == null || formData.price <= 0)) {
+      toast({
+        title: "Preço obrigatório",
+        description: "Informe o preço de venda do produto.",
+        variant: "destructive"
+      });
+      return;
+    }
+
     try {
       setLoading(true);
       const categoryTrimmed = formData.category?.trim() || undefined;
-      const { secondary_images: _legacySecondary, ...restForm } = formData;
+      const {
+        secondary_images: _legacySecondary,
+        pricing_mode: _pm,
+        variation_prices: _vp,
+        ...restForm
+      } = formData;
       void _legacySecondary;
-      const payload = { ...restForm, category: categoryTrimmed, images: formData.images };
+      void _pm;
+      void _vp;
+
+      const payload: ProductFormData = {
+        ...restForm,
+        category: categoryTrimmed,
+        images: formData.images,
+        has_variants: formData.type === 'product' ? Boolean(formData.has_variants) : false,
+        track_inventory: formData.track_inventory !== false,
+        variations: isVariableProduct ? formData.variations || [] : [],
+        variants: isVariableProduct ? formData.variants || [] : [],
+        sku: isVariableProduct ? undefined : formData.sku,
+      };
 
       if (isEditing && product) {
         await productsService.updateProduct(product.id, payload);
@@ -310,7 +342,7 @@ const ProductForm = () => {
       console.error('Erro ao salvar produto:', error);
       toast({
         title: "Erro",
-        description: "Não foi possível salvar o produto",
+        description: error instanceof Error ? error.message : "Não foi possível salvar o produto",
         variant: "destructive"
       });
     } finally {
@@ -335,167 +367,42 @@ const ProductForm = () => {
     }));
   };
 
-  const addVariation = () => {
-    const variationName = variationType === 'custom' 
-      ? newVariation.name.trim() 
-      : PREDEFINED_VARIATIONS[variationType].name;
-    
-    const variationValues = variationType === 'custom'
-      ? newVariation.values.filter(v => v.trim()).map(v => v.trim())
-      : newVariation.values.filter(v => v.trim()).map(v => v.trim());
-
-    if (variationName && variationValues.length > 0) {
-      const variation: ProductVariation = {
-        name: variationName,
-        values: variationValues
-      };
-      
-      setFormData(prev => ({
-        ...prev,
-        variations: [...(prev.variations || []), variation]
-      }));
-      
-      // Reset form
-      setNewVariation({ name: '', values: [''] });
-      setVariationType('cor');
-    } else {
-      toast({
-        title: "Erro",
-        description: variationType === 'custom' 
-          ? "Preencha o nome e pelo menos um valor para a variação" 
-          : "Adicione pelo menos um valor para a variação",
-        variant: "destructive"
-      });
-    }
-  };
-
-  const removeVariation = (index: number) => {
-    setFormData(prev => ({
-      ...prev,
-      variations: prev.variations?.filter((_, i) => i !== index) || []
-    }));
-  };
-
-  const addVariationValue = () => {
-    setNewVariation(prev => ({
-      ...prev,
-      values: [...prev.values, '']
-    }));
-  };
-
-  const updateVariationValue = (index: number, value: string) => {
-    setNewVariation(prev => ({
-      ...prev,
-      values: prev.values.map((v, i) => i === index ? value : v)
-    }));
-  };
-
-  const removeVariationValue = (index: number) => {
-    if (newVariation.values.length > 1) {
-      setNewVariation(prev => ({
-        ...prev,
-        values: prev.values.filter((_, i) => i !== index)
-      }));
-    }
-  };
-
-  const addSuggestedValue = (value: string) => {
-    if (!newVariation.values.some(v => v === value)) {
-      setNewVariation(prev => ({
-        ...prev,
-        values: [...prev.values.filter(v => v.trim()), value, '']
-      }));
-    }
-  };
-
-  const addCustomColor = () => {
-    if (customColorName.trim()) {
-      const colorWithHex = `${customColorName.trim()}|${customColorValue}`;
-      if (!newVariation.values.some(v => v.startsWith(customColorName.trim()))) {
-        setNewVariation(prev => ({
+  const applyStructureMode = (mode: 'simple' | 'variable') => {
+    setFormData((prev) => {
+      if (mode === 'variable') {
+        return {
           ...prev,
-          values: [...prev.values.filter(v => v.trim()), colorWithHex, '']
-        }));
-        setCustomColorName('');
-        setCustomColorValue('#000000');
+          has_variants: true,
+          pricing_mode: undefined,
+          variation_prices: undefined,
+        };
       }
-    }
-  };
-
-  const getColorFromValue = (value: string): string | null => {
-    // Se o valor contém |, é uma cor personalizada
-    if (value.includes('|')) {
-      return value.split('|')[1];
-    }
-    // Se não, procura no mapa de cores
-    return COLOR_MAP[value] || null;
-  };
-
-  const getColorName = (value: string): string => {
-    if (value.includes('|')) {
-      return value.split('|')[0];
-    }
-    return value;
-  };
-
-  const handleVariationTypeChange = (type: 'cor' | 'tamanho' | 'peso' | 'custom') => {
-    setVariationType(type);
-    if (type !== 'custom') {
-      setNewVariation({ name: PREDEFINED_VARIATIONS[type].name, values: [''] });
-    } else {
-      setNewVariation({ name: '', values: [''] });
-    }
-  };
-
-  // Função para gerar todas as combinações de variações
-  const generateVariationCombinations = (): string[] => {
-    if (!formData.variations || formData.variations.length === 0) {
-      return [];
-    }
-
-    let combinations: string[] = [''];
-    
-    for (const variation of formData.variations) {
-      const newCombinations: string[] = [];
-      for (const combination of combinations) {
-        for (const value of variation.values) {
-          const displayValue = getColorName(value);
-          newCombinations.push(
-            combination ? `${combination}-${displayValue}` : displayValue
-          );
-        }
-      }
-      combinations = newCombinations;
-    }
-    
-    return combinations;
-  };
-
-  // Atualizar preço de uma combinação
-  const updateVariationPrice = (combination: string, price: number | undefined) => {
-    setFormData(prev => {
-      const existingPrices = prev.variation_prices || [];
-      const existingIndex = existingPrices.findIndex(vp => vp.combination === combination);
-      
-      let newPrices;
-      if (existingIndex >= 0) {
-        newPrices = [...existingPrices];
-        newPrices[existingIndex] = { combination, price };
-      } else {
-        newPrices = [...existingPrices, { combination, price }];
-      }
-      
       return {
         ...prev,
-        variation_prices: newPrices
+        has_variants: false,
+        variants: [],
+        variations: [],
+        pricing_mode: undefined,
+        variation_prices: undefined,
       };
     });
+    setPendingStructure(null);
   };
 
-  // Obter preço de uma combinação
-  const getVariationPrice = (combination: string): number | undefined => {
-    const priceObj = formData.variation_prices?.find(vp => vp.combination === combination);
-    return priceObj?.price;
+  const requestStructureMode = (mode: 'simple' | 'variable') => {
+    const currentlyVariable = Boolean(formData.has_variants);
+    const nextVariable = mode === 'variable';
+    if (currentlyVariable === nextVariable) return;
+
+    if (currentlyVariable && !nextVariable && (formData.variants?.length || 0) > 0) {
+      setPendingStructure('simple');
+      return;
+    }
+    if (!currentlyVariable && nextVariable && isEditing) {
+      setPendingStructure('variable');
+      return;
+    }
+    applyStructureMode(mode);
   };
 
   if (loading && isEditing) {
@@ -523,7 +430,11 @@ const ProductForm = () => {
             {isEditing ? 'Editar' : 'Novo'} {isProduct ? 'Produto' : 'Serviço'}
           </h1>
           <p className="text-muted-foreground">
-            {isProduct ? 'Configure seu produto com imagens, variações e preços' : 'Configure seu serviço com contratos e duração'}
+            {isProduct
+              ? (formData.has_variants
+                  ? 'Produto variável: eixos Cor/Tamanho, preço e estoque por combinação'
+                  : 'Produto simples: preço, estoque e imagens')
+              : 'Configure seu serviço com contratos e duração'}
           </p>
         </div>
       </div>
@@ -543,7 +454,12 @@ const ProductForm = () => {
                     ? 'border-primary bg-primary/5'
                     : 'border-border hover:border-primary/50'
                 }`}
-                onClick={() => setFormData(prev => ({ ...prev, type: 'product' }))}
+                onClick={() =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    type: 'product',
+                  }))
+                }
               >
                 <CardHeader className="text-center">
                   <Package className="mx-auto h-8 w-8 mb-2" />
@@ -562,7 +478,15 @@ const ProductForm = () => {
                     ? 'border-primary bg-primary/5'
                     : 'border-border hover:border-primary/50'
                 }`}
-                onClick={() => setFormData(prev => ({ ...prev, type: 'service' }))}
+                onClick={() =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    type: 'service',
+                    has_variants: false,
+                    variants: [],
+                    variations: [],
+                  }))
+                }
               >
                 <CardHeader className="text-center">
                   <Wrench className="mx-auto h-8 w-8 mb-2" />
@@ -584,6 +508,58 @@ const ProductForm = () => {
               {enableProducts ? "produtos" : "serviços"}. Altere em Configurar Loja se precisar dos dois tipos.
             </AlertDescription>
           </Alert>
+        )}
+
+        {/* Estrutura: Simples | Variável (PV12) — só produtos */}
+        {isProduct && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Estrutura</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Produto simples tem um preço e estoque. Produto variável tem grade Cor e/ou Tamanho.
+              </p>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 gap-4">
+                <Card
+                  className={`cursor-pointer border-2 transition-colors ${
+                    !formData.has_variants
+                      ? 'border-primary bg-primary/5'
+                      : 'border-border hover:border-primary/50'
+                  }`}
+                  onClick={() => requestStructureMode('simple')}
+                >
+                  <CardHeader className="text-center pb-2">
+                    <Box className="mx-auto h-8 w-8 mb-2" />
+                    <CardTitle className="text-lg">Produto simples</CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-0">
+                    <p className="text-sm text-muted-foreground text-center">
+                      Um SKU, preço e estoque no produto
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card
+                  className={`cursor-pointer border-2 transition-colors ${
+                    formData.has_variants
+                      ? 'border-primary bg-primary/5'
+                      : 'border-border hover:border-primary/50'
+                  }`}
+                  onClick={() => requestStructureMode('variable')}
+                >
+                  <CardHeader className="text-center pb-2">
+                    <Layers className="mx-auto h-8 w-8 mb-2" />
+                    <CardTitle className="text-lg">Produto variável</CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-0">
+                    <p className="text-sm text-muted-foreground text-center">
+                      Combinações Cor/Tamanho com preço e estoque por variante
+                    </p>
+                  </CardContent>
+                </Card>
+              </div>
+            </CardContent>
+          </Card>
         )}
 
         {/* Informações Básicas */}
@@ -627,19 +603,25 @@ const ProductForm = () => {
                 id="short_description"
                 value={formData.short_description}
                 onChange={(e) => setFormData(prev => ({ ...prev, short_description: e.target.value }))}
-                placeholder="Resumo breve do produto/serviço"
+                placeholder="Resumo breve — aparece ao lado do produto na vitrine"
               />
+              <p className="text-xs text-muted-foreground mt-1">
+                Texto curto na coluna lateral da página pública.
+              </p>
             </div>
 
             <div>
               <Label htmlFor="description">Descrição Completa</Label>
-              <Textarea
+              <SystemRichEditor
                 id="description"
-                value={formData.description}
-                onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
+                value={formData.description || ""}
+                onChange={(html) => setFormData((prev) => ({ ...prev, description: html }))}
                 placeholder="Descreva detalhadamente seu produto ou serviço..."
-                rows={4}
+                className="mt-1 min-h-[160px] rounded-md border"
               />
+              <p className="text-xs text-muted-foreground mt-1">
+                Exibida abaixo das imagens e do bloco de compra na página pública.
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -647,9 +629,19 @@ const ProductForm = () => {
         {/* Preços e Estoque */}
         <Card>
           <CardHeader>
-            <CardTitle>Preços {isProduct && '& Estoque'}</CardTitle>
+            <CardTitle>
+              {isProduct && formData.has_variants
+                ? 'Custo (opcional)'
+                : `Preços ${isProduct ? '& Estoque' : ''}`}
+            </CardTitle>
+            {isProduct && formData.has_variants && (
+              <p className="text-sm text-muted-foreground">
+                Preço e estoque ficam em cada variante da grade abaixo. O produto usa o menor preço e a soma dos estoques ativos.
+              </p>
+            )}
           </CardHeader>
           <CardContent className="space-y-4">
+            {!(isProduct && formData.has_variants) && (
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="price">Preço de Venda (R$) *</Label>
@@ -664,7 +656,7 @@ const ProductForm = () => {
                     price: e.target.value ? parseFloat(e.target.value) : undefined 
                   }))}
                   placeholder="0.00"
-                  required
+                  required={!(isProduct && formData.has_variants)}
                 />
               </div>
               
@@ -686,9 +678,28 @@ const ProductForm = () => {
                 </div>
               )}
             </div>
+            )}
+
+            {isProduct && formData.has_variants && (
+              <div>
+                <Label htmlFor="cost">Custo (R$)</Label>
+                <Input
+                  id="cost"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={formData.cost || ''}
+                  onChange={(e) => setFormData(prev => ({ 
+                    ...prev, 
+                    cost: e.target.value ? parseFloat(e.target.value) : undefined 
+                  }))}
+                  placeholder="Custo do produto (referência)"
+                />
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-4">
-              {isProduct && (
+              {isProduct && !formData.has_variants && (
                 <>
                   <div>
                     <Label htmlFor="discount_price">Preço Promocional (R$)</Label>
@@ -795,11 +806,11 @@ const ProductForm = () => {
               )}
             </div>
 
-            {isProduct && (
+            {isProduct && !formData.has_variants && (
               <Separator />
             )}
 
-            {isProduct && (
+            {isProduct && !formData.has_variants && (
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="stock_quantity">Quantidade em Estoque</Label>
@@ -961,296 +972,15 @@ const ProductForm = () => {
           onSelect={handlePickLibraryImage}
         />
 
-        {/* Variações - Apenas para Produtos */}
-        {isProduct && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Variações do Produto</CardTitle>
-              <p className="text-sm text-muted-foreground">
-                Configure cores, tamanhos, peso ou outras variações do seu produto
-              </p>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="border rounded-lg p-4 space-y-4">
-                <div>
-                  <Label>Tipo de Variação</Label>
-                  <Select value={variationType} onValueChange={(value: any) => handleVariationTypeChange(value)}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione o tipo de variação" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="cor">Cor</SelectItem>
-                      <SelectItem value="tamanho">Tamanho</SelectItem>
-                      <SelectItem value="peso">Peso</SelectItem>
-                      <SelectItem value="custom">Personalizada</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {variationType === 'custom' && (
-                  <div>
-                    <Label>Nome da Variação</Label>
-                    <Input
-                      value={newVariation.name}
-                      onChange={(e) => setNewVariation(prev => ({ ...prev, name: e.target.value }))}
-                      placeholder="Ex: Material, Estilo, Acabamento..."
-                    />
-                  </div>
-                )}
-                
-                <div>
-                  <Label>Valores</Label>
-                  
-                  {variationType !== 'custom' && (
-                    <div className="mb-3">
-                      <p className="text-xs text-muted-foreground mb-2">Sugestões rápidas:</p>
-                      <div className="flex flex-wrap gap-2">
-                        {PREDEFINED_VARIATIONS[variationType].suggestions.map((suggestion) => (
-                          <Badge
-                            key={suggestion}
-                            variant="outline"
-                            className="cursor-pointer hover:bg-primary hover:text-primary-foreground"
-                            onClick={() => addSuggestedValue(suggestion)}
-                          >
-                            {variationType === 'cor' && COLOR_MAP[suggestion] && (
-                              <span
-                                className="inline-block w-4 h-4 rounded mr-1.5 border border-border"
-                                style={{ backgroundColor: COLOR_MAP[suggestion] }}
-                              />
-                            )}
-                            <Plus className="h-3 w-3 mr-1" />
-                            {suggestion}
-                          </Badge>
-                        ))}
-                      </div>
-                      
-                      {variationType === 'cor' && (
-                        <div className="mt-3 p-3 border rounded-lg bg-muted/50">
-                          <p className="text-xs font-medium mb-2">Cor Personalizada:</p>
-                          <div className="flex gap-2 mb-2">
-                            <Input
-                              value={customColorName}
-                              onChange={(e) => setCustomColorName(e.target.value)}
-                              placeholder="Nome da cor"
-                              className="flex-1"
-                            />
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="color"
-                                value={customColorValue}
-                                onChange={(e) => setCustomColorValue(e.target.value)}
-                                className="w-10 h-10 rounded border border-input cursor-pointer"
-                              />
-                              <Button
-                                type="button"
-                                size="sm"
-                                onClick={addCustomColor}
-                                disabled={!customColorName.trim()}
-                              >
-                                <Plus className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          </div>
-                          
-                          <div className="mt-2">
-                            <Label className="text-xs">Ou adicione uma textura (foto):</Label>
-                            <div className="mt-1 border-2 border-dashed border-border rounded-lg p-3 text-center hover:bg-muted/50 transition-colors cursor-pointer">
-                              <input
-                                type="file"
-                                accept="image/*"
-                                className="hidden"
-                                id="texture-upload"
-                                onChange={(e) => {
-                                  const file = e.target.files?.[0];
-                                  if (file) {
-                                    // TODO: Implementar upload real
-                                    toast({
-                                      title: "Em breve",
-                                      description: "Upload de texturas será implementado em breve"
-                                    });
-                                  }
-                                }}
-                              />
-                              <label htmlFor="texture-upload" className="cursor-pointer">
-                                <Upload className="mx-auto h-6 w-6 text-muted-foreground mb-1" />
-                                <p className="text-xs text-muted-foreground">
-                                  Clique para adicionar textura
-                                </p>
-                              </label>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  <div className="space-y-2">
-                    {newVariation.values.map((value, index) => (
-                      <div key={index} className="flex gap-2">
-                        <div className="relative flex-1">
-                          {variationType === 'cor' && getColorFromValue(value) && (
-                            <span
-                              className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded border border-border"
-                              style={{ backgroundColor: getColorFromValue(value)! }}
-                            />
-                          )}
-                          <Input
-                            value={getColorName(value)}
-                            onChange={(e) => updateVariationValue(index, e.target.value)}
-                            placeholder={variationType === 'custom' ? "Digite um valor..." : `Ex: ${PREDEFINED_VARIATIONS[variationType]?.suggestions[0] || 'Valor'}`}
-                            className={variationType === 'cor' && getColorFromValue(value) ? 'pl-11' : ''}
-                          />
-                        </div>
-                        {newVariation.values.length > 1 && (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => removeVariationValue(index)}
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={addVariationValue}
-                    className="mt-2"
-                  >
-                    <Plus className="h-4 w-4 mr-2" />
-                    Adicionar Valor
-                  </Button>
-                </div>
-                
-                <Button type="button" onClick={addVariation} className="w-full">
-                  Adicionar Variação
-                </Button>
-              </div>
-
-              {formData.variations && formData.variations.length > 0 && (
-                <>
-                  <div className="space-y-2">
-                    <Label>Variações Cadastradas</Label>
-                    {formData.variations.map((variation, index) => (
-                      <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
-                        <div className="flex-1">
-                          <span className="font-medium">{variation.name}:</span>
-                          <div className="flex flex-wrap gap-1 mt-1">
-                            {variation.values.map((value, vIndex) => (
-                              <Badge key={vIndex} variant="secondary" className="flex items-center gap-1.5">
-                                {variation.name === 'Cor' && getColorFromValue(value) && (
-                                  <span
-                                    className="inline-block w-3 h-3 rounded border border-border"
-                                    style={{ backgroundColor: getColorFromValue(value)! }}
-                                  />
-                                )}
-                                {getColorName(value)}
-                              </Badge>
-                            ))}
-                          </div>
-                        </div>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => removeVariation(index)}
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-
-                  <Separator className="my-4" />
-
-                  {/* Precificação por Variação */}
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <Label>Modo de Precificação</Label>
-                        <p className="text-sm text-muted-foreground">
-                          Defina um preço fixo ou personalize por variação
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm text-muted-foreground">
-                          {formData.pricing_mode === 'fixed' ? 'Preço Fixo' : 'Preço por Variação'}
-                        </span>
-                        <Switch
-                          checked={formData.pricing_mode === 'per_variation'}
-                          onCheckedChange={(checked) => {
-                            setFormData(prev => ({
-                              ...prev,
-                              pricing_mode: checked ? 'per_variation' : 'fixed'
-                            }));
-                          }}
-                        />
-                      </div>
-                    </div>
-
-                    {formData.pricing_mode === 'per_variation' && (
-                      <div className="space-y-3 mt-4">
-                        <Label>Preços por Variação</Label>
-                        <div className="grid gap-2">
-                          {generateVariationCombinations().map((combination, index) => (
-                            <div key={index} className="flex items-center gap-3 p-3 border rounded-lg bg-muted/50">
-                              <div className="flex-1">
-                                <div className="flex items-center gap-2">
-                                  {formData.variations?.map((variation, vIdx) => {
-                                    const parts = combination.split('-');
-                                    const value = parts[vIdx];
-                                    if (!value) return null;
-                                    
-                                    // Encontrar o valor original (com hex) para cores
-                                    const originalValue = variation.values.find(v => 
-                                      getColorName(v) === value
-                                    );
-                                    
-                                    return (
-                                      <React.Fragment key={vIdx}>
-                                        {vIdx > 0 && <span className="text-muted-foreground">×</span>}
-                                        <Badge variant="outline" className="flex items-center gap-1.5">
-                                          {variation.name === 'Cor' && originalValue && getColorFromValue(originalValue) && (
-                                            <span
-                                              className="inline-block w-3 h-3 rounded border border-border"
-                                              style={{ backgroundColor: getColorFromValue(originalValue)! }}
-                                            />
-                                          )}
-                                          {value}
-                                        </Badge>
-                                      </React.Fragment>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <Label className="text-sm text-muted-foreground whitespace-nowrap">R$</Label>
-                                <Input
-                                  type="number"
-                                  step="0.01"
-                                  value={getVariationPrice(combination) || ''}
-                                  onChange={(e) => updateVariationPrice(
-                                    combination, 
-                                    e.target.value ? parseFloat(e.target.value) : undefined
-                                  )}
-                                  placeholder="0,00"
-                                  className="w-32"
-                                />
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </>
-              )}
-            </CardContent>
-          </Card>
+        {isProduct && formData.has_variants && (
+          <ProductVariantsEditor
+            variations={formData.variations || []}
+            variants={formData.variants || []}
+            defaultPrice={formData.price}
+            onChange={({ variations, variants }) =>
+              setFormData((prev) => ({ ...prev, variations, variants }))
+            }
+          />
         )}
 
         {/* Contrato - Apenas para Serviços */}
@@ -1358,6 +1088,40 @@ const ProductForm = () => {
           </Button>
         </div>
       </form>
+      <AlertDialog open={pendingStructure === 'simple'} onOpenChange={(open) => !open && setPendingStructure(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Converter para produto simples?</AlertDialogTitle>
+            <AlertDialogDescription>
+              As variantes da grade serão removidas deste formulário. Ao salvar, elas deixam de existir no produto.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={() => applyStructureMode('simple')}>
+              Continuar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={pendingStructure === 'variable'} onOpenChange={(open) => !open && setPendingStructure(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Converter para produto variável?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Preço e estoque passam a ser definidos por combinação (Cor/Tamanho). Gere a grade antes de salvar.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={() => applyStructureMode('variable')}>
+              Continuar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
     </div>
   );
 };

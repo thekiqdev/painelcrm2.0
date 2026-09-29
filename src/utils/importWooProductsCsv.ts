@@ -1,4 +1,4 @@
-import type { ProductFormData, ProductVariation } from "@/types/products";
+import type { ProductFormData, ProductVariant, ProductVariation } from "@/types/products";
 
 export type WooProductImportPayload = ProductFormData & {
   status: "active" | "inactive" | "draft";
@@ -8,7 +8,7 @@ export type WooCsvImportPreparedRow = {
   lineNumber: number;
   sourceType: "simple" | "variable";
   externalId?: string;
-  /** Linhas de variation absorvidas neste produto (S4). */
+  /** Linhas de variation vinculadas a este produto. */
   variationLineNumbers?: number[];
   payload: WooProductImportPayload;
 };
@@ -303,19 +303,42 @@ function parseAttributeValues(raw: string): string[] {
     .filter(Boolean);
 }
 
-/** `id:1970` ou `1970` → `1970`. */
-export function parseWooParentRef(raw: string): string | undefined {
-  const t = raw.trim();
-  if (!t) return undefined;
-  const m = t.match(/^id:(\d+)$/i) || t.match(/^(\d+)$/);
-  return m?.[1];
+/** Color/Size → Cor/Tamanho; demais eixos fora do MVP. */
+export function mapWooAxisToPv(name: string): "Cor" | "Tamanho" | null {
+  const key = name
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "");
+  if (key === "cor" || key === "color" || key === "colour") return "Cor";
+  if (key === "tamanho" || key === "size") return "Tamanho";
+  return null;
 }
 
-function buildVariationsFromCells(
+function filterAndMapAxes(axes: ProductVariation[]): ProductVariation[] {
+  const byName = new Map<"Cor" | "Tamanho", Set<string>>();
+  for (const axis of axes) {
+    const mapped = mapWooAxisToPv(axis.name);
+    if (!mapped) continue;
+    const set = byName.get(mapped) ?? new Set<string>();
+    for (const v of axis.values) {
+      const clean = v.includes("|") ? v.split("|")[0]!.trim() : v.trim();
+      if (clean) set.add(clean);
+    }
+    byName.set(mapped, set);
+  }
+  const out: ProductVariation[] = [];
+  if (byName.has("Cor")) out.push({ name: "Cor", values: [...byName.get("Cor")!] });
+  if (byName.has("Tamanho")) out.push({ name: "Tamanho", values: [...byName.get("Tamanho")!] });
+  return out;
+}
+
+/** Extrai pares nome/valor das colunas de atributo (variation: valor único; variable: lista). */
+function extractRawAttrs(
   cells: string[],
   attrCols: AttrColumn[],
-): ProductVariation[] {
-  const out: ProductVariation[] = [];
+): { name: string; values: string[] }[] {
+  const out: { name: string; values: string[] }[] = [];
   for (const col of attrCols) {
     const name = (cells[col.nameCol] ?? "").trim();
     const valuesRaw = (cells[col.valuesCol] ?? "").trim();
@@ -327,34 +350,77 @@ function buildVariationsFromCells(
   return out;
 }
 
-/** Une valores das variations filhas nos atributos do pai (PI12). */
-function mergeVariationAttrsFromChildren(
-  parentVars: ProductVariation[],
+/**
+ * Monta option1/option2 canônicos (Cor → Tamanho) a partir dos atributos da variation.
+ * Retorna null se não houver Cor nem Tamanho.
+ */
+export function buildVariantOptionsFromAttrs(
+  attrs: { name: string; values: string[] }[],
+): Pick<
+  ProductVariant,
+  "option1_name" | "option1_value" | "option2_name" | "option2_value"
+> | null {
+  let cor: string | undefined;
+  let tam: string | undefined;
+  for (const a of attrs) {
+    const mapped = mapWooAxisToPv(a.name);
+    const value = a.values[0]?.includes("|")
+      ? a.values[0].split("|")[0]!.trim()
+      : a.values[0]?.trim();
+    if (!mapped || !value) continue;
+    if (mapped === "Cor") cor = value;
+    if (mapped === "Tamanho") tam = value;
+  }
+  if (cor && tam) {
+    return {
+      option1_name: "Cor",
+      option1_value: cor,
+      option2_name: "Tamanho",
+      option2_value: tam,
+    };
+  }
+  if (cor) {
+    return {
+      option1_name: "Cor",
+      option1_value: cor,
+      option2_name: null,
+      option2_value: null,
+    };
+  }
+  if (tam) {
+    return {
+      option1_name: "Tamanho",
+      option1_value: tam,
+      option2_name: null,
+      option2_value: null,
+    };
+  }
+  return null;
+}
+
+/** `id:1970` ou `1970` → `1970`. */
+export function parseWooParentRef(raw: string): string | undefined {
+  const t = raw.trim();
+  if (!t) return undefined;
+  const m = t.match(/^id:(\d+)$/i) || t.match(/^(\d+)$/);
+  return m?.[1];
+}
+
+function mergeAxesFromParentAndChildren(
+  parentCells: string[],
   children: ParsedLine[],
   attrCols: AttrColumn[],
-  getCell: (cells: string[], col: number) => string,
 ): ProductVariation[] {
-  if (attrCols.length === 0) return parentVars;
-
-  const byName = new Map<string, Set<string>>();
-  for (const v of parentVars) {
-    byName.set(v.name, new Set(v.values));
-  }
-
+  const raw: ProductVariation[] = extractRawAttrs(parentCells, attrCols).map((a) => ({
+    name: a.name,
+    values: a.values,
+  }));
   for (const child of children) {
-    for (const col of attrCols) {
-      const name = getCell(child.cells, col.nameCol).trim();
-      const valuesRaw = getCell(child.cells, col.valuesCol).trim();
-      if (!name || !valuesRaw) continue;
-      const set = byName.get(name) ?? new Set<string>();
-      for (const val of parseAttributeValues(valuesRaw)) set.add(val);
-      byName.set(name, set);
+    for (const a of extractRawAttrs(child.cells, attrCols)) {
+      raw.push({ name: a.name, values: a.values });
     }
   }
-
-  return [...byName.entries()]
-    .filter(([, values]) => values.size > 0)
-    .map(([name, values]) => ({ name, values: [...values] }));
+  return filterAndMapAxes(raw);
 }
 
 type PriceStockParse =
@@ -411,6 +477,9 @@ function buildBasePayload(
     stock_quantity?: number;
     min_stock_quantity?: number;
     variations?: ProductVariation[];
+    has_variants?: boolean;
+    variants?: ProductVariant[];
+    external_id?: string;
   },
 ): WooProductImportPayload {
   const { status, is_public } = parsePublished(get("published"));
@@ -428,12 +497,16 @@ function buildBasePayload(
     images,
     secondary_images: [],
     variations: extras.variations ?? [],
+    has_variants: extras.has_variants ?? false,
+    track_inventory: true,
+    variants: extras.variants ?? [],
     is_public,
     status,
     has_contract: false,
     is_recurring: false,
   };
   if (sku) payload.sku = sku;
+  if (extras.external_id) payload.external_id = extras.external_id;
   if (category) payload.category = category;
   if (extras.price !== undefined) payload.price = extras.price;
   if (extras.discount_price !== undefined) payload.discount_price = extras.discount_price;
@@ -452,7 +525,7 @@ function buildBasePayload(
 
 /**
  * Converte CSV de exportação WooCommerce (PT ou EN) em payloads de produtos
- * **simple** e **variable** (variações agregadas no pai — PI13).
+ * **simple** e **variable** (PV10: cada variation → 1 item em variants[]).
  */
 export function prepareWooProductsFromCsv(csvText: string): {
   prepared: WooCsvImportPreparedRow[];
@@ -490,8 +563,6 @@ export function prepareWooProductsFromCsv(csvText: string): {
     if (idx < 0) return "";
     return (cells[idx] ?? "").trim();
   };
-
-  const getCell = (cells: string[], col: number): string => (cells[col] ?? "").trim();
 
   const parsed: ParsedLine[] = [];
   const skipped: WooCsvImportSkip[] = [];
@@ -555,7 +626,6 @@ export function prepareWooProductsFromCsv(csvText: string): {
   }
 
   const prepared: WooCsvImportPreparedRow[] = [];
-  const consumedVariationLines = new Set<number>();
 
   const pushPrepared = (row: WooCsvImportPreparedRow) => {
     if (prepared.length >= WOO_IMPORT_MAX_PREPARED) {
@@ -588,6 +658,9 @@ export function prepareWooProductsFromCsv(csvText: string): {
       stock_quantity: ps.stock_quantity,
       min_stock_quantity: ps.min_stock_quantity,
       variations: [],
+      has_variants: false,
+      variants: [],
+      external_id: row.externalId,
     });
     pushPrepared({
       lineNumber: row.lineNumber,
@@ -597,7 +670,7 @@ export function prepareWooProductsFromCsv(csvText: string): {
     });
   }
 
-  // --- variable (+ variations absorvidas) ---
+  // --- variable (+ variations → product_variants) ---
   for (const row of parsed) {
     if (row.type !== "variable") continue;
     if (!row.name) {
@@ -615,56 +688,98 @@ export function prepareWooProductsFromCsv(csvText: string): {
     const children =
       row.externalId != null ? variationsByParent.get(row.externalId) ?? [] : [];
 
-    for (const child of children) {
-      consumedVariationLines.add(child.lineNumber);
-    }
+    const variations = mergeAxesFromParentAndChildren(row.cells, children, attrCols);
 
-    let variations = buildVariationsFromCells(row.cells, attrCols);
-    variations = mergeVariationAttrsFromChildren(variations, children, attrCols, getCell);
+    const variants: ProductVariant[] = [];
+    const variantSkipReasons: string[] = [];
+    let position = 0;
 
-    // PI13: preço do pai = menor preço efetivo das variations (se houver)
-    const childPrices: number[] = [];
-    let stockSum = 0;
-    let stockSeen = false;
     for (const child of children) {
       const cGet = (role: ColumnRole) => getFrom(child.cells, role);
       const cps = parsePriceStockFields(cGet);
-      if (!cps.ok) continue;
-      const unit = effectiveUnitPrice(cps.price, cps.discount_price);
-      if (unit != null) childPrices.push(unit);
-      if (cps.stock_quantity != null) {
-        stockSum += cps.stock_quantity;
-        stockSeen = true;
+      if (!cps.ok) {
+        variantSkipReasons.push(`L${child.lineNumber}: ${cps.reason}`);
+        skipped.push({ line: child.lineNumber, reason: cps.reason });
+        continue;
       }
+      const opts = buildVariantOptionsFromAttrs(extractRawAttrs(child.cells, attrCols));
+      if (!opts) {
+        const reason =
+          "Variação sem atributo Cor/Tamanho (Color/Size) — ignorada no MVP.";
+        variantSkipReasons.push(`L${child.lineNumber}: ${reason}`);
+        skipped.push({ line: child.lineNumber, reason });
+        continue;
+      }
+      const childSku = cGet("sku").trim() || undefined;
+      const childImages = parseImageUrls(cGet("images"));
+      variants.push({
+        ...opts,
+        sku: childSku ?? null,
+        price: cps.price ?? null,
+        discount_price: cps.discount_price ?? null,
+        stock_quantity: cps.stock_quantity ?? 0,
+        min_stock_quantity: cps.min_stock_quantity ?? null,
+        images: childImages,
+        is_active: true,
+        position: position++,
+        external_id: child.externalId ?? null,
+      });
     }
 
-    let price = ps.price;
-    let discount_price = ps.discount_price;
-    if (childPrices.length > 0) {
-      price = Math.min(...childPrices);
-      // Preço agregado já é o mínimo efetivo; não forçar discount no pai
-      discount_price = undefined;
+    // Fallback PI13: zero variations no arquivo → produto sem grade
+    if (children.length === 0) {
+      const payload = buildBasePayload(get, row.name, {
+        price: ps.price,
+        discount_price: ps.discount_price,
+        stock_quantity: ps.stock_quantity,
+        min_stock_quantity: ps.min_stock_quantity,
+        variations,
+        has_variants: false,
+        variants: [],
+        external_id: row.externalId,
+      });
+      pushPrepared({
+        lineNumber: row.lineNumber,
+        sourceType: "variable",
+        externalId: row.externalId,
+        variationLineNumbers: [],
+        payload,
+      });
+      continue;
     }
 
-    let stock_quantity = ps.stock_quantity;
-    if (stock_quantity == null && stockSeen) {
-      stock_quantity = stockSum;
+    if (variants.length === 0) {
+      skipped.push({
+        line: row.lineNumber,
+        reason:
+          "Produto variável sem variantes Cor/Tamanho importáveis." +
+          (variantSkipReasons.length ? ` (${variantSkipReasons[0]})` : ""),
+      });
+      continue;
     }
+
+    const activePrices = variants
+      .map((v) => effectiveUnitPrice(v.price ?? undefined, v.discount_price ?? undefined))
+      .filter((p): p is number => p != null);
+    const stockSum = variants.reduce((s, v) => s + (Number(v.stock_quantity) || 0), 0);
 
     const payload = buildBasePayload(get, row.name, {
-      price,
-      discount_price,
-      stock_quantity,
+      price: activePrices.length > 0 ? Math.min(...activePrices) : ps.price,
+      discount_price: undefined,
+      stock_quantity: stockSum,
       min_stock_quantity: ps.min_stock_quantity,
       variations,
+      has_variants: true,
+      variants,
+      external_id: row.externalId,
     });
+    // Pai variável: SKU fica nas variantes
+    delete payload.sku;
 
-    // Se pai sem imagens, usa a 1ª imagem de uma variation
     if (payload.images.length === 0) {
-      for (const child of children) {
-        const imgs = parseImageUrls(getFrom(child.cells, "images"));
-        if (imgs.length > 0) {
-          payload.images = imgs.slice(0, MAX_IMAGES);
+      for (const v of variants) {
+        if (v.images?.length) {
+          payload.images = v.images.slice(0, MAX_IMAGES);
           break;
         }
       }

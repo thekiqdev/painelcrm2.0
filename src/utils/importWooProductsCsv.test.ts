@@ -3,6 +3,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  buildVariantOptionsFromAttrs,
+  mapWooAxisToPv,
   parseWooCategory,
   parseWooDecimal,
   parseWooParentRef,
@@ -42,6 +44,28 @@ describe("parseWooParentRef", () => {
   });
 });
 
+describe("mapWooAxisToPv / buildVariantOptionsFromAttrs", () => {
+  it("mapeia Color/Size", () => {
+    expect(mapWooAxisToPv("Color")).toBe("Cor");
+    expect(mapWooAxisToPv("size")).toBe("Tamanho");
+    expect(mapWooAxisToPv("Peso")).toBeNull();
+  });
+
+  it("monta Cor×Tamanho", () => {
+    expect(
+      buildVariantOptionsFromAttrs([
+        { name: "Color", values: ["Red"] },
+        { name: "Size", values: ["M"] },
+      ]),
+    ).toEqual({
+      option1_name: "Cor",
+      option1_value: "Red",
+      option2_name: "Tamanho",
+      option2_value: "M",
+    });
+  });
+});
+
 describe("stripHtmlToText", () => {
   it("remove tags e normaliza quebras", () => {
     expect(stripHtmlToText("<p>Olá</p><br/>Mundo")).toContain("Olá");
@@ -50,7 +74,7 @@ describe("stripHtmlToText", () => {
 });
 
 describe("prepareWooProductsFromCsv", () => {
-  it("fixture: 2 simple + 1 variable com atributos e preço min das variations", () => {
+  it("fixture: 2 simple + 1 variable com variants[] reais (PV10)", () => {
     const { prepared, skipped } = prepareWooProductsFromCsv(sampleCsv);
     expect(prepared).toHaveLength(3);
 
@@ -64,45 +88,94 @@ describe("prepareWooProductsFromCsv", () => {
       "BOLSA TOTE",
     ]);
     expect(simple[0].payload.price).toBe(199.99);
-    expect(simple[0].payload.category).toBe("Bolsas");
+    expect(simple[0].payload.has_variants).toBe(false);
+    expect(simple[0].payload.external_id).toBe("2020");
     expect(simple[0].payload.images[0]).toMatch(/^https:\/\/example\.com\//);
 
     const parent = variable[0];
     expect(parent.payload.name).toMatch(/SIGNATURE CAP/);
+    expect(parent.payload.has_variants).toBe(true);
+    expect(parent.payload.external_id).toBe("1970");
     expect(parent.payload.price).toBe(69.9);
-    expect(parent.payload.variations?.length).toBe(1);
+    expect(parent.payload.variants).toHaveLength(2);
+    expect(parent.payload.variants?.[0]).toMatchObject({
+      option1_name: "Cor",
+      option1_value: "Azul claro",
+      price: 69.9,
+      external_id: "1976",
+    });
+    expect(parent.payload.variants?.[0].images?.[0]).toMatch(/demo-1976/);
+    expect(parent.payload.variants?.[1]).toMatchObject({
+      option1_value: "Branco",
+      external_id: "1977",
+    });
     expect(parent.payload.variations?.[0].name).toBe("Cor");
     expect(parent.payload.variations?.[0].values).toEqual(
       expect.arrayContaining(["Azul claro", "Branco", "Marron", "Preto", "Rosa"]),
     );
-    expect(parent.variationLineNumbers).toEqual([3, 4]); // fixture lines: header=1, var=2, v1=3, v2=4
+    expect(parent.variationLineNumbers).toEqual([3, 4]);
     expect(skipped.some((s) => /órfã|Variação/i.test(s.reason))).toBe(false);
   });
 
-  it("aceita cabeçalhos EN: simple + variable com variation", () => {
+  it("aceita cabeçalhos EN: simple + variable com variants reais", () => {
     const csv = [
       "ID,Type,SKU,Name,Published,Short description,Description,Regular price,Sale price,Stock,Categories,Images,Parent,Attribute 1 name,Attribute 1 value(s)",
       '10,simple,SKU-1,Demo Cap,1,"Short","<p>Long</p>",69.90,49.90,5,Hats,"https://example.com/a.jpg, https://example.com/b.jpg",,,',
       '11,variable,,Parent Cap,1,,,,,,Hats,"https://example.com/p.jpg",,Color,"Red, Blue"',
-      "12,variation,,Parent Cap - Red,1,,,,59.90,,,,id:11,Color,Red",
-      "13,variation,,Parent Cap - Blue,1,,,,79.90,,,,id:11,Color,Blue",
+      '12,variation,SKU-R,Parent Cap - Red,1,,,59.90,,2,,"https://example.com/r.jpg",id:11,Color,Red',
+      '13,variation,SKU-B,Parent Cap - Blue,1,,,79.90,,3,,"https://example.com/b.jpg",id:11,Color,Blue',
     ].join("\n");
 
     const { prepared, skipped } = prepareWooProductsFromCsv(csv);
+    expect(skipped).toEqual([]);
     expect(prepared).toHaveLength(2);
-    expect(skipped).toHaveLength(0);
 
     const simple = prepared.find((p) => p.sourceType === "simple")!;
     expect(simple.payload.name).toBe("Demo Cap");
     expect(simple.payload.price).toBe(69.9);
     expect(simple.payload.discount_price).toBe(49.9);
     expect(simple.payload.description).toBe("Long");
+    expect(simple.payload.has_variants).toBe(false);
 
     const variable = prepared.find((p) => p.sourceType === "variable")!;
     expect(variable.payload.name).toBe("Parent Cap");
-    expect(variable.payload.price).toBe(59.9); // min das variations
-    expect(variable.payload.variations).toEqual([{ name: "Color", values: ["Red", "Blue"] }]);
+    expect(variable.payload.has_variants).toBe(true);
+    expect(variable.payload.price).toBe(59.9);
+    expect(variable.payload.stock_quantity).toBe(5);
+    expect(variable.payload.variations).toEqual([{ name: "Cor", values: ["Red", "Blue"] }]);
+    expect(variable.payload.variants).toHaveLength(2);
+    expect(variable.payload.variants?.[0]).toMatchObject({
+      option1_name: "Cor",
+      option1_value: "Red",
+      sku: "SKU-R",
+      price: 59.9,
+      stock_quantity: 2,
+      external_id: "12",
+    });
     expect(variable.variationLineNumbers).toHaveLength(2);
+  });
+
+  it("variable Cor×Tamanho gera opções em 2 eixos", () => {
+    const csv = [
+      "ID,Type,Name,Published,Regular price,Parent,Attribute 1 name,Attribute 1 value(s),Attribute 2 name,Attribute 2 value(s)",
+      "1,variable,Shirt,1,,,Color,\"Red, Blue\",Size,\"S, M\"",
+      "2,variation,Shirt Red S,1,10,id:1,Color,Red,Size,S",
+      "3,variation,Shirt Blue M,1,12,id:1,Color,Blue,Size,M",
+    ].join("\n");
+    const { prepared } = prepareWooProductsFromCsv(csv);
+    const v = prepared[0]!;
+    expect(v.payload.has_variants).toBe(true);
+    expect(v.payload.variants).toHaveLength(2);
+    expect(v.payload.variants?.[0]).toMatchObject({
+      option1_name: "Cor",
+      option1_value: "Red",
+      option2_name: "Tamanho",
+      option2_value: "S",
+    });
+    expect(v.payload.variations).toEqual([
+      { name: "Cor", values: expect.arrayContaining(["Red", "Blue"]) },
+      { name: "Tamanho", values: expect.arrayContaining(["S", "M"]) },
+    ]);
   });
 
   it("pula variation órfã", () => {

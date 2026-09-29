@@ -19,6 +19,8 @@ export async function fetchStoreCheckoutClientEligibility(
 export interface StoreCheckoutCreateBody {
   store_slug: string;
   product_id: string;
+  /** Obrigatório se o produto tem variantes. */
+  variant_id?: string | null;
   quantity: 1;
   customer_name: string;
   customer_email: string;

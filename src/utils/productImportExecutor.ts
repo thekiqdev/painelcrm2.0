@@ -40,34 +40,43 @@ function throwIfAborted(signal?: AbortSignal) {
   }
 }
 
-/** Troca URLs externas por URLs do catálogo; em falha mantém a URL original. */
-export async function rehostProductImages(
-  payload: WooProductImportPayload,
-  signal?: AbortSignal,
-): Promise<WooProductImportPayload> {
-  const images = payload.images ?? [];
-  if (images.length === 0) return payload;
-
-  const nextImages: string[] = [];
-  for (const url of images) {
+async function rehostUrlList(urls: string[], signal?: AbortSignal): Promise<string[]> {
+  const next: string[] = [];
+  for (const url of urls) {
     throwIfAborted(signal);
     if (!/^https?:\/\//i.test(url)) {
-      nextImages.push(url);
+      next.push(url);
       continue;
     }
-    // Já hospedada no nosso catálogo / media
     if (url.includes("/api/public/catalog-media/") || url.includes("/api/media/v1/raw")) {
-      nextImages.push(url);
+      next.push(url);
       continue;
     }
     try {
       const hosted = await importCatalogImageFromUrl(url, "product");
-      nextImages.push(hosted);
+      next.push(hosted);
     } catch {
-      nextImages.push(url);
+      next.push(url);
     }
   }
-  return { ...payload, images: nextImages };
+  return next;
+}
+
+/** Troca URLs externas (pai + variantes) por URLs do catálogo; em falha mantém a URL original. */
+export async function rehostProductImages(
+  payload: WooProductImportPayload,
+  signal?: AbortSignal,
+): Promise<WooProductImportPayload> {
+  const images = await rehostUrlList(payload.images ?? [], signal);
+  const variants = payload.variants?.length
+    ? await Promise.all(
+        payload.variants.map(async (v) => ({
+          ...v,
+          images: await rehostUrlList(v.images ?? [], signal),
+        })),
+      )
+    : payload.variants;
+  return { ...payload, images, variants };
 }
 
 export function buildSkuIndex(products: Product[]): Map<string, Product> {
@@ -80,8 +89,32 @@ export function buildSkuIndex(products: Product[]): Map<string, Product> {
   return map;
 }
 
+export function buildExternalIdIndex(products: Product[]): Map<string, Product> {
+  const map = new Map<string, Product>();
+  for (const p of products) {
+    const key = (p.external_id ?? "").trim();
+    if (!key || map.has(key)) continue;
+    map.set(key, p);
+  }
+  return map;
+}
+
+function findExistingProduct(
+  row: WooCsvImportPreparedRow,
+  options: { upsertBySku: boolean; skuIndex: Map<string, Product>; externalIdIndex: Map<string, Product> },
+): Product | undefined {
+  if (!options.upsertBySku) return undefined;
+  const ext = (row.externalId || row.payload.external_id || "").trim();
+  if (ext && options.externalIdIndex.has(ext)) {
+    return options.externalIdIndex.get(ext);
+  }
+  const skuKey = normalizeProductSkuKey(row.payload.sku);
+  if (skuKey) return options.skuIndex.get(skuKey);
+  return undefined;
+}
+
 /**
- * Executa create/update em lote com opções S5 (rehost + upsert por SKU).
+ * Executa create/update em lote com opções S5 (rehost + upsert por SKU / external_id).
  */
 export async function runWooProductImport(
   rows: WooCsvImportPreparedRow[],
@@ -96,9 +129,11 @@ export async function runWooProductImport(
   let cancelled = false;
 
   let skuIndex = new Map<string, Product>();
+  let externalIdIndex = new Map<string, Product>();
   if (options.upsertBySku) {
     const existing = await productsService.getProducts();
     skuIndex = buildSkuIndex(existing);
+    externalIdIndex = buildExternalIdIndex(existing);
   }
 
   try {
@@ -114,8 +149,11 @@ export async function runWooProductImport(
               payload = await rehostProductImages(payload, options.signal);
             }
 
-            const skuKey = normalizeProductSkuKey(payload.sku);
-            const match = options.upsertBySku && skuKey ? skuIndex.get(skuKey) : undefined;
+            const match = findExistingProduct(row, {
+              upsertBySku: options.upsertBySku,
+              skuIndex,
+              externalIdIndex,
+            });
 
             if (match) {
               await productsService.updateProduct(match.id, payload);
@@ -123,8 +161,11 @@ export async function runWooProductImport(
             } else {
               const createdProduct = await productsService.createProduct(payload);
               created += 1;
-              if (options.upsertBySku && skuKey) {
-                skuIndex.set(skuKey, createdProduct);
+              if (options.upsertBySku) {
+                const skuKey = normalizeProductSkuKey(payload.sku);
+                if (skuKey) skuIndex.set(skuKey, createdProduct);
+                const ext = (payload.external_id || row.externalId || "").trim();
+                if (ext) externalIdIndex.set(ext, createdProduct);
               }
             }
           } catch (err) {

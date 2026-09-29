@@ -4,7 +4,7 @@ import {
   hasWooCsvHeaders,
   normalizeProductSkuKey,
 } from "@/utils/importWooProductsCsv";
-import { buildSkuIndex } from "@/utils/productImportExecutor";
+import { buildExternalIdIndex, buildSkuIndex } from "@/utils/productImportExecutor";
 import type { Product } from "@/types/products";
 
 describe("decodeWooCsvBuffer / hasWooCsvHeaders", () => {
@@ -26,7 +26,7 @@ describe("decodeWooCsvBuffer / hasWooCsvHeaders", () => {
   });
 });
 
-describe("normalizeProductSkuKey / buildSkuIndex", () => {
+describe("normalizeProductSkuKey / buildSkuIndex / buildExternalIdIndex", () => {
   it("normaliza SKU case-insensitive", () => {
     expect(normalizeProductSkuKey(" Abc-1 ")).toBe("abc-1");
     expect(normalizeProductSkuKey("")).toBe("");
@@ -40,6 +40,16 @@ describe("normalizeProductSkuKey / buildSkuIndex", () => {
     ] as Product[];
     const map = buildSkuIndex(products);
     expect(map.get("sku-a")?.id).toBe("1");
+    expect(map.size).toBe(1);
+  });
+
+  it("indexa por external_id", () => {
+    const products = [
+      { id: "1", external_id: "1970", name: "A" },
+      { id: "2", name: "sem" },
+    ] as Product[];
+    const map = buildExternalIdIndex(products);
+    expect(map.get("1970")?.id).toBe("1");
     expect(map.size).toBe(1);
   });
 });

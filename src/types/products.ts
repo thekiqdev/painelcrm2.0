@@ -9,6 +9,28 @@ export interface VariationPrice {
   price?: number;
 }
 
+/** Variante persistida (PV S1) — grade Cor/Tamanho. */
+export interface ProductVariant {
+  id?: string;
+  product_id?: string;
+  tenant_id?: string;
+  sku?: string | null;
+  option1_name: string;
+  option1_value: string;
+  option2_name?: string | null;
+  option2_value?: string | null;
+  price?: number | null;
+  discount_price?: number | null;
+  stock_quantity?: number;
+  min_stock_quantity?: number | null;
+  images?: string[];
+  is_active?: boolean;
+  position?: number;
+  external_id?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface Product {
   id: string;
   user_id: string;
@@ -26,8 +48,18 @@ export interface Product {
   images: string[];
   secondary_images?: string[]; // imagens secundárias
   features: string[];
-  variations?: ProductVariation[]; // para produtos
+  variations?: ProductVariation[]; // eixos (espelho UI/import)
+  /** false = simples; true = grade em variants[] */
+  has_variants?: boolean;
+  track_inventory?: boolean;
+  variants?: ProductVariant[];
+  /** ID externo (WooCommerce) para reimport */
+  external_id?: string | null;
+  /** Presente na listagem admin (GET /api/products). */
+  variants_count?: number;
+  /** @deprecated front-only; substituído por variants (PV) */
   pricing_mode?: 'fixed' | 'per_variation';
+  /** @deprecated front-only; substituído por variants (PV) */
   variation_prices?: VariationPrice[];
   category?: string;
   status: 'active' | 'inactive' | 'draft';
@@ -42,7 +74,23 @@ export interface Product {
   updated_at?: string;
 }
 
-/** Resposta das APIs públicas de catálogo (V2-1); sem dados internos nem variations. */
+/** Variante exposta na API pública de detalhe (PV14). */
+export interface PublicCatalogVariant {
+  id: string;
+  sku?: string | null;
+  option1_name: string;
+  option1_value: string;
+  option2_name?: string | null;
+  option2_value?: string | null;
+  price?: number | null;
+  discount_price?: number | null;
+  stock_quantity?: number;
+  images?: string[];
+  is_active?: boolean;
+  position?: number;
+}
+
+/** Resposta das APIs públicas de catálogo (V2-1 + PV S4). */
 export interface PublicCatalogProduct {
   id: string;
   name: string;
@@ -59,11 +107,18 @@ export interface PublicCatalogProduct {
   duration_hours?: number | null;
   is_recurring?: boolean | null;
   recurrence_interval?: string | null;
+  has_variants?: boolean;
+  track_inventory?: boolean;
+  stock_quantity?: number | null;
+  /** Maior preço entre variantes ativas (lista/detalhe). */
+  price_max?: number | null;
+  /** Presente no detalhe quando has_variants. */
+  variants?: PublicCatalogVariant[];
 }
 
 /** Preço unitário exibido na vitrine/checkout (menor entre preço e desconto quando aplicável). */
 export function resolvePublicCatalogUnitPrice(
-  row: Pick<PublicCatalogProduct, 'price' | 'discount_price'>
+  row: Pick<PublicCatalogProduct, 'price' | 'discount_price'> | Pick<PublicCatalogVariant, 'price' | 'discount_price'>
 ): number | null {
   const rawPrice = row.price != null ? Number(row.price) : null;
   const rawDisc = row.discount_price != null ? Number(row.discount_price) : null;
@@ -75,6 +130,22 @@ export function resolvePublicCatalogUnitPrice(
   }
   if (value == null || Number.isNaN(value) || value <= 0) return null;
   return value;
+}
+
+/** Texto de preço na listagem: «A partir de» se variável com faixa. */
+export function formatPublicCatalogListPrice(product: PublicCatalogProduct): string | null {
+  const unit = resolvePublicCatalogUnitPrice(product);
+  if (unit == null) return null;
+  const fmt = (n: number) =>
+    n.toLocaleString('pt-BR', { style: 'currency', currency: product.currency || 'BRL' });
+  if (product.has_variants) {
+    const max = product.price_max != null ? Number(product.price_max) : null;
+    if (max != null && max > unit) {
+      return `A partir de ${fmt(unit)}`;
+    }
+    return `A partir de ${fmt(unit)}`;
+  }
+  return fmt(unit);
 }
 
 export type StorefrontThemeKey = 'default' | 'minimal' | 'moderno' | 'luzmodas';
@@ -93,6 +164,17 @@ export interface StoreProfile {
   is_active: boolean;
   /** Opt-in: Comprar com checkout na vitrine (e flags globais). Ausente em respostas antigas = false. */
   store_checkout_enabled?: boolean;
+  /**
+   * Compra via WhatsApp na vitrine (além do checkout).
+   * Ausente em respostas antigas = true (comportamento histórico).
+   */
+  store_whatsapp_purchase_enabled?: boolean;
+  /**
+   * Template da mensagem de compra via WhatsApp.
+   * Placeholders: {{product_name}}, {{product_type}}, {{variant}}, {{store_name}}.
+   * Vazio/ausente = mensagem padrão do sistema.
+   */
+  store_whatsapp_purchase_message?: string | null;
   /** Catálogo: produtos habilitados (default true se ausente). */
   enable_products?: boolean;
   /** Catálogo: serviços habilitados (default true se ausente). */
@@ -122,7 +204,14 @@ export interface ProductFormData {
   images: string[];
   secondary_images?: string[];
   variations?: ProductVariation[];
+  has_variants?: boolean;
+  track_inventory?: boolean;
+  variants?: ProductVariant[];
+  /** ID externo (WooCommerce) para reimport */
+  external_id?: string | null;
+  /** @deprecated front-only; substituído por variants (PV) */
   pricing_mode?: 'fixed' | 'per_variation';
+  /** @deprecated front-only; substituído por variants (PV) */
   variation_prices?: VariationPrice[];
   duration_hours?: number;
   responsible_id?: string;
@@ -139,6 +228,7 @@ export interface CartItem {
   cart_id: string;
   product_id: string;
   quantity: number;
+  variant_id?: string | null;
   selected_variation?: any;
   product?: Product;
 }
@@ -161,6 +251,7 @@ export interface OrderItemRow {
   quantity: number;
   unit_price: number;
   total_price: number;
+  variant_id?: string | null;
   selected_variation?: unknown;
 }
 

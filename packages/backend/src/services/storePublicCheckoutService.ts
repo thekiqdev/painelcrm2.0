@@ -10,10 +10,18 @@ import {
   parseCpfCnpjDigits,
   assertCpfCnpjValidOrThrow,
 } from './storeCheckoutClientResolver.js';
+import {
+  InsufficientStockError,
+  InventoryValidationError,
+  decrementInventoryForCheckout,
+  hasEnoughStock,
+} from './productInventoryService.js';
 
 export interface StoreCheckoutCreateInput {
   store_slug: string;
   product_id: string;
+  /** Obrigatório quando o produto tem has_variants (PV S4/S5). */
+  variant_id?: string | null;
   quantity: number;
   customer_name: string;
   customer_email: string;
@@ -216,8 +224,14 @@ export async function createStorePublicCheckout(
     type: string;
     price: string | null;
     discount_price: string | null;
+    has_variants: boolean;
+    track_inventory: boolean;
+    stock_quantity: number | null;
   }>(
-    `SELECT p.id, p.name, p.type, p.price, p.discount_price
+    `SELECT p.id, p.name, p.type, p.price, p.discount_price,
+            COALESCE(p.has_variants, false) AS has_variants,
+            COALESCE(p.track_inventory, true) AS track_inventory,
+            p.stock_quantity
      FROM products p
      INNER JOIN store_profiles sp ON sp.user_id = p.user_id AND lower(trim(sp.store_slug)) = $1
      WHERE p.id = $2
@@ -229,7 +243,82 @@ export async function createStorePublicCheckout(
     throw Object.assign(new Error('Produto não encontrado ou indisponível para venda'), { statusCode: 404 });
   }
   const product = productRes.rows[0];
-  const unitPriceBrl = resolvePublicUnitPriceBrl(product);
+
+  let unitPriceBrl: number | null = null;
+  let variantId: string | null = null;
+  let selectedVariation: Record<string, unknown> | null = null;
+  let lineName = product.name;
+
+  if (product.has_variants) {
+    const vid = typeof input.variant_id === 'string' ? input.variant_id.trim() : '';
+    if (!vid) {
+      throw Object.assign(new Error('Selecione uma variante do produto'), {
+        statusCode: 400,
+        field: 'variant_id',
+      });
+    }
+    const vr = await pool.query<{
+      id: string;
+      sku: string | null;
+      option1_name: string;
+      option1_value: string;
+      option2_name: string | null;
+      option2_value: string | null;
+      price: string | null;
+      discount_price: string | null;
+      is_active: boolean;
+      stock_quantity: number;
+    }>(
+      `SELECT id, sku, option1_name, option1_value, option2_name, option2_value,
+              price, discount_price, is_active, stock_quantity
+       FROM product_variants
+       WHERE id = $1 AND product_id = $2`,
+      [vid, product.id]
+    );
+    if (vr.rows.length === 0 || !vr.rows[0].is_active) {
+      throw Object.assign(new Error('Variante não encontrada ou indisponível'), {
+        statusCode: 404,
+        field: 'variant_id',
+      });
+    }
+    const variant = vr.rows[0];
+    if (product.track_inventory && !hasEnoughStock(variant.stock_quantity, qty)) {
+      throw Object.assign(
+        new Error(
+          `Estoque insuficiente para a variante selecionada (disponível: ${Number(variant.stock_quantity) || 0}).`
+        ),
+        { statusCode: 409, code: 'INSUFFICIENT_STOCK', field: 'variant_id' }
+      );
+    }
+    unitPriceBrl = resolvePublicUnitPriceBrl(variant);
+    variantId = variant.id;
+    const label = variant.option2_value
+      ? `${variant.option1_value} × ${variant.option2_value}`
+      : variant.option1_value;
+    lineName = `${product.name} — ${label}`;
+    selectedVariation = {
+      variant_id: variant.id,
+      sku: variant.sku,
+      label,
+      options: {
+        [variant.option1_name]: variant.option1_value,
+        ...(variant.option2_name && variant.option2_value
+          ? { [variant.option2_name]: variant.option2_value }
+          : {}),
+      },
+    };
+  } else {
+    unitPriceBrl = resolvePublicUnitPriceBrl(product);
+    if (product.track_inventory && !hasEnoughStock(product.stock_quantity, qty)) {
+      throw Object.assign(
+        new Error(
+          `Estoque insuficiente (disponível: ${Number(product.stock_quantity) || 0}).`
+        ),
+        { statusCode: 409, code: 'INSUFFICIENT_STOCK', field: 'product_id' }
+      );
+    }
+  }
+
   if (unitPriceBrl == null) {
     throw Object.assign(new Error('Produto sem preço válido para checkout'), { statusCode: 400 });
   }
@@ -283,6 +372,26 @@ export async function createStorePublicCheckout(
             amount_cents: Number(row.amount_cents),
           };
         }
+      }
+
+      // PV S5: baixa atômica (FOR UPDATE) antes de criar pedido/fatura
+      try {
+        await decrementInventoryForCheckout(pool, {
+          productId: product.id,
+          variantId,
+          quantity: qty,
+          storeUserId,
+          tenantId,
+        });
+      } catch (invErr) {
+        if (invErr instanceof InsufficientStockError || invErr instanceof InventoryValidationError) {
+          throw Object.assign(new Error(invErr.message), {
+            statusCode: invErr.statusCode,
+            code: invErr instanceof InsufficientStockError ? invErr.code : undefined,
+            field: variantId ? 'variant_id' : 'product_id',
+          });
+        }
+        throw invErr;
       }
 
       const cpfDigits = parseOptionalCheckoutCpfOrThrow(input.customer_cpf_cnpj ?? undefined);
@@ -342,22 +451,24 @@ export async function createStorePublicCheckout(
       await pool.query(
         `INSERT INTO order_items (
           order_id, product_id, product_name, product_type,
-          quantity, unit_price, total_price, selected_variation
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, NULL)`,
+          quantity, unit_price, total_price, selected_variation, variant_id
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)`,
         [
           orderId,
           product.id,
-          product.name,
+          lineName,
           product.type,
           qty,
           unitPriceBrl,
           unitPriceBrl * qty,
+          selectedVariation ? JSON.stringify(selectedVariation) : null,
+          variantId,
         ]
       );
 
       const invoiceItems: CreateManualCustomerInvoiceItemInput[] = [
         {
-          description: product.name,
+          description: lineName,
           quantity: qty,
           unit_price_cents: unitPriceCents,
           discount_cents: 0,
@@ -373,12 +484,13 @@ export async function createStorePublicCheckout(
         client_id: clientId,
         amount_cents: serverTotalCents,
         due_date: addDaysIsoDate(7),
-        description: `Pedido ${orderNumber} — ${product.name}`.slice(0, 500),
+        description: `Pedido ${orderNumber} — ${lineName}`.slice(0, 500),
         items: invoiceItems,
         gateway_metadata: {
           source: 'store_public_checkout',
           order_id: orderId,
           order_number: orderNumber,
+          variant_id: variantId,
         },
       });
 

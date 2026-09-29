@@ -418,10 +418,10 @@ export function ProductImportDialog({
                   className="mt-0.5"
                 />
                 <span className="min-w-0">
-                  <span className="text-sm font-medium block">Atualizar existentes pelo SKU</span>
+                  <span className="text-sm font-medium block">Atualizar existentes (SKU ou ID Woo)</span>
                   <span className="text-xs text-muted-foreground">
-                    Se o SKU já existir no catálogo, atualiza em vez de duplicar
-                    {withSku > 0 ? ` (${withSku} com SKU neste arquivo)` : " (nenhum SKU neste arquivo)"}.
+                    Se o ID Woo (`external_id`) ou o SKU já existir, atualiza em vez de duplicar
+                    {withSku > 0 ? ` (${withSku} com SKU neste arquivo)` : ""}.
                   </span>
                 </span>
               </label>
@@ -448,7 +448,11 @@ export function ProductImportDialog({
                 {prepared.slice(0, 10).map((row) => (
                   <li key={`${row.lineNumber}-${row.payload.name}`} className="truncate">
                     L{row.lineNumber}
-                    {row.sourceType === "variable" ? " [variável]" : ""}: {row.payload.name}
+                    {row.sourceType === "variable" ? " [variável]" : ""}
+                    {row.payload.has_variants && row.payload.variants?.length
+                      ? ` · ${row.payload.variants.length} variantes`
+                      : ""}
+                    : {row.payload.name}
                     {row.payload.price != null ? ` — R$ ${row.payload.price.toFixed(2)}` : ""}
                   </li>
                 ))}

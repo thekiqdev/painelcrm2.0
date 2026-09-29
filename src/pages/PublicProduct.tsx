@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -18,14 +18,27 @@ import {
 } from "lucide-react";
 import {
   PublicCatalogProduct,
+  PublicCatalogVariant,
   StoreProfile,
   resolvePublicCatalogUnitPrice,
 } from "@/types/products";
 import { productsService } from "@/services/products";
 import { resolveStorefrontTheme } from "@/themes/registry";
 import { getPublicProductGalleryUrls } from "@/utils/publicCatalogImages";
-import { canUseStoreCheckout } from "@/utils/storeCheckoutVisibility";
+import { canUseStoreCheckout, canUseStoreWhatsAppPurchase } from "@/utils/storeCheckoutVisibility";
 import { useStorefrontSlug } from "@/hooks/useStorefrontSlug";
+import { PublicProductVariantSelector } from "@/components/products/PublicProductVariantSelector";
+import {
+  isVariantPurchasable,
+  resolveVariantUnitPrice,
+  variantDisplayLabel,
+} from "@/utils/publicProductVariants";
+import { SystemRichEditorReadOnly } from "@/components/editor";
+import {
+  productDescriptionDisplayHtml,
+  productDescriptionPlainText,
+} from "@/utils/productRichText";
+import { buildStoreWhatsAppPurchaseMessage } from "@/utils/storeWhatsAppPurchaseMessage";
 
 export const PublicProduct = () => {
   const { productId } = useParams<{ productId: string }>();
@@ -36,6 +49,7 @@ export const PublicProduct = () => {
   const [notFound, setNotFound] = useState(false);
   const [galleryIndex, setGalleryIndex] = useState(0);
   const [relatedProducts, setRelatedProducts] = useState<PublicCatalogProduct[]>([]);
+  const [selectedVariant, setSelectedVariant] = useState<PublicCatalogVariant | null>(null);
 
   useEffect(() => {
     loadProductData();
@@ -43,6 +57,7 @@ export const PublicProduct = () => {
 
   useEffect(() => {
     setGalleryIndex(0);
+    setSelectedVariant(null);
   }, [product?.id]);
 
   const loadProductData = async () => {
@@ -81,11 +96,38 @@ export const PublicProduct = () => {
     if (!storeProfile?.contact_whatsapp || !product) return;
 
     const phone = storeProfile.contact_whatsapp.replace(/\D/g, "");
-    const message = `Olá! Gostaria de solicitar um orçamento para o ${product.type === "product" ? "produto" : "serviço"} "${product.name}". Pode me ajudar?`;
+    const message = buildStoreWhatsAppPurchaseMessage(
+      storeProfile.store_whatsapp_purchase_message,
+      {
+        productName: product.name,
+        productType: product.type,
+        variantLabel: selectedVariant ? variantDisplayLabel(selectedVariant) : null,
+        storeName: storeProfile.store_name,
+      }
+    );
 
     const whatsappUrl = `https://wa.me/55${phone}?text=${encodeURIComponent(message)}`;
     window.open(whatsappUrl, "_blank");
   };
+
+  const baseGallery = useMemo(
+    () => (product ? getPublicProductGalleryUrls(product) : []),
+    [product]
+  );
+
+  const gallery = useMemo(() => {
+    if (!product) return [];
+    const variantImgs = (selectedVariant?.images || []).filter((u) => u.trim());
+    if (variantImgs.length > 0) {
+      const seen = new Set(variantImgs);
+      return [...variantImgs, ...baseGallery.filter((u) => !seen.has(u))];
+    }
+    return baseGallery;
+  }, [product, selectedVariant, baseGallery]);
+
+  useEffect(() => {
+    setGalleryIndex(0);
+  }, [selectedVariant?.id]);
 
   if (loading) {
     return (
@@ -121,10 +163,31 @@ export const PublicProduct = () => {
 
   const theme = resolveStorefrontTheme(storeProfile.theme_key);
   const ProductShell = theme.ProductShell;
-  const gallery = getPublicProductGalleryUrls(product);
   const mainImage = gallery[galleryIndex] ?? null;
-  const unitPrice = resolvePublicCatalogUnitPrice(product);
-  const showOnlineCheckout = canUseStoreCheckout(storeProfile) && unitPrice != null;
+
+  const track = product.track_inventory !== false;
+  const unitPrice = product.has_variants
+    ? selectedVariant
+      ? resolveVariantUnitPrice(selectedVariant)
+      : resolvePublicCatalogUnitPrice(product)
+    : resolvePublicCatalogUnitPrice(product);
+
+  const variantReady =
+    !product.has_variants || isVariantPurchasable(selectedVariant, track);
+  const showOnlineCheckout =
+    canUseStoreCheckout(storeProfile) &&
+    unitPrice != null &&
+    (!product.has_variants || (selectedVariant != null && variantReady));
+  const showWhatsAppPurchase = canUseStoreWhatsAppPurchase(storeProfile);
+
+  const checkoutHref =
+    storeSlug && product
+      ? `${href("/checkout")}?productId=${encodeURIComponent(product.id)}${
+          selectedVariant
+            ? `&variantId=${encodeURIComponent(selectedVariant.id)}`
+            : ""
+        }`
+      : "#";
 
   return (
     <ProductShell
@@ -217,11 +280,11 @@ export const PublicProduct = () => {
 
                 <h1 className="text-3xl font-bold mb-4">{product.name}</h1>
 
-                {product.description && (
-                  <p className="text-lg text-muted-foreground leading-relaxed">
-                    {product.description}
+                {product.short_description?.trim() ? (
+                  <p className="text-lg text-muted-foreground leading-relaxed whitespace-pre-line">
+                    {product.short_description.trim()}
                   </p>
-                )}
+                ) : null}
               </div>
 
               {product.features.length > 0 && (
@@ -247,8 +310,20 @@ export const PublicProduct = () => {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-6">
+                  {product.has_variants && (
+                    <PublicProductVariantSelector
+                      key={product.id}
+                      product={product}
+                      value={selectedVariant}
+                      onChange={setSelectedVariant}
+                    />
+                  )}
+
                   {unitPrice != null && (
                     <div className="text-center">
+                      {product.has_variants && !selectedVariant && (
+                        <p className="text-sm text-muted-foreground mb-1">A partir de</p>
+                      )}
                       <p className="text-3xl font-bold text-primary">
                         R$ {unitPrice.toFixed(2)}
                       </p>
@@ -265,16 +340,20 @@ export const PublicProduct = () => {
 
                   {showOnlineCheckout && storeSlug && (
                     <Button className="w-full" size="lg" asChild>
-                      <Link
-                        to={`${href('/checkout')}?productId=${encodeURIComponent(product.id)}`}
-                      >
+                      <Link to={checkoutHref}>
                         <ShoppingCart className="mr-2 h-4 w-4" />
                         Comprar
                       </Link>
                     </Button>
                   )}
 
-                  {storeProfile.contact_whatsapp && (
+                  {product.has_variants && selectedVariant && !variantReady && (
+                    <p className="text-sm text-center text-destructive">
+                      Esta combinação está esgotada. Escolha outra opção.
+                    </p>
+                  )}
+
+                  {showWhatsAppPurchase && (
                     <Button
                       className="w-full"
                       size="lg"
@@ -282,7 +361,7 @@ export const PublicProduct = () => {
                       onClick={handleWhatsAppContact}
                     >
                       <MessageSquare className="mr-2 h-4 w-4" />
-                      Solicitar via WhatsApp
+                      Comprar via WhatsApp
                     </Button>
                   )}
 
@@ -320,6 +399,22 @@ export const PublicProduct = () => {
               </Card>
             </div>
           </div>
+
+          {productDescriptionPlainText(product.description) ? (
+            <section className="mt-10 max-w-4xl mx-auto">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-xl">Descrição</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <SystemRichEditorReadOnly
+                    html={productDescriptionDisplayHtml(product.description)}
+                    className="text-foreground prose-headings:text-foreground"
+                  />
+                </CardContent>
+              </Card>
+            </section>
+          ) : null}
         </div>
       </div>
     </ProductShell>
