@@ -122,7 +122,7 @@ import { runAppointmentRemindersOnce } from './services/appointmentReminderWorke
 import { runPendingConfirmationAutomationOnce } from './services/appointmentAutomationService.js';
 import { logGoogleCalendarBootDiagnostics } from './config/googleCalendarEnv.js';
 import { logGoogleDriveBootDiagnostics } from './config/googleDriveEnv.js';
-import { getAllowedCorsOrigins } from './config/corsOrigins.js';
+import { corsOriginDelegate } from './config/corsOrigins.js';
 import { runWhatsappOfficialCampaignWorkerTick } from './services/whatsappOfficial/whatsappOfficialCampaignQueueService.js';
 import {
   isWhatsappOfficialCampaignWorkerEnabled,
@@ -174,13 +174,13 @@ app.use(
     crossOriginResourcePolicy: { policy: 'cross-origin' },
   })
 );
-// CORS - aceitar FRONTEND_URL(S) e hosts locais (dev); mesma lista em Socket.IO (corsOrigins.ts)
-const corsOrigins = getAllowedCorsOrigins();
-
-app.use(cors({
-  origin: corsOrigins.length > 0 ? corsOrigins : true, // Se não houver URLs, aceitar todas (apenas para debug)
-  credentials: true,
-}));
+// CORS - FRONTEND_URL(S) + localhost + hosts customizados active (tenant + Partner)
+app.use(
+  cors({
+    origin: corsOriginDelegate,
+    credentials: true,
+  })
+);
 /** Webhook Meta WhatsApp Cloud API — corpo bruto para assinatura X-Hub-Signature-256 (antes do JSON global). */
 app.use('/api/webhooks/whatsapp-official', whatsappOfficialWebhookRoutes);
 app.use('/webhooks/whatsapp-official', whatsappOfficialWebhookRoutes);
@@ -738,6 +738,19 @@ void (async () => {
       .then(({ runTrialExpirationOnce }) => runTrialExpirationOnce())
       .catch((err) => appLogger.error('trial-expiration', 'tick error', { err: String(err) }));
   }, 3_600_000);
+
+  void import('./jobs/tenantHostDnsRecheckJob.js')
+    .then(async (mod) => {
+      if (!mod.isTenantHostDnsRecheckEnabled()) return;
+      const interval = mod.getTenantHostDnsRecheckIntervalMs();
+      await mod.runTenantHostDnsRecheckOnce();
+      setInterval(() => {
+        void mod
+          .runTenantHostDnsRecheckOnce()
+          .catch((err) => appLogger.error('tenant-host-dns-recheck', 'tick error', { err: String(err) }));
+      }, interval);
+    })
+    .catch((err) => appLogger.error('tenant-host-dns-recheck', 'startup error', { err: String(err) }));
   });
 })();
 

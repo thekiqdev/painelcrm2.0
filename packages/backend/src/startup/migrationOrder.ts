@@ -532,5 +532,13 @@ export const MIGRATION_ORDER = [
   '336_partner_license_downgrade_s3.sql',
   /** CA S2 — asaas_subscription_id em subscriptions SaaS */
   '337_subscriptions_asaas_subscription_id_ca_s2.sql',
+  /** TD S0 — flags tenant.custom_domain_v1 (loja | chamados) */
+  '338_tenant_custom_domain_flags_s0.sql',
+  /** TD S1 — tenant_hosts schema */
+  '339_tenant_hosts_s1.sql',
+  /** Catálogo — enable_products / enable_services na loja */
+  '340_store_profiles_catalog_types.sql',
+  /** TD — custom domain ON por padrão para todos os tenants */
+  '341_tenant_custom_domain_default_on.sql',
   'create-admin-user.sql',
 ];

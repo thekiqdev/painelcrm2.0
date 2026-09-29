@@ -5,7 +5,7 @@ import { pool } from '../utils/db.js';
 import { isUazIntegrationVerboseLogs } from '../utils/chatObservability.js';
 import { conversationRowForClientApi } from '../utils/uazapiIdentityResolve.js';
 import type { Notification } from './notifications.js';
-import { getAllowedCorsOrigins } from '../config/corsOrigins.js';
+import { corsOriginDelegate } from '../config/corsOrigins.js';
 import { getRedisSocketAdapterConfig } from '../config/redisSocketAdapterEnv.js';
 
 interface AuthenticatedSocket extends Socket {
@@ -20,13 +20,12 @@ const wsVerbose = () => isUazIntegrationVerboseLogs();
  * Inicializa o servidor WebSocket
  */
 export function initializeWebSocket(httpServer: HttpServer): SocketIOServer {
-  // Mesma lista que Express (inclui localhost:8081 etc.) — FRONTEND_URL só prod não bloqueia dev
-  const corsOrigins = getAllowedCorsOrigins();
+  // Mesma política CORS que Express (estático + hosts customizados active)
   const nodeId = getRedisSocketAdapterConfig().nodeId;
 
   io = new SocketIOServer(httpServer, {
     cors: {
-      origin: corsOrigins.length > 0 ? corsOrigins : true,
+      origin: corsOriginDelegate,
       methods: ['GET', 'POST', 'OPTIONS'],
       credentials: true,
       allowedHeaders: ['Authorization', 'Content-Type'],

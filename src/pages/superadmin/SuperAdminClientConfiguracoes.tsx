@@ -16,6 +16,7 @@ import { toast } from '@/components/ui/sonner';
 import { apiClient } from '@/integrations/api/client';
 import { useTenantDetail } from '@/contexts/TenantDetailContext';
 import { datetimeLocalToTrialEndsAtIso, trialEndsAtToDatetimeLocal } from '@/lib/trialEndsAtBrAdmin';
+import { SuperAdminTenantHostsCard } from '@/components/superadmin/SuperAdminTenantHostsCard';
 
 interface Plan {
   id: string;
@@ -248,12 +249,16 @@ export default function SuperAdminClientConfiguracoes() {
               />
             </div>
             <div className="space-y-2 sm:col-span-2">
-              <Label>Domínio (opcional)</Label>
+              <Label>Domínio (legado / metadado)</Label>
               <Input
                 value={formTenant.domain}
                 onChange={(e) => setFormTenant((f) => ({ ...f, domain: e.target.value }))}
                 placeholder="app.empresa.com"
               />
+              <p className="text-xs text-muted-foreground">
+                Campo legado em <code>tenants.domain</code> (merge/templates). Domínio público de loja/chamados
+                usa <code>tenant_hosts</code> — veja o card abaixo. Não roteia o Host customizado.
+              </p>
             </div>
             <div className="space-y-2">
               <Label>Fuso horário</Label>
@@ -344,6 +349,10 @@ export default function SuperAdminClientConfiguracoes() {
           </Button>
         </CardContent>
       </Card>
+
+      {id ? (
+        <SuperAdminTenantHostsCard tenantId={id} accountType={tenant?.account_type} />
+      ) : null}
 
       <Card>
         <CardHeader>

@@ -9,6 +9,7 @@ import { PartnerAdminError } from './partnerAdminService.js';
 import { normalizeHostname } from './partnerBrandResolver.js';
 import { isPartnerDomainVerifyBypassEnabled } from './partnerFlags.js';
 import { getPartnerProfile } from './partnerRepository.js';
+import { invalidateCorsOriginsCache } from '../config/corsOrigins.js';
 
 const TXT_LABEL = '_painelcrm-partner';
 
@@ -60,6 +61,18 @@ export async function setPartnerDomain(
   );
   if (taken.rows.length > 0) {
     throw new PartnerAdminError('Domínio já em uso por outro Partner', 'DOMAIN_TAKEN', 409);
+  }
+
+  const tenantTaken = await pool.query(
+    `SELECT id FROM tenant_hosts WHERE lower(hostname) = $1 LIMIT 1`,
+    [domain]
+  );
+  if (tenantTaken.rows.length > 0) {
+    throw new PartnerAdminError(
+      'Domínio já em uso por um tenant (loja/chamados)',
+      'DOMAIN_TAKEN_TENANT',
+      409
+    );
   }
 
   const token = generateToken();
@@ -186,6 +199,7 @@ export async function verifyPartnerDomain(
        WHERE partner_tenant_id = $1`,
       [partnerTenantId]
     );
+    invalidateCorsOriginsCache();
     const instructions = await getPartnerDomainInstructions(partnerTenantId);
     return {
       verified: true,
@@ -222,4 +236,5 @@ export async function clearPartnerDomain(partnerTenantId: string): Promise<void>
      WHERE partner_tenant_id = $1`,
     [partnerTenantId]
   );
+  invalidateCorsOriginsCache();
 }

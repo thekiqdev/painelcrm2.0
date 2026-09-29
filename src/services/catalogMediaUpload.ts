@@ -270,6 +270,21 @@ export async function uploadCatalogImageFile(
   return normalizeCatalogMediaUrlForBrowser(res.data.publicUrl);
 }
 
+/** Baixa URL remota no servidor e devolve URL pública do catálogo (S5 rehost). */
+export async function importCatalogImageFromUrl(
+  remoteUrl: string,
+  scope: CatalogMediaScope = 'product',
+): Promise<string> {
+  const res = await apiClient.post<CatalogUploadResponse>('/api/catalog-media/import-from-url', {
+    url: remoteUrl,
+    scope,
+  });
+  if (res.error || !res.data?.publicUrl) {
+    throw new Error(res.error || 'Falha ao importar imagem remota');
+  }
+  return normalizeCatalogMediaUrlForBrowser(res.data.publicUrl);
+}
+
 export function isCatalogMediaUploadLikelyConfigured(): boolean {
   return import.meta.env.VITE_CATALOG_MEDIA_UPLOAD_ENABLED !== 'false';
 }

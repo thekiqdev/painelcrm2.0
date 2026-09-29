@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { useParams, Link } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -10,9 +10,10 @@ import { productsService } from "@/services/products";
 import { resolveStorefrontTheme } from "@/themes/registry";
 import { getPublicProductThumbnailUrl } from "@/utils/publicCatalogImages";
 import { canUseStoreCheckout } from "@/utils/storeCheckoutVisibility";
+import { useStorefrontSlug } from "@/hooks/useStorefrontSlug";
 
 export const PublicStore = () => {
-  const { storeSlug } = useParams<{ storeSlug: string }>();
+  const { storeSlug, href } = useStorefrontSlug();
   const [storeProfile, setStoreProfile] = useState<StoreProfile | null>(null);
   const [products, setProducts] = useState<PublicCatalogProduct[]>([]);
   const [loading, setLoading] = useState(true);
@@ -23,7 +24,11 @@ export const PublicStore = () => {
   }, [storeSlug]);
 
   const loadStoreData = async () => {
-    if (!storeSlug) return;
+    if (!storeSlug) {
+      setLoading(false);
+      setNotFound(true);
+      return;
+    }
 
     try {
       setLoading(true);
@@ -159,7 +164,7 @@ export const PublicStore = () => {
                     className="group hover:shadow-lg transition-shadow overflow-hidden storefront-product-card"
                   >
                     <Link
-                      to={`/${storeSlug}/loja/produto/${product.id}`}
+                      to={href(`/produto/${product.id}`)}
                       className="aspect-video bg-muted flex items-center justify-center relative block"
                     >
                       {thumb ? (
@@ -187,7 +192,7 @@ export const PublicStore = () => {
                       </div>
                       <CardTitle className="line-clamp-2">
                         <Link
-                          to={`/${storeSlug}/loja/produto/${product.id}`}
+                          to={href(`/produto/${product.id}`)}
                           className="hover:underline"
                         >
                           {product.name}
@@ -235,7 +240,7 @@ export const PublicStore = () => {
                       {showCardCheckout && storeSlug && (
                         <Button className="w-full" asChild>
                           <Link
-                            to={`/${storeSlug}/loja/checkout?productId=${encodeURIComponent(product.id)}`}
+                            to={`${href('/checkout')}?productId=${encodeURIComponent(product.id)}`}
                           >
                             <ShoppingCart className="mr-2 h-4 w-4" />
                             Comprar

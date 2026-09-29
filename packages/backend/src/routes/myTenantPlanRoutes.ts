@@ -69,6 +69,28 @@ router.put('/company', ...tenantAuthCrm, myTenantCompanyController.putMyTenantCo
 router.get('/billing-preferences', ...tenantAuthCrm, myTenantBillingPreferencesController.getMyTenantBillingPreferences);
 router.put('/billing-preferences', ...tenantAuthCrm, myTenantBillingPreferencesController.putMyTenantBillingPreferences);
 
+/** TD S1 — domínio personalizado (loja | abertura de chamados) */
+router.get('/domain', ...tenantAuthCrm, async (req, res, next) => {
+  const { getMyTenantDomain } = await import('../tenantCustomDomain/tenantDomainControllers.js');
+  return getMyTenantDomain(req, res).catch(next);
+});
+router.post('/domain', ...tenantAuthCrm, async (req, res, next) => {
+  const { postMyTenantDomain } = await import('../tenantCustomDomain/tenantDomainControllers.js');
+  return postMyTenantDomain(req, res).catch(next);
+});
+router.post('/domain/verify', ...tenantAuthCrm, async (req, res, next) => {
+  const { postMyTenantDomainVerify } = await import('../tenantCustomDomain/tenantDomainControllers.js');
+  return postMyTenantDomainVerify(req, res).catch(next);
+});
+router.post('/domain/change-role', ...tenantAuthCrm, async (req, res, next) => {
+  const { postMyTenantDomainChangeRole } = await import('../tenantCustomDomain/tenantDomainControllers.js');
+  return postMyTenantDomainChangeRole(req, res).catch(next);
+});
+router.delete('/domain', ...tenantAuthCrm, async (req, res, next) => {
+  const { deleteMyTenantDomain } = await import('../tenantCustomDomain/tenantDomainControllers.js');
+  return deleteMyTenantDomain(req, res).catch(next);
+});
+
 router.get('/roles', ...tenantAuth, myTenantPlanController.getMyTenantRoles);
 router.post('/roles', ...tenantAuth, myTenantPlanController.postMyTenantRole);
 router.get('/users', ...tenantAuth, myTenantPlanController.getMyTenantUsers);

@@ -2,7 +2,9 @@ import { useNavigate } from "react-router-dom";
 import { Suspense, lazy, useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useTenantHost } from "@/contexts/TenantHostContext";
 import { getPostAuthHomePath } from "@/utils/superAdminRedirect";
+import TenantHostLanding from "@/components/TenantHostLanding";
 
 const LandingPage = lazy(() => import("../landingpage").then((m) => ({ default: m.LandingPage })));
 
@@ -29,6 +31,7 @@ function isStandalonePWA(): boolean {
 
 /**
  * Na rota "/":
+ * - Host customizado tenant (TD S2): loja ou portal de chamados (não landing/CRM).
  * - Desktop (navegador, não PWA): landing para visitantes.
  * - Mobile (mesmo breakpoint que o shell, max-width 767px) ou PWA: se já autenticado, vai direto para o app (dashboard, superadmin ou register/steps).
  * - PWA sem sessão: /login (comportamento anterior).
@@ -38,8 +41,10 @@ export default function HomeOrRedirect() {
   const { user, loading } = useAuth();
   const isMobile = useIsMobile();
   const [isPWA] = useState(() => isStandalonePWA());
+  const { loading: hostLoading, isTenantHost } = useTenantHost();
 
   useEffect(() => {
+    if (hostLoading || isTenantHost) return;
     if (loading) return;
     const loggedIn = Boolean(user);
     if (loggedIn && (isMobile || isPWA)) {
@@ -49,7 +54,15 @@ export default function HomeOrRedirect() {
     if (isPWA && !loggedIn) {
       navigate("/login", { replace: true });
     }
-  }, [loading, user, isMobile, isPWA, navigate]);
+  }, [hostLoading, isTenantHost, loading, user, isMobile, isPWA, navigate]);
+
+  if (hostLoading) {
+    return <LoadingFallback />;
+  }
+
+  if (isTenantHost) {
+    return <TenantHostLanding />;
+  }
 
   if (loading) {
     return <LoadingFallback />;

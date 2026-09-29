@@ -93,6 +93,10 @@ export interface StoreProfile {
   is_active: boolean;
   /** Opt-in: Comprar com checkout na vitrine (e flags globais). Ausente em respostas antigas = false. */
   store_checkout_enabled?: boolean;
+  /** Catálogo: produtos habilitados (default true se ausente). */
+  enable_products?: boolean;
+  /** Catálogo: serviços habilitados (default true se ausente). */
+  enable_services?: boolean;
   theme_key?: StorefrontThemeKey | string | null;
   theme_options?: Record<string, unknown> | null;
   created_at?: string;
@@ -127,6 +131,7 @@ export interface ProductFormData {
   is_recurring?: boolean;
   recurrence_interval?: 'daily' | 'weekly' | 'monthly' | 'yearly';
   is_public: boolean;
+  status?: 'active' | 'inactive' | 'draft';
 }
 
 export interface CartItem {

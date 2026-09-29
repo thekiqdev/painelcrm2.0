@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { ArrowLeft, ImageOff, Loader2, Lock, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,6 +16,7 @@ import { createStoreCheckout, fetchStoreCheckoutClientEligibility } from "@/serv
 import { resolveStorefrontTheme } from "@/themes/registry";
 import { canUseStoreCheckout } from "@/utils/storeCheckoutVisibility";
 import { getPublicProductThumbnailUrl } from "@/utils/publicCatalogImages";
+import { useStorefrontSlug } from "@/hooks/useStorefrontSlug";
 
 function checkoutProductTeaser(product: PublicCatalogProduct): string {
   const short = product.short_description?.trim();
@@ -30,7 +31,7 @@ function checkoutProductTeaser(product: PublicCatalogProduct): string {
 }
 
 const StorePublicCheckout = () => {
-  const { storeSlug } = useParams<{ storeSlug: string }>();
+  const { storeSlug, href } = useStorefrontSlug();
   const [searchParams] = useSearchParams();
   const productId = (searchParams.get("productId") || "").trim();
 
@@ -243,7 +244,7 @@ const StorePublicCheckout = () => {
             Produto inválido, sem preço ou indisponível para compra online.
           </p>
           {storeSlug && (
-            <Link to={`/${storeSlug}/loja`}>
+            <Link to={href()}>
               <Button variant="outline">
                 <ArrowLeft className="h-4 w-4 mr-2" />
                 Voltar à loja
@@ -273,7 +274,7 @@ const StorePublicCheckout = () => {
       <div className="border-b bg-card">
         <div className="container mx-auto px-4 py-4">
           <Link
-            to={`/${storeSlug}/loja/produto/${product.id}`}
+            to={href(`/produto/${product.id}`)}
             className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
           >
             <ArrowLeft className="h-4 w-4" />

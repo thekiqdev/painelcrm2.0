@@ -84,6 +84,14 @@ const partnerBrandPublicLimiter = rateLimit({
 /** M5 S2 — marca white-label por Host / ?domain= */
 router.get('/partner-brand', partnerBrandPublicLimiter, publicGetPartnerBrand);
 
+/** TD S2 — host customizado tenant (loja | abertura de chamados) */
+router.get('/tenant-host', partnerBrandPublicLimiter, async (req, res, next) => {
+  const { publicGetTenantHost } = await import(
+    '../tenantCustomDomain/tenantHostPublicController.js'
+  );
+  return publicGetTenantHost(req, res).catch(next);
+});
+
 /** M5 S7.2/S7.3 — checkout/cadastro do canal Partner (sem exclusive_signup). */
 router.post(
   '/partner-channel/signup-trial',

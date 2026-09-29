@@ -10,6 +10,7 @@ import { productsService } from "@/services/products";
 import { useToast } from "@/hooks/use-toast";
 import { uploadCatalogImageFile } from "@/services/catalogMediaUpload";
 import { ImageIcon, Trash2, Upload } from "lucide-react";
+import { resolveCanonicalStoreUrl } from "@/lib/tenantCanonicalUrls";
 
 function normalizeThemeKeyForPayload(profile: StoreProfile | null): StorefrontThemeId {
   const k = profile?.theme_key;
@@ -41,7 +42,10 @@ export const StoreSettingsForm = ({ storeProfile, onSuccess }: StoreSettingsForm
     contact_whatsapp: "",
     is_active: true,
     store_checkout_enabled: false,
+    enable_products: true,
+    enable_services: true,
   });
+  const [canonicalUrl, setCanonicalUrl] = useState<string | null>(null);
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [bannerUrl, setBannerUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -62,6 +66,8 @@ export const StoreSettingsForm = ({ storeProfile, onSuccess }: StoreSettingsForm
         contact_whatsapp: storeProfile.contact_whatsapp || "",
         is_active: storeProfile.is_active,
         store_checkout_enabled: storeProfile.store_checkout_enabled === true,
+        enable_products: storeProfile.enable_products !== false,
+        enable_services: storeProfile.enable_services !== false,
       });
       setLogoUrl(storeProfile.store_logo?.trim() || null);
       setBannerUrl(storeProfile.store_banner_url?.trim() || null);
@@ -75,11 +81,23 @@ export const StoreSettingsForm = ({ storeProfile, onSuccess }: StoreSettingsForm
         contact_whatsapp: "",
         is_active: true,
         store_checkout_enabled: false,
+        enable_products: true,
+        enable_services: true,
       });
       setLogoUrl(null);
       setBannerUrl(null);
     }
   }, [storeProfile]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void resolveCanonicalStoreUrl(formData.store_slug || storeProfile?.store_slug).then((url) => {
+      if (!cancelled) setCanonicalUrl(url);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [formData.store_slug, storeProfile?.store_slug]);
 
   const handleStoreNameChange = (name: string) => {
     setFormData((prev) => ({
@@ -136,6 +154,15 @@ export const StoreSettingsForm = ({ storeProfile, onSuccess }: StoreSettingsForm
       toast({
         title: "Erro",
         description: "URL da loja é obrigatória",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!formData.enable_products && !formData.enable_services) {
+      toast({
+        title: "Erro",
+        description: "Ative pelo menos Produtos ou Serviços.",
         variant: "destructive",
       });
       return;
@@ -296,7 +323,19 @@ export const StoreSettingsForm = ({ storeProfile, onSuccess }: StoreSettingsForm
             />
             <span className="text-sm text-muted-foreground shrink-0">/loja</span>
           </div>
-          <p className="text-xs text-muted-foreground mt-1">Esta será a URL pública da sua loja</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Caminho legado na plataforma.{" "}
+            {canonicalUrl ? (
+              <>
+                URL pública canônica:{" "}
+                <a href={canonicalUrl} className="underline" target="_blank" rel="noreferrer">
+                  {canonicalUrl}
+                </a>
+              </>
+            ) : (
+              "Configure um domínio personalizado (uso Loja) em Configurações → Domínio para um endereço próprio."
+            )}
+          </p>
         </div>
 
         <div>
@@ -370,6 +409,57 @@ export const StoreSettingsForm = ({ storeProfile, onSuccess }: StoreSettingsForm
               setFormData((prev) => ({ ...prev, store_checkout_enabled: checked }))
             }
           />
+        </div>
+
+        <div className="rounded-lg border p-4 space-y-4">
+          <div>
+            <Label>Tipos do catálogo</Label>
+            <p className="text-sm text-muted-foreground">
+              Escolha se a loja trabalha com produtos, serviços ou ambos. Pelo menos um deve permanecer ativo.
+            </p>
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <Label htmlFor="enable_products">Produtos</Label>
+              <p className="text-xs text-muted-foreground">Itens físicos ou digitais com estoque/variações</p>
+            </div>
+            <Switch
+              id="enable_products"
+              checked={formData.enable_products}
+              onCheckedChange={(checked) => {
+                if (!checked && !formData.enable_services) {
+                  toast({
+                    title: "Não permitido",
+                    description: "Mantenha Produtos ou Serviços ativo.",
+                    variant: "destructive",
+                  });
+                  return;
+                }
+                setFormData((prev) => ({ ...prev, enable_products: checked }));
+              }}
+            />
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <Label htmlFor="enable_services">Serviços</Label>
+              <p className="text-xs text-muted-foreground">Serviços com duração, contrato ou recorrência</p>
+            </div>
+            <Switch
+              id="enable_services"
+              checked={formData.enable_services}
+              onCheckedChange={(checked) => {
+                if (!checked && !formData.enable_products) {
+                  toast({
+                    title: "Não permitido",
+                    description: "Mantenha Produtos ou Serviços ativo.",
+                    variant: "destructive",
+                  });
+                  return;
+                }
+                setFormData((prev) => ({ ...prev, enable_services: checked }));
+              }}
+            />
+          </div>
         </div>
       </div>
 

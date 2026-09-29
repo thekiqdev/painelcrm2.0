@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { pool } from '../utils/db.js';
 import type { AuthRequest } from '../middleware/auth.js';
 import { checkPermission, ModulePermissionError } from '../permissions/index.js';
+import { buildCanonicalSupportPortalUrl } from '../tenantCustomDomain/tenantPublicUrls.js';
 
 const putSchema = z.object({
   enabled: z.boolean(),
@@ -54,6 +55,20 @@ function publicSupportPath(slug: string): string {
   return `/suporte/${slug}`;
 }
 
+async function publicSupportAbsoluteUrl(
+  tenantId: string,
+  slug: string | null | undefined
+): Promise<string | null> {
+  const s = (slug ?? '').trim();
+  if (!s) return null;
+  try {
+    const r = await buildCanonicalSupportPortalUrl({ tenantId, portalSlug: s });
+    return r.url;
+  } catch {
+    return publicSupportPath(s);
+  }
+}
+
 async function getTenantSlug(tenantId: string): Promise<string | null> {
   const r = await pool.query<{ slug: string }>(`SELECT slug FROM tenants WHERE id = $1 LIMIT 1`, [tenantId]);
   return r.rows[0]?.slug?.trim() ? String(r.rows[0].slug).trim() : null;
@@ -99,7 +114,7 @@ export async function getSupportPortalSettings(req: AuthRequest, res: Response):
         primary_color: null,
         default_priority: 'normal',
         allowed_category_ids: null,
-        public_url: slug ? publicSupportPath(slug) : null,
+        public_url: await publicSupportAbsoluteUrl(tenantId, slug || null),
         tenant_categories: catR.rows,
       });
       return;
@@ -117,7 +132,7 @@ export async function getSupportPortalSettings(req: AuthRequest, res: Response):
       primary_color: s.primary_color ?? null,
       default_priority: String(s.default_priority ?? 'normal'),
       allowed_category_ids: (s.allowed_category_ids as string[] | null) ?? null,
-      public_url: slug ? publicSupportPath(slug) : null,
+      public_url: await publicSupportAbsoluteUrl(tenantId, slug || null),
       tenant_categories: catR.rows,
     });
   } catch (error) {
@@ -244,7 +259,10 @@ export async function putSupportPortalSettings(req: AuthRequest, res: Response):
         primary_color: ins.rows[0]?.primary_color ?? null,
         default_priority: String(ins.rows[0]?.default_priority ?? 'normal'),
         allowed_category_ids: (ins.rows[0]?.allowed_category_ids as string[] | null) ?? null,
-        public_url: hasValidTenantSlug ? publicSupportPath(slugForStorage) : null,
+        public_url: await publicSupportAbsoluteUrl(
+          tenantId,
+          hasValidTenantSlug ? slugForStorage : null
+        ),
       });
     } catch (e: unknown) {
       const msg = e && typeof e === 'object' && 'code' in e ? String((e as { code?: string }).code) : '';

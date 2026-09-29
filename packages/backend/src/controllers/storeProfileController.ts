@@ -41,6 +41,9 @@ const storeProfileSchema = z.object({
   is_active: z.boolean().default(true),
   /** Opt-in: checkout online na vitrine (requer flags globais no deploy). */
   store_checkout_enabled: z.boolean().default(false),
+  /** Catálogo: habilitar produtos e/ou serviços (pelo menos um). */
+  enable_products: z.boolean().default(true),
+  enable_services: z.boolean().default(true),
   theme_key: z.enum(THEME_KEYS).default('default'),
   theme_options: themeOptionsSchema,
 });
@@ -70,6 +73,10 @@ export async function createStoreProfile(req: AuthRequest, res: Response): Promi
   try {
     const userId = req.userId!;
     const storeData = storeProfileSchema.parse(req.body);
+    if (!storeData.enable_products && !storeData.enable_services) {
+      res.status(400).json({ error: 'Ative pelo menos Produtos ou Serviços.' });
+      return;
+    }
 
     // Check if store profile already exists
     const existingResult = await pool.query(
@@ -97,8 +104,9 @@ export async function createStoreProfile(req: AuthRequest, res: Response): Promi
       `INSERT INTO store_profiles (
         user_id, store_name, store_description, store_logo, store_banner_url,
         contact_phone, contact_email, contact_whatsapp,
-        store_slug, is_active, store_checkout_enabled, theme_key, theme_options
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb)
+        store_slug, is_active, store_checkout_enabled, enable_products, enable_services,
+        theme_key, theme_options
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb)
       RETURNING *`,
       [
         userId,
@@ -112,6 +120,8 @@ export async function createStoreProfile(req: AuthRequest, res: Response): Promi
         storeData.store_slug,
         storeData.is_active,
         storeData.store_checkout_enabled,
+        storeData.enable_products,
+        storeData.enable_services,
         storeData.theme_key,
         JSON.stringify(storeData.theme_options ?? {}),
       ]
@@ -132,6 +142,28 @@ export async function updateStoreProfile(req: AuthRequest, res: Response): Promi
   try {
     const userId = req.userId!;
     const storeData = storeProfileSchema.partial().parse(req.body);
+
+    // Se alterar flags de tipo, garantir que o estado final tenha ao menos um ativo
+    if (storeData.enable_products !== undefined || storeData.enable_services !== undefined) {
+      const cur = await pool.query<{ enable_products: boolean; enable_services: boolean }>(
+        'SELECT enable_products, enable_services FROM store_profiles WHERE user_id = $1',
+        [userId]
+      );
+      if (cur.rows.length > 0) {
+        const nextProducts =
+          storeData.enable_products !== undefined
+            ? storeData.enable_products
+            : cur.rows[0].enable_products;
+        const nextServices =
+          storeData.enable_services !== undefined
+            ? storeData.enable_services
+            : cur.rows[0].enable_services;
+        if (!nextProducts && !nextServices) {
+          res.status(400).json({ error: 'Ative pelo menos Produtos ou Serviços.' });
+          return;
+        }
+      }
+    }
 
     // If updating slug, check if it's already taken by another user
     if (storeData.store_slug) {

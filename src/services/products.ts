@@ -36,7 +36,8 @@ export class ProductsService {
         images: productData.images as any,
         secondary_images: productData.secondary_images as any,
         variations: productData.variations as any,
-        status: 'active'
+        // PIA1: respeitar status explícito (ex.: import Publicado=0 → draft)
+        status: productData.status ?? 'active',
     });
 
     if (response.error) throw new Error(response.error);

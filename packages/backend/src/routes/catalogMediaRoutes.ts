@@ -8,5 +8,6 @@ router.use(...tenantAuthCrm);
 
 router.post('/delete', catalogMediaController.postCatalogMediaDelete);
 router.post('/upload', catalogMediaUploadSingle, catalogMediaController.postCatalogMediaUpload);
+router.post('/import-from-url', catalogMediaController.postCatalogMediaImportFromUrl);
 
 export default router;

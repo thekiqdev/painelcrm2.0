@@ -16,6 +16,7 @@ export const PLATFORM_FLAG_NAMESPACES = [
   'worker',
   'platform',
   'partner',
+  'tenant',
 ] as const;
 
 export type PlatformFlagNamespace = (typeof PLATFORM_FLAG_NAMESPACES)[number];
@@ -85,6 +86,9 @@ export const PLATFORM_FEATURE_FLAG_KEYS = [
   'partner.master_off',
   'partner.channel_v1',
   'partner.domain_verify_bypass',
+  'tenant.master_off',
+  'tenant.custom_domain_v1',
+  'tenant.domain_verify_bypass',
   'worker.runtime_v1',
   'worker.heartbeat_v1',
   'worker.health_v1',

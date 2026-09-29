@@ -17,6 +17,18 @@ router.get('/:id/primary-user', tenantsController.getPrimaryUser);
 router.get('/:id/notes', tenantsController.getTenantNotes);
 router.get('/:id/tags', tenantsController.getTenantTags);
 router.get('/:id/audit-log', tenantsController.getTenantAuditLog);
+router.get('/:id/domain', async (req, res, next) => {
+  const { superadminGetTenantDomain } = await import(
+    '../tenantCustomDomain/tenantDomainControllers.js'
+  );
+  return superadminGetTenantDomain(req as never, res).catch(next);
+});
+router.delete('/:id/domain', async (req, res, next) => {
+  const { superadminClearTenantDomain } = await import(
+    '../tenantCustomDomain/tenantDomainControllers.js'
+  );
+  return superadminClearTenantDomain(req as never, res).catch(next);
+});
 router.get('/:tenantId/commercial', commercialOverridesController.getTenantCommercial);
 router.get(
   '/:tenantId/commercial/overrides',

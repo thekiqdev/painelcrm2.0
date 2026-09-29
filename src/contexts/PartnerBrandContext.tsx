@@ -76,8 +76,10 @@ export function PartnerBrandProvider({ children }: { children: React.ReactNode }
       const b = await fetchBrandForHost();
       setBrand(b);
       applyTheme(b?.theme_json);
-      const name = b?.product_name || b?.public_name || DEFAULT_PLATFORM_NAME;
-      document.title = name;
+      // Só sobrescreve título em host Partner (evita clobber do tenant host / landing)
+      if (b) {
+        document.title = b.product_name || b.public_name || DEFAULT_PLATFORM_NAME;
+      }
     } catch {
       setBrand(null);
       applyTheme(null);

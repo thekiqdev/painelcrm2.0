@@ -20,10 +20,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Plus, Package, Wrench, Eye, Edit, Trash2, Store, ExternalLink } from "lucide-react";
+import { Plus, Package, Wrench, Eye, Edit, Trash2, Store, ExternalLink, Upload } from "lucide-react";
 import { Product, StoreProfile } from "@/types/products";
 import { productsService } from "@/services/products";
 import { useToast } from "@/hooks/use-toast";
+import { ProductImportDialog } from "@/components/products/ProductImportDialog";
+import { resolveCanonicalStoreUrl } from "@/lib/tenantCanonicalUrls";
 
 type StatusFilter = "all" | "active" | "inactive" | "draft";
 type CategoryFilter = "all" | "__none__" | string;
@@ -52,11 +54,13 @@ const Products = () => {
   const navigate = useNavigate();
   const [products, setProducts] = useState<Product[]>([]);
   const [storeProfile, setStoreProfile] = useState<StoreProfile | null>(null);
+  const [storeUrl, setStoreUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchName, setSearchName] = useState("");
   const [activeTab, setActiveTab] = useState<CatalogTab>("all");
   const [filterStatus, setFilterStatus] = useState<StatusFilter>("all");
   const [filterCategory, setFilterCategory] = useState<CategoryFilter>("all");
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
   const { toast } = useToast();
 
   const loadData = useCallback(async () => {
@@ -68,6 +72,7 @@ const Products = () => {
       ]);
       setProducts(productsData);
       setStoreProfile(storeData);
+      setStoreUrl(await resolveCanonicalStoreUrl(storeData?.store_slug));
     } catch (error) {
       console.error("Erro ao carregar dados:", error);
       toast({
@@ -84,6 +89,20 @@ const Products = () => {
     loadData();
   }, [loadData]);
 
+  const enableProducts = storeProfile?.enable_products !== false;
+  const enableServices = storeProfile?.enable_services !== false;
+
+  useEffect(() => {
+    if (enableProducts && enableServices) return;
+    if (enableProducts && !enableServices && activeTab === "service") {
+      setActiveTab("product");
+    } else if (!enableProducts && enableServices && (activeTab === "product" || activeTab === "all")) {
+      setActiveTab("service");
+    } else if (enableProducts && !enableServices && activeTab === "all") {
+      setActiveTab("product");
+    }
+  }, [enableProducts, enableServices, activeTab]);
+
   const categoryOptions = useMemo(() => {
     const seen = new Set<string>();
     for (const p of products) {
@@ -96,6 +115,8 @@ const Products = () => {
   const filteredProducts = useMemo(() => {
     const q = searchName.trim().toLowerCase();
     return products.filter((p) => {
+      if (p.type === "product" && !enableProducts) return false;
+      if (p.type === "service" && !enableServices) return false;
       if (q && !p.name.toLowerCase().includes(q)) return false;
       if (activeTab !== "all" && p.type !== activeTab) return false;
       if (filterStatus !== "all" && p.status !== filterStatus) return false;
@@ -109,7 +130,7 @@ const Products = () => {
       }
       return true;
     });
-  }, [products, searchName, activeTab, filterStatus, filterCategory]);
+  }, [products, searchName, activeTab, filterStatus, filterCategory, enableProducts, enableServices]);
 
   const handleDeleteProduct = async (id: string) => {
     if (!confirm("Tem certeza que deseja excluir este produto?")) return;
@@ -131,10 +152,7 @@ const Products = () => {
     }
   };
 
-  const getStoreUrl = () => {
-    if (!storeProfile?.store_slug) return null;
-    return `${window.location.origin}/${storeProfile.store_slug}/loja`;
-  };
+  const getStoreUrl = () => storeUrl;
 
   const canOpenStorefront = (product: Product) =>
     Boolean(
@@ -161,6 +179,10 @@ const Products = () => {
           <p className="text-muted-foreground">Gerencie os itens do seu catálogo</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={() => setImportDialogOpen(true)}>
+            <Upload className="mr-2 h-4 w-4" />
+            Importar
+          </Button>
           <Button variant="outline" onClick={() => navigate("/admin/loja")}>
             <Store className="mr-2 h-4 w-4" />
             Configurar Loja
@@ -171,6 +193,14 @@ const Products = () => {
           </Button>
         </div>
       </div>
+
+      <ProductImportDialog
+        open={importDialogOpen}
+        onOpenChange={setImportDialogOpen}
+        onImportComplete={() => {
+          void loadData();
+        }}
+      />
 
       <Card>
         <CardContent className="pt-6">
@@ -212,22 +242,35 @@ const Products = () => {
               <Package className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
               <h2 className="text-xl font-semibold mb-3">Nenhum produto cadastrado</h2>
               <p className="text-muted-foreground mb-6">
-                Comece adicionando seus primeiros produtos ou serviços para sua loja virtual.
+                Comece adicionando seus primeiros produtos ou serviços para sua loja virtual,
+                ou importe de um CSV do WooCommerce.
               </p>
-              <Button onClick={() => navigate("/admin/products/new")}>
-                <Plus className="mr-2 h-4 w-4" />
-                Adicionar primeiro item
-              </Button>
+              <div className="flex flex-wrap justify-center gap-2">
+                <Button variant="outline" onClick={() => setImportDialogOpen(true)}>
+                  <Upload className="mr-2 h-4 w-4" />
+                  Importar
+                </Button>
+                <Button onClick={() => navigate("/admin/products/new")}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Adicionar primeiro item
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-4">
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as CatalogTab)}>
-            <TabsList className="grid w-full max-w-md grid-cols-3">
-              <TabsTrigger value="all">Todos</TabsTrigger>
-              <TabsTrigger value="product">Produtos</TabsTrigger>
-              <TabsTrigger value="service">Serviços</TabsTrigger>
+            <TabsList
+              className={`grid w-full max-w-md ${
+                enableProducts && enableServices ? "grid-cols-3" : "grid-cols-1"
+              }`}
+            >
+              {enableProducts && enableServices ? (
+                <TabsTrigger value="all">Todos</TabsTrigger>
+              ) : null}
+              {enableProducts ? <TabsTrigger value="product">Produtos</TabsTrigger> : null}
+              {enableServices ? <TabsTrigger value="service">Serviços</TabsTrigger> : null}
             </TabsList>
           </Tabs>
 

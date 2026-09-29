@@ -57,6 +57,8 @@ const ProductForm = () => {
   const isEditing = !!id;
   const [loading, setLoading] = useState(false);
   const [product, setProduct] = useState<Product | null>(null);
+  const [enableProducts, setEnableProducts] = useState(true);
+  const [enableServices, setEnableServices] = useState(true);
   const { toast } = useToast();
 
   const [formData, setFormData] = useState<ProductFormData>({
@@ -102,6 +104,36 @@ const ProductForm = () => {
       loadProduct(id);
     }
   }, [id, isEditing]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const profile = await productsService.getStoreProfile();
+        if (cancelled) return;
+        const allowProducts = profile?.enable_products !== false;
+        const allowServices = profile?.enable_services !== false;
+        setEnableProducts(allowProducts);
+        setEnableServices(allowServices);
+        if (!isEditing) {
+          setFormData((prev) => {
+            if (allowProducts && !allowServices && prev.type !== "product") {
+              return { ...prev, type: "product" };
+            }
+            if (!allowProducts && allowServices && prev.type !== "service") {
+              return { ...prev, type: "service" };
+            }
+            return prev;
+          });
+        }
+      } catch {
+        /* defaults: both enabled */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isEditing]);
 
   useEffect(() => {
     let cancelled = false;
@@ -498,6 +530,7 @@ const ProductForm = () => {
 
       <form onSubmit={handleSubmit} className="space-y-8">
         {/* Tipo de Produto/Serviço */}
+        {enableProducts && enableServices ? (
         <Card>
           <CardHeader>
             <CardTitle>Tipo</CardTitle>
@@ -544,6 +577,14 @@ const ProductForm = () => {
             </div>
           </CardContent>
         </Card>
+        ) : (
+          <Alert>
+            <AlertDescription>
+              Esta loja está configurada apenas para{" "}
+              {enableProducts ? "produtos" : "serviços"}. Altere em Configurar Loja se precisar dos dois tipos.
+            </AlertDescription>
+          </Alert>
+        )}
 
         {/* Informações Básicas */}
         <Card>

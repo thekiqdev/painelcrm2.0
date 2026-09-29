@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { useParams, Link } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -25,9 +25,11 @@ import { productsService } from "@/services/products";
 import { resolveStorefrontTheme } from "@/themes/registry";
 import { getPublicProductGalleryUrls } from "@/utils/publicCatalogImages";
 import { canUseStoreCheckout } from "@/utils/storeCheckoutVisibility";
+import { useStorefrontSlug } from "@/hooks/useStorefrontSlug";
 
 export const PublicProduct = () => {
-  const { storeSlug, productId } = useParams<{ storeSlug: string; productId: string }>();
+  const { productId } = useParams<{ productId: string }>();
+  const { storeSlug, href } = useStorefrontSlug();
   const [storeProfile, setStoreProfile] = useState<StoreProfile | null>(null);
   const [product, setProduct] = useState<PublicCatalogProduct | null>(null);
   const [loading, setLoading] = useState(true);
@@ -44,7 +46,11 @@ export const PublicProduct = () => {
   }, [product?.id]);
 
   const loadProductData = async () => {
-    if (!storeSlug || !productId) return;
+    if (!storeSlug || !productId) {
+      setLoading(false);
+      setNotFound(true);
+      return;
+    }
 
     try {
       setLoading(true);
@@ -101,7 +107,7 @@ export const PublicProduct = () => {
             O produto que você procura não existe ou não está mais disponível.
           </p>
           {storeSlug && (
-            <Link to={`/${storeSlug}/loja`}>
+            <Link to={href()}>
               <Button variant="outline">
                 <ArrowLeft className="mr-2 h-4 w-4" />
                 Voltar para a loja
@@ -132,7 +138,7 @@ export const PublicProduct = () => {
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <Link
-              to={`/${storeSlug}/loja`}
+              to={href()}
               className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
             >
               <ArrowLeft className="h-4 w-4" />
@@ -260,7 +266,7 @@ export const PublicProduct = () => {
                   {showOnlineCheckout && storeSlug && (
                     <Button className="w-full" size="lg" asChild>
                       <Link
-                        to={`/${storeSlug}/loja/checkout?productId=${encodeURIComponent(product.id)}`}
+                        to={`${href('/checkout')}?productId=${encodeURIComponent(product.id)}`}
                       >
                         <ShoppingCart className="mr-2 h-4 w-4" />
                         Comprar

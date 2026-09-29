@@ -37,6 +37,10 @@ describe('partnerDomainService', () => {
   });
 
   it('setPartnerDomain grava pending + token', async () => {
+    query
+      .mockResolvedValueOnce({ rows: [] }) // partner collision
+      .mockResolvedValueOnce({ rows: [] }) // tenant_hosts collision
+      .mockResolvedValueOnce({ rows: [] }); // update
     const instr = await setPartnerDomain(PARTNER_ID, 'crm.parceiro.com');
     expect(instr.custom_domain).toBe('crm.parceiro.com');
     expect(instr.domain_status).toBe('pending');
@@ -91,5 +95,15 @@ describe('partnerDomainService', () => {
     const result = await verifyPartnerDomain(PARTNER_ID);
     expect(result.verified).toBe(true);
     expect(result.method).toBe('txt');
+  });
+
+  it('setPartnerDomain rejeita colisão com tenant_hosts', async () => {
+    query
+      .mockResolvedValueOnce({ rows: [] }) // partner collision
+      .mockResolvedValueOnce({ rows: [{ id: 'th1' }] }); // tenant_hosts
+
+    await expect(setPartnerDomain(PARTNER_ID, 'loja.empresa.com')).rejects.toMatchObject({
+      code: 'DOMAIN_TAKEN_TENANT',
+    });
   });
 });

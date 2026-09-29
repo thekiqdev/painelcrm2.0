@@ -13,6 +13,7 @@ import {
   unlinkCatalogMediaRelativeKey,
   type CatalogMediaScope,
 } from '../services/catalogMediaUploadService.js';
+import { fetchRemoteImageForCatalog } from '../services/catalogMediaImportFromUrlService.js';
 import { extractCatalogMediaRelativeKeyFromStoredUrl } from '../utils/catalogMediaPublicSignedUrl.js';
 import { isMediaSimpleUploadsServiceEnabled } from '../services/media/mediaConfig.js';
 import { deleteFile } from '../services/media/mediaLocalStorageAdapter.js';
@@ -34,6 +35,11 @@ const scopeSchema = z.enum([
 
 const deleteBodySchema = z.object({
   key: z.string().min(1).max(2048),
+});
+
+const importFromUrlBodySchema = z.object({
+  url: z.string().url().max(2048),
+  scope: scopeSchema.default('product'),
 });
 
 function resolvePreviousCatalogKeyFromBody(
@@ -259,5 +265,61 @@ export async function postCatalogMediaDelete(req: AuthRequest, res: Response): P
     const errMsg = error instanceof Error ? error.message : 'Erro ao remover arquivo';
     console.error('[catalogMediaDelete]', errMsg);
     res.status(400).json({ error: errMsg });
+  }
+}
+
+/** POST /api/catalog-media/import-from-url — baixa imagem remota (SSRF-safe) e grava no catalog-media. */
+export async function postCatalogMediaImportFromUrl(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    if (process.env.CATALOG_MEDIA_UPLOAD_ENABLED === 'false') {
+      res.status(503).json({ error: 'Upload de mídia desabilitado neste ambiente.' });
+      return;
+    }
+
+    const userId = req.userId!;
+    const body = importFromUrlBodySchema.parse(req.body);
+    const scope = body.scope as CatalogMediaScope;
+
+    if (scope === 'tenant_logo_light' || scope === 'tenant_logo_dark') {
+      await assertModulePermission(userId, 'settings', 'edit', undefined, req);
+    } else if (scope === 'user_avatar') {
+      /* avatar pessoal */
+    } else {
+      await assertModulePermission(userId, 'products', 'edit', undefined, req);
+    }
+
+    const fetched = await fetchRemoteImageForCatalog(body.url);
+    assertAllowedImageUpload(fetched.contentType, fetched.buffer.length);
+
+    const tenantId = getTenantIdOrNull(req.tenantId);
+    const relativeKey = buildCatalogMediaRelativeKey({
+      tenantId,
+      userId,
+      scope,
+      contentType: fetched.contentType,
+      originalName: fetched.filename,
+    });
+    await saveCatalogMediaBuffer(relativeKey, fetched.buffer);
+    const publicUrl = buildCatalogMediaPublicUrl(req, relativeKey);
+
+    res.status(201).json({ publicUrl, key: relativeKey });
+  } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Validation error', details: error.errors });
+      return;
+    }
+    const errMsg = error instanceof Error ? error.message : 'Erro ao importar imagem';
+    const timedOut =
+      (typeof error === 'object' &&
+        error !== null &&
+        'name' in error &&
+        String((error as { name: unknown }).name) === 'TimeoutError') ||
+      /aborted|timeout/i.test(errMsg);
+    console.warn('[catalogMediaImportFromUrl]', errMsg);
+    res.status(timedOut ? 504 : 400).json({ error: errMsg });
   }
 }

@@ -15,17 +15,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "@/components/ui/sonner";
+import { displayPublicUrl } from "@/lib/tenantCanonicalUrls";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
 import {
   supportPortalSettingsService,
   type SupportPortalSettingsResponse,
 } from "@/services/supportPortalSettings";
 import { ticketPriorityLabels, type TicketPriority } from "@/types/tickets";
-
-function fullPublicUrl(path: string): string {
-  if (typeof window === "undefined") return path;
-  return `${window.location.origin}${path}`;
-}
 
 export const PublicSupportPortalSettingsSection: React.FC = () => {
   const { canEdit } = useModulePermissions();
@@ -123,15 +119,15 @@ export const PublicSupportPortalSettingsSection: React.FC = () => {
 
   const tenantSlug = (data?.slug ?? "").trim();
   const publicPath = tenantSlug ? `/suporte/${tenantSlug.toLowerCase()}` : null;
+  const publicDisplayUrl = displayPublicUrl(data?.public_url, publicPath);
 
   const copyLink = async () => {
-    if (!publicPath) {
+    if (!publicDisplayUrl) {
       toast.error("Defina o slug da empresa nas configurações da conta (Dados da empresa).");
       return;
     }
-    const url = fullPublicUrl(publicPath);
     try {
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(publicDisplayUrl);
       toast.success("Link copiado");
     } catch {
       toast.error("Não foi possível copiar");
@@ -167,15 +163,15 @@ export const PublicSupportPortalSettingsSection: React.FC = () => {
 
         <div className="space-y-2 rounded-lg border bg-muted/30 p-4">
           <Label>Link público do suporte</Label>
-          {publicPath ? (
+          {publicDisplayUrl ? (
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <span className="break-all font-mono text-xs sm:text-sm">{fullPublicUrl(publicPath)}</span>
+              <span className="break-all font-mono text-xs sm:text-sm">{publicDisplayUrl}</span>
               <Button type="button" size="sm" variant="outline" onClick={copyLink}>
                 <Copy className="mr-1 h-3.5 w-3.5" />
                 Copiar link
               </Button>
               <Button type="button" size="sm" variant="secondary" asChild>
-                <a href={publicPath} target="_blank" rel="noreferrer">
+                <a href={publicDisplayUrl} target="_blank" rel="noreferrer">
                   <ExternalLink className="mr-1 h-3.5 w-3.5" />
                   Abrir link
                 </a>

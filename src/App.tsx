@@ -6,6 +6,7 @@ import { queryClient } from "@/lib/queryClient";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AuthProvider } from "./contexts/AuthContext";
 import { PartnerBrandProvider } from "./contexts/PartnerBrandContext";
+import { TenantHostProvider } from "./contexts/TenantHostContext";
 import { ModulePermissionsProvider } from "./contexts/ModulePermissionsContext";
 import AuthLayout from "./layouts/AuthLayout";
 import AuthGuard from "./components/AuthGuard";
@@ -264,6 +265,7 @@ const App = () => (
       <BrowserRouter>
         <ThemeProvider>
         <PartnerBrandProvider>
+        <TenantHostProvider>
         <AuthProvider>
           <ChatQueryPersistBridge />
           <ChatRouteTimingListener />
@@ -1366,7 +1368,24 @@ const App = () => (
               </Route>
             </Route>
             
-            {/* Public store routes */}
+            {/* Public store — host customizado (TD S2): paths sem /:storeSlug */}
+              <Route path="/loja" element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <PublicStore />
+                </Suspense>
+              } />
+              <Route path="/loja/produto/:productId" element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <PublicProduct />
+                </Suspense>
+              } />
+              <Route path="/loja/checkout" element={
+                <Suspense fallback={<LoadingFallback />}>
+                  <StorePublicCheckout />
+                </Suspense>
+              } />
+
+            {/* Public store routes (path legado com slug) */}
               <Route path="/:storeSlug/loja" element={
                 <Suspense fallback={<LoadingFallback />}>
                   <PublicStore />
@@ -1398,6 +1417,7 @@ const App = () => (
         </AuthProvider>
         <ChatImageLightboxHost />
         <Toaster />
+        </TenantHostProvider>
         </PartnerBrandProvider>
         </ThemeProvider>
       </BrowserRouter>

@@ -9,10 +9,12 @@ import { productsService } from "@/services/products";
 import { useToast } from "@/hooks/use-toast";
 import { StoreSettingsForm } from "@/components/products/StoreSettingsForm";
 import { StoreTemplateTab } from "@/components/products/StoreTemplateTab";
+import { resolveCanonicalStoreUrl } from "@/lib/tenantCanonicalUrls";
 
 const StoreSettings = () => {
   const [storeProfile, setStoreProfile] = useState<StoreProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [storeUrl, setStoreUrl] = useState<string | null>(null);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -22,6 +24,8 @@ const StoreSettings = () => {
         setLoading(true);
         const data = await productsService.getStoreProfile();
         if (!cancelled) setStoreProfile(data);
+        const url = await resolveCanonicalStoreUrl(data?.store_slug);
+        if (!cancelled) setStoreUrl(url);
       } catch (error) {
         console.error("Erro ao carregar loja:", error);
         if (!cancelled) {
@@ -40,10 +44,15 @@ const StoreSettings = () => {
     };
   }, []);
 
-  const getStoreUrl = () => {
-    if (!storeProfile?.store_slug) return null;
-    return `${window.location.origin}/${storeProfile.store_slug}/loja`;
-  };
+  useEffect(() => {
+    let cancelled = false;
+    void resolveCanonicalStoreUrl(storeProfile?.store_slug).then((url) => {
+      if (!cancelled) setStoreUrl(url);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [storeProfile?.store_slug]);
 
   const handleSuccess = (profile: StoreProfile) => {
     setStoreProfile(profile);
@@ -65,10 +74,10 @@ const StoreSettings = () => {
         </p>
       </div>
 
-      {getStoreUrl() && (
+      {storeUrl && (
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" size="sm" asChild>
-            <a href={getStoreUrl()!} target="_blank" rel="noreferrer">
+            <a href={storeUrl} target="_blank" rel="noreferrer">
               Visualizar loja pública
             </a>
           </Button>

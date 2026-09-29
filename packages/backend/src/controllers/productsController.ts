@@ -10,6 +10,7 @@ import {
   ensureUserIdForInsert,
 } from '../utils/tenantScope.js';
 import { z } from 'zod';
+import { unlinkStoredProductImageUrls } from '../services/productCatalogMediaCleanup.js';
 
 /** V2-1: campos expostos em APIs públicas (lista e detalhe por slug); sem variations. */
 const PUBLIC_PRODUCT_SELECT = `
@@ -309,8 +310,13 @@ export async function deleteProduct(req: AuthRequest, res: Response): Promise<vo
     const userId = req.userId!;
     const { id } = req.params;
 
-    const existing = await pool.query<{ user_id: string; responsible_id: string | null }>(
-      `SELECT user_id, responsible_id FROM products p
+    const existing = await pool.query<{
+      user_id: string;
+      responsible_id: string | null;
+      images: unknown;
+      secondary_images: unknown;
+    }>(
+      `SELECT user_id, responsible_id, images, secondary_images FROM products p
        INNER JOIN users u ON u.id = p.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
        WHERE p.id = $1`,
       [id, userId]
@@ -335,6 +341,21 @@ export async function deleteProduct(req: AuthRequest, res: Response): Promise<vo
       return;
     }
 
+    // Best-effort: remove ficheiros do storage após o DELETE (não bloqueia a exclusão)
+    try {
+      await unlinkStoredProductImageUrls({
+        images: row.images,
+        secondaryImages: row.secondary_images,
+        tenantId: getTenantIdOrNull(req.tenantId),
+        ownerUserId: row.user_id,
+      });
+    } catch (cleanupErr) {
+      console.warn('[deleteProduct] limpeza de mídia falhou', {
+        productId: id,
+        message: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+      });
+    }
+
     res.json({ message: 'Product deleted successfully' });
   } catch (error) {
     if (error instanceof ModulePermissionError) {
@@ -353,7 +374,13 @@ export async function getPublicProducts(req: Request, res: Response): Promise<vo
     const result = await pool.query(
       `SELECT ${PUBLIC_PRODUCT_SELECT}
        FROM products p
-       WHERE p.user_id = $1 AND p.status = 'active' AND p.is_public = true 
+       LEFT JOIN store_profiles sp ON sp.user_id = p.user_id
+       WHERE p.user_id = $1 AND p.status = 'active' AND p.is_public = true
+         AND (
+           (p.type = 'product' AND COALESCE(sp.enable_products, true) = true)
+           OR (p.type = 'service' AND COALESCE(sp.enable_services, true) = true)
+           OR sp.user_id IS NULL
+         )
        ORDER BY p.created_at DESC`,
       [userId]
     );
@@ -375,7 +402,11 @@ export async function getPublicProductByStoreSlugAndProductId(req: Request, res:
       `SELECT ${PUBLIC_PRODUCT_SELECT}
        FROM products p
        INNER JOIN store_profiles sp ON sp.user_id = p.user_id AND sp.store_slug = $1
-       WHERE p.id = $2 AND p.status = 'active' AND p.is_public = true`,
+       WHERE p.id = $2 AND p.status = 'active' AND p.is_public = true
+         AND (
+           (p.type = 'product' AND COALESCE(sp.enable_products, true) = true)
+           OR (p.type = 'service' AND COALESCE(sp.enable_services, true) = true)
+         )`,
       [slug, productId]
     );
 

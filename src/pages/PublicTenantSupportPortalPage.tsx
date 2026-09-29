@@ -11,10 +11,16 @@ import { PublicSupportSuccess } from "@/components/public-support/PublicSupportS
 import type { PublicPortalPayload, TicketPostOk } from "@/components/public-support/types";
 import type { TicketPriority } from "@/types/tickets";
 import { isBrazilianNationalPhoneValid, normalizeBrazilianNationalDigits } from "@/lib/phone";
+import { useTenantHost } from "@/contexts/TenantHostContext";
 
 export default function PublicTenantSupportPortalPage() {
   const { id: slugParam } = useParams<{ id: string }>();
-  const slug = (slugParam ?? "").trim().toLowerCase();
+  const { isTenantHost, host, loading: hostLoading } = useTenantHost();
+  const slugFromHost =
+    isTenantHost && host?.role === 'support'
+      ? (host.support_portal_slug ?? '').trim().toLowerCase()
+      : '';
+  const slug = (slugParam ?? slugFromHost).trim().toLowerCase();
 
   const [loading, setLoading] = useState(true);
   const [portal, setPortal] = useState<PublicPortalPayload | null>(null);
@@ -36,6 +42,10 @@ export default function PublicTenantSupportPortalPage() {
   const invalidSegment = slug.length > 0 && isPlatformSupportTicketPathSegment(slug);
 
   useEffect(() => {
+    if (hostLoading && !slugParam) {
+      setLoading(true);
+      return;
+    }
     if (!slug || invalidSegment) {
       setLoading(false);
       setLoadError("Portal não encontrado.");
@@ -64,7 +74,7 @@ export default function PublicTenantSupportPortalPage() {
     return () => {
       cancelled = true;
     };
-  }, [slug, invalidSegment]);
+  }, [slug, slugParam, invalidSegment, hostLoading]);
 
   const accent = portal ? portalAccent(portal.primary_color) : "#5b4cdb";
   const companyLabel = portal?.company_name?.trim() || "";

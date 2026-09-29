@@ -267,6 +267,14 @@ export async function partnerVerifyDomain(req: PartnerAuthRequest, res: Response
       res.status(403).json({ error: 'Partner context missing' });
       return;
     }
+    const { checkDomainVerifyRateLimit } = await import('../middleware/domainVerifyRateLimit.js');
+    if (!checkDomainVerifyRateLimit(`partner:${ctx.partnerTenantId}`)) {
+      res.status(429).json({
+        error: 'Máximo de verificações DNS por minuto atingido. Tente novamente em instantes.',
+        code: 'RATE_LIMITED',
+      });
+      return;
+    }
     const { verifyPartnerDomain } = await import('./partnerDomainService.js');
     const result = await verifyPartnerDomain(ctx.partnerTenantId);
     res.json(result);
