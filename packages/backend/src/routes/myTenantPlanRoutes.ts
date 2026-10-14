@@ -43,6 +43,16 @@ router.post(
   postPlanCheckoutPreparePayment
 );
 router.get('/commercial-billings', ...tenantAuthCommercialHub, myTenantPlanController.getMyTenantCommercialBillings);
+router.get(
+  '/late-renewal-restart',
+  ...tenantAuthCommercialHub,
+  myTenantPlanController.getLateRenewalRestart
+);
+router.post(
+  '/late-renewal-restart',
+  ...tenantAuthCommercialHub,
+  myTenantPlanController.postLateRenewalRestart
+);
 
 // Demais rotas: CRM comercial + período ativo
 // Leitura de assinatura / limites no hub (Meu plano com período vencido)

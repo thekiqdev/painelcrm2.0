@@ -5,6 +5,7 @@
 import { pool } from '../utils/db.js';
 import { yyyyMmDdFromDbDateValue } from '../utils/calendarDateBr.js';
 import {
+  cancelOpenPlanRenewalBillingsForTenant,
   createInvoice,
   getInvoiceById,
   getInvoiceByGatewayReferenceId,
@@ -19,6 +20,11 @@ import {
 } from './billingSubscriptionService.js';
 import { calculateNextBillingDate } from './subscriptionService.js';
 import { billingLog } from './billingLogger.js';
+import { getActiveGateway } from '../modules/payments/gatewayProvider.js';
+import {
+  evaluateLateRenewalRestart,
+  LATE_RENEWAL_OPEN_STATUSES,
+} from './lateRenewalRestartEligibility.js';
 
 const OPEN_STATUSES = ['pending', 'waiting_payment', 'processing', 'overdue'] as const;
 const UUID_RE =
@@ -262,10 +268,115 @@ async function enrichBillingAsaasSubscriptionMeta(
   });
 }
 
+async function cancelRenewalSiblingGatewayCharges(
+  rows: Array<{ id: string; gateway_reference_id: string | null }>,
+  tenantId: string
+): Promise<void> {
+  for (const row of rows) {
+    const ref = row.gateway_reference_id?.trim();
+    if (!ref) continue;
+    try {
+      const gateway = await getActiveGateway({ billingType: 'saas', tenantId });
+      if (gateway && typeof gateway.cancelPayment === 'function') {
+        await gateway.cancelPayment(ref);
+      }
+    } catch (e) {
+      console.warn('[RC S3] falha ao cancelar cobrança gateway de plan_renewal', {
+        billingId: row.id,
+        ref,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+}
+
+/**
+ * RC S3 — segunda baixa de outra fatura do mesmo atraso, depois que uma já reancorou.
+ * Compara o início histórico desta fatura com `renewal_period_start` gravado na que reiniciou.
+ */
+async function findPriorLateRenewalRestart(opts: {
+  tenantId: string;
+  subscriptionId: string;
+  billingId: string;
+  invoiceAnchorYmd: string;
+}): Promise<boolean> {
+  if (!opts.invoiceAnchorYmd) return false;
+  const prior = await pool.query<{ renewal_period_start: string | null }>(
+    `SELECT gateway_metadata->>'renewal_period_start' AS renewal_period_start
+     FROM tenant_billing
+     WHERE subscription_id = $1::uuid
+       AND tenant_id = $2::uuid
+       AND id <> $3::uuid
+       AND status = 'paid'
+       AND COALESCE(billing_reason, '') = 'plan_renewal'
+       AND gateway_metadata->>'late_renewal_restart_at' IS NOT NULL
+     ORDER BY paid_at DESC NULLS LAST
+     LIMIT 1`,
+    [opts.subscriptionId, opts.tenantId, opts.billingId]
+  );
+  const restartStart = yyyyMmDdFromDbDateValue(prior.rows[0]?.renewal_period_start);
+  return Boolean(restartStart && opts.invoiceAnchorYmd < restartStart);
+}
+
+/** Limpa suspensão / past_due. Período só muda quando `periodStart` e `periodEnd` vêm preenchidos. */
+async function applyRenewalPaidAccess(opts: {
+  tenantId: string;
+  subscriptionId: string;
+  billingId: string;
+  periodStart?: string | null;
+  periodEnd?: string | null;
+}): Promise<void> {
+  if (opts.periodStart && opts.periodEnd) {
+    await pool.query(
+      `UPDATE tenants
+       SET plan_period_start = $1::date,
+           plan_period_end = $2::date,
+           status = CASE WHEN status IN ('suspended', 'past_due') THEN 'active' ELSE status END,
+           suspension_reason = CASE WHEN status IN ('suspended', 'past_due') THEN NULL ELSE suspension_reason END,
+           suspended_at = CASE WHEN status IN ('suspended', 'past_due') THEN NULL ELSE suspended_at END,
+           updated_at = now()
+       WHERE id = $3::uuid`,
+      [opts.periodStart, opts.periodEnd, opts.tenantId]
+    );
+  } else {
+    await pool.query(
+      `UPDATE tenants
+       SET status = CASE WHEN status IN ('suspended', 'past_due') THEN 'active' ELSE status END,
+           suspension_reason = CASE WHEN status IN ('suspended', 'past_due') THEN NULL ELSE suspension_reason END,
+           suspended_at = CASE WHEN status IN ('suspended', 'past_due') THEN NULL ELSE suspended_at END,
+           updated_at = now()
+       WHERE id = $1::uuid`,
+      [opts.tenantId]
+    );
+  }
+
+  await pool.query(
+    `UPDATE subscriptions
+     SET status = 'active', updated_at = now()
+     WHERE id = $1::uuid AND tenant_id = $2::uuid AND type = 'saas' AND status = 'past_due'`,
+    [opts.subscriptionId, opts.tenantId]
+  );
+
+  try {
+    const { clearSubscriptionPastDueOnPaid } = await import(
+      './collectionPolicy/subscriptionPastDueWriter.js'
+    );
+    const { tenantBillingCorrelationId } = await import('./billing2/billingCorrelationId.js');
+    await clearSubscriptionPastDueOnPaid({
+      subscriptionId: opts.subscriptionId,
+      billingId: opts.billingId,
+      correlationId: tenantBillingCorrelationId(opts.billingId),
+    });
+  } catch (e) {
+    console.warn('[CA S3] clear past_due skipped', e);
+  }
+}
+
 /**
  * Confirma renovação paga: avança período da subscription + tenant **sem**
  * reescrever snapshot contratual / activated_billing_id como 1ª compra.
  * Idempotente por `gateway_metadata.asaas_renewal_confirmed_at`.
+ * RC S3: backlog em atraso reancora uma vez a partir da data do pagamento.
  */
 export async function confirmSaasRenewalFromAsaasPayment(billingId: string): Promise<{
   confirmed: boolean;
@@ -313,14 +424,98 @@ export async function confirmSaasRenewalFromAsaasPayment(billingId: string): Pro
   }
 
   const interval = (billing.billing_interval || sub.billing_interval || 'monthly') as BillingInterval;
-  const periodStart =
-    yyyyMmDdFromDbDateValue(billing.period_start) ||
-    yyyyMmDdFromDbDateValue(billing.due_date) ||
+  const paymentDate =
+    yyyyMmDdFromDbDateValue(billing.paid_at) ||
     yyyyMmDdFromDbDateValue(new Date()) ||
     new Date().toISOString().slice(0, 10);
-  const periodEnd =
+  const historicalStart =
+    yyyyMmDdFromDbDateValue(billing.period_start) ||
+    yyyyMmDdFromDbDateValue(billing.due_date) ||
+    paymentDate;
+  const historicalEnd =
     yyyyMmDdFromDbDateValue(billing.period_end) ||
-    calculateNextBillingDate(periodStart, interval, null);
+    calculateNextBillingDate(historicalStart, interval, null);
+  const invoiceAnchor =
+    yyyyMmDdFromDbDateValue(billing.period_start) ||
+    yyyyMmDdFromDbDateValue(billing.due_date) ||
+    yyyyMmDdFromDbDateValue(billing.period_end);
+
+  const backlogAlreadyRestarted = await findPriorLateRenewalRestart({
+    tenantId: billing.tenant_id,
+    subscriptionId: sub.id,
+    billingId,
+    invoiceAnchorYmd: invoiceAnchor,
+  });
+  if (backlogAlreadyRestarted) {
+    await applyRenewalPaidAccess({
+      tenantId: billing.tenant_id,
+      subscriptionId: sub.id,
+      billingId,
+    });
+    const cancelled = await cancelOpenPlanRenewalBillingsForTenant(billing.tenant_id, billingId);
+    await cancelRenewalSiblingGatewayCharges(cancelled, billing.tenant_id);
+    await updateInvoiceGatewayData(billingId, {
+      gateway: billing.gateway ?? 'asaas',
+      payment_method: billing.payment_method,
+      gateway_reference_id: billing.gateway_reference_id,
+      gateway_status: billing.gateway_status,
+      gateway_metadata: {
+        ...meta,
+        asaas_renewal_confirmed_at: new Date().toISOString(),
+        renewal_confirmed_at: new Date().toISOString(),
+        late_renewal_restart_skipped: true,
+      },
+    });
+    billingLog('invoice', 'late_renewal_restart_skipped', {
+      billing_id: billingId,
+      subscription_id: sub.id,
+    });
+    return { confirmed: true, detail: 'restart_already_applied' };
+  }
+
+  const coverage = await pool.query<{
+    plan_period_end: string | null;
+    asaas_subscription_id: string | null;
+  }>(
+    `SELECT t.plan_period_end::text AS plan_period_end,
+            s.asaas_subscription_id
+     FROM tenants t
+     LEFT JOIN subscriptions s ON s.id = $2::uuid AND s.tenant_id = t.id
+     WHERE t.id = $1::uuid`,
+    [billing.tenant_id, sub.id]
+  );
+  const openRenewals = await pool.query<{
+    period_start: string | null;
+    period_end: string | null;
+    status: string;
+  }>(
+    `SELECT period_start::text AS period_start,
+            period_end::text AS period_end,
+            status
+     FROM tenant_billing
+     WHERE subscription_id = $1::uuid
+       AND tenant_id = $2::uuid
+       AND COALESCE(billing_reason, '') = 'plan_renewal'
+       AND status = ANY($3::text[])`,
+    [sub.id, billing.tenant_id, [...LATE_RENEWAL_OPEN_STATUSES]]
+  );
+  const decision = evaluateLateRenewalRestart({
+    planPeriodEnd: yyyyMmDdFromDbDateValue(coverage.rows[0]?.plan_period_end) || null,
+    billingInterval: interval,
+    paymentDate,
+    openRenewals: [
+      ...openRenewals.rows,
+      {
+        period_start: yyyyMmDdFromDbDateValue(billing.period_start) || null,
+        period_end: yyyyMmDdFromDbDateValue(billing.period_end) || null,
+        status: 'overdue',
+      },
+    ],
+    asaasSubscriptionId: coverage.rows[0]?.asaas_subscription_id ?? null,
+  });
+
+  const periodStart = decision.eligible ? decision.periodStart : historicalStart;
+  const periodEnd = decision.eligible ? decision.periodEnd : historicalEnd;
 
   const nextCount = Number(sub.billing_cycle_count ?? 0) + 1;
   await updateSubscriptionAfterRenewal(pool, sub.id, billing.tenant_id, {
@@ -330,41 +525,28 @@ export async function confirmSaasRenewalFromAsaasPayment(billingId: string): Pro
     billing_cycle_count: nextCount,
   });
 
-  // Estende período no tenant sem tocar plan_id / activated_billing_id / snapshot CS.
-  await pool.query(
-    `UPDATE tenants
-     SET plan_period_start = $1::date,
-         plan_period_end = $2::date,
-         status = CASE WHEN status IN ('suspended', 'past_due') THEN 'active' ELSE status END,
-         suspension_reason = CASE WHEN status IN ('suspended', 'past_due') THEN NULL ELSE suspension_reason END,
-         suspended_at = CASE WHEN status IN ('suspended', 'past_due') THEN NULL ELSE suspended_at END,
-         updated_at = now()
-     WHERE id = $3::uuid`,
-    [periodStart, periodEnd, billing.tenant_id]
-  );
+  await applyRenewalPaidAccess({
+    tenantId: billing.tenant_id,
+    subscriptionId: sub.id,
+    billingId,
+    periodStart,
+    periodEnd,
+  });
 
-  // Reativa subscription se estava past_due.
-  await pool.query(
-    `UPDATE subscriptions
-     SET status = 'active', updated_at = now()
-     WHERE id = $1::uuid AND tenant_id = $2::uuid AND type = 'saas' AND status = 'past_due'`,
-    [sub.id, billing.tenant_id]
-  );
-
-  try {
-    const { clearSubscriptionPastDueOnPaid } = await import(
-      './collectionPolicy/subscriptionPastDueWriter.js'
+  if (decision.eligible) {
+    await pool.query(
+      `UPDATE tenant_billing
+       SET period_start = $1::date,
+           period_end = $2::date,
+           updated_at = now()
+       WHERE id = $3::uuid AND tenant_id = $4::uuid`,
+      [periodStart, periodEnd, billingId, billing.tenant_id]
     );
-    const { tenantBillingCorrelationId } = await import('./billing2/billingCorrelationId.js');
-    await clearSubscriptionPastDueOnPaid({
-      subscriptionId: sub.id,
-      billingId,
-      correlationId: tenantBillingCorrelationId(billingId),
-    });
-  } catch (e) {
-    console.warn('[CA S3] clear past_due skipped', e);
+    const cancelled = await cancelOpenPlanRenewalBillingsForTenant(billing.tenant_id, billingId);
+    await cancelRenewalSiblingGatewayCharges(cancelled, billing.tenant_id);
   }
 
+  const confirmedAt = new Date().toISOString();
   await updateInvoiceGatewayData(billingId, {
     gateway: billing.gateway ?? 'asaas',
     payment_method: billing.payment_method,
@@ -372,10 +554,11 @@ export async function confirmSaasRenewalFromAsaasPayment(billingId: string): Pro
     gateway_status: billing.gateway_status,
     gateway_metadata: {
       ...meta,
-      asaas_renewal_confirmed_at: new Date().toISOString(),
-      renewal_confirmed_at: new Date().toISOString(),
+      asaas_renewal_confirmed_at: confirmedAt,
+      renewal_confirmed_at: confirmedAt,
       renewal_period_start: periodStart,
       renewal_period_end: periodEnd,
+      ...(decision.eligible ? { late_renewal_restart_at: confirmedAt } : {}),
     },
   });
 
@@ -385,9 +568,10 @@ export async function confirmSaasRenewalFromAsaasPayment(billingId: string): Pro
     period_start: periodStart,
     period_end: periodEnd,
     billing_cycle_count: nextCount,
+    late_renewal_restart: decision.eligible,
   });
 
-  return { confirmed: true, detail: 'confirmed' };
+  return { confirmed: true, detail: decision.eligible ? 'restarted' : 'confirmed' };
 }
 
 /**

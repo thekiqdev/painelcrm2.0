@@ -9,6 +9,15 @@ vi.mock('./invoiceService.js', () => ({
   getInvoiceById: vi.fn(),
   getInvoiceByGatewayReferenceId: vi.fn(),
   updateInvoiceGatewayData: vi.fn().mockResolvedValue(undefined),
+  cancelOpenPlanRenewalBillingsForTenant: vi.fn().mockResolvedValue([]),
+}));
+
+vi.mock('../modules/payments/gatewayProvider.js', () => ({
+  getActiveGateway: vi.fn(),
+}));
+
+vi.mock('./saasContractRenewalReconcileService.js', () => ({
+  reconcileOpenPlanRenewalsAfterContractChange: vi.fn(),
 }));
 
 vi.mock('./billingSubscriptionService.js', () => ({
@@ -35,16 +44,22 @@ vi.mock('./billing2/billingCorrelationId.js', () => ({
 
 import { pool } from '../utils/db.js';
 import {
+  cancelOpenPlanRenewalBillingsForTenant,
   createInvoice,
   getInvoiceById,
   getInvoiceByGatewayReferenceId,
   updateInvoiceGatewayData,
 } from './invoiceService.js';
+import { getActiveGateway } from '../modules/payments/gatewayProvider.js';
+import { reconcileOpenPlanRenewalsAfterContractChange } from './saasContractRenewalReconcileService.js';
 import {
   getSubscriptionById,
   updateSubscriptionAfterRenewal,
 } from './billingSubscriptionService.js';
-import { markSubscriptionPastDue } from './collectionPolicy/subscriptionPastDueWriter.js';
+import {
+  clearSubscriptionPastDueOnPaid,
+  markSubscriptionPastDue,
+} from './collectionPolicy/subscriptionPastDueWriter.js';
 import {
   confirmSaasRenewalFromAsaasPayment,
   ensureTenantBillingForAsaasSubscriptionPayment,
@@ -243,6 +258,8 @@ describe('confirmSaasRenewalFromAsaasPayment', () => {
     const second = await confirmSaasRenewalFromAsaasPayment(BILLING_ID);
     expect(second).toEqual({ confirmed: true, detail: 'already_confirmed' });
     expect(updateSubscriptionAfterRenewal).not.toHaveBeenCalled();
+    expect(cancelOpenPlanRenewalBillingsForTenant).not.toHaveBeenCalled();
+    expect(reconcileOpenPlanRenewalsAfterContractChange).not.toHaveBeenCalled();
   });
 
   it('não confirma se não for plan_renewal', async () => {
@@ -251,6 +268,171 @@ describe('confirmSaasRenewalFromAsaasPayment', () => {
     );
     const r = await confirmSaasRenewalFromAsaasPayment(BILLING_ID);
     expect(r).toEqual({ confirmed: false, detail: 'not_plan_renewal' });
+  });
+
+  it('fatura velha no backlog reancora a partir do pagamento e cancela a irmã', async () => {
+    vi.mocked(getInvoiceById).mockResolvedValue(
+      billingRow({
+        status: 'paid',
+        paid_at: '2026-10-14T15:00:00.000Z',
+        period_start: '2026-09-29',
+        period_end: '2026-10-29',
+        due_date: '2026-09-29',
+      }) as never
+    );
+    vi.mocked(getSubscriptionById).mockResolvedValue(subRow({ billing_cycle_count: 2 }) as never);
+    vi.mocked(pool.query).mockImplementation(async (sql: string) => {
+      const q = String(sql).replace(/\s+/g, ' ');
+      if (q.includes('late_renewal_restart_at')) return { rows: [], rowCount: 0 } as never;
+      if (q.includes('plan_period_end')) {
+        return {
+          rows: [{ plan_period_end: '2026-08-29', asaas_subscription_id: null }],
+          rowCount: 1,
+        } as never;
+      }
+      if (q.includes('FROM tenant_billing') && q.includes('status = ANY')) {
+        return {
+          rows: [{ period_start: '2026-08-29', period_end: '2026-09-29', status: 'overdue' }],
+          rowCount: 1,
+        } as never;
+      }
+      return { rows: [], rowCount: 1 } as never;
+    });
+    const cancelPayment = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(getActiveGateway).mockResolvedValue({ cancelPayment } as never);
+    vi.mocked(cancelOpenPlanRenewalBillingsForTenant).mockResolvedValue([
+      {
+        id: 'old-aug',
+        amount_cents: 14700,
+        gateway: 'asaas',
+        gateway_reference_id: 'pay_aug',
+        period_start: '2026-08-29',
+        period_end: '2026-09-29',
+      },
+    ]);
+
+    const result = await confirmSaasRenewalFromAsaasPayment(BILLING_ID);
+
+    expect(result).toEqual({ confirmed: true, detail: 'restarted' });
+    expect(updateSubscriptionAfterRenewal).toHaveBeenCalledTimes(1);
+    expect(updateSubscriptionAfterRenewal).toHaveBeenCalledWith(
+      pool,
+      SUB_ID,
+      TENANT_ID,
+      expect.objectContaining({
+        current_period_start: '2026-10-14',
+        current_period_end: '2026-11-14',
+        next_billing_date: '2026-11-14',
+        billing_cycle_count: 3,
+      })
+    );
+    const periodUpdate = vi.mocked(pool.query).mock.calls.find(([sql]) =>
+      String(sql).includes('UPDATE tenant_billing')
+    );
+    expect(periodUpdate?.[1]).toEqual(['2026-10-14', '2026-11-14', BILLING_ID, TENANT_ID]);
+    expect(cancelOpenPlanRenewalBillingsForTenant).toHaveBeenCalledWith(TENANT_ID, BILLING_ID);
+    expect(cancelPayment).toHaveBeenCalledWith('pay_aug');
+    expect(clearSubscriptionPastDueOnPaid).toHaveBeenCalled();
+    expect(updateInvoiceGatewayData).toHaveBeenCalledWith(
+      BILLING_ID,
+      expect.objectContaining({
+        gateway_metadata: expect.objectContaining({
+          late_renewal_restart_at: expect.any(String),
+          renewal_period_start: '2026-10-14',
+          renewal_period_end: '2026-11-14',
+        }),
+      })
+    );
+    expect(reconcileOpenPlanRenewalsAfterContractChange).not.toHaveBeenCalled();
+    const renewalArgs = vi.mocked(updateSubscriptionAfterRenewal).mock.calls[0]?.[3] as Record<
+      string,
+      unknown
+    >;
+    expect(renewalArgs).not.toHaveProperty('contracted_plan_price_cents');
+  });
+
+  it('segunda baixa do mesmo atraso não soma outro mês', async () => {
+    vi.mocked(getInvoiceById).mockResolvedValue(
+      billingRow({
+        id: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+        status: 'paid',
+        paid_at: '2026-10-14T16:00:00.000Z',
+        period_start: '2026-08-29',
+        period_end: '2026-09-29',
+        due_date: '2026-08-29',
+      }) as never
+    );
+    vi.mocked(getSubscriptionById).mockResolvedValue(subRow({ billing_cycle_count: 3 }) as never);
+    vi.mocked(pool.query).mockImplementation(async (sql: string) => {
+      const q = String(sql).replace(/\s+/g, ' ');
+      if (q.includes('late_renewal_restart_at')) {
+        return { rows: [{ renewal_period_start: '2026-10-14' }], rowCount: 1 } as never;
+      }
+      return { rows: [], rowCount: 1 } as never;
+    });
+
+    const result = await confirmSaasRenewalFromAsaasPayment(
+      'ffffffff-ffff-4fff-8fff-ffffffffffff'
+    );
+
+    expect(result).toEqual({ confirmed: true, detail: 'restart_already_applied' });
+    expect(updateSubscriptionAfterRenewal).not.toHaveBeenCalled();
+    expect(
+      vi.mocked(pool.query).mock.calls.some(([sql]) => String(sql).includes('plan_period_start'))
+    ).toBe(false);
+    expect(clearSubscriptionPastDueOnPaid).toHaveBeenCalled();
+    expect(updateInvoiceGatewayData).toHaveBeenCalledWith(
+      'ffffffff-ffff-4fff-8fff-ffffffffffff',
+      expect.objectContaining({
+        gateway_metadata: expect.objectContaining({ late_renewal_restart_skipped: true }),
+      })
+    );
+    expect(reconcileOpenPlanRenewalsAfterContractChange).not.toHaveBeenCalled();
+  });
+
+  it('assinatura Asaas com backlog mantém o período da fatura', async () => {
+    vi.mocked(getInvoiceById).mockResolvedValue(
+      billingRow({
+        status: 'paid',
+        paid_at: '2026-10-14T15:00:00.000Z',
+        period_start: '2026-09-29',
+        period_end: '2026-10-29',
+        due_date: '2026-09-29',
+      }) as never
+    );
+    vi.mocked(getSubscriptionById).mockResolvedValue(subRow() as never);
+    vi.mocked(pool.query).mockImplementation(async (sql: string) => {
+      const q = String(sql).replace(/\s+/g, ' ');
+      if (q.includes('late_renewal_restart_at')) return { rows: [], rowCount: 0 } as never;
+      if (q.includes('plan_period_end')) {
+        return {
+          rows: [{ plan_period_end: '2026-08-29', asaas_subscription_id: 'sub_asaas_xyz' }],
+          rowCount: 1,
+        } as never;
+      }
+      if (q.includes('FROM tenant_billing') && q.includes('status = ANY')) {
+        return {
+          rows: [{ period_start: '2026-08-29', period_end: '2026-09-29', status: 'overdue' }],
+          rowCount: 1,
+        } as never;
+      }
+      return { rows: [], rowCount: 1 } as never;
+    });
+
+    const result = await confirmSaasRenewalFromAsaasPayment(BILLING_ID);
+
+    expect(result).toEqual({ confirmed: true, detail: 'confirmed' });
+    expect(updateSubscriptionAfterRenewal).toHaveBeenCalledWith(
+      pool,
+      SUB_ID,
+      TENANT_ID,
+      expect.objectContaining({
+        current_period_start: '2026-09-29',
+        current_period_end: '2026-10-29',
+        billing_cycle_count: 3,
+      })
+    );
+    expect(cancelOpenPlanRenewalBillingsForTenant).not.toHaveBeenCalled();
   });
 });
 
