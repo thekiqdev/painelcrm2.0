@@ -1,0 +1,7 @@
+{
+  "platform_title": "Chat da Plataforma",
+  "platform_desc": "Mensagens dos canais conectados no Super Admin.",
+  "meta_loading": "Meta — a carregar…",
+  "meta_off": "API Oficial Meta (desativada)",
+  "meta_error": "Meta — token / conta em erro"
+}

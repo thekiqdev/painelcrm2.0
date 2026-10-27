@@ -23,6 +23,12 @@ router.get('/:id/domain', async (req, res, next) => {
   );
   return superadminGetTenantDomain(req as never, res).catch(next);
 });
+router.post('/:id/domain/cf-sync', async (req, res, next) => {
+  const { superadminSyncTenantDomainCf } = await import(
+    '../tenantCustomDomain/tenantDomainControllers.js'
+  );
+  return superadminSyncTenantDomainCf(req as never, res).catch(next);
+});
 router.delete('/:id/domain', async (req, res, next) => {
   const { superadminClearTenantDomain } = await import(
     '../tenantCustomDomain/tenantDomainControllers.js'

@@ -32,6 +32,11 @@ export type DomainInstructions = {
   cname_host?: string | null;
   cname_target?: string | null;
   bypass_enabled?: boolean;
+  cf_custom_hostname_id?: string | null;
+  cf_ssl_status?: string | null;
+  cf_ownership_status?: string | null;
+  cf_last_sync_at?: string | null;
+  cf_last_error?: string | null;
 };
 
 export type LicenseSummary = {
@@ -170,6 +175,39 @@ export function domainStatusLabel(status: string): string {
     failed: 'Falhou',
   };
   return map[status] || status;
+}
+
+/** PE Etapa 4 — rótulos amigáveis do ssl.status Cloudflare */
+export function cfSslStatusLabel(status: string | null | undefined): string {
+  if (!status) return 'Não provisionado';
+  const key = status.trim().toLowerCase();
+  const map: Record<string, string> = {
+    active: 'Ativo',
+    pending_validation: 'Validando',
+    pending_issuance: 'Emitindo certificado',
+    pending_deployment: 'Publicando certificado',
+    pending: 'Pendente',
+    initializing: 'Iniciando',
+    moved: 'Movido',
+    deleted: 'Removido',
+    expired: 'Expirado',
+  };
+  return map[key] || status;
+}
+
+export function isCfSslPending(status: string | null | undefined): boolean {
+  if (!status) return false;
+  const key = status.trim().toLowerCase();
+  return (
+    key !== 'active' &&
+    (key.startsWith('pending') || key === 'initializing')
+  );
+}
+
+export function partnerChannelCheckoutUrl(hostname: string | null | undefined): string | null {
+  const h = (hostname || '').trim().toLowerCase();
+  if (!h) return null;
+  return `https://${h}/cadastro`;
 }
 
 export type ChannelSetupStep = {

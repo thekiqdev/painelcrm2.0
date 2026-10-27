@@ -28,6 +28,7 @@
 - Node **não** emite certificado (MVP)
 - Cliente aponta CNAME do hostname → `TENANT_CUSTOM_DOMAIN_CNAME_TARGET` (fallback `PARTNER_WL_CNAME_TARGET`)
 - Edge (Easypanel / Traefik / nginx) termina TLS e encaminha para o mesmo frontend/API
+- **Escala (pós-MVP):** cadastrar cada hostname no Easypanel é inviável — fase **TE** ([`PLAN_SPRINTS_TE_CLOUDFLARE_SAAS.md`](./PLAN_SPRINTS_TE_CLOUDFLARE_SAAS.md)): Cloudflare for SaaS + Origin Host rewrite para o domínio já conhecido da plataforma
 
 ---
 

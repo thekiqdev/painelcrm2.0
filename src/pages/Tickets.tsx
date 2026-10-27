@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { Plus, Search, LayoutGrid, List } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -19,12 +20,13 @@ import {
   ticketChannelLabels,
 } from '@/types/tickets';
 import { formatDistanceToNow } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
+import { dateFnsLocale } from '@/lib/i18n/formatApp';
 import { MobilePageHeader } from '@/components/mobile/MobilePageHeader';
 import { ClientEntityLink, LeadEntityLink } from '@/components/entities';
 import { clientsService } from '@/services/clients';
 
 export default function Tickets() {
+  const { t } = useTranslation('tickets');
   const navigate = useNavigate();
   const { user } = useAuth();
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -99,7 +101,7 @@ export default function Tickets() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen">
-        <p>Carregando...</p>
+        <p>{t('loading')}</p>
       </div>
     );
   }
@@ -108,21 +110,21 @@ export default function Tickets() {
     <div className="container mx-auto p-6 space-y-6">
       <div className="md:hidden sticky top-0 z-30 -mx-0.5 border-b border-border/70 bg-background/95 px-0.5 pb-2 pt-1 backdrop-blur supports-[backdrop-filter]:bg-background/90">
         <MobilePageHeader
-          title="Tickets"
+          title={t('title')}
           secondaryActions={[
             {
               icon: <List className="h-4 w-4" aria-hidden />,
-              ariaLabel: 'Vista em lista',
+              ariaLabel: t('list_view'),
               onClick: () => setViewMode('table'),
             },
             {
               icon: <LayoutGrid className="h-4 w-4" aria-hidden />,
-              ariaLabel: 'Vista em kanban',
+              ariaLabel: t('kanban_view'),
               onClick: () => navigate('/support/tickets/kanban'),
             },
           ]}
           primaryAction={{
-            label: 'Novo ticket',
+            label: t('new'),
             icon: <Plus className="h-4 w-4" aria-hidden />,
             onClick: () => navigate('/support/tickets/new'),
           }}
@@ -130,12 +132,12 @@ export default function Tickets() {
       </div>
       <div className="hidden md:flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold">Tickets</h1>
-          <p className="text-muted-foreground">Gerencie seus chamados e atendimentos</p>
+          <h1 className="text-3xl font-bold">{t('title')}</h1>
+          <p className="text-muted-foreground">{t('subtitle')}</p>
         </div>
         <Button onClick={() => navigate('/support/tickets/new')}>
           <Plus className="mr-2 h-4 w-4" />
-          Novo Ticket
+          {t('new_desktop')}
         </Button>
       </div>
 
@@ -267,7 +269,7 @@ export default function Tickets() {
                     <td className="p-4 text-sm text-muted-foreground">
                       {formatDistanceToNow(new Date(ticket.created_at), {
                         addSuffix: true,
-                        locale: ptBR,
+                        locale: dateFnsLocale(),
                       })}
                     </td>
                   </tr>

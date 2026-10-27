@@ -3,7 +3,7 @@ import type { PoolClient } from 'pg';
 import { verifyToken } from '../utils/jwt.js';
 import { pool, dbRequestStorage } from '../utils/db.js';
 import { userHasFeature } from '../services/featureFlagService.js';
-import { isPhase2TrialCrmGateEnabled } from '../config/checkoutTrialFeatureFlags.js';
+import { commercialAccessBlock, planPeriodBlock } from '../services/tenantAccessGate.js';
 import { getTenantIdForUser } from '../utils/tenant.js';
 import type { ModulePermissionsMap } from '../permissions/permissionTypes.js';
 import { bindRequestContext } from './bindRequestContext.js';
@@ -286,57 +286,12 @@ export async function requireTenantCommercialAccess(
     next();
     return;
   }
-  if (!isPhase2TrialCrmGateEnabled()) {
-    next();
-    return;
-  }
   try {
-    const row = await pool.query<{
-      status: string;
-      suspension_reason: string | null;
-      trial_ends_at: string | null;
-      activated_billing_id: string | null;
-    }>(
-      `SELECT status, suspension_reason, trial_ends_at, activated_billing_id
-       FROM tenants WHERE id = $1`,
-      [req.tenantId]
-    );
-    const t = row.rows[0];
-    if (!t) {
-      next();
+    const block = await commercialAccessBlock(req.tenantId);
+    if (block) {
+      res.status(block.status).json(block.body);
       return;
     }
-
-    if (t.activated_billing_id || t.status === 'active') {
-      next();
-      return;
-    }
-
-    const trialEndedUnpaid =
-      t.status === 'trial' &&
-      t.trial_ends_at != null &&
-      new Date(t.trial_ends_at) < new Date() &&
-      t.activated_billing_id == null;
-
-    const trialEndedWhilePaymentPending =
-      t.status === 'payment_pending' &&
-      t.trial_ends_at != null &&
-      new Date(t.trial_ends_at) < new Date() &&
-      t.activated_billing_id == null;
-
-    if (
-      trialEndedUnpaid ||
-      trialEndedWhilePaymentPending ||
-      (t.status === 'suspended' && t.suspension_reason === 'trial_expired')
-    ) {
-      res.status(403).json({
-        error: 'Período de trial encerrado. Conclua o pagamento para continuar.',
-        code: 'TRIAL_EXPIRED',
-        requires_checkout_resume: true,
-      });
-      return;
-    }
-
     next();
   } catch {
     res.status(500).json({ error: 'Internal server error' });
@@ -358,22 +313,9 @@ export async function requireActivePlanPeriod(
     return;
   }
   try {
-    const row = await pool.query<{ plan_period_end: string | null }>(
-      'SELECT plan_period_end FROM tenants WHERE id = $1',
-      [req.tenantId]
-    );
-    const periodEnd = row.rows[0]?.plan_period_end;
-    if (!periodEnd) {
-      next();
-      return;
-    }
-    const end = new Date(periodEnd);
-    if (end < new Date()) {
-      res.status(402).json({
-        error: 'Período do plano expirado. Renove para continuar acessando.',
-        code: 'PLAN_EXPIRED',
-        redirect: '/meu-plano',
-      });
+    const block = await planPeriodBlock(req.tenantId);
+    if (block) {
+      res.status(block.status).json(block.body);
       return;
     }
     next();

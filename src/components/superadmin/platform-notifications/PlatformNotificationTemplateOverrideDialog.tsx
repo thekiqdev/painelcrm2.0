@@ -12,9 +12,13 @@ import {
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import { CHANNEL, LOCALE, channelLabel, type EventDetail } from './platformNotificationsUtils';
+import { CHANNEL, channelLabel, type EventDetail } from './platformNotificationsUtils';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useTranslation } from 'react-i18next';
 
 export type PlatformNotificationTemplateOverrideDialogProps = {
+  locale: 'pt-BR' | 'en' | 'es';
+  onLocaleChange: (locale: 'pt-BR' | 'en' | 'es') => void;
   editorOpen: boolean;
   editorKey: string | null;
   detailLoading: boolean;
@@ -39,6 +43,8 @@ export type PlatformNotificationTemplateOverrideDialogProps = {
 };
 
 export function PlatformNotificationTemplateOverrideDialog({
+  locale,
+  onLocaleChange,
   editorOpen,
   editorKey,
   detailLoading,
@@ -61,6 +67,7 @@ export function PlatformNotificationTemplateOverrideDialog({
   onRestoreDefault,
   onPreview,
 }: PlatformNotificationTemplateOverrideDialogProps) {
+  const { t } = useTranslation('superadmin');
   return (
     <Dialog open={editorOpen} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto bg-card border-border">
@@ -70,9 +77,22 @@ export function PlatformNotificationTemplateOverrideDialog({
           </DialogTitle>
           <DialogDescription className="text-muted-foreground">
             Template padrão do sistema é apenas leitura implícita; aqui grava-se só o override operacional. Canal{' '}
-            {channelLabel(CHANNEL)} · locale {LOCALE}.
+            {channelLabel(CHANNEL)} · locale {locale}.
           </DialogDescription>
         </DialogHeader>
+        <div className="grid gap-2 max-w-xs">
+          <Label>{t('template_locale')}</Label>
+          <Select value={locale} onValueChange={(v) => onLocaleChange(v as 'pt-BR' | 'en' | 'es')}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="pt-BR">pt-BR</SelectItem>
+              <SelectItem value="en">en</SelectItem>
+              <SelectItem value="es">es</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
 
         {detailLoading ? (
           <p className="text-sm text-muted-foreground">A carregar modelo…</p>

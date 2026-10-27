@@ -40,8 +40,14 @@ function generateSixDigitCode(): string {
   return String(randomInt(100000, 1000000));
 }
 
-function buildAccessCodeMessage(plainCode: string): string {
+function buildAccessCodeMessage(plainCode: string, locale?: string): string {
   const appName = (process.env.APP_PUBLIC_NAME || 'PainelCRM').trim() || 'PainelCRM';
+  if (locale === 'en') {
+    return `🔐 ${appName}\n\nAccess code:\n\n${plainCode}\n\nThis code is valid for ${CODE_TTL_MINUTES} minutes.`;
+  }
+  if (locale === 'es') {
+    return `🔐 ${appName}\n\nCódigo de acceso:\n\n${plainCode}\n\nEste código es válido durante ${CODE_TTL_MINUTES} minutos.`;
+  }
   return `🔐 ${appName}\n\nCódigo de acesso:\n\n${plainCode}\n\nEste código é válido por ${CODE_TTL_MINUTES} minutos.`;
 }
 
@@ -67,6 +73,7 @@ export async function sendSignupPhoneVerificationCode(
   pool: Pool,
   rawPhone: string,
   ddiInput?: string,
+  locale?: string,
 ): Promise<SendSignupCodeResult> {
   const parsed = parseSignupPhone(rawPhone, ddiInput);
   if (!parsed) return { ok: false, reason: 'invalid_phone' };
@@ -114,7 +121,7 @@ export async function sendSignupPhoneVerificationCode(
   const send = await dispatchPlatformWhatsAppText({
     instanceToken: outbound.instanceToken,
     phone: parsed.dialDigits,
-    text: buildAccessCodeMessage(plainCode),
+    text: buildAccessCodeMessage(plainCode, locale),
   });
 
   if (!send.ok) {

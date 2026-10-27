@@ -15,6 +15,11 @@ export type TenantDomainInstructions = {
   cname_target: string;
   canonical_public_url?: string | null;
   bypass_enabled: boolean;
+  cf_custom_hostname_id?: string | null;
+  cf_ssl_status?: string | null;
+  cf_ownership_status?: string | null;
+  cf_last_sync_at?: string | null;
+  cf_last_error?: string | null;
 };
 
 export type TenantDomainEmpty = {
@@ -43,6 +48,11 @@ export type TenantHostRowAdmin = {
   last_error: string | null;
   created_at: string;
   updated_at: string;
+  cf_custom_hostname_id?: string | null;
+  cf_ssl_status?: string | null;
+  cf_ownership_status?: string | null;
+  cf_last_sync_at?: string | null;
+  cf_last_error?: string | null;
 };
 
 const BASE = '/api/me/tenant/domain';
@@ -65,6 +75,30 @@ export function tenantDomainStatusLabel(status: string): string {
   return map[status] || status;
 }
 
+/** TE3 — rótulos amigáveis do ssl.status Cloudflare */
+export function tenantCfSslStatusLabel(status: string | null | undefined): string {
+  if (!status) return 'Não provisionado';
+  const key = status.trim().toLowerCase();
+  const map: Record<string, string> = {
+    active: 'Ativo',
+    pending_validation: 'Validando',
+    pending_issuance: 'Emitindo certificado',
+    pending_deployment: 'Publicando certificado',
+    pending: 'Pendente',
+    initializing: 'Iniciando',
+    moved: 'Movido',
+    deleted: 'Removido',
+    expired: 'Expirado',
+  };
+  return map[key] || status;
+}
+
+export function isTenantCfSslPending(status: string | null | undefined): boolean {
+  if (!status) return false;
+  const key = status.trim().toLowerCase();
+  return key !== 'active' && (key.startsWith('pending') || key === 'initializing');
+}
+
 export async function listMyTenantDomains(): Promise<{
   data?: { items: TenantDomainInstructions[] };
   error?: string;
@@ -84,6 +118,12 @@ export async function verifyMyTenantDomain(
   role: TenantHostRole
 ): Promise<{ data?: VerifyTenantDomainResult; error?: string; code?: string }> {
   return apiClient.post<VerifyTenantDomainResult>(`${BASE}/verify`, { role });
+}
+
+export async function syncMyTenantDomainCloudflare(
+  role: TenantHostRole
+): Promise<{ data?: TenantDomainInstructions; error?: string; code?: string }> {
+  return apiClient.post<TenantDomainInstructions>(`${BASE}/cf-sync`, { role });
 }
 
 export async function changeMyTenantDomainRole(body: {
@@ -120,5 +160,15 @@ export async function superadminClearTenantDomain(
     : `role=${encodeURIComponent(opts.role || '')}`;
   return apiClient.delete<{ ok: true }>(
     `/api/superadmin/tenants/${encodeURIComponent(tenantId)}/domain?${q}`
+  );
+}
+
+export async function superadminSyncTenantDomainCloudflare(
+  tenantId: string,
+  role: TenantHostRole
+): Promise<{ data?: TenantDomainInstructions; error?: string; code?: string }> {
+  return apiClient.post<TenantDomainInstructions>(
+    `/api/superadmin/tenants/${encodeURIComponent(tenantId)}/domain/cf-sync`,
+    { role }
   );
 }

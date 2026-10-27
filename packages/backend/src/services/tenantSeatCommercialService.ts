@@ -141,8 +141,8 @@ export async function previewSeatAddonPurchase(params: {
   if (planType === 'standard') {
     const catalog = await pool.query<{ price_per_user_cents: number }>(
       `SELECT price_per_user_cents FROM plan_interval_prices
-       WHERE plan_id = $1 AND billing_interval = $2`,
-      [planId, billingInterval]
+       WHERE plan_id = $1 AND billing_interval = $2 AND currency = $3`,
+      [planId, billingInterval, 'BRL']
     );
     const unit = catalog.rows[0]?.price_per_user_cents ?? 0;
     const contractedUnit = sub.contracted_price_per_user_cents;

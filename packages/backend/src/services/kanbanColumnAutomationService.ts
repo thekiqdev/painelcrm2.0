@@ -1258,8 +1258,9 @@ export async function runKanbanEnsureClientAutomationInTransaction(
       notes: string | null;
       source: string | null;
       cpf_cnpj: string | null;
+      observacao: string | null;
     }>(
-      `SELECT l.id, l.user_id, l.name, l.email, l.phone, l.company, l.notes, l.source, l.cpf_cnpj
+      `SELECT l.id, l.user_id, l.name, l.email, l.phone, l.company, l.notes, l.source, l.cpf_cnpj, l.observacao
        FROM leads l
        INNER JOIN users u ON u.id = l.user_id
        WHERE l.id = $1 AND u.tenant_id = $2
@@ -1279,8 +1280,8 @@ export async function runKanbanEnsureClientAutomationInTransaction(
     if (!finalClientId) {
       const ins = await client.query<{ id: string }>(
         `INSERT INTO clients (
-          user_id, name, email, phone, company, status, source, notes, funnel_stage, cpf_cnpj
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULL,$9)
+          user_id, name, email, phone, company, status, source, notes, funnel_stage, cpf_cnpj, observacao
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULL,$9,$10)
         RETURNING id`,
         [
           lead.user_id,
@@ -1292,6 +1293,7 @@ export async function runKanbanEnsureClientAutomationInTransaction(
           (lead.source || 'kanban_column').trim().slice(0, 120),
           lead.notes ? lead.notes.slice(0, 2000) : null,
           lead.cpf_cnpj?.replace(/\D/g, '') || null,
+          lead.observacao ? lead.observacao.slice(0, 4000) : null,
         ],
       );
       finalClientId = ins.rows[0]?.id ?? null;

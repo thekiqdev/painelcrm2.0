@@ -35,6 +35,8 @@ export interface CreateChargeInput {
   idempotencyKey?: string;
   /** Identificador externo (ex.: tenant_id) para resolver tenant no webhook. */
   externalReference?: string;
+  /** IX5 — moeda da cobrança avulsa (BRL, USD, EUR). Default BRL. */
+  currency?: string;
   /** Sprint 10 — Pix Automático: débito autorizado (Asaas pixAutomaticAuthorizationId). */
   pixAutomaticAuthorizationId?: string;
 }

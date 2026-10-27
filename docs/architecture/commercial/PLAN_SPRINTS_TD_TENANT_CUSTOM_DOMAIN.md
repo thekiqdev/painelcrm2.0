@@ -10,9 +10,10 @@
 | **Base** | Partner WL ([`SPRINT_M5_S2_WHITELABEL_BRAND.md`](./SPRINT_M5_S2_WHITELABEL_BRAND.md)) · stub [`DomainSection.tsx`](../../../src/components/settings/DomainSection.tsx) · loja path `/{slug}/loja` · portal público de suporte (`PublicSupport*` · `/api/public/support/:slug`) · catálogo hosts ([`PLANO_EVOLUCAO_MODULO_CATALOGO.md`](../../app/PLANO_EVOLUCAO_MODULO_CATALOGO.md) §4) |
 | **Fora de escopo (MVP)** | Domínio apex (`empresa.com.br`) · usar o host customizado como **login do CRM** (`app`) · domínio próprio de `customer_tenant` (cliente do Partner) · emitir TLS no Node · confiar no Host para autorização JWT |
 | **Princípio** | Reusar DNS do Partner (**TXT + CNAME → active**) em **`tenant_hosts`**; o Host resolve **tenant + papel** e abre a superfície pública correta |
-| **Status** | **Sprint 0–5 feitas** (2026-09-28) — MVP TD completo |
+| **Status** | **Sprint 0–5 feitas** (2026-09-28) — MVP TD **app** completo |
+| **Pós-MVP (edge)** | **TE — Cloudflare for SaaS** — sem Add Domain por tenant no Easypanel: [`PLAN_SPRINTS_TE_CLOUDFLARE_SAAS.md`](./PLAN_SPRINTS_TE_CLOUDFLARE_SAAS.md) |
 | **MVP** | **Sprint 4** (Settings com seletor de uso + host serve loja **ou** portal de chamados) |
-| **Kickoff** | Em chat: `ok sprint 2` … `ok sprint 5` |
+| **Kickoff** | Em chat: `ok sprint 2` … `ok sprint 5` · fase edge: `ok sprint te0` … |
 
 | Sprint | Foco | Status |
 |--------|------|--------|
@@ -261,13 +262,14 @@ Browser ──Host: loja.empresa.com──► Edge (TLS)
 | Catálogo §4 / V2-9 | Este plano **antecipa** o host `store` do tenant; apex continua depois; host `app` CRM continua fora |
 | Portal de suporte público | Superfície `support`; domínio customizado é só o **front door** por Host |
 | Partner wholesale | Sem dependência |
+| **TE Cloudflare for SaaS** | Fecha o gap de **edge/TLS**: Custom Hostnames + origin Easypanel sem cadastro manual por domínio — [`PLAN_SPRINTS_TE_CLOUDFLARE_SAAS.md`](./PLAN_SPRINTS_TE_CLOUDFLARE_SAAS.md) |
 
 ---
 
 ## 9. Riscos
 
 1. **Confundir com login do CRM** — UI deve deixar claro: domínio é para **clientes finais** (loja ou chamados), não para a equipe entrar no painel.
-2. **TLS / CORS** — sem Sprint 4 o verify “passa” e o browser falha.
+2. **TLS / CORS** — S4 cobre CORS/canônicos; **TLS por hostname em escala** exige fase **TE** (Cloudflare for SaaS). Sem TE: verify “passa” e o edge Easypanel responde 404 ou exige Add Domain manual.
 3. **Dois papéis, um hostname** — proibido no MVP (TD3/TD11); forçar hostname diferente por uso.
 4. **Portal sem portal configurado** — se role=`support` e portal público não estiver ativo, UI deve bloquear activate ou mostrar erro acionável.
 5. **Loja sem catálogo/slug** — idem para `store`.
@@ -294,9 +296,11 @@ Ao concluir cada sprint: marcar DoD aqui e, se útil, abrir `SPRINT_TD_S{n}_….
 - [ ] Host `store` `active` abre a loja do tenant
 - [ ] Host `support` `active` abre o portal de abertura de chamados
 - [ ] Sem colisão com domínio Partner
-- [ ] CORS/edge testados em staging
+- [ ] CORS/edge testados em staging *(edge em escala → fase TE)*
 - [ ] Apex e login CRM (`app`) explicitamente fora  
+
+**Produção sem Add Domain por tenant:** ver DoD em [`PLAN_SPRINTS_TE_CLOUDFLARE_SAAS.md`](./PLAN_SPRINTS_TE_CLOUDFLARE_SAAS.md) §7.
 
 ---
 
-*Documento de planejamento — sem implementação neste artefato. Atualizado para papéis públicos selecionáveis (`store` \| `support`).*
+*Documento de planejamento — sem implementação neste artefato. Atualizado para papéis públicos selecionáveis (`store` \| `support`). Fase edge: TE Cloudflare for SaaS (2026-09-29).*

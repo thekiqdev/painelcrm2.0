@@ -16,6 +16,9 @@ RUN npm ci
 # Copiar código fonte
 COPY . .
 
+# IX10 — namespaces completos e trava de pt-BR/BRL fixo antes do build
+RUN npm run check:i18n && npm run check:i18n-hardcode
+
 # Verificar se o arquivo clients.ts existe
 RUN ls -la src/services/clients.ts || (echo "ERRO: clients.ts não encontrado!" && ls -la src/services/ && exit 1)
 

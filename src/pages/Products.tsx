@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -58,6 +59,7 @@ function statusLabel(status: Product["status"]): string {
 }
 
 const Products = () => {
+  const { t } = useTranslation("store");
   const navigate = useNavigate();
   const [products, setProducts] = useState<Product[]>([]);
   const [storeProfile, setStoreProfile] = useState<StoreProfile | null>(null);
@@ -182,7 +184,7 @@ const Products = () => {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-center">
         <div>
-          <h1 className="text-2xl font-bold">Catálogo</h1>
+          <h1 className="text-2xl font-bold">{t("catalog")}</h1>
           <p className="text-muted-foreground">Gerencie os itens do seu catálogo</p>
         </div>
         <div className="flex flex-wrap gap-2">

@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { format, parseISO } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
+import { dateFnsLocale } from '@/lib/i18n/formatApp';
 import { CalendarDays, ExternalLink, MoreHorizontal, RefreshCw, User, Video } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
@@ -264,8 +264,8 @@ export function AgendaListView({
             )}
           >
             {compactMobile
-              ? format(parseISO(`${day}T12:00:00`), "EEEE '•' d MMM", { locale: ptBR })
-              : format(parseISO(`${day}T12:00:00`), "EEEE, d 'de' MMMM", { locale: ptBR })}
+              ? format(parseISO(`${day}T12:00:00`), "EEEE '•' d MMM", { locale: dateFnsLocale() })
+              : format(parseISO(`${day}T12:00:00`), "EEEE, d MMMM", { locale: dateFnsLocale() })}
           </h2>
           <ul className={cn(compactMobile ? 'space-y-1.5' : 'space-y-2')}>
             {rows.map((row) => {

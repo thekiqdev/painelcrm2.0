@@ -95,12 +95,14 @@ describe('tenantDomainFlags', () => {
     expect(getTenantCustomDomainCnameTarget()).toBe(TENANT_CUSTOM_DOMAIN_CNAME_FALLBACK);
   });
 
-  it('blocked hosts inclui defaults + env + cname target', () => {
+  it('blocked hosts inclui defaults + env + cname target + host da plataforma', () => {
     process.env.TENANT_CUSTOM_DOMAIN_BLOCKED_HOSTS = 'staging.example.com';
     process.env.TENANT_CUSTOM_DOMAIN_CNAME_TARGET = 'wl.plataforma.com';
+    process.env.FRONTEND_URL = 'https://app.plataforma.com';
     const hosts = getTenantCustomDomainBlockedHosts();
     expect(hosts).toContain('localhost');
     expect(hosts).toContain('staging.example.com');
     expect(hosts).toContain('wl.plataforma.com');
+    expect(hosts).toContain('app.plataforma.com');
   });
 });

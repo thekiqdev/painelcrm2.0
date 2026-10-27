@@ -19,6 +19,7 @@ import type { GatewayStatusItem } from "./gatewayPanelTypes";
 import { formatGatewayLastTest } from "./gatewayPanelUtils";
 import { apiClient } from "@/integrations/api/client";
 import { toast } from "@/components/ui/sonner";
+import { useTranslation } from "react-i18next";
 
 const API_AVAILABILITY = "/api/integrations/mercado-pago/availability";
 const API_CONNECT_URL = "/api/integrations/mercado-pago/connect-url";
@@ -78,6 +79,7 @@ function resolveMpEnvironmentDisplay(
 }
 
 export const MercadoPagoGatewayPanelCard: React.FC<MercadoPagoGatewayPanelCardProps> = ({ item, onStatusChange }) => {
+  const { t } = useTranslation("finance");
   const [availability, setAvailability] = useState<Availability | null>(null);
   const [mpStatus, setMpStatus] = useState<MpStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -190,7 +192,7 @@ export const MercadoPagoGatewayPanelCard: React.FC<MercadoPagoGatewayPanelCardPr
 
         <div className={gatewayCardStatusSectionClass}>
           <div>
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Ambiente</p>
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{t("environment")}</p>
             <div className="mt-1.5">{envBadgeNode(envDisplay)}</div>
           </div>
           <div>
@@ -206,7 +208,7 @@ export const MercadoPagoGatewayPanelCard: React.FC<MercadoPagoGatewayPanelCardPr
 
       <CardContent className="flex min-h-0 flex-1 flex-col px-5 pb-5 pt-0">
         <div className={gatewayCardBodyClass}>
-          <GatewayFeatureList items={["Checkout Pro", "Pix, cartão e saldo Mercado Pago", "Notificações automáticas"]} />
+          <GatewayFeatureList items={["Checkout Pro", t("mp_features_2"), t("asaas_features_3")]} />
           <div className={gatewayCardActionsRowClass}>
             {!connected ? (
               <>
@@ -217,7 +219,7 @@ export const MercadoPagoGatewayPanelCard: React.FC<MercadoPagoGatewayPanelCardPr
                 <Button type="button" variant="outline" size="sm" asChild>
                   <Link to="/settings/payments/mercado_pago">
                     <Settings className="mr-2 h-4 w-4" />
-                    Configurar
+                    {t("configure")}
                   </Link>
                 </Button>
               </>
@@ -225,7 +227,7 @@ export const MercadoPagoGatewayPanelCard: React.FC<MercadoPagoGatewayPanelCardPr
               <>
                 <Button type="button" variant="default" size="sm" onClick={() => void handleTest()} disabled={testing}>
                   {testing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-                  Testar conexão
+                  {t("test_connection")}
                 </Button>
                 <Button type="button" variant="outline" size="sm" asChild>
                   <Link to="/settings/payments/mercado_pago">

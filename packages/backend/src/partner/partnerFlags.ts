@@ -7,6 +7,7 @@ import { featureFlagRegistry } from '../platform/featureFlagRegistry.js';
 
 export const PARTNER_CHANNEL_FLAG_KEY = 'partner.channel_v1' as const;
 export const PARTNER_DOMAIN_VERIFY_BYPASS_FLAG_KEY = 'partner.domain_verify_bypass' as const;
+export const PARTNER_EDGE_CLOUDFLARE_SAAS_FLAG_KEY = 'partner.edge_cloudflare_saas_v1' as const;
 export const PARTNER_MASTER_OFF_FLAG_KEY = 'partner.master_off' as const;
 
 function parseEnvBool(raw: string | undefined): boolean | null {
@@ -59,6 +60,21 @@ export async function isPartnerDomainVerifyBypassEnabled(ctx?: {
   return resolvePartnerFlag(
     PARTNER_DOMAIN_VERIFY_BYPASS_FLAG_KEY,
     ['PARTNER_DOMAIN_VERIFY_BYPASS'],
+    ctx
+  );
+}
+
+/**
+ * PE Etapa 3 — provisiona Custom Hostname na Cloudflare no verify/clear.
+ * Ligar só após runbook Etapa 2 (Origin rewrite + PARTNER_WL_CNAME_TARGET).
+ */
+export async function isPartnerEdgeCloudflareSaasEnabled(ctx?: {
+  tenantId?: string | null;
+  userId?: string | null;
+}): Promise<boolean> {
+  return resolvePartnerFlag(
+    PARTNER_EDGE_CLOUDFLARE_SAAS_FLAG_KEY,
+    ['PARTNER_EDGE_CLOUDFLARE_SAAS_V1', 'CF_SAAS_ENABLED'],
     ctx
   );
 }

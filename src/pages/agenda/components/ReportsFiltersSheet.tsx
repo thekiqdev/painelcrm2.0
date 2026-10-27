@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { format, startOfMonth, subDays, endOfMonth, startOfDay, endOfDay } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
+import { dateFnsLocale } from '@/lib/i18n/formatApp';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import { Label } from '@/components/ui/label';
@@ -132,7 +132,7 @@ export const ReportsFiltersSheet = React.memo(function ReportsFiltersSheet({
                     className="h-10 w-full justify-start text-left text-sm font-normal"
                     disabled={draft.preset !== 'custom'}
                   >
-                    {format(draft.dateFrom, 'P', { locale: ptBR })}
+                    {format(draft.dateFrom, 'P', { locale: dateFnsLocale() })}
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-auto p-0" align="start">
@@ -161,7 +161,7 @@ export const ReportsFiltersSheet = React.memo(function ReportsFiltersSheet({
                     className="h-10 w-full justify-start text-left text-sm font-normal"
                     disabled={draft.preset !== 'custom'}
                   >
-                    {format(draft.dateTo, 'P', { locale: ptBR })}
+                    {format(draft.dateTo, 'P', { locale: dateFnsLocale() })}
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-auto p-0" align="start">

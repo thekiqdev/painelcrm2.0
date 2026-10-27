@@ -14,6 +14,7 @@ import {
   Globe,
   Images,
   LayoutTemplate,
+  KeyRound,
   LifeBuoy,
   MessageSquare,
   PanelLeft,
@@ -42,6 +43,7 @@ export type SettingSection =
   | "paymentGateway"
   | "googleCalendar"
   | "googleDrive"
+  | "apiKeys"
   | "mediaLibrary"
   | "agendaAvailability"
   | "chatAttendance"
@@ -86,6 +88,7 @@ export const INTEGRATIONS_SUBCATEGORY_ORDER = [
   "Recebimentos",
   "Agenda",
   "Arquivos",
+  "API",
 ] as const;
 
 const CHAT_AUTOMATION_UI_ENABLED = import.meta.env.VITE_CHAT_AUTOMATION_ENABLED === "true";
@@ -289,6 +292,16 @@ const BASE_ITEMS: SettingsNavItem[] = [
     pathSegment: "google-drive",
   },
   {
+    id: "apiKeys",
+    title: "API",
+    description: "Chave para cadastrar leads a partir de outro sistema",
+    icon: KeyRound,
+    sidebarCategory: "Integrações",
+    subcategory: "API",
+    mobileCategory: "Sistema",
+    pathSegment: "api",
+  },
+  {
     id: "mediaLibrary",
     title: "Mídias",
     description: "Biblioteca de ficheiros do tenant (upload, preview e quotas)",
@@ -372,6 +385,7 @@ export const SECTION_QUERY_VALUES: SettingSection[] = [
   "paymentGateway",
   "googleCalendar",
   "googleDrive",
+  "apiKeys",
   "mediaLibrary",
   "agendaAvailability",
   "chatAttendance",

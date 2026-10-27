@@ -13,10 +13,12 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useFeatureFlag } from '@/hooks/useFeatureFlag';
 import { useModulePermissions } from '@/contexts/ModulePermissionsContext';
 import { useFloatingChat } from '@/features/floating-chat';
+import { useTranslation } from 'react-i18next';
 import { useGlobalSearchSlot } from './GlobalSearchSlotContext';
 import { logDevMount } from '@/lib/devMountTiming';
 
 function GlobalSearchRegion() {
+  const { t } = useTranslation('nav');
   const { setOverlayReady, openCommandOnMount, clearOpenCommandOnMount } = useGlobalSearchSlot();
   const { canView, canCreate } = useModulePermissions();
   const navigate = useNavigate();
@@ -232,7 +234,7 @@ function GlobalSearchRegion() {
           armSearchBundle();
           setCommandDialogOpen(true);
         }}
-        aria-label="Buscar"
+        aria-label={t('search_aria')}
       >
         <Search className="h-4 w-4" />
       </Button>
@@ -241,7 +243,7 @@ function GlobalSearchRegion() {
           <div className="relative hidden w-full md:block">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
-              placeholder="Buscar clientes, contratos, produtos..."
+              placeholder={t('search')}
               value={searchQuery}
               onChange={(e) => {
                 if (!desktopSearchFocused || !desktopSearchArmed) return;

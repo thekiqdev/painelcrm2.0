@@ -91,6 +91,7 @@ type LeadProfileForConversion = {
   email?: string | null;
   phone?: string | null;
   notes?: string | null;
+  observacao?: string | null;
 };
 
 const FLOATING_Z_WINDOW_ACTIVE = 49;
@@ -525,6 +526,7 @@ export function FloatingConversationWindow({
             email: lead.email || undefined,
             phone: lead.phone || conversation.phoneNumber || undefined,
             notes: lead.notes || undefined,
+            observacao: lead.observacao || undefined,
             status: 'Ativo',
           });
           if (!clientResult.success || !clientResult.data || !(clientResult.data as { id?: string }).id) {

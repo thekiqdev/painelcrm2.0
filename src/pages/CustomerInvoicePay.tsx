@@ -34,6 +34,8 @@ import { cn } from "@/lib/utils";
 import { PublicTenantBrandMark } from "@/components/tenant/PublicTenantBrand";
 import { hasTenantLogoForTheme } from "@/utils/tenantBranding";
 import { useTheme } from "next-themes";
+import { useTranslation } from "react-i18next";
+import { formatAppMoney } from "@/lib/i18n/formatApp";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { PixAutomaticConsentSwitch } from "@/components/billing/PixAutomaticConsentSwitch";
 import {
@@ -45,6 +47,7 @@ export interface PayInvoiceResponse {
   invoice_number: string | null;
   description: string | null;
   amount_cents: number;
+  currency?: string | null;
   due_date: string;
   status: string;
   payment_method: string | null;
@@ -235,6 +238,7 @@ function toPixImageSrc(raw: string | undefined): string | null {
 }
 
 const CustomerInvoicePay = () => {
+  const { t } = useTranslation("finance");
   const { token } = useParams<{ token: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const { resolvedTheme } = useTheme();
@@ -308,7 +312,7 @@ const CustomerInvoicePay = () => {
           return;
         }
         if (res.data) setData(res.data);
-        else setError("Fatura não encontrada");
+        else setError(t("not_found"));
       })
       .catch(() => setError("Erro ao carregar a fatura"))
       .finally(() => setLoading(false));
@@ -781,7 +785,7 @@ const CustomerInvoicePay = () => {
           <CardContent className="pt-6">
             <div className="flex items-center gap-2 text-destructive">
               <XCircle className="h-5 w-5 shrink-0" />
-              <p>{error || "Fatura não encontrada ou link inválido."}</p>
+              <p>{error || t("not_found_link")}</p>
             </div>
           </CardContent>
         </Card>
@@ -804,9 +808,7 @@ const CustomerInvoicePay = () => {
   const billingEmail = (data.tenant_branding?.billing_email ?? "").trim();
   const billingPhone = (data.tenant_branding?.billing_phone ?? "").trim();
   const tenantContact = [billingEmail || null, billingPhone || null].filter(Boolean).join(" • ");
-  const totalBrl = (data.amount_cents / 100).toLocaleString("pt-BR", {
-    minimumFractionDigits: 2,
-  });
+  const totalLabel = formatAppMoney(data.amount_cents, data.currency || "BRL");
   const pixImageSrc = toPixImageSrc(data.payment_urls.pixQrCode);
   const normalizedAllowedMethods = (
     Array.isArray(data.allowed_payment_methods) && data.allowed_payment_methods.length > 0
@@ -865,8 +867,8 @@ const CustomerInvoicePay = () => {
   const itemsCount = data.items?.length ?? 0;
 
   const invoiceTitle = data.invoice_number?.trim()
-    ? `Fatura n.º ${data.invoice_number}`
-    : "Cobrança";
+    ? t("invoice_no", { number: data.invoice_number })
+    : t("charge");
   const showStickyBar = isMobile && showPaymentSection && !isPaid;
 
   const mpPublic = data.mercado_pago_public;
@@ -910,9 +912,9 @@ const CustomerInvoicePay = () => {
       ? "A atualizar…"
       : "Atualizar status"
     : isPixSelected && canCopyPix
-      ? "Copiar código PIX"
+      ? t("copy_pix")
       : isBoletoSelected && canCopyBoleto
-        ? "Copiar código do boleto"
+        ? t("copy_boleto")
         : "Ver como pagar";
 
   return (
@@ -1044,9 +1046,9 @@ const CustomerInvoicePay = () => {
                 strokeWidth={1.25}
                   aria-hidden
                 />
-              <p className="text-lg font-semibold text-emerald-900 dark:text-emerald-100">Pagamento confirmado</p>
+              <p className="text-lg font-semibold text-emerald-900 dark:text-emerald-100">{t("paid_ok")}</p>
               <p className="text-sm text-muted-foreground">
-                Esta cobrança foi quitada com sucesso. Guarde esta página ou o comprovante do seu banco.
+                {t("paid_ok_hint")}
                 </p>
                 {data.paid_at ? (
                 <p className="text-xs font-medium text-emerald-800/90 dark:text-emerald-200/90">
@@ -1057,15 +1059,15 @@ const CustomerInvoicePay = () => {
           ) : null}
 
           <p id="pay-amount-heading" className="sr-only">
-            Valor e vencimento
+            {t("amount_heading")}
           </p>
           <div className="grid gap-3 lg:grid-cols-[1.25fr_1fr_1fr]">
             <div className="rounded-xl border bg-background/70 p-3.5">
-              <p className="text-sm font-medium text-muted-foreground">{isPaid ? "Valor pago" : "Valor a pagar"}</p>
-              <p className="text-3xl font-bold tabular-nums tracking-tight text-foreground sm:text-4xl">R$ {totalBrl}</p>
+              <p className="text-sm font-medium text-muted-foreground">{isPaid ? t("amount_paid") : t("amount_due")}</p>
+              <p className="text-3xl font-bold tabular-nums tracking-tight text-foreground sm:text-4xl">{totalLabel}</p>
             </div>
             <div className="rounded-xl border bg-background/70 p-3.5">
-              <p className="text-xs uppercase tracking-wide text-muted-foreground">Vencimento</p>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">{t("due")}</p>
               <p className="mt-1 flex items-center gap-2 text-sm">
                 <CalendarDays className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                 <span className="font-medium text-foreground">{formatInvoiceDueDatePtBr(data.due_date)}</span>
@@ -1230,9 +1232,9 @@ const CustomerInvoicePay = () => {
                 className="scroll-mt-6 space-y-5 rounded-2xl border-2 border-primary/30 bg-primary/[0.06] p-4 shadow-md dark:bg-primary/10 sm:p-6 lg:p-7"
               >
                 <div className="space-y-1">
-                  <h2 className="text-lg font-semibold tracking-tight text-foreground">Pagar agora</h2>
+                  <h2 className="text-lg font-semibold tracking-tight text-foreground">{t("pay_now")}</h2>
                   <p className="text-xs text-muted-foreground sm:text-sm">
-                    Escolha a forma de pagamento e use o código, QR ou link abaixo.
+                    {t("pay_hint")}
                   </p>
                 </div>
 
@@ -1495,7 +1497,18 @@ const CustomerInvoicePay = () => {
                       </div>
                     )}
 
-                    {isCardSelected && allowCard && showCardFormFields && (
+                    {isCardSelected && allowCard && showCardFormFields &&
+                    (data.payment_urls.invoiceUrl ?? "").includes("checkout.stripe.com") ? (
+                      <Button
+                        type="button"
+                        className="w-full"
+                        onClick={() => {
+                          window.location.href = data.payment_urls.invoiceUrl!;
+                        }}
+                      >
+                        Pagar com cartão
+                      </Button>
+                    ) : isCardSelected && allowCard && showCardFormFields ? (
                       <InlineCreditCardPaymentForm
                         form={cardForm}
                         setForm={setCardForm}
@@ -1503,7 +1516,7 @@ const CustomerInvoicePay = () => {
                         paying={payingCard}
                         hostedCheckoutUrl={null}
                       />
-                    )}
+                    ) : null}
                   </div>
                 )}
                 </div>
@@ -1548,7 +1561,7 @@ const CustomerInvoicePay = () => {
                   <div className="mt-2 space-y-2 text-sm">
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-muted-foreground">Valor</span>
-                      <span className="font-semibold tabular-nums">R$ {totalBrl}</span>
+                      <span className="font-semibold tabular-nums">{totalLabel}</span>
             </div>
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-muted-foreground">Vencimento</span>

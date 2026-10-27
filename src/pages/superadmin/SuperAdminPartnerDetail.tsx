@@ -29,6 +29,12 @@ type PartnerDetail = {
   wholesale_status: string;
   wholesale_plan_name: string | null;
   wholesale_block_after_days: number | null;
+  custom_domain?: string | null;
+  domain_status?: string;
+  cf_custom_hostname_id?: string | null;
+  cf_ssl_status?: string | null;
+  cf_ownership_status?: string | null;
+  cf_last_error?: string | null;
   memberships: Array<{
     id: string;
     role: string;
@@ -421,6 +427,51 @@ export default function SuperAdminPartnerDetail() {
               {savingProfile ? 'Salvando…' : 'Salvar cadastro'}
             </Button>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Subdomínio do canal (PE)</CardTitle>
+          <CardDescription>
+            Domínio white-label + espelho Cloudflare Custom Hostname (ops)
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm">
+          {detail.custom_domain ? (
+            <>
+              <p>
+                <strong>Host:</strong> {detail.custom_domain}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Badge variant="outline">DNS: {detail.domain_status || '—'}</Badge>
+                <Badge variant="outline">SSL: {detail.cf_ssl_status || '—'}</Badge>
+                {detail.cf_ownership_status ? (
+                  <Badge variant="secondary">CF: {detail.cf_ownership_status}</Badge>
+                ) : null}
+              </div>
+              {detail.cf_custom_hostname_id ? (
+                <p className="text-xs text-muted-foreground break-all">
+                  CF id: {detail.cf_custom_hostname_id}
+                </p>
+              ) : null}
+              {detail.cf_last_error ? (
+                <p className="text-xs text-destructive">{detail.cf_last_error}</p>
+              ) : null}
+              {detail.domain_status === 'active' ? (
+                <a
+                  className="text-xs text-primary underline"
+                  href={`https://${detail.custom_domain}/cadastro`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Abrir checkout do canal
+                </a>
+              ) : null}
+            </>
+          ) : (
+            <p className="text-muted-foreground">Nenhum subdomínio configurado.</p>
+          )}
         </CardContent>
       </Card>
 

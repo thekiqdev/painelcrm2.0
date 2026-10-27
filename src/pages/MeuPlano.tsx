@@ -454,6 +454,29 @@ function competenceLineForBilling(b: CommercialBillingHubRow): string {
   return `Vencimento ${formatDate(b.due_date)}`;
 }
 
+const OPEN_COMMERCIAL_BILLING_STATUSES = [
+  'pending',
+  'waiting_payment',
+  'processing',
+  'overdue',
+] as const;
+
+/** RC S4: no backlog elegível, renovação aberta não abre checkout individual. */
+function isLateRenewalBacklogRow(b: CommercialBillingHubRow, lateRenewalEligible: boolean): boolean {
+  if (!lateRenewalEligible) return false;
+  if (b.billing_reason !== 'plan_renewal') return false;
+  return (OPEN_COMMERCIAL_BILLING_STATUSES as readonly string[]).includes(b.status);
+}
+
+type LateRenewalRestartLookup = {
+  eligible: boolean;
+  period_start?: string;
+  period_end?: string;
+  open_renewal_count?: number;
+  reason?: string;
+  message?: string | null;
+};
+
 function nextBillingCopy(sub: SaasSubscriptionPayload): { title: string; detail: string } {
   const d = sub.days_until_next_billing;
   const dateStr = formatDate(sub.next_billing_date);
@@ -505,10 +528,30 @@ export default function MeuPlano() {
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [cancelSubmitting, setCancelSubmitting] = useState(false);
   const [commercialBillings, setCommercialBillings] = useState<CommercialBillingHubRow[]>([]);
+  const [lateRenewalEligible, setLateRenewalEligible] = useState(false);
+  const [lateRenewalPeriod, setLateRenewalPeriod] = useState<{
+    start: string;
+    end: string;
+  } | null>(null);
+  const [lateRenewalRestarting, setLateRenewalRestarting] = useState(false);
   const seatAddonPreviewSeq = useRef(0);
   const instanceAddonPreviewSeq = useRef(0);
   const isMobile = useIsMobile();
   const canManage = authUser?.can_manage_plan === true;
+
+  const applyLateRenewalLookup = useCallback((data: LateRenewalRestartLookup | null | undefined) => {
+    if (data?.eligible) {
+      setLateRenewalEligible(true);
+      setLateRenewalPeriod(
+        data.period_start && data.period_end
+          ? { start: data.period_start, end: data.period_end }
+          : null
+      );
+      return;
+    }
+    setLateRenewalEligible(false);
+    setLateRenewalPeriod(null);
+  }, []);
 
   useEffect(() => {
     try {
@@ -532,7 +575,7 @@ export default function MeuPlano() {
   }, [myPlan, commercialBillings]);
 
   const refreshAfterMutation = useCallback(async () => {
-    const [resPlan, resSub, resLimits, resBill] = await Promise.all([
+    const [resPlan, resSub, resLimits, resBill, resLate] = await Promise.all([
       apiClient.get<MyPlanResponse>('/api/me/tenant/plan'),
       apiClient.get<{ subscription: SaasSubscriptionPayload | null }>('/api/me/tenant/subscription'),
       apiClient.get<{
@@ -540,6 +583,7 @@ export default function MeuPlano() {
         whatsapp_instances?: TenantUsersLimitsPayload;
       }>('/api/me/tenant/limits'),
       apiClient.get<{ billings: CommercialBillingHubRow[] }>('/api/me/tenant/commercial-billings'),
+      apiClient.get<LateRenewalRestartLookup>('/api/me/tenant/late-renewal-restart'),
     ]);
     if (resPlan.data && resPlan.details?.status !== 403) {
       setMyPlan(resPlan.data);
@@ -548,7 +592,9 @@ export default function MeuPlano() {
     if (resLimits.data?.users) setLimitsUsers(resLimits.data.users);
     if (resLimits.data?.whatsapp_instances) setLimitsWhatsapp(resLimits.data.whatsapp_instances);
     if (resBill.data?.billings) setCommercialBillings(resBill.data.billings);
-  }, []);
+    if (resLate.details?.status === 403) applyLateRenewalLookup(null);
+    else applyLateRenewalLookup(resLate.data);
+  }, [applyLateRenewalLookup]);
 
   useEffect(() => {
     let cancelled = false;
@@ -564,7 +610,8 @@ export default function MeuPlano() {
       apiClient.get<{ billings: CommercialBillingHubRow[] }>('/api/me/tenant/commercial-billings'),
       apiClient.get<{ channel: string; plans: Plan[] | null }>('/api/me/tenant/available-plans'),
       apiClient.get<Plan[]>('/api/plans'),
-    ]).then(([resPlan, resSub, resLimits, resBill, resAvail, resPlans]) => {
+      apiClient.get<LateRenewalRestartLookup>('/api/me/tenant/late-renewal-restart'),
+    ]).then(([resPlan, resSub, resLimits, resBill, resAvail, resPlans, resLate]) => {
       if (cancelled) return;
       if (resPlan.details?.status === 403) {
         setPlanAccessDenied(true);
@@ -589,6 +636,8 @@ export default function MeuPlano() {
       } else if (resPlans.data) {
         setAllPlans(resPlans.data);
       }
+      if (resLate.details?.status === 403) applyLateRenewalLookup(null);
+      else applyLateRenewalLookup(resLate.data);
       setLoading(false);
     });
     return () => {
@@ -771,6 +820,32 @@ export default function MeuPlano() {
     },
     [navigate]
   );
+
+  /** RC S4 — cancela vencidas do backlog e abre o pagamento do ciclo a partir de hoje. */
+  const runLateRenewalRestart = useCallback(async () => {
+    if (!canManage || lateRenewalRestarting) return;
+    setLateRenewalRestarting(true);
+    const res = await apiClient.post<{
+      ok: boolean;
+      billing_id: string;
+      period_start: string;
+      period_end: string;
+      amount_cents: number;
+      message?: string;
+    }>('/api/me/tenant/late-renewal-restart', {});
+    setLateRenewalRestarting(false);
+    if (res.error || !res.data?.billing_id) {
+      const detailMsg =
+        res.details && typeof res.details.message === 'string' ? res.details.message : null;
+      toast.error(detailMsg || res.error || 'Não foi possível renovar agora.');
+      return;
+    }
+    toast.success(
+      `Cobrança do período ${formatDate(res.data.period_start)} — ${formatDate(res.data.period_end)} pronta.`
+    );
+    goOpenSaasBillingPay(res.data.billing_id);
+    await refreshAfterMutation();
+  }, [canManage, lateRenewalRestarting, goOpenSaasBillingPay, refreshAfterMutation]);
 
   const goToCheckoutResume = useCallback(() => {
     navigate('/checkout?mode=resume');
@@ -2431,14 +2506,38 @@ export default function MeuPlano() {
           <CardDescription className="text-xs">Histórico de pagamentos da sua assinatura.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
+          {canManage && lateRenewalEligible ? (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/[0.07] px-3 py-3 space-y-2">
+              <p className="text-sm text-foreground">
+                Há mais de um ciclo em atraso. Em vez de pagar competências antigas, renove a partir de hoje
+                {lateRenewalPeriod
+                  ? ` (${formatDate(lateRenewalPeriod.start)} — ${formatDate(lateRenewalPeriod.end)})`
+                  : ''}
+                .
+              </p>
+              <Button
+                type="button"
+                className="w-full sm:w-auto"
+                disabled={lateRenewalRestarting}
+                onClick={() => void runLateRenewalRestart()}
+              >
+                {lateRenewalRestarting ? 'Preparando…' : 'Renovar agora'}
+              </Button>
+            </div>
+          ) : null}
           {commercialBillings.length === 0 ? (
             <p className="text-sm text-muted-foreground">Ainda não há faturas para esta conta.</p>
           ) : isMobile ? (
             <div className="space-y-2.5">
               {commercialBillings.map((b) => {
+                const backlogBlocked = isLateRenewalBacklogRow(b, lateRenewalEligible);
                 const canReopenGateway =
-                  ['pending', 'waiting_payment', 'processing'].includes(b.status) && b.has_gateway_reference;
-                const openCommercially = ['pending', 'waiting_payment', 'processing', 'overdue'].includes(b.status);
+                  !backlogBlocked &&
+                  ['pending', 'waiting_payment', 'processing'].includes(b.status) &&
+                  b.has_gateway_reference;
+                const openCommercially =
+                  !backlogBlocked &&
+                  ['pending', 'waiting_payment', 'processing', 'overdue'].includes(b.status);
                 const tone = mobileBillingStatusStyles(b.status);
                 return (
                   <div
@@ -2447,7 +2546,8 @@ export default function MeuPlano() {
                       'overflow-hidden rounded-xl border border-border/60 text-sm',
                       b.status === 'paid' && 'bg-emerald-500/[0.04]',
                       ['pending', 'waiting_payment', 'processing'].includes(b.status) && 'bg-amber-500/[0.06]',
-                      b.status === 'overdue' && 'bg-destructive/[0.04]'
+                      b.status === 'overdue' && 'bg-destructive/[0.04]',
+                      b.status === 'cancelled' && 'opacity-70'
                     )}
                   >
                     <div className="flex items-start justify-between gap-2 border-b border-border/40 bg-muted/20 px-3 py-2.5">
@@ -2468,6 +2568,11 @@ export default function MeuPlano() {
                       <p className="text-xs text-muted-foreground">
                         {paymentMethodOrDash(b.effective_payment_method)}
                       </p>
+                      {backlogBlocked ? (
+                        <p className="text-xs text-muted-foreground">
+                          Use Renovar agora para pagar o período a partir de hoje.
+                        </p>
+                      ) : null}
                     </div>
                     <div className="border-t border-border/40 bg-background/30 px-3 py-1.5">
                       <p className="text-[10px] text-muted-foreground">
@@ -2508,11 +2613,19 @@ export default function MeuPlano() {
                 </thead>
                 <tbody>
                   {commercialBillings.map((b) => {
+                    const backlogBlocked = isLateRenewalBacklogRow(b, lateRenewalEligible);
                     const canReopenGateway =
-                      ['pending', 'waiting_payment', 'processing'].includes(b.status) && b.has_gateway_reference;
-                    const openCommercially = ['pending', 'waiting_payment', 'processing', 'overdue'].includes(b.status);
+                      !backlogBlocked &&
+                      ['pending', 'waiting_payment', 'processing'].includes(b.status) &&
+                      b.has_gateway_reference;
+                    const openCommercially =
+                      !backlogBlocked &&
+                      ['pending', 'waiting_payment', 'processing', 'overdue'].includes(b.status);
                     return (
-                      <tr key={b.id} className="border-b last:border-0">
+                      <tr
+                        key={b.id}
+                        className={cn('border-b last:border-0', b.status === 'cancelled' && 'opacity-70')}
+                      >
                         <td className="max-w-[10rem] px-2 py-2 align-top">
                           <div className="line-clamp-2 font-medium leading-snug">{competenceLineForBilling(b)}</div>
                           {b.invoice_number ? (

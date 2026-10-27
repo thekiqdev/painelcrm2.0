@@ -902,6 +902,83 @@ export async function getMyTenantCommercialBillings(req: AuthRequest, res: Respo
   }
 }
 
+const LATE_RENEWAL_RESTART_MESSAGES: Record<string, string> = {
+  asaas_subscription: 'Renovação em atraso não se aplica a assinatura de cartão no Asaas.',
+  plan_period_not_ended: 'A vigência do plano ainda não encerrou.',
+  insufficient_backlog: 'Não há dois ciclos de renovação em aberto para reiniciar a partir de hoje.',
+  invalid_input: 'Não foi possível calcular o novo período.',
+  subscription_not_found: 'Assinatura não encontrada.',
+  plan_missing: 'Assinatura sem plano.',
+};
+
+/** GET /api/me/tenant/late-renewal-restart — RC S4. Elegibilidade (só leitura). */
+export async function getLateRenewalRestart(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const ctx = await getMyTenantAndPrimary(req);
+    if (!ctx || ctx.primaryUserId !== req.userId) {
+      res.status(403).json({ error: 'Apenas o administrador da conta pode renovar o plano' });
+      return;
+    }
+    const { assessLateRenewalRestartForTenant } = await import('../services/lateRenewalRestartService.js');
+    const assessment = await assessLateRenewalRestartForTenant({ tenantId: ctx.tenantId });
+    if (!assessment.eligible) {
+      res.status(200).json({
+        eligible: false,
+        reason: assessment.reason,
+        message: LATE_RENEWAL_RESTART_MESSAGES[assessment.reason] ?? null,
+      });
+      return;
+    }
+    res.status(200).json({
+      eligible: true,
+      period_start: assessment.periodStart,
+      period_end: assessment.periodEnd,
+      open_renewal_count: assessment.openRenewalCount,
+    });
+  } catch (error: unknown) {
+    console.error('getLateRenewalRestart error:', error);
+    res.status(500).json({ error: 'late_renewal_restart_lookup_failed' });
+  }
+}
+
+/** POST /api/me/tenant/late-renewal-restart — RC S2. Primary user. */
+export async function postLateRenewalRestart(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const ctx = await getMyTenantAndPrimary(req);
+    if (!ctx || ctx.primaryUserId !== req.userId) {
+      res.status(403).json({ error: 'Apenas o administrador da conta pode renovar o plano' });
+      return;
+    }
+    const { restartLateRenewalForTenant } = await import('../services/lateRenewalRestartService.js');
+    const result = await restartLateRenewalForTenant({ tenantId: ctx.tenantId });
+    if (!result.ok) {
+      const message = LATE_RENEWAL_RESTART_MESSAGES[result.error] ?? 'Não foi possível renovar agora.';
+      if (result.error === 'invalid_input') {
+        res.status(400).json({ error: result.error, message });
+        return;
+      }
+      if (result.error === 'subscription_not_found' || result.error === 'plan_missing') {
+        res.status(404).json({ error: result.error, message });
+        return;
+      }
+      res.status(409).json({ error: result.error, message });
+      return;
+    }
+    res.status(200).json({
+      ok: true,
+      billing_id: result.billingId,
+      invoice_number: result.invoiceNumber,
+      period_start: result.periodStart,
+      period_end: result.periodEnd,
+      amount_cents: result.amountCents,
+      cancelled_ids: result.cancelledIds,
+    });
+  } catch (error: unknown) {
+    console.error('postLateRenewalRestart error:', error);
+    res.status(500).json({ error: 'late_renewal_restart_failed' });
+  }
+}
+
 /** GET /api/me/tenant/plan - plano atual do tenant do usuário (apenas primary user). */
 export async function getMyTenantPlan(req: AuthRequest, res: Response): Promise<void> {
   try {
@@ -930,14 +1007,14 @@ export async function getMyTenantPlan(req: AuthRequest, res: Response): Promise<
     if (!Array.isArray(plan.benefits)) plan.benefits = [];
     if (plan.plan_type === 'custom') {
       const pricesRows = await pool.query(
-        'SELECT billing_interval, price_per_user_cents, price_per_instance_cents FROM plan_interval_prices WHERE plan_id = $1',
-        [plan.id]
+        'SELECT billing_interval, price_per_user_cents, price_per_instance_cents FROM plan_interval_prices WHERE plan_id = $1 AND currency = $2',
+        [plan.id, 'BRL']
       );
       plan.interval_prices = pricesRows.rows;
     } else {
       const pricesRows = await pool.query(
-        'SELECT billing_interval, price_per_user_cents, price_per_instance_cents FROM plan_interval_prices WHERE plan_id = $1',
-        [plan.id]
+        'SELECT billing_interval, price_per_user_cents, price_per_instance_cents FROM plan_interval_prices WHERE plan_id = $1 AND currency = $2',
+        [plan.id, 'BRL']
       );
       if (pricesRows.rows.length > 0) plan.interval_prices = pricesRows.rows;
     }

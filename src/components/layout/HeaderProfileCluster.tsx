@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { HeaderNotificationBell } from '@/components/layout/HeaderNotificationBell';
+import { useTranslation } from 'react-i18next';
 
 type HeaderProfileClusterProps = {
   displayName: string;
@@ -48,6 +49,7 @@ export const HeaderProfileCluster = React.memo(function HeaderProfileCluster({
   canView,
   signOut,
 }: HeaderProfileClusterProps) {
+  const { t } = useTranslation('nav');
   const navigate = useNavigate();
 
   const profileNav = useMemo(
@@ -91,14 +93,14 @@ export const HeaderProfileCluster = React.memo(function HeaderProfileCluster({
           <DropdownMenuSeparator className="my-1" />
           <DropdownMenuItem className="cursor-pointer rounded-lg" onClick={profileNav.profile}>
             <User className="mr-2 h-4 w-4 shrink-0" />
-            <span>Perfil</span>
+            <span>{t('profile')}</span>
           </DropdownMenuItem>
           <DropdownMenuItem className="cursor-pointer rounded-lg gap-2" onClick={profileNav.updates}>
             <Newspaper className="mr-2 h-4 w-4 shrink-0" />
-            <span className="flex-1">Atualizações</span>
+            <span className="flex-1">{t('updates')}</span>
             {updatesUnread > 0 ? (
               <span className="flex shrink-0 items-center gap-2">
-                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" title="Novidades não lidas" aria-hidden />
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" title={t('updates_unread')} aria-hidden />
                 <Badge
                   variant="secondary"
                   className="h-5 min-w-[1.25rem] justify-center px-1.5 text-[10px] font-medium tabular-nums"
@@ -110,22 +112,22 @@ export const HeaderProfileCluster = React.memo(function HeaderProfileCluster({
           </DropdownMenuItem>
           <DropdownMenuItem className="cursor-pointer rounded-lg" onClick={profileNav.settings}>
             <Settings className="mr-2 h-4 w-4 shrink-0" />
-            <span>Configurações</span>
+            <span>{t('settings')}</span>
           </DropdownMenuItem>
           <DropdownMenuItem className="cursor-pointer rounded-lg" onClick={profileNav.support}>
             <LifeBuoy className="mr-2 h-4 w-4 shrink-0" />
-            <span>Suporte</span>
+            <span>{t('support')}</span>
           </DropdownMenuItem>
           {user?.can_manage_plan && canView('meu_plano') ? (
             <DropdownMenuItem className="cursor-pointer rounded-lg" onClick={profileNav.plan}>
               <CreditCard className="mr-2 h-4 w-4 shrink-0" />
-              <span>Planos</span>
+              <span>{t('plans')}</span>
             </DropdownMenuItem>
           ) : null}
           {user?.is_super_admin ? (
             <DropdownMenuItem className="cursor-pointer rounded-lg" onClick={profileNav.superAdmin}>
               <ShieldCheck className="mr-2 h-4 w-4 shrink-0" />
-              <span>Super Admin</span>
+              <span>{t('superadmin')}</span>
             </DropdownMenuItem>
           ) : null}
           <DropdownMenuSeparator className="my-1" />
@@ -134,7 +136,7 @@ export const HeaderProfileCluster = React.memo(function HeaderProfileCluster({
             onClick={signOut}
           >
             <LogOut className="mr-2 h-4 w-4 shrink-0" />
-            <span>Sair</span>
+            <span>{t('logout')}</span>
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

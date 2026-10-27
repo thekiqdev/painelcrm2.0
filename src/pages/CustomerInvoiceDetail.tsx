@@ -76,12 +76,12 @@ import {
   type InvoicePaymentMethodUi,
 } from "@/lib/crmGatewayPaymentMethods";
 import { financialService, type FinancialAccountDto } from "@/services/financial";
+import { formatAppMoney } from "@/lib/i18n/formatApp";
+import { resolveRecordCurrency } from "@/lib/i18n/recordCurrency";
+import { useTranslation } from "react-i18next";
 
-function formatAmount(cents: number): string {
-  return new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  }).format(cents / 100);
+function formatInvoiceCents(cents: number, currency = "BRL"): string {
+  return formatAppMoney(cents, currency);
 }
 
 /** URL da preferência MP já gravada em `gateway_metadata` (Checkout Pro). */
@@ -177,6 +177,8 @@ const CustomerInvoiceDetail = () => {
   }, [location.pathname, location.search, location.state, navigate]);
 
   const [invoice, setInvoice] = useState<CustomerInvoice | null>(null);
+  const { t } = useTranslation("finance");
+  const formatAmount = (cents: number) => formatInvoiceCents(cents, resolveRecordCurrency(invoice));
   const [client, setClient] = useState<Client | null>(null);
   const [loading, setLoading] = useState(true);
   const [cancelling, setCancelling] = useState(false);
@@ -479,7 +481,7 @@ const CustomerInvoiceDetail = () => {
           {loading ? (
             <p className="text-muted-foreground">Carregando...</p>
           ) : (
-            <p className="text-muted-foreground">Fatura não encontrada.</p>
+            <p className="text-muted-foreground">{t("not_found")}</p>
           )}
         </div>
       </div>
@@ -763,7 +765,7 @@ const CustomerInvoiceDetail = () => {
 
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">Resumo da fatura</CardTitle>
+          <CardTitle className="text-base">{t("summary")}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           {hybridAsaasMercadoPago ? (
@@ -780,15 +782,15 @@ const CustomerInvoiceDetail = () => {
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <div className="rounded-lg border bg-muted/20 p-3">
-              <p className="text-xs text-muted-foreground">Valor</p>
+              <p className="text-xs text-muted-foreground">{t("amount")}</p>
               <p className="mt-1 text-xl font-semibold">{formatAmount(invoice.amount_cents)}</p>
             </div>
             <div className="rounded-lg border bg-muted/20 p-3">
-              <p className="text-xs text-muted-foreground">Vencimento</p>
+              <p className="text-xs text-muted-foreground">{t("due")}</p>
               <p className="mt-1 font-medium">{formatInvoiceDueDatePtBr(invoice.due_date)}</p>
             </div>
             <div className="rounded-lg border bg-muted/20 p-3">
-              <p className="text-xs text-muted-foreground">Cliente</p>
+              <p className="text-xs text-muted-foreground">{t("client")}</p>
               <ClientEntityLink
                 clientId={invoice.client_id}
                 name={clientName}

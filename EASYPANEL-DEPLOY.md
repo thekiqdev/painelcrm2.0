@@ -133,6 +133,10 @@ VALUES (
 - `JWT_SECRET`: Gere um secret forte (ex: `openssl rand -base64 32`)
 - `POSTGRES_PASSWORD`: Senha forte para o banco
 - `FRONTEND_URL`: URL completa do frontend (para CORS)
+- `PUBLIC_APP_URL`: URL pública do app (sale-links Partner sem domínio próprio)
+- `PARTNER_WL_CNAME_TARGET`: CNAME que o Partner aponta (ex. `customers.seudominio.com` após Cloudflare for SaaS) — ver [`docs/architecture/commercial/RUNBOOK_PARTNER_CLOUDFLARE_SAAS.md`](docs/architecture/commercial/RUNBOOK_PARTNER_CLOUDFLARE_SAAS.md)
+- `TENANT_CUSTOM_DOMAIN_CNAME_TARGET`: CNAME da loja/chamados do tenant — preferir o **mesmo** valor do Partner; smoke: [`docs/architecture/commercial/RUNBOOK_TE_TENANT_EDGE_SMOKE.md`](docs/architecture/commercial/RUNBOOK_TE_TENANT_EDGE_SMOKE.md)
+- `CF_SAAS_ZONE_ID` / `CF_SAAS_API_TOKEN`: automação Custom Hostnames (Partner PE3 / Tenant TE2) — secrets; não versionar
 
 ### Frontend
 - `VITE_API_URL`: URL completa da API backend

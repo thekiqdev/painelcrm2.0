@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  AlertTriangle,
   CheckCircle2,
   Circle,
   ExternalLink,
@@ -13,6 +14,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,8 +30,11 @@ import { useModulePermissions } from '@/contexts/ModulePermissionsContext';
 import {
   changeMyTenantDomainRole,
   clearMyTenantDomain,
+  isTenantCfSslPending,
   listMyTenantDomains,
   setMyTenantDomain,
+  syncMyTenantDomainCloudflare,
+  tenantCfSslStatusLabel,
   tenantDomainRoleLabel,
   tenantDomainStatusLabel,
   verifyMyTenantDomain,
@@ -63,7 +68,7 @@ function DnsBlock({ item }: { item: TenantDomainInstructions }) {
       <p className="font-medium text-foreground">Instruções DNS</p>
       <p className="text-muted-foreground">
         Crie os dois registros abaixo no DNS do seu domínio. O TXT valida a propriedade; o CNAME
-        aponta o subdomínio para a plataforma.
+        aponta o subdomínio para a plataforma (edge Cloudflare).
       </p>
       <div>
         <strong>1) TXT host:</strong> {item.txt_host}
@@ -93,6 +98,7 @@ function HostRoleCard({
   busy,
   onSave,
   onVerify,
+  onSyncSsl,
   onClear,
   onChangeRole,
 }: {
@@ -102,6 +108,7 @@ function HostRoleCard({
   busy: boolean;
   onSave: (hostname: string, role: TenantHostRole) => Promise<boolean>;
   onVerify: (role: TenantHostRole) => Promise<void>;
+  onSyncSsl: (role: TenantHostRole) => Promise<void>;
   onClear: (role: TenantHostRole) => void;
   onChangeRole: (from: TenantHostRole, to: TenantHostRole) => void;
 }) {
@@ -117,6 +124,11 @@ function HostRoleCard({
   const configured = Boolean(item?.hostname);
   const verified = item?.status === 'verified' || item?.status === 'active';
   const active = item?.status === 'active';
+  const sslStatus = item?.cf_ssl_status ?? null;
+  const sslActive = sslStatus?.toLowerCase() === 'active';
+  const sslPending = isTenantCfSslPending(sslStatus);
+  const openUrl = item?.canonical_public_url || (item?.hostname ? `https://${item.hostname}` : null);
+  const canOpen = active && Boolean(openUrl);
 
   return (
     <Card className="border-border/80 shadow-sm">
@@ -132,9 +144,14 @@ function HostRoleCard({
             </div>
           </div>
           {item ? (
-            <Badge variant={verified ? 'default' : 'outline'}>
-              {tenantDomainStatusLabel(item.status)}
-            </Badge>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Badge variant={verified ? 'default' : 'outline'}>
+                DNS: {tenantDomainStatusLabel(item.status)}
+              </Badge>
+              <Badge variant={sslActive ? 'default' : 'secondary'}>
+                SSL: {tenantCfSslStatusLabel(sslStatus)}
+              </Badge>
+            </div>
           ) : (
             <Badge variant="outline">Não configurado</Badge>
           )}
@@ -159,13 +176,37 @@ function HostRoleCard({
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Use um subdomínio (ex.: {meta.placeholder}). Este endereço é para clientes finais — não
-            substitui o login do painel CRM.
+            Use um subdomínio (ex.: {meta.placeholder}). Domínio raiz (apex) não é suportado neste
+            momento. Este endereço é para clientes finais — não substitui o login do painel CRM.
           </p>
         </div>
 
         {item ? (
           <>
+            {verified && sslPending ? (
+              <Alert>
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Certificado em provisionamento</AlertTitle>
+                <AlertDescription>
+                  O DNS já está verificado. A Cloudflare ainda está emitindo o certificado HTTPS —
+                  isso costuma levar alguns minutos. Você já pode abrir a{' '}
+                  {role === 'store' ? 'loja' : 'portal'}; se o browser alertar sobre o certificado,
+                  aguarde e tente de novo.
+                </AlertDescription>
+              </Alert>
+            ) : null}
+
+            {item.cf_last_error ? (
+              <Alert variant="destructive">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Falha no edge (Cloudflare)</AlertTitle>
+                <AlertDescription>
+                  {item.cf_last_error}. O domínio pode continuar ativo no painel; confira o DNS
+                  (CNAME) e use “Atualizar status SSL” ou “Verificar DNS”.
+                </AlertDescription>
+              </Alert>
+            ) : null}
+
             <ul className="space-y-2 text-sm">
               <li className="flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4 text-emerald-600" />
@@ -178,6 +219,14 @@ function HostRoleCard({
                   <Circle className="h-4 w-4 text-muted-foreground" />
                 )}
                 DNS {verified ? 'verificado' : 'pendente'}
+              </li>
+              <li className="flex items-center gap-2">
+                {sslActive ? (
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                ) : (
+                  <Circle className="h-4 w-4 text-muted-foreground" />
+                )}
+                HTTPS {sslActive ? 'ativo' : sslPending ? 'provisionando' : 'pendente'}
               </li>
             </ul>
 
@@ -194,13 +243,18 @@ function HostRoleCard({
               >
                 Verificar DNS
               </Button>
-              {active ? (
+              {verified ? (
+                <Button
+                  variant="outline"
+                  disabled={!canSave || busy}
+                  onClick={() => void onSyncSsl(role)}
+                >
+                  Atualizar status SSL
+                </Button>
+              ) : null}
+              {canOpen && openUrl ? (
                 <Button variant="outline" asChild>
-                  <a
-                    href={item.canonical_public_url || `https://${item.hostname}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
+                  <a href={openUrl} target="_blank" rel="noopener noreferrer">
                     <ExternalLink className="mr-2 h-4 w-4" />
                     Abrir {role === 'store' ? 'loja' : 'portal'}
                   </a>
@@ -337,6 +391,24 @@ export const DomainSection: React.FC<SettingsSectionProps> = () => {
     await refresh();
   };
 
+  const handleSyncSsl = async (role: TenantHostRole) => {
+    if (!canSave) {
+      toast.error('Sem permissão para alterar configurações.');
+      return;
+    }
+    setBusy(true);
+    const res = await syncMyTenantDomainCloudflare(role);
+    setBusy(false);
+    if (res.error) {
+      toast.error(res.error);
+      return;
+    }
+    toast.success(
+      `SSL: ${tenantCfSslStatusLabel(res.data?.cf_ssl_status)}. Status atualizado.`
+    );
+    await refresh();
+  };
+
   const handleClear = async (role: TenantHostRole) => {
     setBusy(true);
     const res = await clearMyTenantDomain({ role });
@@ -441,8 +513,13 @@ export const DomainSection: React.FC<SettingsSectionProps> = () => {
             <ol className="list-decimal list-inside space-y-1">
               <li>Escolha o uso (loja ou chamados) no card correspondente.</li>
               <li>Informe o subdomínio e salve.</li>
-              <li>Crie o registro TXT e o CNAME no seu DNS (ambos são necessários).</li>
-              <li>Clique em Verificar DNS. Quando ativo, clientes abrem a superfície pública nesse host.</li>
+              <li>
+                Crie o TXT e o CNAME no seu DNS (o CNAME aponta para o edge da plataforma).
+              </li>
+              <li>
+                Clique em Verificar DNS. Com o domínio ativo, clientes abrem a superfície pública;
+                o certificado HTTPS costuma ficar pronto em alguns minutos.
+              </li>
             </ol>
           </div>
         </CardContent>
@@ -455,6 +532,7 @@ export const DomainSection: React.FC<SettingsSectionProps> = () => {
         busy={busy}
         onSave={handleSaveClick}
         onVerify={handleVerify}
+        onSyncSsl={handleSyncSsl}
         onClear={(r) => setConfirmClearRole(r)}
         onChangeRole={(from, to) => setConfirmChange({ from, to })}
       />
@@ -466,6 +544,7 @@ export const DomainSection: React.FC<SettingsSectionProps> = () => {
         busy={busy}
         onSave={handleSaveClick}
         onVerify={handleVerify}
+        onSyncSsl={handleSyncSsl}
         onClear={(r) => setConfirmClearRole(r)}
         onChangeRole={(from, to) => setConfirmChange({ from, to })}
       />

@@ -31,6 +31,7 @@ import {
 } from '@/components/ui/select';
 import { Plus, Pencil, Trash2, Flag, ChevronDown, ChevronRight, Check, Users, MessageCircle, Mail, Headphones, Star, Zap, Shield, FileText, BarChart3, Settings, Smartphone, Globe, Lock, Gift, CreditCard, Building2, Calendar } from 'lucide-react';
 import { toast } from '@/components/ui/sonner';
+import { useTranslation } from 'react-i18next';
 import { apiClient } from '@/integrations/api/client';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -38,6 +39,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 const BILLING_INTERVALS = [
   { key: 'monthly', label: 'Mensal' },
@@ -48,6 +50,7 @@ const BILLING_INTERVALS = [
 
 interface IntervalPrice {
   billing_interval: string;
+  currency?: 'BRL' | 'USD' | 'EUR';
   price_per_user_cents: number;
   /** null = extras WhatsApp não vendáveis (WI2) */
   price_per_instance_cents?: number | null;
@@ -56,6 +59,18 @@ interface IntervalPrice {
 interface PlanBenefit {
   icon: string;
   label: string;
+}
+
+interface CurrencyPrice {
+  currency: 'BRL' | 'USD' | 'EUR';
+  price_cents: number;
+}
+
+interface PlanTranslation {
+  locale: 'pt-BR' | 'en' | 'es';
+  name: string | null;
+  description: string | null;
+  benefits: PlanBenefit[];
 }
 
 interface Plan {
@@ -73,6 +88,9 @@ interface Plan {
   is_free?: boolean;
   free_access_days?: number | null;
   interval_prices?: IntervalPrice[];
+  currency_prices?: CurrencyPrice[];
+  translations?: PlanTranslation[];
+  published_currencies?: Array<'BRL' | 'USD' | 'EUR'>;
   benefits?: PlanBenefit[];
   is_active: boolean;
   sort_order: number;
@@ -99,9 +117,15 @@ const defaultPlan: Partial<Plan> = {
   free_access_days: null,
   interval_prices: BILLING_INTERVALS.map(({ key }) => ({
     billing_interval: key,
+    currency: 'BRL' as const,
     price_per_user_cents: 0,
     price_per_instance_cents: null,
   })),
+  currency_prices: [],
+  translations: [
+    { locale: 'en', name: '', description: '', benefits: [] },
+    { locale: 'es', name: '', description: '', benefits: [] },
+  ],
   is_active: true,
   sort_order: 0,
   features: {} as Record<string, boolean>,
@@ -133,6 +157,7 @@ const BENEFIT_ICON_MAP: Record<string, React.ComponentType<{ className?: string 
 );
 
 export default function SuperAdminPlans() {
+  const { t } = useTranslation('superadmin');
   const navigate = useNavigate();
   const [plans, setPlans] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(true);
@@ -142,6 +167,73 @@ export default function SuperAdminPlans() {
   const [saving, setSaving] = useState(false);
   const [featureKeys, setFeatureKeys] = useState<FeatureKeyItem[]>([]);
   const [featuresOpen, setFeaturesOpen] = useState(true);
+  const [priceCurrencyTab, setPriceCurrencyTab] = useState<'BRL' | 'USD' | 'EUR'>('BRL');
+  const [translationLocale, setTranslationLocale] = useState<'en' | 'es'>('en');
+
+  const currencyListPrice = (currency: 'BRL' | 'USD' | 'EUR') => {
+    if (currency === 'BRL') return form.price_cents ?? 0;
+    return form.currency_prices?.find((c) => c.currency === currency)?.price_cents ?? 0;
+  };
+
+  const setCurrencyListPrice = (currency: 'BRL' | 'USD' | 'EUR', cents: number) => {
+    if (currency === 'BRL') {
+      setForm((f) => ({ ...f, price_cents: cents }));
+      return;
+    }
+    setForm((f) => {
+      const list = [...(f.currency_prices ?? [])].filter((c) => c.currency !== currency);
+      if (cents > 0 || (f.currency_prices ?? []).some((c) => c.currency === currency)) {
+        // manter linha mesmo com 0 se já existia = "publicado com preço 0"; UI usa botão publicar
+        list.push({ currency, price_cents: cents });
+      }
+      return { ...f, currency_prices: list };
+    });
+  };
+
+  const publishCurrency = (currency: 'USD' | 'EUR') => {
+    setForm((f) => {
+      if (f.plan_type === 'custom') {
+        const has = (f.interval_prices ?? []).some((ip) => (ip.currency ?? 'BRL') === currency);
+        if (has) return f;
+        const brlRows = (f.interval_prices ?? []).filter((ip) => (ip.currency ?? 'BRL') === 'BRL');
+        const seeded =
+          brlRows.length > 0
+            ? brlRows.map((ip) => ({
+                billing_interval: ip.billing_interval,
+                currency,
+                price_per_user_cents: 0,
+                price_per_instance_cents: null as number | null,
+              }))
+            : [
+                {
+                  billing_interval: 'monthly',
+                  currency,
+                  price_per_user_cents: 0,
+                  price_per_instance_cents: null as number | null,
+                },
+              ];
+        return { ...f, interval_prices: [...(f.interval_prices ?? []), ...seeded] };
+      }
+      const list = [...(f.currency_prices ?? [])].filter((c) => c.currency !== currency);
+      list.push({
+        currency,
+        price_cents: f.currency_prices?.find((c) => c.currency === currency)?.price_cents ?? 0,
+      });
+      return { ...f, currency_prices: list };
+    });
+  };
+
+  const unpublishCurrency = (currency: 'USD' | 'EUR') => {
+    setForm((f) => ({
+      ...f,
+      currency_prices: (f.currency_prices ?? []).filter((c) => c.currency !== currency),
+      interval_prices: (f.interval_prices ?? []).filter((ip) => (ip.currency ?? 'BRL') !== currency),
+    }));
+  };
+
+  const isCurrencyPublished = (currency: 'USD' | 'EUR') =>
+    (form.currency_prices ?? []).some((c) => c.currency === currency) ||
+    (form.interval_prices ?? []).some((ip) => (ip.currency ?? 'BRL') === currency);
 
   const loadPlans = async () => {
     setLoading(true);
@@ -162,20 +254,30 @@ export default function SuperAdminPlans() {
 
   const openCreate = () => {
     setEditingId(null);
+    setPriceCurrencyTab('BRL');
+    setTranslationLocale('en');
     setForm({
       ...defaultPlan,
       features: {},
       benefits: [],
       interval_prices: [],
+      currency_prices: [],
+      translations: [
+        { locale: 'en', name: '', description: '', benefits: [] },
+        { locale: 'es', name: '', description: '', benefits: [] },
+      ],
     });
     setDialogOpen(true);
   };
 
   const openEdit = async (plan: Plan) => {
     setEditingId(plan.id);
+    setPriceCurrencyTab('BRL');
+    setTranslationLocale('en');
     const intervalPrices = plan.interval_prices ?? [];
     const featuresRes = await apiClient.get<{ features: Record<string, boolean> }>(`/api/superadmin/plans/${plan.id}/features`);
     const features = featuresRes.data?.features ?? {};
+    const translations = plan.translations ?? [];
     setForm({
       name: plan.name,
       slug: plan.slug,
@@ -189,9 +291,22 @@ export default function SuperAdminPlans() {
       is_default: plan.is_default ?? false,
       is_free: plan.is_free ?? false,
       free_access_days: plan.free_access_days ?? null,
-      interval_prices: intervalPrices.length
-        ? intervalPrices
-        : [],
+      interval_prices: intervalPrices.length ? intervalPrices : [],
+      currency_prices: plan.currency_prices ?? [],
+      translations: [
+        {
+          locale: 'en',
+          name: translations.find((t) => t.locale === 'en')?.name ?? '',
+          description: translations.find((t) => t.locale === 'en')?.description ?? '',
+          benefits: translations.find((t) => t.locale === 'en')?.benefits ?? [],
+        },
+        {
+          locale: 'es',
+          name: translations.find((t) => t.locale === 'es')?.name ?? '',
+          description: translations.find((t) => t.locale === 'es')?.description ?? '',
+          benefits: translations.find((t) => t.locale === 'es')?.benefits ?? [],
+        },
+      ],
       is_active: plan.is_active,
       sort_order: plan.sort_order,
       features,
@@ -242,6 +357,7 @@ export default function SuperAdminPlans() {
               .filter((ip) => ip.billing_interval && ip.price_per_user_cents > 0)
               .map((ip) => ({
                 billing_interval: ip.billing_interval,
+                currency: ip.currency ?? 'BRL',
                 price_per_user_cents: ip.price_per_user_cents,
                 price_per_instance_cents:
                   ip.price_per_instance_cents != null && ip.price_per_instance_cents > 0
@@ -260,6 +376,7 @@ export default function SuperAdminPlans() {
                 })
                 .map((ip) => ({
                   billing_interval: ip.billing_interval,
+                  currency: ip.currency ?? 'BRL',
                   price_per_user_cents:
                     ip.price_per_user_cents != null && ip.price_per_user_cents > 0
                       ? ip.price_per_user_cents
@@ -270,6 +387,15 @@ export default function SuperAdminPlans() {
                       : null,
                 }))
             : undefined,
+      currency_prices: (form.currency_prices ?? []).filter((c) => c.currency !== 'BRL'),
+      translations: (form.translations ?? [])
+        .filter((t) => t.locale !== 'pt-BR')
+        .map((t) => ({
+          locale: t.locale,
+          name: (t.name || '').trim() || null,
+          description: (t.description || '').trim() || null,
+          benefits: (t.benefits ?? []).filter((b) => (b.label || '').trim()),
+        })),
       benefits: (form.benefits ?? [])
         .filter((b) => (b.label || '').trim())
         .map((b) => ({ icon: b.icon || 'Check', label: (b.label || '').trim() })),
@@ -319,13 +445,16 @@ export default function SuperAdminPlans() {
     loadPlans();
   };
 
-  const formatPrice = (cents: number) => {
+  const formatPrice = (cents: number, currency: 'BRL' | 'USD' | 'EUR' = 'BRL') => {
     if (cents === 0) return 'Grátis';
-    return new Intl.NumberFormat('pt-BR', {
+    return new Intl.NumberFormat(currency === 'BRL' ? 'pt-BR' : currency === 'EUR' ? 'de-DE' : 'en-US', {
       style: 'currency',
-      currency: 'BRL',
+      currency,
     }).format(cents / 100);
   };
+
+  const moneyPrefix = (currency: 'BRL' | 'USD' | 'EUR') =>
+    currency === 'BRL' ? 'R$' : currency === 'EUR' ? '€' : '$';
 
   /** Converte centavos para string em reais (ex.: 9950 → "99,50") para exibir no input */
   const centsToReaisInput = (cents: number) => {
@@ -338,12 +467,12 @@ export default function SuperAdminPlans() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Planos</h1>
+          <h1 className="text-2xl font-bold">{t('plans_title')}</h1>
           <p className="text-muted-foreground">Gerencie planos e features por plano.</p>
         </div>
         <Button onClick={openCreate}>
           <Plus className="mr-2 h-4 w-4" />
-          Novo plano
+          {t('new_plan')}
         </Button>
       </div>
 
@@ -363,7 +492,8 @@ export default function SuperAdminPlans() {
                 <TableRow>
                   <TableHead>Nome</TableHead>
                   <TableHead>Slug</TableHead>
-                  <TableHead>Preço</TableHead>
+                  <TableHead>{t('price')}</TableHead>
+                  <TableHead>{t('currencies')}</TableHead>
                   <TableHead>Limites</TableHead>
                   <TableHead>Benefícios</TableHead>
                   <TableHead>Features</TableHead>
@@ -388,16 +518,18 @@ export default function SuperAdminPlans() {
                     <TableCell className="text-muted-foreground">{plan.slug}</TableCell>
                     <TableCell>
                       {plan.plan_type === 'custom' ? (
-                        plan.interval_prices?.length ? (
+                        plan.interval_prices?.some((ip) => (ip.currency ?? 'BRL') === 'BRL') ? (
                           <span className="text-sm">
-                            {plan.interval_prices.map((ip) => {
+                            {plan.interval_prices
+                              .filter((ip) => (ip.currency ?? 'BRL') === 'BRL')
+                              .map((ip) => {
                               const label = BILLING_INTERVALS.find((i) => i.key === ip.billing_interval)?.label ?? ip.billing_interval;
                               const inst =
                                 ip.price_per_instance_cents != null && ip.price_per_instance_cents > 0
                                   ? ` · ${formatPrice(ip.price_per_instance_cents)}/conexão`
                                   : '';
                               return (
-                                <span key={ip.billing_interval} className="block">
+                                <span key={`BRL-${ip.billing_interval}`} className="block">
                                   {formatPrice(ip.price_per_user_cents)}/usuário{inst} ({label.toLowerCase()})
                                 </span>
                               );
@@ -429,6 +561,15 @@ export default function SuperAdminPlans() {
                           })()}
                         </span>
                       )}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1">
+                        {(plan.published_currencies ?? ['BRL']).map((c) => (
+                          <Badge key={c} variant="outline" className="text-xs">
+                            {c}
+                          </Badge>
+                        ))}
+                      </div>
                     </TableCell>
                     <TableCell>
                       {plan.max_users != null ? `${plan.max_users} usuários` : '—'}
@@ -496,7 +637,7 @@ export default function SuperAdminPlans() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-xl max-h-[90vh] flex flex-col p-0 gap-0">
           <DialogHeader className="px-6 pt-6 pb-2 shrink-0">
-            <DialogTitle>{editingId ? 'Editar plano' : 'Novo plano'}</DialogTitle>
+            <DialogTitle>{editingId ? t('edit_plan') : t('new_plan')}</DialogTitle>
             <DialogDescription>Preencha os dados do plano.</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 px-6 py-4 overflow-y-auto min-h-0">
@@ -518,12 +659,80 @@ export default function SuperAdminPlans() {
               />
             </div>
             <div className="grid gap-2">
-              <Label>Descrição (opcional)</Label>
+              <Label>Descrição (opcional, pt-BR)</Label>
               <Input
                 value={form.description ?? ''}
                 onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
                 placeholder="Breve descrição"
               />
+            </div>
+            <div className="grid gap-2 rounded-lg border p-3">
+              <Label>Traduções do catálogo (en / es)</Label>
+              <p className="text-xs text-muted-foreground">
+                Sem tradução, a landing usa o nome e a descrição em português.
+              </p>
+              <Tabs value={translationLocale} onValueChange={(v) => setTranslationLocale(v as 'en' | 'es')}>
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="en">English</TabsTrigger>
+                  <TabsTrigger value="es">Español</TabsTrigger>
+                </TabsList>
+                {(['en', 'es'] as const).map((loc) => {
+                  const tr = (form.translations ?? []).find((t) => t.locale === loc) ?? {
+                    locale: loc,
+                    name: '',
+                    description: '',
+                    benefits: [] as PlanBenefit[],
+                  };
+                  return (
+                    <TabsContent key={loc} value={loc} className="space-y-3">
+                      <div className="grid gap-2">
+                        <Label>Nome ({loc})</Label>
+                        <Input
+                          value={tr.name ?? ''}
+                          onChange={(e) =>
+                            setForm((f) => {
+                              const list = [...(f.translations ?? [])];
+                              const idx = list.findIndex((t) => t.locale === loc);
+                              const next = {
+                                locale: loc,
+                                name: e.target.value,
+                                description: tr.description ?? '',
+                                benefits: tr.benefits ?? [],
+                              };
+                              if (idx >= 0) list[idx] = next;
+                              else list.push(next);
+                              return { ...f, translations: list };
+                            })
+                          }
+                          placeholder={form.name || 'Nome traduzido'}
+                        />
+                      </div>
+                      <div className="grid gap-2">
+                        <Label>Descrição ({loc})</Label>
+                        <Input
+                          value={tr.description ?? ''}
+                          onChange={(e) =>
+                            setForm((f) => {
+                              const list = [...(f.translations ?? [])];
+                              const idx = list.findIndex((t) => t.locale === loc);
+                              const next = {
+                                locale: loc,
+                                name: tr.name ?? '',
+                                description: e.target.value,
+                                benefits: tr.benefits ?? [],
+                              };
+                              if (idx >= 0) list[idx] = next;
+                              else list.push(next);
+                              return { ...f, translations: list };
+                            })
+                          }
+                          placeholder="Descrição traduzida"
+                        />
+                      </div>
+                    </TabsContent>
+                  );
+                })}
+              </Tabs>
             </div>
             <div className="grid gap-2">
               <Label>Tipo de plano</Label>
@@ -551,39 +760,127 @@ export default function SuperAdminPlans() {
             </div>
             {form.plan_type === 'standard' && (
               <>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="grid gap-2">
-                    <Label>Preço (R$)</Label>
-                    <Input
-                      type="text"
-                      inputMode="decimal"
-                      placeholder="0,00"
-                      value={form.price_cents != null && form.price_cents > 0 ? `R$ ${centsToReaisInput(form.price_cents)}` : ''}
-                      onChange={(e) => {
-                        const raw = e.target.value.replace(/\D/g, '');
-                        const cents = raw === '' ? 0 : parseInt(raw, 10);
-                        setForm((f) => ({ ...f, price_cents: isNaN(cents) ? 0 : cents }));
-                      }}
-                    />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label>Cobrança</Label>
-                    <Select
-                      value={form.billing_interval ?? 'monthly'}
-                      onValueChange={(v) => setForm((f) => ({ ...f, billing_interval: v }))}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {BILLING_INTERVALS.map(({ key, label }) => (
-                          <SelectItem key={key} value={key}>
-                            {label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                <div className="grid gap-2 rounded-lg border p-3">
+                  <Label>{t('prices_by_currency')}</Label>
+                  <Tabs
+                    value={priceCurrencyTab}
+                    onValueChange={(v) => setPriceCurrencyTab(v as 'BRL' | 'USD' | 'EUR')}
+                  >
+                    <TabsList className="grid w-full grid-cols-3">
+                      <TabsTrigger value="BRL">Real</TabsTrigger>
+                      <TabsTrigger value="USD">Dólar</TabsTrigger>
+                      <TabsTrigger value="EUR">Euro</TabsTrigger>
+                    </TabsList>
+                    {(['BRL', 'USD', 'EUR'] as const).map((cur) => (
+                      <TabsContent key={cur} value={cur} className="space-y-3 pt-2">
+                        {cur !== 'BRL' && (
+                          <div className="flex flex-wrap items-center gap-2">
+                            {isCurrencyPublished(cur) ? (
+                              <>
+                                <Badge variant="secondary">{cur} publicado</Badge>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => unpublishCurrency(cur)}
+                                >
+                                  Remover {cur}
+                                </Button>
+                              </>
+                            ) : (
+                              <Button type="button" size="sm" onClick={() => publishCurrency(cur)}>
+                                Publicar em {cur}
+                              </Button>
+                            )}
+                          </div>
+                        )}
+                        {(cur === 'BRL' || isCurrencyPublished(cur)) && (
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="grid gap-2">
+                              <Label>{t('price_for', { prefix: moneyPrefix(cur) })}</Label>
+                              <Input
+                                type="text"
+                                inputMode="decimal"
+                                placeholder="0,00"
+                                value={
+                                  currencyListPrice(cur) > 0
+                                    ? `${moneyPrefix(cur)} ${centsToReaisInput(currencyListPrice(cur))}`
+                                    : ''
+                                }
+                                onChange={(e) => {
+                                  const raw = e.target.value.replace(/\D/g, '');
+                                  const cents = raw === '' ? 0 : parseInt(raw, 10);
+                                  setCurrencyListPrice(cur, isNaN(cents) ? 0 : cents);
+                                }}
+                              />
+                            </div>
+                            {cur === 'BRL' && (
+                              <div className="grid gap-2">
+                                <Label>Cobrança</Label>
+                                <Select
+                                  value={form.billing_interval ?? 'monthly'}
+                                  onValueChange={(v) => setForm((f) => ({ ...f, billing_interval: v }))}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {BILLING_INTERVALS.map(({ key, label }) => (
+                                      <SelectItem key={key} value={key}>
+                                        {label}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {(cur === 'BRL' || isCurrencyPublished(cur)) && (
+                          <div className="grid gap-2">
+                            <Label>Valor por usuário avulso ({moneyPrefix(cur)}, vazio = não vendável)</Label>
+                            <Input
+                              type="text"
+                              inputMode="decimal"
+                              placeholder="0,00"
+                              value={(() => {
+                                const interval = form.billing_interval ?? 'monthly';
+                                const row = (form.interval_prices ?? []).find(
+                                  (ip) =>
+                                    ip.billing_interval === interval && (ip.currency ?? 'BRL') === cur
+                                );
+                                const cents = row?.price_per_user_cents ?? 0;
+                                return cents > 0 ? `${moneyPrefix(cur)} ${centsToReaisInput(cents)}` : '';
+                              })()}
+                              onChange={(e) => {
+                                const raw = e.target.value.replace(/\D/g, '');
+                                const nextCents = raw === '' ? 0 : parseInt(raw, 10);
+                                const cents = !isNaN(nextCents) ? nextCents : 0;
+                                setForm((f) => {
+                                  const interval = f.billing_interval ?? 'monthly';
+                                  const list = [...(f.interval_prices ?? [])];
+                                  const idx = list.findIndex(
+                                    (ip) =>
+                                      ip.billing_interval === interval && (ip.currency ?? 'BRL') === cur
+                                  );
+                                  const prev = idx >= 0 ? list[idx] : null;
+                                  const nextRow: IntervalPrice = {
+                                    billing_interval: interval,
+                                    currency: cur,
+                                    price_per_user_cents: cents,
+                                    price_per_instance_cents: prev?.price_per_instance_cents ?? null,
+                                  };
+                                  if (idx >= 0) list[idx] = nextRow;
+                                  else list.push(nextRow);
+                                  return { ...f, interval_prices: list };
+                                });
+                              }}
+                            />
+                          </div>
+                        )}
+                      </TabsContent>
+                    ))}
+                  </Tabs>
                 </div>
                 <div className="grid grid-cols-3 gap-4">
                   <div className="grid gap-2">
@@ -615,47 +912,9 @@ export default function SuperAdminPlans() {
                   </div>
                 </div>
                 <div className="grid gap-2">
-                  <Label>Valor por usuário avulso (vazio = não vendável)</Label>
+                  <Label>Valor por conexão WhatsApp extra BRL (vazio = não vendável)</Label>
                   <p className="text-xs text-muted-foreground">
-                    Preço unitário para usuários além do máximo incluso, na periodicidade do plano.
-                    Exibido na vitrine e usado no Meu Plano (SE S2).
-                  </p>
-                  <Input
-                    type="text"
-                    inputMode="decimal"
-                    placeholder="0,00"
-                    value={(() => {
-                      const interval = form.billing_interval ?? 'monthly';
-                      const row = (form.interval_prices ?? []).find((ip) => ip.billing_interval === interval);
-                      const cents = row?.price_per_user_cents ?? 0;
-                      return cents > 0 ? `R$ ${centsToReaisInput(cents)}` : '';
-                    })()}
-                    onChange={(e) => {
-                      const raw = e.target.value.replace(/\D/g, '');
-                      const nextCents = raw === '' ? 0 : parseInt(raw, 10);
-                      const cents = !isNaN(nextCents) ? nextCents : 0;
-                      setForm((f) => {
-                        const interval = f.billing_interval ?? 'monthly';
-                        const list = [...(f.interval_prices ?? [])];
-                        const idx = list.findIndex((ip) => ip.billing_interval === interval);
-                        if (idx >= 0) {
-                          list[idx] = { ...list[idx], price_per_user_cents: cents };
-                        } else {
-                          list.push({
-                            billing_interval: interval,
-                            price_per_user_cents: cents,
-                            price_per_instance_cents: null,
-                          });
-                        }
-                        return { ...f, interval_prices: list };
-                      });
-                    }}
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label>Valor por conexão WhatsApp extra (vazio = não vendável)</Label>
-                  <p className="text-xs text-muted-foreground">
-                    Preço unitário para conexões além do máximo incluso, na periodicidade do plano. Usado no Meu Plano (WI3).
+                    Preço unitário BRL para conexões além do máximo incluso. Usado no Meu Plano (WI3).
                   </p>
                   <Input
                     type="text"
@@ -713,126 +972,199 @@ export default function SuperAdminPlans() {
                     placeholder="Ex: 0"
                   />
                 </div>
-                <div>
-                  <Label>Preço por usuário e por conexão WhatsApp extra</Label>
-                  <p className="text-sm text-muted-foreground mt-0.5">
+                <div className="grid gap-2 rounded-lg border p-3">
+                  <Label>{t('prices_per_user')}</Label>
+                  <p className="text-sm text-muted-foreground">
                     Valor por usuário (obrigatório). Valor por conexão extra (opcional) — usado no Meu Plano quando a
                     empresa tem teto contratado.
                   </p>
+                  <Tabs
+                    value={priceCurrencyTab}
+                    onValueChange={(v) => setPriceCurrencyTab(v as 'BRL' | 'USD' | 'EUR')}
+                  >
+                    <TabsList className="grid w-full grid-cols-3">
+                      <TabsTrigger value="BRL">Real</TabsTrigger>
+                      <TabsTrigger value="USD">Dólar</TabsTrigger>
+                      <TabsTrigger value="EUR">Euro</TabsTrigger>
+                    </TabsList>
+                    {(['BRL', 'USD', 'EUR'] as const).map((cur) => {
+                      const rowsForCur = (form.interval_prices ?? [])
+                        .map((ip, absoluteIndex) => ({ ip, absoluteIndex }))
+                        .filter(({ ip }) => (ip.currency ?? 'BRL') === cur);
+                      return (
+                        <TabsContent key={cur} value={cur} className="space-y-3 pt-2">
+                          {cur !== 'BRL' && (
+                            <div className="flex flex-wrap items-center gap-2">
+                              {isCurrencyPublished(cur) ? (
+                                <>
+                                  <Badge variant="secondary">{cur} publicado</Badge>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => unpublishCurrency(cur)}
+                                  >
+                                    Remover {cur}
+                                  </Button>
+                                </>
+                              ) : (
+                                <Button type="button" size="sm" onClick={() => publishCurrency(cur)}>
+                                  Publicar em {cur}
+                                </Button>
+                              )}
+                            </div>
+                          )}
+                          {(cur === 'BRL' || isCurrencyPublished(cur)) && (
+                            <>
+                              <div className="space-y-2">
+                                {rowsForCur.map(({ ip, absoluteIndex }) => {
+                                  const usedByOthers = new Set(
+                                    rowsForCur
+                                      .filter(({ absoluteIndex: i }) => i !== absoluteIndex)
+                                      .map(({ ip: x }) => x.billing_interval)
+                                      .filter(Boolean)
+                                  );
+                                  const periodOptions = BILLING_INTERVALS.filter(
+                                    (i) => ip.billing_interval === i.key || !usedByOthers.has(i.key)
+                                  );
+                                  const cents = ip.price_per_user_cents ?? 0;
+                                  const instanceCents = ip.price_per_instance_cents ?? 0;
+                                  return (
+                                    <div
+                                      key={`${cur}-${absoluteIndex}-${ip.billing_interval || 'new'}`}
+                                      className="flex flex-wrap items-center gap-2"
+                                    >
+                                      <Input
+                                        type="text"
+                                        inputMode="decimal"
+                                        placeholder={`${moneyPrefix(cur)}/usuário`}
+                                        className="w-[120px] shrink-0"
+                                        value={
+                                          cents > 0 ? `${moneyPrefix(cur)} ${centsToReaisInput(cents)}` : ''
+                                        }
+                                        onChange={(e) => {
+                                          const raw = e.target.value.replace(/\D/g, '');
+                                          const next = raw === '' ? 0 : parseInt(raw, 10);
+                                          const nextCents = isNaN(next) ? 0 : next;
+                                          setForm((f) => {
+                                            const list = [...(f.interval_prices ?? [])];
+                                            list[absoluteIndex] = {
+                                              ...list[absoluteIndex],
+                                              currency: cur,
+                                              price_per_user_cents: nextCents,
+                                            };
+                                            return { ...f, interval_prices: list };
+                                          });
+                                        }}
+                                      />
+                                      <Input
+                                        type="text"
+                                        inputMode="decimal"
+                                        placeholder={`${moneyPrefix(cur)}/conexão`}
+                                        className="w-[120px] shrink-0"
+                                        title="Valor por conexão WhatsApp extra"
+                                        value={
+                                          instanceCents > 0
+                                            ? `${moneyPrefix(cur)} ${centsToReaisInput(instanceCents)}`
+                                            : ''
+                                        }
+                                        onChange={(e) => {
+                                          const raw = e.target.value.replace(/\D/g, '');
+                                          const next = raw === '' ? null : parseInt(raw, 10);
+                                          const nextCents = next != null && !isNaN(next) ? next : null;
+                                          setForm((f) => {
+                                            const list = [...(f.interval_prices ?? [])];
+                                            list[absoluteIndex] = {
+                                              ...list[absoluteIndex],
+                                              currency: cur,
+                                              price_per_instance_cents: nextCents,
+                                            };
+                                            return { ...f, interval_prices: list };
+                                          });
+                                        }}
+                                      />
+                                      <Select
+                                        value={ip.billing_interval || '__none__'}
+                                        onValueChange={(v) => {
+                                          if (v === '__none__') return;
+                                          setForm((f) => {
+                                            const list = [...(f.interval_prices ?? [])];
+                                            list[absoluteIndex] = {
+                                              ...list[absoluteIndex],
+                                              currency: cur,
+                                              billing_interval: v,
+                                            };
+                                            return { ...f, interval_prices: list };
+                                          });
+                                        }}
+                                      >
+                                        <SelectTrigger className="min-w-[140px]">
+                                          <SelectValue placeholder="Período" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          {!ip.billing_interval && (
+                                            <SelectItem value="__none__" disabled>
+                                              Selecione o período
+                                            </SelectItem>
+                                          )}
+                                          {periodOptions.map(({ key, label: l }) => (
+                                            <SelectItem key={key} value={key}>
+                                              {l}
+                                            </SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        className="shrink-0 text-muted-foreground hover:text-destructive"
+                                        onClick={() =>
+                                          setForm((f) => ({
+                                            ...f,
+                                            interval_prices: (f.interval_prices ?? []).filter(
+                                              (_, i) => i !== absoluteIndex
+                                            ),
+                                          }))
+                                        }
+                                        aria-label="Remover"
+                                      >
+                                        <Trash2 className="h-4 w-4" />
+                                      </Button>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="w-full sm:w-auto"
+                                onClick={() =>
+                                  setForm((f) => ({
+                                    ...f,
+                                    interval_prices: [
+                                      ...(f.interval_prices ?? []),
+                                      {
+                                        billing_interval: '',
+                                        currency: cur,
+                                        price_per_user_cents: 0,
+                                        price_per_instance_cents: null,
+                                      },
+                                    ],
+                                  }))
+                                }
+                              >
+                                <Plus className="mr-2 h-4 w-4" />
+                                Adicionar valor ({cur})
+                              </Button>
+                            </>
+                          )}
+                        </TabsContent>
+                      );
+                    })}
+                  </Tabs>
                 </div>
-                <div className="space-y-2">
-                  {(form.interval_prices ?? []).map((ip, index) => {
-                    const usedByOthers = new Set(
-                      (form.interval_prices ?? [])
-                        .map((x, i) => (i !== index ? x.billing_interval : null))
-                        .filter(Boolean)
-                    );
-                    const periodOptions = BILLING_INTERVALS.filter(
-                      (i) => ip.billing_interval === i.key || !usedByOthers.has(i.key)
-                    );
-                    const cents = ip.price_per_user_cents ?? 0;
-                    const instanceCents = ip.price_per_instance_cents ?? 0;
-                    return (
-                      <div key={`${index}-${ip.billing_interval || 'new'}`} className="flex flex-wrap items-center gap-2">
-                        <Input
-                          type="text"
-                          inputMode="decimal"
-                          placeholder="R$/usuário"
-                          className="w-[120px] shrink-0"
-                          value={cents > 0 ? `R$ ${centsToReaisInput(cents)}` : ''}
-                          onChange={(e) => {
-                            const raw = e.target.value.replace(/\D/g, '');
-                            const next = raw === '' ? 0 : parseInt(raw, 10);
-                            const nextCents = isNaN(next) ? 0 : next;
-                            setForm((f) => {
-                              const list = [...(f.interval_prices ?? [])];
-                              list[index] = { ...list[index], price_per_user_cents: nextCents };
-                              return { ...f, interval_prices: list };
-                            });
-                          }}
-                        />
-                        <Input
-                          type="text"
-                          inputMode="decimal"
-                          placeholder="R$/conexão"
-                          className="w-[120px] shrink-0"
-                          title="Valor por conexão WhatsApp extra"
-                          value={instanceCents > 0 ? `R$ ${centsToReaisInput(instanceCents)}` : ''}
-                          onChange={(e) => {
-                            const raw = e.target.value.replace(/\D/g, '');
-                            const next = raw === '' ? null : parseInt(raw, 10);
-                            const nextCents = next != null && !isNaN(next) ? next : null;
-                            setForm((f) => {
-                              const list = [...(f.interval_prices ?? [])];
-                              list[index] = { ...list[index], price_per_instance_cents: nextCents };
-                              return { ...f, interval_prices: list };
-                            });
-                          }}
-                        />
-                        <Select
-                          value={ip.billing_interval || '__none__'}
-                          onValueChange={(v) => {
-                            if (v === '__none__') return;
-                            setForm((f) => {
-                              const list = [...(f.interval_prices ?? [])];
-                              list[index] = { ...list[index], billing_interval: v };
-                              return { ...f, interval_prices: list };
-                            });
-                          }}
-                        >
-                          <SelectTrigger className="min-w-[140px]">
-                            <SelectValue placeholder="Período" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {!ip.billing_interval && (
-                              <SelectItem value="__none__" disabled>
-                                Selecione o período
-                              </SelectItem>
-                            )}
-                            {periodOptions.map(({ key, label: l }) => (
-                              <SelectItem key={key} value={key}>
-                                {l}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="shrink-0 text-muted-foreground hover:text-destructive"
-                          onClick={() =>
-                            setForm((f) => ({
-                              ...f,
-                              interval_prices: (f.interval_prices ?? []).filter((_, i) => i !== index),
-                            }))
-                          }
-                          aria-label="Remover"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    );
-                  })}
-                </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="w-full sm:w-auto"
-                  onClick={() =>
-                    setForm((f) => ({
-                      ...f,
-                      interval_prices: [
-                        ...(f.interval_prices ?? []),
-                        { billing_interval: '', price_per_user_cents: 0, price_per_instance_cents: null },
-                      ],
-                    }))
-                  }
-                >
-                  <Plus className="mr-2 h-4 w-4" />
-                  Adicionar valor
-                </Button>
               </div>
             )}
             <div className="flex items-center justify-between">

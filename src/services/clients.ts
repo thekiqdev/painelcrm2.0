@@ -13,6 +13,7 @@ export interface Client {
   source?: string;
   funnel_stage?: string;
   notes?: string;
+  observacao?: string | null;
   group_id?: string;
   profile_id?: string;
   cpf_cnpj?: string | null;

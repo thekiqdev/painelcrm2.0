@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { Logo } from '@/components/Logo';
 import { Button } from '@/components/ui/button';
 import { usePartnerBrand } from '@/contexts/PartnerBrandContext';
@@ -13,6 +14,7 @@ type Props = {
  * Header compacto do checkout (D2) — marca Partner por Host ou Platform.
  */
 export function CheckoutShellHeader({ title, isLoggedIn }: Props) {
+  const { t } = useTranslation('checkout');
   const { displayName, logoUrl } = usePartnerBrand();
 
   return (
@@ -38,11 +40,11 @@ export function CheckoutShellHeader({ title, isLoggedIn }: Props) {
 
       {isLoggedIn ? (
         <Button asChild variant="ghost" size="sm" className="shrink-0 text-muted-foreground">
-          <Link to="/dashboard">Painel</Link>
+          <Link to="/dashboard">{t('go_panel')}</Link>
         </Button>
       ) : (
         <Button asChild variant="ghost" size="sm" className="shrink-0 text-muted-foreground">
-          <Link to="/login">Já tenho conta</Link>
+          <Link to="/login">{t('have_account')}</Link>
         </Button>
       )}
     </div>

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { format } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
+import { dateFnsLocale } from '@/lib/i18n/formatApp';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import { Label } from '@/components/ui/label';
@@ -123,7 +123,7 @@ export const AgendaFiltersSheet = React.memo(function AgendaFiltersSheet({
                         className="h-10 w-full justify-start text-left font-normal"
                         aria-label="Data inicial do período"
                       >
-                        {format(dateFrom, 'P', { locale: ptBR })}
+                        {format(dateFrom, 'P', { locale: dateFnsLocale() })}
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent className="w-auto p-0" align="start">
@@ -140,7 +140,7 @@ export const AgendaFiltersSheet = React.memo(function AgendaFiltersSheet({
                         className="h-10 w-full justify-start text-left font-normal"
                         aria-label="Data final do período"
                       >
-                        {format(dateTo, 'P', { locale: ptBR })}
+                        {format(dateTo, 'P', { locale: dateFnsLocale() })}
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent className="w-auto p-0" align="start">

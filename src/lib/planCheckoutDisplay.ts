@@ -29,8 +29,16 @@ export function formatMoneyBRL(cents: number): string {
 }
 
 /** Rótulo de preço na vitrine: nunca retorna a palavra "Grátis" (evita confundir com trial/cobrança). */
-export function formatVitrinePriceLabel(cents: number): string {
-  if (cents > 0) return formatMoneyBRL(cents);
+export function formatVitrinePriceLabel(cents: number, currency = 'BRL'): string {
+  if (cents > 0) {
+    if (currency === 'BRL') return formatMoneyBRL(cents);
+    return new Intl.NumberFormat(currency === 'EUR' ? 'de-DE' : 'en-US', {
+      style: 'currency',
+      currency,
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(cents / 100);
+  }
   return 'Sob consulta';
 }
 

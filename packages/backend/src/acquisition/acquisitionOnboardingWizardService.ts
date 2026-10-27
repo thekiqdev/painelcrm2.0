@@ -160,6 +160,7 @@ export async function completeWizardCompanyStep(input: {
   logoLightUrl?: string | null;
   logoDarkUrl?: string | null;
   workspaceName?: string;
+  locale?: string | null;
 }): Promise<{ ok: boolean; wizard?: OnboardingWizardStatePayload; reason?: string }> {
   const loaded = await loadSessionWithLead(input.sessionToken);
   if (!loaded || loaded.session.tenant_id !== input.tenantId) {
@@ -231,7 +232,7 @@ export async function completeWizardCompanyStep(input: {
   if (!companyAlreadyCompleted) {
     setImmediate(() => notifySuperAdminsNewTenant(name, input.tenantId).catch(() => {}));
     if (tenantStatus === 'trial') {
-      schedulePublishPlatformAccountCreated(input.tenantId);
+      schedulePublishPlatformAccountCreated(input.tenantId, input.locale);
       schedulePublishPlatformTrialStarted(input.tenantId);
     }
   }

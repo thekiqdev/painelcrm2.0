@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { ChevronRight } from "lucide-react";
 import type { SettingsNavItem } from "@/config/settingsNavigation";
 import { cn } from "@/lib/utils";
+import { useSettingsLabels } from "@/lib/i18n/settingsLabels";
 
 type MobileSettingsListProps = {
   items: SettingsNavItem[];
@@ -10,6 +11,7 @@ type MobileSettingsListProps = {
 };
 
 export function MobileSettingsList({ items, resolveHref }: MobileSettingsListProps) {
+  const labels = useSettingsLabels();
   return (
     <div className="overflow-hidden rounded-2xl border border-border bg-card">
       {items.map((item, idx) => {
@@ -24,15 +26,15 @@ export function MobileSettingsList({ items, resolveHref }: MobileSettingsListPro
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
               idx > 0 && "border-t border-border/70",
             )}
-            aria-label={item.title}
+            aria-label={labels.title(item)}
           >
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground">
               <Icon className="h-5 w-5" aria-hidden />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="truncate font-medium leading-snug text-foreground">{item.title}</p>
+              <p className="truncate font-medium leading-snug text-foreground">{labels.title(item)}</p>
               {item.description ? (
-                <p className="truncate text-xs text-muted-foreground">{item.description}</p>
+                <p className="truncate text-xs text-muted-foreground">{labels.description(item)}</p>
               ) : null}
             </div>
             <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden />

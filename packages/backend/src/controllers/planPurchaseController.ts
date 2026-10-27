@@ -43,6 +43,7 @@ import {
   parseMarketingAttributionFromBody,
   persistTenantMarketingAttribution,
 } from '../services/marketingAttributionService.js';
+import { getRequestLocale } from '../middleware/localeMiddleware.js';
 
 const validateCheckoutAdminBodySchema = z.object({
   email: z.string().email(),
@@ -56,6 +57,8 @@ const planPurchaseBodySchema = z.object({
   tenant_id: z.string().uuid().optional(),
   name: z.string().min(1).optional(),
   payment_method: z.enum(['PIX', 'BOLETO', 'CREDIT_CARD']).optional(),
+  /** IX4: USD/EUR abre Stripe Checkout. Ausente ou BRL segue Asaas. */
+  currency: z.enum(['BRL', 'USD', 'EUR']).optional(),
   company_name: z.string().min(1).optional(),
   email: z.string().email().optional(),
   cpf_cnpj: z.string().optional(),
@@ -390,6 +393,34 @@ export async function postPlanPurchase(req: AuthRequest, res: Response): Promise
       );
     }
 
+    const checkoutCurrency = body.currency === 'USD' || body.currency === 'EUR' ? body.currency : 'BRL';
+    if (checkoutCurrency !== 'BRL') {
+      if (body.payment_method === 'PIX' || body.payment_method === 'BOLETO') {
+        jsonError(res, 400, 'PIX e boleto estão disponíveis só em real (BRL).', 'PIX_ONLY_BRL');
+        return;
+      }
+      const { startStripePlatformCheckout } =
+        await import('../modules/gateways/stripe/stripePlatformCheckout.js');
+      const stripe = await startStripePlatformCheckout({
+        tenantId,
+        planId: body.plan_id,
+        billingInterval: body.billing_interval,
+        usersCount,
+        currency: checkoutCurrency,
+      });
+      res.status(201).json({
+        billing_id: stripe.billing_id,
+        invoice_number: stripe.invoice_number,
+        amount_cents: stripe.amount_cents,
+        status: stripe.status,
+        tenant_id: tenantId,
+        payment_method: 'CREDIT_CARD',
+        currency: stripe.currency,
+        checkout_url: stripe.checkout_url,
+      });
+      return;
+    }
+
     const paymentMethod = body.payment_method ?? 'BOLETO';
     if (paymentMethod === 'PIX') {
       const row = await pool.query<{ cpf_cnpj: string | null }>(
@@ -439,7 +470,7 @@ export async function postPlanPurchase(req: AuthRequest, res: Response): Promise
     if (isNewTenant) {
       const u = await pool.query('SELECT 1 FROM users WHERE tenant_id = $1 LIMIT 1', [tenantId]);
       if (u.rows.length > 0) {
-        schedulePublishPlatformAccountCreated(tenantId);
+        schedulePublishPlatformAccountCreated(tenantId, getRequestLocale(req));
       }
     }
     res.status(201).json(response);
@@ -451,6 +482,18 @@ export async function postPlanPurchase(req: AuthRequest, res: Response): Promise
     const message = error instanceof Error ? error.message : 'Erro ao processar compra';
     const errCode = (error as Error & { code?: string }).code;
 
+    if (errCode === 'MIXED_SAAS_GATEWAY') {
+      jsonError(res, 409, message, 'MIXED_SAAS_GATEWAY');
+      return;
+    }
+    if (errCode === 'STRIPE_PLATFORM_DISABLED') {
+      jsonError(res, 409, message, 'STRIPE_PLATFORM_DISABLED');
+      return;
+    }
+    if (errCode === 'STRIPE_PRICE_MISSING') {
+      jsonError(res, 409, message, 'STRIPE_PRICE_MISSING');
+      return;
+    }
     if (message === ASAAS_CPF_CNPJ_USER_MESSAGE) {
       jsonError(res, 400, message, 'CPF_CNPJ_REQUIRED_FOR_PAYMENT_METHOD', 'cpf_cnpj');
       return;
@@ -1000,7 +1043,7 @@ export async function postCompleteSignupTrial(req: AuthRequest, res: Response): 
     await client.query('COMMIT');
 
     setImmediate(() => notifySuperAdminsNewTenant(name, tenantId).catch(() => {}));
-    schedulePublishPlatformAccountCreated(tenantId);
+    schedulePublishPlatformAccountCreated(tenantId, getRequestLocale(req));
     schedulePublishPlatformTrialStarted(tenantId);
 
     const token = generateToken({ userId, email });

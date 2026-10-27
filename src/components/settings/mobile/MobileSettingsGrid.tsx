@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { ChevronRight } from "lucide-react";
 import type { SettingsNavItem } from "@/config/settingsNavigation";
 import { cn } from "@/lib/utils";
+import { useSettingsLabels } from "@/lib/i18n/settingsLabels";
 
 type MobileSettingsGridProps = {
   items: SettingsNavItem[];
@@ -10,6 +11,7 @@ type MobileSettingsGridProps = {
 };
 
 export function MobileSettingsGrid({ items, resolveHref }: MobileSettingsGridProps) {
+  const labels = useSettingsLabels();
   return (
     <div className="grid grid-cols-2 gap-3">
       {items.map((item) => {
@@ -23,14 +25,14 @@ export function MobileSettingsGrid({ items, resolveHref }: MobileSettingsGridPro
               "flex min-h-[124px] flex-col rounded-2xl border border-border/80 bg-card p-3 shadow-sm transition-colors active:bg-muted/50",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
             )}
-            aria-label={item.title}
+            aria-label={labels.title(item)}
           >
             <div className="mb-2 flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 text-primary">
               <Icon className="h-6 w-6" aria-hidden />
             </div>
-            <span className="line-clamp-2 text-sm font-semibold leading-snug text-foreground">{item.title}</span>
+            <span className="line-clamp-2 text-sm font-semibold leading-snug text-foreground">{labels.title(item)}</span>
             {item.description ? (
-              <span className="mt-1 line-clamp-2 flex-1 text-[11px] leading-snug text-muted-foreground">{item.description}</span>
+              <span className="mt-1 line-clamp-2 flex-1 text-[11px] leading-snug text-muted-foreground">{labels.description(item)}</span>
             ) : null}
             <div className="mt-2 flex items-center justify-end text-muted-foreground">
               <ChevronRight className="h-4 w-4" aria-hidden />

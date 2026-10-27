@@ -12,6 +12,7 @@ import { Logo } from '@/components/Logo';
 import { publicApiPost } from '@/integrations/api/client';
 import { Eye, EyeOff, Loader2, ArrowLeft, MessageCircle } from 'lucide-react';
 import { useSignupEntry } from '@/hooks/useSignupEntry';
+import { useTranslation } from 'react-i18next';
 
 const legalLinksEnabled = import.meta.env.VITE_ENABLE_LEGAL_PAGES !== 'false';
 
@@ -47,6 +48,7 @@ type LocationFrom = { from?: { pathname: string; search?: string } };
  * Rota /login — hub de autenticação (mobile-first). Cadastro reutiliza /api/auth/register.
  */
 const AuthWhatsApp = () => {
+  const { t } = useTranslation('auth');
   const [mainTab, setMainTab] = useState<MainTab>('login');
   const [panel, setPanel] = useState<AuthPanel>('main');
   const [recoverStep, setRecoverStep] = useState<RecoverStep>(1);
@@ -132,7 +134,7 @@ const AuthWhatsApp = () => {
       if (target) navigate(target, { replace: true });
     } catch (error: unknown) {
       console.error('Auth error:', error);
-      toast.error(error instanceof Error ? error.message : 'Ocorreu um erro desconhecido');
+      toast.error(error instanceof Error ? error.message : t('unknown_error'));
     } finally {
       setIsLoading(false);
     }
@@ -144,7 +146,7 @@ const AuthWhatsApp = () => {
 
   const sendRecoverCode = async (isResend: boolean) => {
     if (waNational.length < MIN_WA_DIGITS) {
-      toast.error('Informe DDD + número (ex.: (11) 99999-9999).');
+      toast.error(t('forgot_invalid_phone'));
       return;
     }
     setRecoverLoading(true);
@@ -153,10 +155,10 @@ const AuthWhatsApp = () => {
         whatsapp: waNational,
       });
       if (res.error || !res.data?.ok) {
-        toast.error(res.error || 'Não foi possível enviar o pedido.');
+        toast.error(res.error || t('forgot_send_fail'));
         return;
       }
-      toast.success(res.data.message || 'Pedido registado.');
+      toast.success(res.data.message || t('forgot_sent'));
       setRecoverStep(2);
       if (isResend) startResendCooldown();
     } finally {
@@ -168,7 +170,7 @@ const AuthWhatsApp = () => {
     e.preventDefault();
     const c = onlyDigits(code);
     if (c.length !== 6) {
-      toast.error('Digite o código de 6 dígitos.');
+      toast.error(t('forgot_code_invalid'));
       return;
     }
     setRecoverLoading(true);
@@ -178,12 +180,12 @@ const AuthWhatsApp = () => {
         code: c,
       });
       if (res.error || !res.data?.ok || !res.data.reset_token) {
-        toast.error(res.error || 'Código inválido ou expirado.');
+        toast.error(res.error || t('forgot_code_bad'));
         return;
       }
       setResetToken(res.data.reset_token);
       setRecoverStep(3);
-      toast.success('Código confirmado. Defina a nova senha.');
+      toast.success(t('forgot_code_ok'));
     } finally {
       setRecoverLoading(false);
     }
@@ -192,11 +194,11 @@ const AuthWhatsApp = () => {
   const handleCompleteRecover = async (e: FormEvent) => {
     e.preventDefault();
     if (newPassword.length < 6) {
-      toast.error('A senha deve ter pelo menos 6 caracteres.');
+      toast.error(t('forgot_short'));
       return;
     }
     if (newPassword !== confirmPassword) {
-      toast.error('As senhas não coincidem.');
+      toast.error(t('forgot_mismatch'));
       return;
     }
     setRecoverLoading(true);
@@ -207,10 +209,10 @@ const AuthWhatsApp = () => {
         confirm_password: confirmPassword,
       });
       if (res.error || !res.data?.ok) {
-        toast.error(res.error || 'Não foi possível atualizar a senha.');
+        toast.error(res.error || t('forgot_save_fail'));
         return;
       }
-      toast.success(res.data.message || 'Senha atualizada.');
+      toast.success(res.data.message || t('forgot_saved'));
       setPanel('main');
       setRecoverStep(1);
       setMainTab('login');
@@ -231,14 +233,14 @@ const AuthWhatsApp = () => {
   };
 
   const recoverPrimaryLabel =
-    recoverStep === 1 ? 'Enviar código' : recoverStep === 2 ? 'Continuar' : 'Redefinir senha';
+    recoverStep === 1 ? t('forgot_send') : recoverStep === 2 ? t('forgot_continue') : t('wa_redefine');
 
   const mobilePrimaryLabel =
     panel === 'recover'
       ? recoverPrimaryLabel
       : mainTab === 'login'
-        ? 'Entrar no painel'
-        : 'Continuar cadastro';
+        ? t('wa_enter_panel')
+        : t('wa_continue_signup');
 
   const mobilePrimaryDisabled =
     panel === 'recover'
@@ -264,8 +266,8 @@ const AuthWhatsApp = () => {
         <h1 className="font-display text-2xl font-bold tracking-tight text-foreground">PainelCRM</h1>
         <p className="mt-1.5 text-sm text-muted-foreground">
           {isExclusiveSignup
-            ? 'Acesso exclusivo para contas autorizadas.'
-            : 'Acesse seu CRM de qualquer lugar.'}
+            ? t('wa_exclusive')
+            : t('wa_tagline')}
         </p>
       </header>
 
@@ -286,14 +288,14 @@ const AuthWhatsApp = () => {
               }}
             >
               <ArrowLeft className="h-4 w-4" />
-              Voltar ao login
+              {t('forgot_back')}
             </button>
             <div>
-              <h2 className="text-lg font-semibold">Recuperar senha</h2>
+              <h2 className="text-lg font-semibold">{t('forgot_title')}</h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                {recoverStep === 1 && 'Enviaremos um código por WhatsApp ao número da sua conta.'}
-                {recoverStep === 2 && 'Digite o código de 6 dígitos recebido no WhatsApp.'}
-                {recoverStep === 3 && 'Escolha uma nova senha para a sua conta.'}
+                {recoverStep === 1 && t('forgot_step1')}
+                {recoverStep === 2 && t('forgot_step2')}
+                {recoverStep === 3 && t('forgot_step3')}
               </p>
             </div>
 
@@ -316,10 +318,10 @@ const AuthWhatsApp = () => {
                     value={formatBrazilMobileDisplay(waNational)}
                     onChange={(e) => setWaNational(toNationalBrazilDigits(e.target.value))}
                   />
-                  <p className="text-xs text-muted-foreground">DDD + número, como no cadastro (sem +55).</p>
+                  <p className="text-xs text-muted-foreground">{t('wa_phone_hint')}</p>
                 </div>
                 <Button type="submit" className="hidden w-full lg:flex" disabled={recoverLoading}>
-                  {recoverLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Enviar código'}
+                  {recoverLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : t('forgot_send')}
                 </Button>
               </form>
             )}
@@ -327,7 +329,7 @@ const AuthWhatsApp = () => {
             {recoverStep === 2 && (
               <form id="recover-form-2" className="space-y-4" onSubmit={handleVerifyCode}>
                 <div className="space-y-2">
-                  <Label htmlFor="code-rec">Código</Label>
+                  <Label htmlFor="code-rec">{t('forgot_code')}</Label>
                   <Input
                     id="code-rec"
                     inputMode="numeric"
@@ -340,7 +342,7 @@ const AuthWhatsApp = () => {
                 </div>
                 <div className="flex flex-col gap-2">
                   <Button type="submit" className="hidden w-full lg:flex" disabled={recoverLoading}>
-                    {recoverLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Continuar'}
+                    {recoverLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : t('forgot_continue')}
                   </Button>
                   <Button
                     type="button"
@@ -349,7 +351,7 @@ const AuthWhatsApp = () => {
                     disabled={recoverLoading || resendCooldown > 0}
                     onClick={() => void sendRecoverCode(true)}
                   >
-                    {resendCooldown > 0 ? `Reenviar (${resendCooldown}s)` : 'Reenviar código'}
+                    {resendCooldown > 0 ? t('wa_resend_wait', { seconds: resendCooldown }) : t('forgot_resend')}
                   </Button>
                 </div>
               </form>
@@ -358,7 +360,7 @@ const AuthWhatsApp = () => {
             {recoverStep === 3 && (
               <form id="recover-form-3" className="space-y-4" onSubmit={handleCompleteRecover}>
                 <div className="space-y-2">
-                  <Label htmlFor="np">Nova senha</Label>
+                  <Label htmlFor="np">{t('forgot_new_password')}</Label>
                   <Input
                     id="np"
                     type="password"
@@ -368,7 +370,7 @@ const AuthWhatsApp = () => {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="np2">Confirmar senha</Label>
+                  <Label htmlFor="np2">{t('forgot_confirm')}</Label>
                   <Input
                     id="np2"
                     type="password"
@@ -378,7 +380,7 @@ const AuthWhatsApp = () => {
                   />
                 </div>
                 <Button type="submit" className="hidden w-full lg:flex" disabled={recoverLoading}>
-                  {recoverLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Redefinir senha'}
+                  {recoverLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : t('wa_redefine')}
                 </Button>
               </form>
             )}
@@ -391,17 +393,17 @@ const AuthWhatsApp = () => {
           >
             <TabsList className="grid h-11 w-full grid-cols-2 rounded-xl bg-muted/60 p-1">
               <TabsTrigger value="login" className="rounded-lg text-sm font-semibold">
-                Entrar
+                {t('enter')}
               </TabsTrigger>
               <TabsTrigger value="register" className="rounded-lg text-sm font-semibold">
-                Cadastro
+                {t('wa_tab_register')}
               </TabsTrigger>
             </TabsList>
 
             <TabsContent value="login" className="mt-6 space-y-5 outline-none">
               <form id="login-form" className="space-y-4" onSubmit={handleLogin}>
                 <div className="space-y-2">
-                  <Label htmlFor="id-login">{loginWithPhone ? 'Telefone' : 'E-mail'}</Label>
+                  <Label htmlFor="id-login">{loginWithPhone ? t('phone') : t('email')}</Label>
                   <Input
                     id="id-login"
                     type={loginWithPhone ? 'tel' : 'email'}
@@ -419,12 +421,12 @@ const AuthWhatsApp = () => {
                       setLoginIdentifier('');
                     }}
                   >
-                    {loginWithPhone ? 'Entrar com e-mail' : 'Entrar com telefone'}
+                    {loginWithPhone ? t('wa_with_email') : t('wa_with_phone')}
                   </button>
                 </div>
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-2">
-                    <Label htmlFor="pw-login">Senha</Label>
+                    <Label htmlFor="pw-login">{t('password')}</Label>
                   </div>
                   <div className="relative">
                     <Input
@@ -441,14 +443,14 @@ const AuthWhatsApp = () => {
                       type="button"
                       className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
                       onClick={() => setShowPassword(!showPassword)}
-                      aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+                      aria-label={showPassword ? t('wa_hide_pw') : t('wa_show_pw')}
                     >
                       {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </button>
                   </div>
                 </div>
                 <Button type="submit" className="hidden h-12 w-full text-base font-semibold lg:flex" disabled={isLoading}>
-                  {isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Entrar no painel'}
+                  {isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : t('wa_enter_panel')}
                 </Button>
               </form>
             </TabsContent>
@@ -456,19 +458,19 @@ const AuthWhatsApp = () => {
             <TabsContent value="register" className="mt-6 space-y-5 outline-none">
               <div className="rounded-xl border border-border bg-muted/30 p-5 text-center">
                 <p className="text-sm text-muted-foreground">
-                  Cadastre sua empresa e escolha o plano ideal para sua operação.
+                  {t('wa_register_blurb')}
                 </p>
                 <Button className="mt-4 hidden h-12 w-full text-base font-semibold lg:flex" asChild>
-                  <Link to={signupPath}>Continuar cadastro</Link>
+                  <Link to={signupPath}>{t('wa_continue_signup')}</Link>
                 </Button>
                 <p className="mt-4 text-xs text-muted-foreground">
-                  Já tem conta?{' '}
+                  {t('wa_have_account')}{' '}
                   <button
                     type="button"
                     className="font-medium text-primary hover:underline"
                     onClick={() => setMainTab('login')}
                   >
-                    Entrar
+                    {t('enter')}
                   </button>
                 </p>
               </div>
@@ -478,7 +480,7 @@ const AuthWhatsApp = () => {
           <div className="mt-6 w-full animate-in fade-in duration-300">
             <form id="login-form" className="space-y-4" onSubmit={handleLogin}>
               <div className="space-y-2">
-                <Label htmlFor="id-login-exclusive">{loginWithPhone ? 'Telefone' : 'E-mail'}</Label>
+                <Label htmlFor="id-login-exclusive">{loginWithPhone ? t('phone') : t('email')}</Label>
                 <Input
                   id="id-login-exclusive"
                   type={loginWithPhone ? 'tel' : 'email'}
@@ -496,11 +498,11 @@ const AuthWhatsApp = () => {
                     setLoginIdentifier('');
                   }}
                 >
-                  {loginWithPhone ? 'Entrar com e-mail' : 'Entrar com telefone'}
+                  {loginWithPhone ? t('wa_with_email') : t('wa_with_phone')}
                 </button>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="pw-login-exclusive">Senha</Label>
+                <Label htmlFor="pw-login-exclusive">{t('password')}</Label>
                 <div className="relative">
                   <Input
                     id="pw-login-exclusive"
@@ -516,14 +518,14 @@ const AuthWhatsApp = () => {
                     type="button"
                     className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
                     onClick={() => setShowPassword(!showPassword)}
-                    aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+                    aria-label={showPassword ? t('wa_hide_pw') : t('wa_show_pw')}
                   >
                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
               </div>
               <Button type="submit" className="hidden h-12 w-full text-base font-semibold lg:flex" disabled={isLoading}>
-                {isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Entrar no painel'}
+                {isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : t('wa_enter_panel')}
               </Button>
             </form>
           </div>
@@ -534,22 +536,22 @@ const AuthWhatsApp = () => {
         <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
           {panel === 'main' && mainTab === 'login' ? (
             <button type="button" className="font-medium hover:text-foreground" onClick={openRecover}>
-              Esqueceu sua senha?
+              {t('forgot')}
             </button>
           ) : null}
           {legalLinksEnabled ? (
             <>
               <Link to="/legal/terms-of-service" className="hover:text-foreground">
-                Termos
+                {t('wa_terms')}
               </Link>
               <Link to="/legal/privacy-policy" className="hover:text-foreground">
-                Privacidade
+                {t('wa_privacy')}
               </Link>
             </>
           ) : null}
           <a href="mailto:suporte@painelcrm.com.br" className="inline-flex items-center gap-1 hover:text-foreground">
             <MessageCircle className="h-3.5 w-3.5" />
-            Suporte
+            {t('wa_support')}
           </a>
         </div>
       </footer>
@@ -565,7 +567,7 @@ const AuthWhatsApp = () => {
                 className="h-12 flex-1 text-base font-semibold shadow-lg shadow-primary/10"
                 disabled={recoverLoading || onlyDigits(code).length !== 6}
               >
-                {recoverLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Continuar'}
+                {recoverLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : t('forgot_continue')}
               </Button>
               <Button
                 type="button"
@@ -574,7 +576,7 @@ const AuthWhatsApp = () => {
                 disabled={recoverLoading || resendCooldown > 0}
                 onClick={() => void sendRecoverCode(true)}
               >
-                {resendCooldown > 0 ? `${resendCooldown}s` : 'Reenviar'}
+                {resendCooldown > 0 ? `${resendCooldown}s` : t('wa_resend_short')}
               </Button>
             </div>
           ) : panel === 'main' && mainTab === 'register' && showSignupOnLogin ? (

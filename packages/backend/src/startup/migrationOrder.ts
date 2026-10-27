@@ -550,5 +550,29 @@ export const MIGRATION_ORDER = [
   '345_store_whatsapp_purchase_message.sql',
   /** TD — domínio personalizado always-on + CNAME sem env dedicada */
   '346_tenant_custom_domain_always_on.sql',
+  /** IX0 — flags i18n / multicurrency / Stripe tenant (default OFF; sem efeito de runtime) */
+  '347_ix0_i18n_currency_flags.sql',
+  /** IX1 — profiles.locale é a preferência de idioma do usuário (pt-BR, en, es) */
+  '348_ix1_profile_locale_comment.sql',
+  /** IX3 — planos por moeda + traduções de catálogo */
+  '349_ix3_plan_multicurrency.sql',
+  /** IX4 — stripe_price_id, ids de subscription Stripe, idempotência de webhook */
+  '350_ix4_stripe_platform.sql',
+  /** IX6 — templates en/es de boas-vindas e código de senha */
+  '351_ix6_account_locale_templates.sql',
+  /** IX9 — templates en/es dos eventos de plataforma (e-mail e WhatsApp) */
+  '352_ix9_platform_locale_templates.sql',
+  /** PE3 — cf_* em partner_profiles + flag partner.edge_cloudflare_saas_v1 */
+  '353_partner_edge_cloudflare_saas_pe3.sql',
+  /** TE2 — cf_* em tenant_hosts + flag tenant.edge_cloudflare_saas_v1 */
+  '354_tenant_edge_cloudflare_saas_te2.sql',
+  /** API etapa 1 — api_keys + flag api.keys_v1 */
+  '355_api_keys.sql',
+  /** API etapa 2 — Idempotency-Key do POST /api/v1/leads */
+  '356_api_idempotency_keys.sql',
+  /** API etapa 4 — flag ligada para todos os tenants */
+  '357_api_keys_default_on.sql',
+  /** Observação de texto no cadastro de lead e de cliente */
+  '358_lead_client_observacao.sql',
   'create-admin-user.sql',
 ];

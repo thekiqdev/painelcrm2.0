@@ -793,8 +793,8 @@ export async function getTenantBilling(req: AuthRequest, res: Response): Promise
     };
     if (row.plan_plan_type === 'custom') {
       const pricesRows = await pool.query(
-        'SELECT billing_interval, price_per_user_cents FROM plan_interval_prices WHERE plan_id = $1',
-        [row.plan_id]
+        'SELECT billing_interval, price_per_user_cents FROM plan_interval_prices WHERE plan_id = $1 AND currency = $2',
+        [row.plan_id, 'BRL']
       );
       planPayload.interval_prices = pricesRows.rows;
       planPayload.contracted_users =

@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { Menu, X, Settings, CreditCard, ShieldCheck, LogOut, LayoutDashboard } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
@@ -16,8 +17,10 @@ import { Logo } from "@/components/Logo";
 import { cn } from "@/lib/utils";
 import { platformSupportHref } from "@/lib/platformSupportNav";
 import { useSignupEntry } from "@/hooks/useSignupEntry";
+import { LandingLocaleCurrencyControls } from "./LandingLocaleCurrencyControls";
 
 const Navbar = () => {
+  const { t } = useTranslation("landing");
   const [open, setOpen] = useState(false);
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
@@ -54,33 +57,34 @@ const Navbar = () => {
 
         <div className="hidden items-center gap-8 md:flex">
           <a href="#recursos" className="text-sm text-muted-foreground transition-colors hover:text-foreground">
-            Recursos
+            {t("nav_features")}
           </a>
           <a href="#como-funciona" className="text-sm text-muted-foreground transition-colors hover:text-foreground">
-            Como funciona
+            {t("nav_how")}
           </a>
           <a href="#planos" className="text-sm text-muted-foreground transition-colors hover:text-foreground">
-            Planos
+            {t("nav_plans")}
           </a>
           {isLoggedIn ? (
             <Link to="/suporte" className="text-sm text-muted-foreground transition-colors hover:text-foreground">
-              Suporte
+              {t("nav_support")}
             </Link>
           ) : (
             <Link
               to={platformSupportHref(false)}
               className="text-sm text-muted-foreground transition-colors hover:text-foreground"
             >
-              Suporte
+              {t("nav_support")}
             </Link>
           )}
         </div>
 
         <div className="hidden items-center gap-3 md:flex">
+          <LandingLocaleCurrencyControls />
           {isLoggedIn ? (
             <>
               <Button size="sm" asChild>
-                <Link to="/dashboard">Dashboard</Link>
+                {t("nav_dashboard")}
               </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -94,32 +98,32 @@ const Navbar = () => {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuLabel>Minha conta</DropdownMenuLabel>
+                  <DropdownMenuLabel>{t("nav_account")}</DropdownMenuLabel>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => goTo("/dashboard")}>
                     <LayoutDashboard className="mr-2 h-4 w-4" />
-                    <span>Dashboard</span>
+                    <span>{t("nav_dashboard")}</span>
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => goTo("/settings")}>
                     <Settings className="mr-2 h-4 w-4" />
-                    <span>Configurações</span>
+                    <span>{t("nav_settings")}</span>
                   </DropdownMenuItem>
                   {user?.can_manage_plan && (
                     <DropdownMenuItem onClick={() => goTo("/meu-plano")}>
                       <CreditCard className="mr-2 h-4 w-4" />
-                      <span>Planos</span>
+                      <span>{t("nav_plans_menu")}</span>
                     </DropdownMenuItem>
                   )}
                   {user?.is_super_admin && (
                     <DropdownMenuItem onClick={() => goTo("/superadmin")}>
                       <ShieldCheck className="mr-2 h-4 w-4" />
-                      <span>Super Admin</span>
+                      <span>{t("nav_superadmin")}</span>
                     </DropdownMenuItem>
                   )}
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => signOut()}>
                     <LogOut className="mr-2 h-4 w-4" />
-                    <span>Sair</span>
+                    <span>{t("nav_logout")}</span>
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -127,37 +131,40 @@ const Navbar = () => {
           ) : (
             <>
               <Button variant="ghost" size="sm" onClick={() => navigate("/login")}>
-                Acessar
+                {t("nav_login")}
               </Button>
               <Button size="sm" onClick={goToSignup}>
-                Começar grátis
+                {t("nav_signup")}
               </Button>
             </>
           )}
         </div>
 
-        {/* Mobile: visitante — CTA premium único; logado — menu conta */}
-        {!isLoggedIn ? (
-          <Button
-            type="button"
-            size="lg"
-            className={cn(
-              "md:hidden h-11 min-w-[7.5rem] rounded-full px-6 text-sm font-semibold shadow-md shadow-primary/15",
-            )}
-            onClick={() => navigate("/login")}
-          >
-            Acessar
-          </Button>
-        ) : (
-          <button
-            className="text-foreground md:hidden"
-            onClick={() => setOpen(!open)}
-            type="button"
-            aria-label="Menu"
-          >
-            {open ? <X size={24} /> : <Menu size={24} />}
-          </button>
-        )}
+        {/* Mobile: seletor + CTA / menu */}
+        <div className="flex items-center gap-2 md:hidden">
+          <LandingLocaleCurrencyControls />
+          {!isLoggedIn ? (
+            <Button
+              type="button"
+              size="lg"
+              className={cn(
+                "h-11 min-w-[7.5rem] rounded-full px-6 text-sm font-semibold shadow-md shadow-primary/15",
+              )}
+              onClick={() => navigate("/login")}
+            >
+              {t("nav_login")}
+            </Button>
+          ) : (
+            <button
+              className="text-foreground"
+              onClick={() => setOpen(!open)}
+              type="button"
+              aria-label={t("nav_menu")}
+            >
+              {open ? <X size={24} /> : <Menu size={24} />}
+            </button>
+          )}
+        </div>
       </div>
 
       {open && isLoggedIn && (
@@ -173,27 +180,27 @@ const Navbar = () => {
             </div>
             <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => goTo("/dashboard")}>
               <LayoutDashboard className="mr-2 h-4 w-4" />
-              Dashboard
+              {t("nav_dashboard")}
             </Button>
             <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => goTo("/settings")}>
               <Settings className="mr-2 h-4 w-4" />
-              Configurações
+              {t("nav_settings")}
             </Button>
             {user?.can_manage_plan && (
               <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => goTo("/meu-plano")}>
                 <CreditCard className="mr-2 h-4 w-4" />
-                Planos
+                {t("nav_plans_menu")}
               </Button>
             )}
             {user?.is_super_admin && (
               <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => goTo("/superadmin")}>
                 <ShieldCheck className="mr-2 h-4 w-4" />
-                Super Admin
+                {t("nav_superadmin")}
               </Button>
             )}
             <Button variant="ghost" size="sm" className="w-full justify-start text-muted-foreground" onClick={() => signOut()}>
               <LogOut className="mr-2 h-4 w-4" />
-              Sair
+              {t("nav_logout")}
             </Button>
           </div>
         </div>

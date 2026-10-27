@@ -31,6 +31,7 @@ import {
   verifySignupPhoneCode,
 } from '../acquisition/signupPhoneVerificationService.js';
 import { pool } from '../utils/db.js';
+import { getRequestLocale } from '../middleware/localeMiddleware.js';
 
 const testeGratisSchema = z.object({
   name: z.string().min(1),
@@ -234,7 +235,12 @@ export async function postPhoneSendCode(req: Request, res: Response): Promise<vo
   try {
     if (!(await requireExclusiveSignupFlow(res))) return;
     const body = phoneSendCodeSchema.parse(req.body);
-    const result = await sendSignupPhoneVerificationCode(pool, body.phone.trim(), body.ddi);
+    const result = await sendSignupPhoneVerificationCode(
+      pool,
+      body.phone.trim(),
+      body.ddi,
+      getRequestLocale(req),
+    );
     if (!result.ok) {
       const mapped = mapSendCodeReason(result.reason);
       res.status(mapped.status).json({

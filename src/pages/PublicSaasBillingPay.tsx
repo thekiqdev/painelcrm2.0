@@ -12,7 +12,8 @@ import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { toast } from '@/components/ui/sonner';
-import { formatMoneyBRL } from '@/lib/planCheckoutDisplay';
+import { formatAppMoney } from '@/lib/i18n/formatApp';
+import { useTranslation } from 'react-i18next';
 import { formatInvoiceDueDatePtBr } from '@/lib/formatInvoiceDates';
 import { Logo } from '@/components/Logo';
 import { cn } from '@/lib/utils';
@@ -77,6 +78,7 @@ interface SummaryResponse {
   invoice_number: string | null;
   status: string;
   amount_cents: number;
+  currency?: string | null;
   due_date: string;
   plan_label: string;
   billing_reason?: string;
@@ -178,6 +180,7 @@ export default function PublicSaasBillingPay() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<SummaryResponse | null>(null);
+  const { t } = useTranslation('finance');
   const [result, setResult] = useState<SaasBillingPurchaseResult | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<PlanPurchasePm>('PIX');
   const [cpfError, setCpfError] = useState('');
@@ -604,16 +607,16 @@ export default function PublicSaasBillingPay() {
               <CardHeader className="space-y-1 pb-2">
                 <CardTitle className="flex items-center gap-2 text-lg font-semibold">
                   <Receipt className="h-5 w-5 text-crm-primary shrink-0" aria-hidden />
-                  Resumo da cobrança
+                  {t('charge_summary')}
                 </CardTitle>
-                <CardDescription>Revise o valor e o status antes de pagar</CardDescription>
+                <CardDescription>{t('charge_review')}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Valor a pagar</p>
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('amount_due')}</p>
                     <p className="mt-1 text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
-                      {formatMoneyBRL(summary.amount_cents)}
+                      {formatAppMoney(summary.amount_cents, summary.currency || 'BRL')}
                     </p>
                   </div>
                   <Badge variant={badge.variant} className={cn('w-fit shrink-0', badge.className)}>
@@ -629,7 +632,7 @@ export default function PublicSaasBillingPay() {
                     <p className="mt-1 text-sm font-semibold">{formatInvoiceDueDatePtBr(summary.due_date)}</p>
                   </div>
                   <div className="rounded-lg border bg-muted/30 p-3">
-                    <p className="text-xs font-medium text-muted-foreground">Fatura</p>
+                    <p className="text-xs font-medium text-muted-foreground">{t('invoice_label')}</p>
                     <p className="mt-1 font-mono text-sm font-semibold">{summary.invoice_number ?? '—'}</p>
                   </div>
                   <div className="rounded-lg border bg-muted/30 p-3 sm:col-span-2">

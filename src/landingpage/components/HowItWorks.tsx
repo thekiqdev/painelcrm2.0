@@ -1,39 +1,24 @@
+import { useTranslation } from "react-i18next";
 import Building2 from "lucide-react/dist/esm/icons/building-2.js";
 import SlidersHorizontal from "lucide-react/dist/esm/icons/sliders-horizontal.js";
 import Rocket from "lucide-react/dist/esm/icons/rocket.js";
 
 const steps = [
-  {
-    icon: Building2,
-    num: "01",
-    title: "Cadastre sua empresa",
-    desc: "Crie seu espaço em minutos, sem complicação. Cada empresa tem seu ambiente isolado e seguro.",
-  },
-  {
-    icon: SlidersHorizontal,
-    num: "02",
-    title: "Configure funil e equipe",
-    desc: "Monte seus funis, convide sua equipe e conecte o WhatsApp. Tudo pronto para operar.",
-  },
-  {
-    icon: Rocket,
-    num: "03",
-    title: "Venda e atenda no mesmo painel",
-    desc: "Gerencie leads, propostas, projetos e comunicação — tudo centralizado e com visibilidade total.",
-  },
+  { icon: Building2, num: "01", key: "1" },
+  { icon: SlidersHorizontal, num: "02", key: "2" },
+  { icon: Rocket, num: "03", key: "3" },
 ];
 
 const HowItWorks = () => {
+  const { t } = useTranslation("landing");
   return (
     <section id="como-funciona" className="border-y border-border/50 bg-secondary/30 py-24">
       <div className="container mx-auto px-4 lg:px-8">
         <div className="mb-16 text-center">
           <h2 className="font-display text-3xl font-bold text-foreground sm:text-4xl">
-            Comece em <span className="text-gradient">3 passos simples</span>
+            {t("how_title_before")} <span className="text-gradient">{t("how_title_em")}</span>
           </h2>
-          <p className="mt-4 text-lg text-muted-foreground">
-            Do cadastro à primeira venda — rápido e sem fricção.
-          </p>
+          <p className="mt-4 text-lg text-muted-foreground">{t("how_lead")}</p>
         </div>
 
         <div className="grid gap-8 md:grid-cols-3">
@@ -48,8 +33,8 @@ const HowItWorks = () => {
                   {step.num}
                 </span>
               </div>
-              <h3 className="font-display text-xl font-semibold text-foreground">{step.title}</h3>
-              <p className="mt-2 text-sm text-muted-foreground">{step.desc}</p>
+              <h3 className="font-display text-xl font-semibold text-foreground">{t(`how_${step.key}_title`)}</h3>
+              <p className="mt-2 text-sm text-muted-foreground">{t(`how_${step.key}_desc`)}</p>
             </div>
           ))}
         </div>

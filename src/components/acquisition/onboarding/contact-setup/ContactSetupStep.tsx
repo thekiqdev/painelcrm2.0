@@ -1,8 +1,4 @@
-import {
-  ONBOARDING_LEAD_ACCESS_HEADLINE,
-  ONBOARDING_LEAD_ADMIN_HEADLINE,
-  ONBOARDING_LEAD_VERIFICATION_HEADLINE,
-} from '../constants';
+import { useTranslation } from 'react-i18next';
 import { OnboardingIdentityCapture } from '../OnboardingIdentityCapture';
 import { OnboardingPrincipalAdminCapture } from '../OnboardingPrincipalAdminCapture';
 import {
@@ -76,14 +72,15 @@ export function ContactSetupStep({
   onResendCode,
   resendLoading,
 }: Props) {
+  const { t } = useTranslation('auth');
   const isAccessRequest = subStep === 'identity';
   const isVerification = subStep === 'verification';
   const isAdmin = subStep === 'admin';
   const headline = isAccessRequest
-    ? ONBOARDING_LEAD_ACCESS_HEADLINE
+    ? { title: t('ob_access_title'), subtitle: t('ob_access_subtitle'), kicker: t('ob_access_kicker') }
     : isVerification
-      ? ONBOARDING_LEAD_VERIFICATION_HEADLINE
-      : ONBOARDING_LEAD_ADMIN_HEADLINE;
+      ? { title: t('ob_verify_title'), subtitle: t('ob_verify_subtitle'), kicker: '' }
+      : { title: t('ob_admin_title'), subtitle: t('ob_admin_subtitle'), kicker: '' };
   const preview = { name, email, phone };
   const cta = isAccessRequest
     ? CONTACT_ACCESS_CTA
@@ -167,13 +164,13 @@ export function ContactSetupStep({
           {isAccessRequest ? (
             <>
               <p className="text-xs font-medium uppercase tracking-[0.22em] text-primary/80">
-                {ONBOARDING_LEAD_ACCESS_HEADLINE.kicker}
+                {t('ob_access_kicker')}
               </p>
               <h1 className="font-display text-[1.75rem] font-semibold tracking-tight text-foreground">
-                {ONBOARDING_LEAD_ACCESS_HEADLINE.title}
+                {t('ob_access_title')}
               </h1>
               <p className="max-w-xl text-[15px] leading-relaxed text-muted-foreground">
-                {ONBOARDING_LEAD_ACCESS_HEADLINE.subtitle}
+                {t('ob_access_subtitle')}
               </p>
             </>
           ) : (

@@ -16,6 +16,7 @@ import { loadStoredContractPdfBuffer } from './contractStoredPdfService.js';
 import { parseSignerSignatureDisplay } from './contractSignatureDisplay.js';
 import { renderSignatureBlockPdfKit } from './contractSignatureBlockPdfKit.js';
 import { stripTrailingSignatureSectionFromHtml } from './contractDocumentHtml.js';
+import { normalizeAppLocale, type AppLocale } from '../i18n/appLocale.js';
 
 type PdfDoc = InstanceType<typeof PDFDocument>;
 
@@ -104,6 +105,7 @@ export type ContractPdfMetaRow = {
   status: string;
   document_frozen_at: string | null;
   tenant_name: string | null;
+  tenant_locale?: string | null;
 };
 
 export type ContractSignerPdfRow = {
@@ -121,11 +123,65 @@ function formatBrazilTaxIdDisplay(input: string | null | undefined): string {
   return d;
 }
 
+function contractPdfChrome(locale: AppLocale) {
+  if (locale === 'en') {
+    return {
+      subject: 'Contract',
+      number: 'No.',
+      signature: 'Signature',
+      noSigners: 'No signers configured for this contract.',
+      signer: {
+        imageUnavailable: '(Signature image unavailable)',
+        waiting: 'Awaiting signature',
+        taxId: 'Tax ID',
+        email: 'Email',
+        signedAt: 'Signed at',
+        method: 'Method',
+        signatureId: 'Signature ID',
+      },
+    };
+  }
+  if (locale === 'es') {
+    return {
+      subject: 'Contrato',
+      number: 'N.º',
+      signature: 'Firma',
+      noSigners: 'No hay firmantes configurados para este contrato.',
+      signer: {
+        imageUnavailable: '(Imagen de la firma no disponible)',
+        waiting: 'En espera de firma',
+        taxId: 'Documento',
+        email: 'Correo',
+        signedAt: 'Fecha de la firma',
+        method: 'Método',
+        signatureId: 'ID de la firma',
+      },
+    };
+  }
+  return {
+    subject: 'Contrato',
+    number: 'Nº',
+    signature: 'Assinatura',
+    noSigners: 'Nenhum signatário configurado para este contrato.',
+    signer: {
+      imageUnavailable: '(Imagem da assinatura indisponível)',
+      waiting: 'Aguardando assinatura',
+      taxId: 'CPF',
+      email: 'E-mail',
+      signedAt: 'Data da assinatura',
+      method: 'Método',
+      signatureId: 'ID da assinatura',
+    },
+  };
+}
+
 /** Gera o PDF a partir do snapshot em texto simples e das linhas de signatários (mesma fonte que o painel). */
 export async function buildPdfBufferFromContractSnapshot(
   c: ContractPdfMetaRow,
   signers: ContractSignerPdfRow[],
 ): Promise<{ buffer: Buffer; filename: string }> {
+  const locale = normalizeAppLocale(c.tenant_locale) ?? 'pt-BR';
+  const chrome = contractPdfChrome(locale);
   const snapRaw = String(c.content_snapshot_html || '').trim();
   const snap =
     signers.length > 0 ? stripTrailingSignatureSectionFromHtml(snapRaw) : snapRaw;
@@ -142,7 +198,7 @@ export async function buildPdfBufferFromContractSnapshot(
       info: {
         Title: c.title,
         Author: c.tenant_name || 'PainelCRM',
-        Subject: `Contrato ${c.contract_number} (snapshot)`,
+        Subject: `${chrome.subject} ${c.contract_number}`,
       },
     });
     doc.on('data', (d: Buffer) => chunks.push(d));
@@ -151,7 +207,7 @@ export async function buildPdfBufferFromContractSnapshot(
 
     doc.font('Helvetica-Bold').fontSize(18).fillColor('#111111').text(c.title, { align: 'center', lineGap: 2.8 });
     doc.moveDown(0.5);
-    doc.font('Helvetica').fontSize(10.5).fillColor('#444444').text(`Nº ${c.contract_number}`, { align: 'center', lineGap: 1.8 });
+    doc.font('Helvetica').fontSize(10.5).fillColor('#444444').text(`${chrome.number} ${c.contract_number}`, { align: 'center', lineGap: 1.8 });
     if (c.tenant_name) doc.moveDown(0.28);
     if (c.tenant_name) doc.text(String(c.tenant_name), { align: 'center', lineGap: 1.6 });
     doc.moveDown(0.75);
@@ -172,14 +228,14 @@ export async function buildPdfBufferFromContractSnapshot(
       doc.addPage();
     }
     doc.moveDown(2.45);
-    doc.font('Helvetica-Bold').fontSize(12).fillColor('#111111').text('Assinatura', {
+    doc.font('Helvetica-Bold').fontSize(12).fillColor('#111111').text(chrome.signature, {
       width: textWidth,
       lineGap: 2,
     });
     doc.font('Helvetica').fillColor('#000000');
     doc.moveDown(0.85);
     if (!signers.length) {
-      doc.fontSize(9.5).fillColor('#555555').text('Nenhum signatário configurado para este contrato.', {
+      doc.fontSize(9.5).fillColor('#555555').text(chrome.noSigners, {
         width: textWidth,
         lineGap: 1.75,
       });
@@ -194,7 +250,7 @@ export async function buildPdfBufferFromContractSnapshot(
         signed_at: s.signed_at,
         signature_data: s.signature_data,
       });
-      renderSignatureBlockPdfKit(doc, model, textWidth);
+      renderSignatureBlockPdfKit(doc, model, textWidth, chrome.signer);
       doc.moveDown(1.2);
     }
 
@@ -237,7 +293,7 @@ export async function buildContractPdfBuffer(params: {
 
   const row = await pool.query<ContractPdfMetaRow>(
     `SELECT c.title, c.contract_number, c.content_snapshot_html, c.status::text AS status,
-            c.document_frozen_at, t.name AS tenant_name
+            c.document_frozen_at, t.name AS tenant_name, t.locale AS tenant_locale
      FROM contracts c
      INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
      LEFT JOIN tenants t ON t.id = u.tenant_id
@@ -272,7 +328,7 @@ export async function buildContractPdfBufferForPublicView(contractId: string): P
 
   const row = await pool.query<ContractPdfMetaRow>(
     `SELECT c.title, c.contract_number, c.content_snapshot_html, c.status::text AS status,
-            c.document_frozen_at, t.name AS tenant_name
+            c.document_frozen_at, t.name AS tenant_name, t.locale AS tenant_locale
      FROM contracts c
      INNER JOIN users u ON u.id = c.user_id
      LEFT JOIN tenants t ON t.id = u.tenant_id

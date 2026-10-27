@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -10,6 +11,7 @@ const SESSION_COMPLETE_KEY = 'meta_complete_registration_fired';
 const SESSION_LEAD_KEY = 'meta_lead_fired';
 
 export default function SignupSuccess() {
+  const { t } = useTranslation('auth');
   const navigate = useNavigate();
   const location = useLocation();
   const nextPath = readSignupSuccessNext(
@@ -50,15 +52,15 @@ export default function SignupSuccess() {
     <div className="min-h-screen flex items-center justify-center bg-background px-4">
       <Card className="w-full max-w-lg border-border bg-card">
         <CardHeader>
-          <CardTitle>Conta criada com sucesso</CardTitle>
-          <CardDescription>Estamos preparando seu painel…</CardDescription>
+          <CardTitle>{t('signup_ok_title')}</CardTitle>
+          <CardDescription>{t('signup_ok_desc')}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            Em instantes você será redirecionado automaticamente.
+            {t('signup_ok_body')}
           </p>
           <Button className="w-full" onClick={() => navigate(nextPath, { replace: true })}>
-            Ir para o dashboard
+            {t('signup_ok_cta')}
           </Button>
         </CardContent>
       </Card>

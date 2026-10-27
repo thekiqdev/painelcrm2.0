@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { Logo } from "@/components/Logo";
 
@@ -7,6 +8,7 @@ const legalLinksEnabled = import.meta.env.VITE_ENABLE_LEGAL_PAGES !== "false";
  * Rodapé da landing estática: links legais com <a href> para carregar o SPA principal (/index.html).
  */
 export default function LandingPublicFooter() {
+  const { t } = useTranslation("landing");
   return (
     <footer className="border-t border-border/50 bg-background py-12">
       <div className="container mx-auto px-4 lg:px-8">
@@ -18,34 +20,34 @@ export default function LandingPublicFooter() {
 
           <nav className="flex flex-wrap items-center justify-center gap-6 font-sans text-sm text-muted-foreground">
             <a href="#recursos" className="transition-colors hover:text-foreground">
-              Recursos
+              {t("nav_features")}
             </a>
             <a href="#planos" className="transition-colors hover:text-foreground">
-              Preços
+              {t("footer_pricing")}
             </a>
             <a href="/login" className="transition-colors hover:text-foreground">
-              Contato
+              {t("footer_contact")}
             </a>
             {legalLinksEnabled ? (
               <>
                 <a href="/legal/terms-of-service" className="transition-colors hover:text-foreground">
-                  Termos de Uso
+                  {t("footer_terms")}
                 </a>
                 <a href="/legal/privacy-policy" className="transition-colors hover:text-foreground">
-                  Privacidade
+                  {t("footer_privacy")}
                 </a>
               </>
             ) : (
               <>
-                <span className="text-muted-foreground/80">Termos</span>
-                <span className="text-muted-foreground/80">Privacidade</span>
+                <span className="text-muted-foreground/80">{t("footer_terms_short")}</span>
+                <span className="text-muted-foreground/80">{t("footer_privacy_short")}</span>
               </>
             )}
           </nav>
         </div>
 
         <div className="mt-8 border-t border-border/50 pt-6 text-center font-sans text-sm text-muted-foreground">
-          © {new Date().getFullYear()} PainelCRM. Todos os direitos reservados.
+          © {new Date().getFullYear()} PainelCRM. {t("footer_rights")}
         </div>
       </div>
     </footer>

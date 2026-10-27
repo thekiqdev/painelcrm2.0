@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Copy, Trash2 } from 'lucide-react';
+import { Copy, ExternalLink, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -32,6 +32,8 @@ export default function PartnerSaleLinkPage() {
   const link = isSeller ? sellerLink?.sale_url : houseLink?.sale_url;
   const code = isSeller ? sellerLink?.referral_code : null;
   const hasCustomDomain = Boolean(me?.profile.custom_domain);
+  const domainActive =
+    me?.profile.domain_status === 'active' || me?.profile.domain_status === 'verified';
 
   return (
     <div className="space-y-6">
@@ -79,6 +81,14 @@ export default function PartnerSaleLinkPage() {
                 <Copy className="mr-2 h-4 w-4" />
                 Copiar link
               </Button>
+              {domainActive && link ? (
+                <Button variant="secondary" asChild>
+                  <a href={link} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="mr-2 h-4 w-4" />
+                    Abrir checkout
+                  </a>
+                </Button>
+              ) : null}
               {isAdmin && hasCustomDomain ? (
                 <Button
                   variant="outline"

@@ -110,8 +110,8 @@ export async function calculateSeatAddonProrata(
     pricePerUser = contractedPu;
   } else {
     const priceRow = await pool.query<{ price_per_user_cents: number }>(
-      'SELECT price_per_user_cents FROM plan_interval_prices WHERE plan_id = $1 AND billing_interval = $2',
-      [planId, billingInterval]
+      'SELECT price_per_user_cents FROM plan_interval_prices WHERE plan_id = $1 AND billing_interval = $2 AND currency = $3',
+      [planId, billingInterval, 'BRL']
     );
     if (priceRow.rows.length === 0) {
       throw new Error(`Plano sem preço por usuário para o intervalo "${billingInterval}"`);
@@ -187,8 +187,8 @@ export async function calculateInstanceAddonProrata(
     const priceRow = await pool.query<{ price_per_instance_cents: number | null }>(
       `SELECT price_per_instance_cents
        FROM plan_interval_prices
-       WHERE plan_id = $1 AND billing_interval = $2`,
-      [planId, billingInterval]
+       WHERE plan_id = $1 AND billing_interval = $2 AND currency = $3`,
+      [planId, billingInterval, 'BRL']
     );
     const raw = priceRow.rows[0]?.price_per_instance_cents;
     if (raw == null || raw < 0) {
@@ -249,8 +249,8 @@ export async function calculateInvoiceAmount(
   if (planType === 'custom') {
     const count = usersCount != null && usersCount > 0 ? usersCount : 1;
     const priceRow = await pool.query<{ price_per_user_cents: number }>(
-      'SELECT price_per_user_cents FROM plan_interval_prices WHERE plan_id = $1 AND billing_interval = $2',
-      [planId, billingInterval]
+      'SELECT price_per_user_cents FROM plan_interval_prices WHERE plan_id = $1 AND billing_interval = $2 AND currency = $3',
+      [planId, billingInterval, 'BRL']
     );
     if (priceRow.rows.length === 0) {
       throw new Error(
@@ -376,8 +376,8 @@ export async function resolveWhatsAppInstanceUnitPriceForRenewal(params: {
   const priceRow = await pool.query<{ price_per_instance_cents: number | null }>(
     `SELECT price_per_instance_cents
      FROM plan_interval_prices
-     WHERE plan_id = $1 AND billing_interval = $2`,
-    [params.planId, params.billingInterval]
+     WHERE plan_id = $1 AND billing_interval = $2 AND currency = $3`,
+    [params.planId, params.billingInterval, 'BRL']
   );
   const raw = priceRow.rows[0]?.price_per_instance_cents;
   if (raw == null || raw < 0) return null;

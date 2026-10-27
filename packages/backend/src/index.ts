@@ -16,6 +16,8 @@ import clientGroupsRoutes from './routes/clientGroupsRoutes.js';
 import profileRoutes from './routes/profileRoutes.js';
 import registrationStepsRoutes from './routes/registrationStepsRoutes.js';
 import leadsRoutes from './routes/leadsRoutes.js';
+import apiV1Routes from './routes/apiV1Routes.js';
+import { startApiIdempotencyPurge } from './apiKeys/purgeApiIdempotency.js';
 import leadStatusesRoutes from './routes/leadStatusesRoutes.js';
 import leadTasksRoutes from './routes/leadTasksRoutes.js';
 import funnelsRoutes from './routes/funnelsRoutes.js';
@@ -54,6 +56,8 @@ import superadminOpsKanbanRoutes from './routes/superadminOpsKanbanRoutes.js';
 import kanbanAttachRoutes from './routes/kanbanAttachRoutes.js';
 import uazapiWebhookRoutes from './routes/uazapiWebhookRoutes.js';
 import asaasWebhookRoutes from './routes/asaasWebhookRoutes.js';
+import stripePlatformWebhookRoutes from './routes/stripePlatformWebhookRoutes.js';
+import stripeTenantWebhookRoutes from './routes/stripeTenantWebhookRoutes.js';
 import chatbotFlowsWebhookRoutes from './routes/chatbotFlowsWebhookRoutes.js';
 import chatbotFlowsListenWebhookRoutes from './routes/chatbotFlowsListenWebhookRoutes.js';
 import chatbotFlowsSampleWebhookRoutes from './routes/chatbotFlowsSampleWebhookRoutes.js';
@@ -75,6 +79,7 @@ import googleCalendarIntegrationRoutes from './routes/googleCalendarIntegrationR
 import googleDriveIntegrationRoutes from './routes/googleDriveIntegrationRoutes.js';
 import asaasIntegrationRoutes from './routes/asaasIntegrationRoutes.js';
 import mercadoPagoIntegrationRoutes from './routes/mercadoPagoIntegrationRoutes.js';
+import apiKeyRoutes from './routes/apiKeyRoutes.js';
 import * as mercadoPagoIntegrationController from './controllers/mercadoPagoIntegrationController.js';
 import { mercadoPagoFeatureGuard } from './middleware/mercadoPagoFeatureGuard.js';
 import appointmentsRoutes from './routes/appointmentsRoutes.js';
@@ -134,6 +139,7 @@ import partnerRoutes from './partner/partnerRoutes.js';
 import superadminPartnerRoutes from './partner/superadminPartnerRoutes.js';
 import superadminPartnerWholesaleRoutes from './partner/superadminPartnerWholesaleRoutes.js';
 import { correlationIdMiddleware } from './middleware/correlationId.js';
+import { localeMiddleware } from './middleware/localeMiddleware.js';
 import {
   appLogger,
   isHttpAccessLogEnabled,
@@ -187,6 +193,11 @@ app.use('/webhooks/whatsapp-official', whatsappOfficialWebhookRoutes);
 /** Alias canónico pedido para o painel Meta (mesmo router: verificação GET + POST com assinatura). */
 app.use('/api/webhooks/meta/whatsapp', whatsappOfficialWebhookRoutes);
 app.use('/webhooks/meta/whatsapp', whatsappOfficialWebhookRoutes);
+/** IX4 — corpo bruto para Stripe-Signature, antes do JSON global. */
+app.use('/api/webhooks/stripe', stripePlatformWebhookRoutes);
+app.use('/webhooks/stripe', stripePlatformWebhookRoutes);
+app.use('/api/webhooks/stripe-tenant', stripeTenantWebhookRoutes);
+app.use('/webhooks/stripe-tenant', stripeTenantWebhookRoutes);
 
 /** Base64 de imagem no JSON de POST /api/chat/messages excede o padrão do body-parser (100kb). */
 const jsonBodyLimit = process.env.API_JSON_BODY_LIMIT || '25mb';
@@ -195,6 +206,7 @@ app.use(express.urlencoded({ extended: true, limit: jsonBodyLimit }));
 
 /** P0 Sprint 1: correlation id + ALS (antes das rotas; não altera body/auth). */
 app.use(correlationIdMiddleware);
+app.use(localeMiddleware);
 
 /** Mídia do catálogo (upload local). Montar volume persistente em getCatalogMediaStorageRoot(). */
 try {
@@ -412,6 +424,7 @@ app.use('/api/client-groups', clientGroupsRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/registration-steps', registrationStepsRoutes);
 app.use('/api/leads', leadsRoutes);
+app.use('/api/v1', apiV1Routes);
 app.use('/api/lead-statuses', leadStatusesRoutes);
 app.use('/api/lead-tasks', leadTasksRoutes);
 app.use('/api/funnels', funnelsRoutes);
@@ -489,6 +502,7 @@ app.get('/api/integrations/mercado-pago/callback', mercadoPagoIntegrationControl
 /** Alias legado (notification_url antiga); mesmo handler que POST /api/integrations/mercado-pago/webhook */
 app.post('/api/webhooks/mercado-pago', mercadoPagoFeatureGuard, mercadoPagoIntegrationController.postMercadoPagoWebhook);
 app.use('/api/integrations/mercado-pago', mercadoPagoIntegrationRoutes);
+app.use('/api/integrations/api-keys', apiKeyRoutes);
 app.use('/api/appointments', appointmentsRoutes);
 app.use('/api/chatbot-flows', chatbotFlowsRoutes);
 app.use('/api/announcements', authenticateToken, setCurrentTenant, announcementsUpdatesRoutes);
@@ -596,6 +610,8 @@ void (async () => {
     void refreshSystemFeatureFlagsFromPool(pool).catch(() => undefined);
     void refreshPlatformFeatureFlagRegistry().catch(() => undefined);
   }, 120_000);
+
+  startApiIdempotencyPurge();
 
   if (isHttpSkipDenseWorkers()) {
     appLogger.boot('http', 'dense workers skipped (HTTP_SKIP_DENSE_WORKERS=1) — run npm run workers:dense');

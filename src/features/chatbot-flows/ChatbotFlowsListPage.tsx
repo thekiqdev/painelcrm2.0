@@ -26,7 +26,8 @@ import {
   type ChatbotFlow,
 } from '@/services/chatbotFlows';
 import { formatDistanceToNow } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
+import { dateFnsLocale } from '@/lib/i18n/formatApp';
+import { useTranslation } from 'react-i18next';
 import { ImportFlowDialog } from './components/ImportFlowDialog';
 import { FlowPublishToggle, isFlowPublishToggleOn } from './components/FlowPublishToggle';
 import { downloadJsonFile, slugifyFilename } from './lib/flowPortability';
@@ -45,6 +46,7 @@ function publishStateLabel(flow: ChatbotFlow): string {
 }
 
 export default function ChatbotFlowsListPage() {
+  const { t } = useTranslation('automation');
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [includeArchived, setIncludeArchived] = useState(false);
@@ -164,7 +166,7 @@ export default function ChatbotFlowsListPage() {
         setPublishBusyId(flow.id);
         await revertChatbotFlowToDraft(flow.id);
         await qc.invalidateQueries({ queryKey: QK });
-        toast.success('Flow em rascunho (desligado no WhatsApp)');
+        toast.success(t('draft_toast'));
       } catch (e) {
         toast.error(e instanceof Error ? e.message : 'Erro ao despublicar');
       } finally {
@@ -179,19 +181,19 @@ export default function ChatbotFlowsListPage() {
       <div className="border-b px-4 py-4 md:px-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 className="text-xl font-semibold tracking-tight">Chatbot Flows</h1>
+            <h1 className="text-xl font-semibold tracking-tight">{t('title')}</h1>
             <p className="text-sm text-muted-foreground">
-              Monte fluxos no canvas. Liga = publicado no WhatsApp; desliga = rascunho.
+              {t('desc')}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" onClick={() => setImportOpen(true)}>
               <Upload className="mr-1.5 h-4 w-4" />
-              Importar
+              {t('import')}
             </Button>
             <Button onClick={() => setCreateOpen(true)}>
               <Plus className="mr-1.5 h-4 w-4" />
-              Novo flow
+              {t('new_flow')}
             </Button>
           </div>
         </div>
@@ -221,11 +223,11 @@ export default function ChatbotFlowsListPage() {
             <div className="flex gap-2">
               <Button variant="outline" onClick={() => setImportOpen(true)}>
                 <Upload className="mr-1.5 h-4 w-4" />
-                Importar
+                {t('import')}
               </Button>
               <Button onClick={() => setCreateOpen(true)}>
                 <Plus className="mr-1.5 h-4 w-4" />
-                Novo flow
+                {t('new_flow')}
               </Button>
             </div>
           </div>
@@ -255,7 +257,7 @@ export default function ChatbotFlowsListPage() {
                     Atualizado{' '}
                     {formatDistanceToNow(new Date(flow.updated_at), {
                       addSuffix: true,
-                      locale: ptBR,
+                      locale: dateFnsLocale(),
                     })}
                   </p>
                 </Link>
@@ -315,7 +317,7 @@ export default function ChatbotFlowsListPage() {
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Novo flow</DialogTitle>
+            <DialogTitle>{t('new_flow')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-2 py-2">
             <Label htmlFor="flow-name">Nome</Label>

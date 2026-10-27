@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import Bell from "lucide-react/dist/esm/icons/bell.js";
 import KanbanIcon from "lucide-react/dist/esm/icons/kanban.js";
 import LayoutDashboard from "lucide-react/dist/esm/icons/layout-dashboard.js";
@@ -5,6 +6,8 @@ import MessageSquare from "lucide-react/dist/esm/icons/message-square.js";
 import Search from "lucide-react/dist/esm/icons/search.js";
 import Settings from "lucide-react/dist/esm/icons/settings.js";
 import Wallet from "lucide-react/dist/esm/icons/wallet.js";
+import { formatAppMoney } from "@/lib/i18n/formatApp";
+import { useLocaleCurrency } from "@/lib/i18n/LocaleProvider";
 import { AutomationToast } from "./AutomationToast";
 import { FloatingChatPreview } from "./FloatingChatPreview";
 import { KanbanPreview } from "./KanbanPreview";
@@ -19,6 +22,9 @@ type DesktopCrmMockupProps = {
 };
 
 export function DesktopCrmMockup({ phase }: DesktopCrmMockupProps) {
+  const { t } = useTranslation("landing");
+  const { currency } = useLocaleCurrency();
+  const amount = formatAppMoney(49700, currency);
   const cardColumn = getCardColumn(phase);
   const glowColumn = getGlowColumn(phase);
   const badges = getDealBadges(phase);
@@ -47,7 +53,7 @@ export function DesktopCrmMockup({ phase }: DesktopCrmMockupProps) {
         <div className="mx-2 hidden min-w-0 flex-1 sm:block">
           <div className="flex h-7 items-center gap-2 rounded-lg border border-border/40 bg-secondary/30 px-2 text-[10px] text-muted-foreground">
             <Search className="h-3 w-3 shrink-0 opacity-60" />
-            Buscar cliente, proposta…
+            {t("mock_search")}
           </div>
         </div>
         <div className="ml-auto flex items-center gap-1.5">
@@ -68,11 +74,11 @@ export function DesktopCrmMockup({ phase }: DesktopCrmMockupProps) {
         <main className="relative min-w-0 flex-1 p-2.5 sm:p-3">
           <div className="mb-2 flex items-center justify-between gap-2">
             <div>
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Funil comercial</p>
-              <p className="text-xs font-medium text-foreground">Kanban · Equipe vendas</p>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t("mock_funnel_title")}</p>
+              <p className="text-xs font-medium text-foreground">{t("mock_team")}</p>
             </div>
             <span className="rounded-full border border-violet-500/25 bg-violet-500/10 px-2 py-0.5 text-[9px] font-medium text-violet-200">
-              Automação ativa
+              {t("mock_badge_automation")}
             </span>
           </div>
 
@@ -87,22 +93,22 @@ export function DesktopCrmMockup({ phase }: DesktopCrmMockupProps) {
             <div className="pointer-events-none absolute left-0 top-0 z-10 flex max-w-[58%] flex-col gap-2 sm:max-w-[220px]">
               {showNewToast ? (
                 <AutomationToast visible variant="automation">
-                  Nova conversa recebida
+                  {t("mock_toast_new")}
                 </AutomationToast>
               ) : null}
               {showProposalToast ? (
                 <AutomationToast visible variant="automation">
-                  Proposta enviada automaticamente
+                  {t("mock_toast_proposal")}
                 </AutomationToast>
               ) : null}
               {showFinanceToast ? (
                 <AutomationToast visible variant="finance">
-                  Fatura gerada — R$ 497,00
+                  {t("mock_toast_invoice", { amount })}
                 </AutomationToast>
               ) : null}
               {showSaleToast ? (
                 <AutomationToast visible variant="success">
-                  Venda concluída automaticamente
+                  {t("mock_toast_sale")}
                 </AutomationToast>
               ) : null}
             </div>

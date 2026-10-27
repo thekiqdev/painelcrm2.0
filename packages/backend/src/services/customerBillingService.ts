@@ -303,6 +303,8 @@ export async function createManualInvoice(
     initial_invoice_status?: 'pending' | 'waiting_payment';
     /** CRM2 — operador pediu Pix Automático na criação. */
     pix_automatic?: boolean;
+    /** IX5 — moeda do documento (BRL, USD, EUR). */
+    currency?: string | null;
   }
 ): Promise<CreateManualInvoiceResult> {
   const hasItems = body.items && body.items.length > 0;
@@ -326,6 +328,7 @@ export async function createManualInvoice(
     payment_method: body.payment_method ?? null,
     gateway_metadata: {
       allowed_payment_methods: normalizeAllowedPaymentMethods(body.allowed_payment_methods),
+      ...(body.currency?.trim() ? { currency: body.currency.trim().toUpperCase() } : {}),
     },
     items: body.items,
     charge_id: body.charge_id ?? null,
@@ -471,6 +474,7 @@ export async function createManualInvoice(
       description: effectiveInvoiceDescription,
       idempotencyKey,
       externalReference,
+      currency: body.currency ?? undefined,
     });
   } catch (e) {
     if (!isAsaasInvalidCustomerError(e)) {
@@ -494,6 +498,7 @@ export async function createManualInvoice(
       description: effectiveInvoiceDescription,
       idempotencyKey,
       externalReference,
+      currency: body.currency ?? undefined,
     });
   }
 
@@ -610,6 +615,7 @@ export async function createRecurringManualInvoice(
     max_cycles?: number | null;
     /** CRM2 — operador pediu Pix Automático na criação. */
     pix_automatic?: boolean;
+    currency?: string | null;
   }
 ): Promise<CreateManualInvoiceResult> {
   const hasItems = body.items && body.items.length > 0;
@@ -670,6 +676,7 @@ export async function createRecurringManualInvoice(
     items: body.items,
     gateway_key: body.gateway_key ?? null,
     project_id: body.project_id ?? null,
+    currency: body.currency ?? null,
     // Start após o link subscription_id (abaixo).
     pix_automatic: false,
   });
@@ -1021,6 +1028,13 @@ export async function switchPaymentMethodByToken(
     throw new InvoiceGenerationError('Só é possível trocar método em fatura pagável', 'not_payable');
   }
 
+  const gwRow = await pool.query<{ gateway: string | null }>(
+    `SELECT gateway FROM customer_invoices WHERE id = $1 LIMIT 1`,
+    [data.invoice_id]
+  );
+  const invoiceGateway = gwRow.rows[0]?.gateway ?? null;
+  const stripeDocument = invoiceGateway === 'stripe';
+
   const clientCpf = await pool.query<{ cpf_cnpj: string | null }>(
     `SELECT c.cpf_cnpj
      FROM clients c
@@ -1030,15 +1044,19 @@ export async function switchPaymentMethodByToken(
     [data.client_id, data.tenant_id]
   );
   const cpfCnpj = normalizeCpfCnpjDigits(clientCpf.rows[0]?.cpf_cnpj ?? null);
-  if (!cpfCnpj) {
-    throw new InvoiceGenerationError('CPF/CNPJ é obrigatório para gerar a cobrança', 'missing_cpf_cnpj');
-  }
-  if (!isValidCpfOrCnpj(cpfCnpj)) {
-    throw new InvoiceGenerationError('CPF/CNPJ inválido no cadastro do cliente', 'invalid_cpf_cnpj');
+  if (!stripeDocument) {
+    if (!cpfCnpj) {
+      throw new InvoiceGenerationError('CPF/CNPJ é obrigatório para gerar a cobrança', 'missing_cpf_cnpj');
+    }
+    if (!isValidCpfOrCnpj(cpfCnpj)) {
+      throw new InvoiceGenerationError('CPF/CNPJ inválido no cadastro do cliente', 'invalid_cpf_cnpj');
+    }
   }
 
   const metadata = (data.invoice.gateway_metadata as Record<string, unknown> | null) ?? null;
-  const cfg = await getActiveConfig('crm', data.tenant_id);
+  const cfg = stripeDocument
+    ? await getConfigForTest('tenant', data.tenant_id, 'stripe')
+    : await getActiveConfig('crm', data.tenant_id);
   const allowedPaymentMethods = mergePublicPayAllowedMethods(
     normalizeAllowedPaymentMethods(
       Array.isArray(metadata?.allowed_payment_methods)
@@ -1051,12 +1069,7 @@ export async function switchPaymentMethodByToken(
     throw new Error('Método não permitido para esta fatura');
   }
 
-  const gwRow = await pool.query<{ gateway: string | null }>(
-    `SELECT gateway FROM customer_invoices WHERE id = $1 LIMIT 1`,
-    [data.invoice_id]
-  );
-  const invoiceGateway = gwRow.rows[0]?.gateway ?? null;
-
+  const currencyRaw = metadata?.currency;
   const ensured = await ensureReusablePaymentAttemptForSwitch({
     invoiceId: data.invoice_id,
     tenantId: data.tenant_id,
@@ -1068,6 +1081,7 @@ export async function switchPaymentMethodByToken(
     amountCents: data.invoice.amount_cents,
     dueDate: data.invoice.due_date,
     description: data.invoice.description ?? `Cobrança ${data.invoice.due_date}`,
+    currency: typeof currencyRaw === 'string' ? currencyRaw : null,
   });
 
   const a = ensured.attempt;
@@ -1142,14 +1156,19 @@ export async function retryInvoiceGeneration(invoiceId: string): Promise<void> {
     [invoice.client_id, invoice.tenant_id]
   );
   const cpfCnpj = normalizeCpfCnpjDigits(clientCpf.rows[0]?.cpf_cnpj ?? null);
-  if (!cpfCnpj) {
-    throw new InvoiceGenerationError('CPF/CNPJ é obrigatório para gerar a cobrança', 'missing_cpf_cnpj');
-  }
-  if (!isValidCpfOrCnpj(cpfCnpj)) {
-    throw new InvoiceGenerationError('CPF/CNPJ inválido no cadastro do cliente', 'invalid_cpf_cnpj');
+  if (invoice.gateway !== 'stripe') {
+    if (!cpfCnpj) {
+      throw new InvoiceGenerationError('CPF/CNPJ é obrigatório para gerar a cobrança', 'missing_cpf_cnpj');
+    }
+    if (!isValidCpfOrCnpj(cpfCnpj)) {
+      throw new InvoiceGenerationError('CPF/CNPJ inválido no cadastro do cliente', 'invalid_cpf_cnpj');
+    }
   }
 
-  const cfg = await getActiveConfig('crm', invoice.tenant_id);
+  const cfg =
+    invoice.gateway === 'stripe'
+      ? await getConfigForTest('tenant', invoice.tenant_id, 'stripe')
+      : await getActiveConfig('crm', invoice.tenant_id);
   const gatewayPolicy = paymentPolicyFromConfigRow(cfg);
   const metadata = invoice.gateway_metadata ?? {};
   const allowedPaymentMethods = mergePublicPayAllowedMethods(
@@ -1180,6 +1199,7 @@ export async function retryInvoiceGeneration(invoiceId: string): Promise<void> {
     amountCents: invoice.amount_cents,
     dueDate: invoice.due_date,
     description: invoice.description ?? `Cobrança ${invoice.due_date}`,
+    currency: typeof metadata.currency === 'string' ? metadata.currency : null,
   });
 }
 

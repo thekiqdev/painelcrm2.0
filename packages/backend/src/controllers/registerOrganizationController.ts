@@ -22,6 +22,7 @@ import {
   parseMarketingAttributionFromBody,
   persistTenantMarketingAttribution,
 } from '../services/marketingAttributionService.js';
+import { getRequestLocale } from '../middleware/localeMiddleware.js';
 
 const checkAdminSchema = z.object({
   admin_email: z.string().email(),
@@ -330,7 +331,7 @@ export async function registerOrganization(req: Request, res: Response): Promise
     transactionStarted = false;
 
     setImmediate(() => notifySuperAdminsNewTenant(companyName, tenantId).catch(() => {}));
-    schedulePublishPlatformAccountCreated(tenantId);
+    schedulePublishPlatformAccountCreated(tenantId, getRequestLocale(req));
     if (isFree && freeDays != null && freeDays >= 1) {
       schedulePublishPlatformTrialStarted(tenantId);
     }

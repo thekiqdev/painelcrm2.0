@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { apiClient } from '@/integrations/api/client';
 import { toast } from '@/components/ui/sonner';
@@ -9,10 +10,7 @@ import { getOnboardingSessionAvatar, setOnboardingSessionAvatar } from '@/lib/on
 import { prepareOnboardingAvatarDataUrl } from '@/lib/onboardingAvatarImage';
 import {
   INITIAL_SIGNUP_FORM,
-  ONBOARDING_CTA_LABELS,
-  ONBOARDING_CTA_ACCESS_REQUEST,
   ACQUISITION_CAPTURE_NAME_PLACEHOLDER,
-  ONBOARDING_HEADLINES,
   OnboardingCard,
   OnboardingConversionStep,
   OnboardingCta,
@@ -61,6 +59,7 @@ type PublicLeadPayload = {
 };
 
 export default function AcquisitionSignupFlowPage() {
+  const { t } = useTranslation('auth');
   const navigate = useNavigate();
   const { setTokenAndUser, refreshUser, user } = useAuth();
   const [params] = useSearchParams();
@@ -149,10 +148,10 @@ export default function AcquisitionSignupFlowPage() {
   const isLeadPhase = leadSubStep !== null;
 
   const headline = isLeadPhase
-    ? ONBOARDING_HEADLINES.lead
+    ? { title: t('ob_lead_title'), subtitle: t('ob_lead_subtitle') }
     : wizardStep === 'plan'
-      ? ONBOARDING_HEADLINES.plan
-      : ONBOARDING_HEADLINES.conversion;
+      ? { title: t('ob_plan_title'), subtitle: t('ob_plan_subtitle') }
+      : { title: t('ob_conversion_title'), subtitle: t('ob_conversion_subtitle') };
 
   const selectedPlan = useMemo(
     () => plans.find((p) => p.id === form.plan_id) ?? null,
@@ -554,7 +553,7 @@ export default function AcquisitionSignupFlowPage() {
         return null;
       }
       if (errCode === 'exclusive_signup_inactive') {
-        toast.info(errMessage ?? 'Cadastro exclusivo indisponível. Utilize o checkout.');
+        toast.info(errMessage ?? t('ob_unavailable'));
       }
       if (fallbackPath) {
         navigate(fallbackPath);
@@ -864,10 +863,10 @@ export default function AcquisitionSignupFlowPage() {
 
   const ctaLabel =
     wizardStep === 'identity'
-      ? ONBOARDING_CTA_ACCESS_REQUEST
+      ? t('ob_cta_code')
       : wizardStep === 'verification' || wizardStep === 'admin'
-        ? 'Continuar'
-        : ONBOARDING_CTA_LABELS[wizardStep === 'plan' ? 'plan' : 'lead'] ?? 'Continuar';
+        ? t('ob_continue')
+        : t(wizardStep === 'plan' ? 'ob_cta_plan' : 'ob_cta_lead');
 
   const leadStepNextDisabled =
     wizardStep === 'verification' &&

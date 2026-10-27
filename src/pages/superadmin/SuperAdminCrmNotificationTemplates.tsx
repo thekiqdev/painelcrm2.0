@@ -260,6 +260,8 @@ export default function SuperAdminCrmNotificationTemplates() {
               <SelectContent>
                 <SelectItem value="__all__">Todos</SelectItem>
                 <SelectItem value="pt-BR">pt-BR</SelectItem>
+                <SelectItem value="en">en</SelectItem>
+                <SelectItem value="es">es</SelectItem>
               </SelectContent>
             </Select>
           </div>

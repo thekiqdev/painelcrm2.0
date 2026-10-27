@@ -278,7 +278,10 @@ export async function getPayByToken(req: Request, res: Response): Promise<void> 
           ),
         ] as Array<'PIX' | 'BOLETO' | 'CREDIT_CARD'>)
       : null;
-    const crmCfg = await getActiveConfig('crm', freshData.tenant_id);
+    const crmCfg =
+      invoice.gateway === 'stripe'
+        ? await getConfigForTest('tenant', freshData.tenant_id, 'stripe')
+        : await getActiveConfig('crm', freshData.tenant_id);
     const allowed_payment_methods = mergePublicPayAllowedMethods(
       storedMethodsNorm && storedMethodsNorm.length > 0 ? storedMethodsNorm : null,
       crmCfg
@@ -308,6 +311,7 @@ export async function getPayByToken(req: Request, res: Response): Promise<void> 
       clientProfile = clientRow.rows[0] ?? null;
     }
     const missingLinkedClientCpf =
+      invoice.gateway !== 'stripe' &&
       !!freshData.client_id &&
       !!clientProfile &&
       (!clientProfile.cpf_cnpj || String(clientProfile.cpf_cnpj).trim() === '');
@@ -407,10 +411,14 @@ export async function getPayByToken(req: Request, res: Response): Promise<void> 
       });
     }
 
+    const rawCurrency = typeof activeMetadata.currency === 'string' ? activeMetadata.currency.trim().toUpperCase() : '';
+    const currency = rawCurrency === 'USD' || rawCurrency === 'EUR' || rawCurrency === 'BRL' ? rawCurrency : 'BRL';
+
     res.json({
       invoice_number: invoice.invoice_number,
       description: invoice.description,
       amount_cents: invoice.amount_cents,
+      currency,
       due_date: invoice.due_date,
       status: invoice.status,
       payment_method: invoice.payment_method,

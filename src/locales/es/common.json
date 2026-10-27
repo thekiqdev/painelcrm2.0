@@ -1,0 +1,20 @@
+{
+  "save": "Guardar",
+  "saving": "Guardando...",
+  "cancel": "Cancelar",
+  "loading": "Cargando...",
+  "empty": "Nada por aquí.",
+  "error_generic": "No se pudo completar. Inténtalo de nuevo.",
+  "language_label": "Idioma del sistema",
+  "language_pt": "Portugués (Brasil)",
+  "language_en": "Inglés",
+  "language_es": "Español",
+  "language_saved": "Idioma guardado.",
+  "language_save_failed": "No se pudo guardar el idioma.",
+  "pilot_date": "Fecha",
+  "pilot_amount": "Importe",
+  "currency_label": "Moneda",
+  "currency_brl": "Real (BRL)",
+  "currency_usd": "Dólar (USD)",
+  "currency_eur": "Euro (EUR)"
+}

@@ -31,6 +31,8 @@ import {
   maybeUnlinkPreviousAvatarUrl,
   saveSimpleUploadFromBuffer,
 } from '../services/media/simpleUploadMediaService.js';
+import { canonicalizeStoredLocale, localeErrorMessage } from '../i18n/appLocale.js';
+import { getRequestLocale } from '../middleware/localeMiddleware.js';
 
 const personalPutSchema = z.object({
   first_name: z.string().max(200).nullable().optional(),
@@ -206,6 +208,19 @@ export async function putMeProfile(req: AuthRequest, res: Response): Promise<voi
     if (!assertMeProfileEditToken(req, res)) return;
     const body = personalPutSchema.parse(req.body);
 
+    let nextLocale: string | null | undefined;
+    if (body.locale !== undefined) {
+      const parsedLocale = canonicalizeStoredLocale(body.locale);
+      if (!parsedLocale.ok) {
+        res.status(400).json({
+          error: localeErrorMessage(getRequestLocale(req), 'invalid_locale'),
+          code: 'INVALID_LOCALE',
+        });
+        return;
+      }
+      nextLocale = parsedLocale.locale;
+    }
+
     const existingResult = await pool.query(
       `SELECT first_name, last_name, company_name, whatsapp_number, whatsapp_connected, registration_complete,
               job_title, locale, timezone, avatar_url
@@ -223,7 +238,7 @@ export async function putMeProfile(req: AuthRequest, res: Response): Promise<voi
       whatsapp_connected: ex.whatsapp_connected ?? false,
       registration_complete: ex.registration_complete ?? false,
       job_title: body.job_title !== undefined ? body.job_title : ex.job_title ?? null,
-      locale: body.locale !== undefined ? body.locale : ex.locale ?? null,
+      locale: nextLocale !== undefined ? nextLocale : ex.locale ?? null,
       timezone: body.timezone !== undefined ? body.timezone : ex.timezone ?? null,
       avatar_url: body.avatar_url !== undefined ? body.avatar_url : ex.avatar_url ?? null,
     };

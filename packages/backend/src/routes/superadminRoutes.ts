@@ -8,6 +8,7 @@ import * as exportController from '../controllers/exportController.js';
 import * as superadminUsersController from '../controllers/superadminUsersController.js';
 import * as systemFeaturesController from '../controllers/systemFeaturesController.js';
 import * as paymentGatewayConfigController from '../controllers/paymentGatewayConfigController.js';
+import * as stripePlatformAdminController from '../controllers/stripePlatformAdminController.js';
 import * as superadminBillingController from '../controllers/superadminBillingController.js';
 import * as superadminNotificationsEngineController from '../controllers/superadminNotificationsEngineController.js';
 import * as superadminCrmNotificationTemplatesController from '../controllers/superadminCrmNotificationTemplatesController.js';
@@ -104,6 +105,9 @@ router.get('/payment-gateways/status', paymentGatewayConfigController.getPayment
 router.get('/payment-gateways/webhooks/events', paymentGatewayConfigController.getPaymentWebhookEvents);
 router.get('/payment-gateway', paymentGatewayConfigController.getPaymentGatewayConfig);
 router.put('/payment-gateway', paymentGatewayConfigController.putPaymentGatewayConfig);
+router.get('/stripe-platform', stripePlatformAdminController.getStripePlatformConfig);
+router.put('/stripe-platform', stripePlatformAdminController.putStripePlatformConfig);
+router.post('/stripe-platform/test', stripePlatformAdminController.postStripePlatformTest);
 
 router.get('/features', systemFeaturesController.listSystemFeatures);
 router.get('/features/:id', systemFeaturesController.getSystemFeature);

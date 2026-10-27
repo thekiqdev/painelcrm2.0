@@ -411,7 +411,7 @@ export async function getFinancialGatewaysAvailableHandler(req: AuthRequest, res
   if (!tenantId || !req.userId) return;
   try {
     await assertModulePermission(req.userId, 'finance', 'view', undefined, req);
-    res.json(getFinancialGatewaysAvailablePayload());
+    res.json(await getFinancialGatewaysAvailablePayload());
   } catch (e: unknown) {
     if (respondPermissionDenied(res, e)) return;
     console.error('[financial] getFinancialGatewaysAvailableHandler', e);

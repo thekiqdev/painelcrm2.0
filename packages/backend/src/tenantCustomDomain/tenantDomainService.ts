@@ -6,6 +6,7 @@ import { randomBytes } from 'node:crypto';
 import dns from 'node:dns/promises';
 import { pool } from '../utils/db.js';
 import { normalizeHostname } from '../partner/partnerBrandResolver.js';
+import { isPartnerSubdomainHostname } from '../partner/partnerHostname.js';
 import {
   getTenantCustomDomainBlockedHosts,
   getTenantCustomDomainCnameTarget,
@@ -16,8 +17,20 @@ import {
 } from './tenantDomainFlags.js';
 import { TenantDomainError } from './tenantDomainErrors.js';
 import { invalidateCorsOriginsCache } from '../config/corsOrigins.js';
+import {
+  deprovisionTenantCloudflareHostname,
+  loadTenantHostCfSnapshot,
+  provisionTenantCloudflareHostname,
+  syncTenantCloudflareHostnameStatus,
+} from './tenantCloudflareHostnameService.js';
 
 const TXT_LABEL = '_painelcrm-tenant';
+
+const HOST_SELECT = `id, tenant_id, hostname, role, status, verification_token,
+            verified_at::text, activated_at::text, last_check_at::text, last_error,
+            cf_custom_hostname_id, cf_ssl_status, cf_ownership_status,
+            cf_last_sync_at::text, cf_last_error,
+            created_at::text, updated_at::text`;
 
 export type TenantHostRow = {
   id: string;
@@ -30,6 +43,11 @@ export type TenantHostRow = {
   activated_at: string | null;
   last_check_at: string | null;
   last_error: string | null;
+  cf_custom_hostname_id?: string | null;
+  cf_ssl_status?: string | null;
+  cf_ownership_status?: string | null;
+  cf_last_sync_at?: string | null;
+  cf_last_error?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -48,6 +66,12 @@ export type TenantDomainInstructions = {
   bypass_enabled: boolean;
   /** TD S4 — URL pública preferida quando status=active */
   canonical_public_url: string | null;
+  /** TE Sprint 2 — espelho Cloudflare */
+  cf_custom_hostname_id?: string | null;
+  cf_ssl_status?: string | null;
+  cf_ownership_status?: string | null;
+  cf_last_sync_at?: string | null;
+  cf_last_error?: string | null;
 };
 
 export type VerifyTenantDomainResult = {
@@ -153,25 +177,40 @@ function mapInstructions(
     cname_target: getTenantCustomDomainCnameTarget(),
     bypass_enabled,
     canonical_public_url,
+    cf_custom_hostname_id: row.cf_custom_hostname_id ?? null,
+    cf_ssl_status: row.cf_ssl_status ?? null,
+    cf_ownership_status: row.cf_ownership_status ?? null,
+    cf_last_sync_at: row.cf_last_sync_at ?? null,
+    cf_last_error: row.cf_last_error ?? null,
   };
 }
 
 async function getHostById(id: string): Promise<TenantHostRow | null> {
   const r = await pool.query<TenantHostRow>(
-    `SELECT id, tenant_id, hostname, role, status, verification_token,
-            verified_at::text, activated_at::text, last_check_at::text, last_error,
-            created_at::text, updated_at::text
+    `SELECT ${HOST_SELECT}
      FROM tenant_hosts WHERE id = $1`,
     [id]
   );
   return r.rows[0] ?? null;
 }
 
+async function softSyncTenantCfIfNeeded(row: TenantHostRow): Promise<TenantHostRow> {
+  if (row.status !== 'active') return row;
+  if (!row.cf_custom_hostname_id || row.cf_ssl_status === 'active') return row;
+  try {
+    await syncTenantCloudflareHostnameStatus({
+      hostId: row.id,
+      tenantId: row.tenant_id,
+    });
+    return (await getHostById(row.id)) ?? row;
+  } catch {
+    return row;
+  }
+}
+
 export async function listTenantHosts(tenantId: string): Promise<TenantHostRow[]> {
   const r = await pool.query<TenantHostRow>(
-    `SELECT id, tenant_id, hostname, role, status, verification_token,
-            verified_at::text, activated_at::text, last_check_at::text, last_error,
-            created_at::text, updated_at::text
+    `SELECT ${HOST_SELECT}
      FROM tenant_hosts
      WHERE tenant_id = $1
      ORDER BY role ASC, created_at ASC`,
@@ -185,9 +224,7 @@ export async function getTenantHostByRole(
   role: TenantHostRole
 ): Promise<TenantHostRow | null> {
   const r = await pool.query<TenantHostRow>(
-    `SELECT id, tenant_id, hostname, role, status, verification_token,
-            verified_at::text, activated_at::text, last_check_at::text, last_error,
-            created_at::text, updated_at::text
+    `SELECT ${HOST_SELECT}
      FROM tenant_hosts
      WHERE tenant_id = $1 AND role = $2
        AND status IN ('pending', 'verified', 'active')
@@ -206,12 +243,14 @@ export async function getTenantDomainInstructions(
   if (role) {
     const row = await getTenantHostByRole(tenantId, role);
     if (!row?.verification_token) return null;
-    return mapInstructions(row, bypass);
+    const synced = await softSyncTenantCfIfNeeded(row);
+    return mapInstructions(synced, bypass);
   }
   const rows = await listTenantHosts(tenantId);
   const usable = rows.filter((r) => r.status !== 'none' && r.verification_token);
   if (usable.length === 0) return [];
-  return usable.map((r) => mapInstructions(r, bypass));
+  const synced = await Promise.all(usable.map((r) => softSyncTenantCfIfNeeded(r)));
+  return synced.map((r) => mapInstructions(r, bypass));
 }
 
 /**
@@ -239,6 +278,14 @@ export async function setTenantDomain(input: {
     throw new TenantDomainError('Domínio inválido', 'DOMAIN_INVALID');
   }
 
+  // TE2 — só subdomínio (paridade PE)
+  if (!isPartnerSubdomainHostname(hostname)) {
+    throw new TenantDomainError(
+      'Use um subdomínio (ex.: loja.suaempresa.com.br). Domínio raiz (apex) não é suportado neste momento.',
+      'DOMAIN_SUBDOMAIN_REQUIRED'
+    );
+  }
+
   const blocked = getTenantCustomDomainBlockedHosts();
   if (blocked.includes(hostname)) {
     throw new TenantDomainError('Domínio não permitido', 'DOMAIN_BLOCKED');
@@ -246,6 +293,15 @@ export async function setTenantDomain(input: {
 
   const existing = await getTenantHostByRole(input.tenantId, role);
   await assertHostnameAvailable(hostname, input.tenantId, existing?.id ?? null);
+
+  // Troca de hostname: remove Custom Hostname antigo antes de resetar
+  if (existing && existing.hostname !== hostname) {
+    await deprovisionTenantCloudflareHostname({
+      hostId: existing.id,
+      hostname: existing.hostname,
+      cfCustomHostnameId: existing.cf_custom_hostname_id,
+    });
+  }
 
   const token = generateToken();
   let row: TenantHostRow;
@@ -260,11 +316,14 @@ export async function setTenantDomain(input: {
            activated_at = NULL,
            last_check_at = NULL,
            last_error = NULL,
+           cf_custom_hostname_id = NULL,
+           cf_ssl_status = NULL,
+           cf_ownership_status = NULL,
+           cf_last_sync_at = NULL,
+           cf_last_error = NULL,
            updated_at = now()
        WHERE id = $3
-       RETURNING id, tenant_id, hostname, role, status, verification_token,
-                 verified_at::text, activated_at::text, last_check_at::text, last_error,
-                 created_at::text, updated_at::text`,
+       RETURNING ${HOST_SELECT}`,
       [hostname, token, existing.id]
     );
     row = upd.rows[0];
@@ -272,9 +331,7 @@ export async function setTenantDomain(input: {
     const ins = await pool.query<TenantHostRow>(
       `INSERT INTO tenant_hosts (tenant_id, hostname, role, status, verification_token)
        VALUES ($1, $2, $3, 'pending', $4)
-       RETURNING id, tenant_id, hostname, role, status, verification_token,
-                 verified_at::text, activated_at::text, last_check_at::text, last_error,
-                 created_at::text, updated_at::text`,
+       RETURNING ${HOST_SELECT}`,
       [input.tenantId, hostname, role, token]
     );
     row = ins.rows[0];
@@ -340,6 +397,11 @@ export async function verifyTenantDomain(input: {
   let ok = false;
 
   if (await isTenantDomainVerifyBypassEnabled({ tenantId: input.tenantId })) {
+    if (process.env.NODE_ENV === 'production') {
+      console.warn('[tenant-domain] domain_verify_bypass ativo em production', {
+        tenantId: input.tenantId,
+      });
+    }
     ok = true;
     method = 'bypass';
   } else if (await checkTxt(row.hostname, token)) {
@@ -366,6 +428,12 @@ export async function verifyTenantDomain(input: {
        WHERE id = $1`,
       [row.id]
     );
+    // TE2 — falha CF não desfaz active
+    await provisionTenantCloudflareHostname({
+      hostId: row.id,
+      tenantId: input.tenantId,
+      hostname: row.hostname,
+    });
     const fresh = await getHostById(row.id);
     const bypass = await isTenantDomainVerifyBypassEnabled({ tenantId: input.tenantId });
     invalidateCorsOriginsCache();
@@ -396,6 +464,56 @@ export async function verifyTenantDomain(input: {
   };
 }
 
+async function deprovisionThenDeleteHost(host: TenantHostRow): Promise<void> {
+  await deprovisionTenantCloudflareHostname({
+    hostId: host.id,
+    hostname: host.hostname,
+    cfCustomHostnameId: host.cf_custom_hostname_id,
+  });
+  await pool.query(`DELETE FROM tenant_hosts WHERE id = $1`, [host.id]);
+}
+
+/**
+ * TE3/TE4 — re-sincroniza espelho SSL/ownership com a Cloudflare (e provisiona se faltar cf_id).
+ * `asAdmin`: Super Admin ops — não exige flag tenant.custom_domain_v1.
+ */
+export async function syncTenantDomainCloudflare(input: {
+  tenantId: string;
+  role: string;
+  asAdmin?: boolean;
+}): Promise<TenantDomainInstructions | null> {
+  if (!input.asAdmin) {
+    await assertFeatureEnabled(input.tenantId);
+  }
+  if (!isTenantHostRole(input.role)) {
+    throw new TenantDomainError(
+      'role inválido — use store ou support',
+      'ROLE_INVALID'
+    );
+  }
+  const row = await getTenantHostByRole(input.tenantId, input.role);
+  if (!row?.verification_token) return null;
+
+  if (row.status === 'active') {
+    await syncTenantCloudflareHostnameStatus({
+      hostId: row.id,
+      tenantId: input.tenantId,
+    });
+    const snap = await loadTenantHostCfSnapshot(row.id);
+    if (!snap?.cf_custom_hostname_id) {
+      await provisionTenantCloudflareHostname({
+        hostId: row.id,
+        tenantId: input.tenantId,
+        hostname: row.hostname,
+      });
+    }
+  }
+
+  const fresh = await getHostById(row.id);
+  const bypass = await isTenantDomainVerifyBypassEnabled({ tenantId: input.tenantId });
+  return fresh ? mapInstructions(fresh, bypass) : null;
+}
+
 export async function clearTenantDomain(input: {
   tenantId: string;
   role?: string | null;
@@ -404,13 +522,11 @@ export async function clearTenantDomain(input: {
   await assertFeatureEnabled(input.tenantId);
 
   if (input.hostId) {
-    const del = await pool.query(
-      `DELETE FROM tenant_hosts WHERE id = $1 AND tenant_id = $2`,
-      [input.hostId, input.tenantId]
-    );
-    if ((del.rowCount ?? 0) === 0) {
+    const host = await getHostById(input.hostId);
+    if (!host || host.tenant_id !== input.tenantId) {
       throw new TenantDomainError('Domínio não encontrado', 'DOMAIN_MISSING', 404);
     }
+    await deprovisionThenDeleteHost(host);
     invalidateCorsOriginsCache();
     return;
   }
@@ -419,10 +535,15 @@ export async function clearTenantDomain(input: {
     throw new TenantDomainError('Informe role (store|support) ou id', 'ROLE_REQUIRED');
   }
 
-  await pool.query(
-    `DELETE FROM tenant_hosts WHERE tenant_id = $1 AND role = $2`,
-    [input.tenantId, input.role]
-  );
+  const byRole = await getTenantHostByRole(input.tenantId, input.role);
+  if (byRole) {
+    await deprovisionThenDeleteHost(byRole);
+  } else {
+    await pool.query(
+      `DELETE FROM tenant_hosts WHERE tenant_id = $1 AND role = $2`,
+      [input.tenantId, input.role]
+    );
+  }
   invalidateCorsOriginsCache();
 }
 
@@ -466,9 +587,7 @@ export async function changeTenantHostRole(input: {
     `UPDATE tenant_hosts
      SET role = $1, updated_at = now()
      WHERE id = $2 AND tenant_id = $3
-     RETURNING id, tenant_id, hostname, role, status, verification_token,
-               verified_at::text, activated_at::text, last_check_at::text, last_error,
-               created_at::text, updated_at::text`,
+     RETURNING ${HOST_SELECT}`,
     [input.toRole, row.id, input.tenantId]
   );
   const fresh = upd.rows[0];
@@ -492,18 +611,28 @@ export async function clearTenantDomainAsAdmin(input: {
   hostId?: string | null;
 }): Promise<void> {
   if (input.hostId) {
-    await pool.query(`DELETE FROM tenant_hosts WHERE id = $1 AND tenant_id = $2`, [
-      input.hostId,
-      input.tenantId,
-    ]);
+    const host = await getHostById(input.hostId);
+    if (host && host.tenant_id === input.tenantId) {
+      await deprovisionThenDeleteHost(host);
+    } else {
+      await pool.query(`DELETE FROM tenant_hosts WHERE id = $1 AND tenant_id = $2`, [
+        input.hostId,
+        input.tenantId,
+      ]);
+    }
     invalidateCorsOriginsCache();
     return;
   }
   if (input.role && isTenantHostRole(input.role)) {
-    await pool.query(`DELETE FROM tenant_hosts WHERE tenant_id = $1 AND role = $2`, [
-      input.tenantId,
-      input.role,
-    ]);
+    const byRole = await getTenantHostByRole(input.tenantId, input.role);
+    if (byRole) {
+      await deprovisionThenDeleteHost(byRole);
+    } else {
+      await pool.query(`DELETE FROM tenant_hosts WHERE tenant_id = $1 AND role = $2`, [
+        input.tenantId,
+        input.role,
+      ]);
+    }
     invalidateCorsOriginsCache();
     return;
   }
@@ -560,6 +689,10 @@ export async function recheckActiveTenantHosts(opts?: {
            WHERE id = $1`,
           [row.id]
         );
+        await syncTenantCloudflareHostnameStatus({
+          hostId: row.id,
+          tenantId: row.tenant_id,
+        }).catch(() => undefined);
         okCount += 1;
       } else {
         await pool.query(

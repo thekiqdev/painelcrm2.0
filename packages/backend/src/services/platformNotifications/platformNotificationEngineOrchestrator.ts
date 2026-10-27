@@ -34,6 +34,29 @@ import {
 
 const DEFAULT_LOCALE = 'pt-BR';
 
+function normalizePlatformLocale(raw: string | undefined): 'pt-BR' | 'en' | 'es' {
+  if (raw === 'en' || raw === 'es' || raw === 'pt-BR') return raw;
+  return DEFAULT_LOCALE;
+}
+
+/** IX6 — locale pedido; se não houver template, cai em pt-BR. */
+async function loadPlatformChannelTemplate(
+  pool: Pool,
+  eventKey: string,
+  channel: string,
+  preferred: string | undefined,
+): Promise<{ systemTpl: NonNullable<Awaited<ReturnType<typeof getPlatformSystemTemplate>>>; override: Awaited<ReturnType<typeof getPlatformOverride>>; locale: string } | null> {
+  let locale = normalizePlatformLocale(preferred);
+  let systemTpl = await getPlatformSystemTemplate(pool, eventKey, channel, locale);
+  if (!systemTpl && locale !== DEFAULT_LOCALE) {
+    locale = DEFAULT_LOCALE;
+    systemTpl = await getPlatformSystemTemplate(pool, eventKey, channel, locale);
+  }
+  if (!systemTpl) return null;
+  const override = await getPlatformOverride(pool, eventKey, channel, locale);
+  return { systemTpl, override, locale };
+}
+
 export type PlatformSimulateResult =
   | {
       ok: true;
@@ -114,6 +137,8 @@ export async function runPlatformTransactionalNotification(params: {
   eventOccurredAt: Date | null;
   actor: Record<string, unknown>;
   metadata: Record<string, unknown>;
+  /** IX6 — idioma da sessão ou do perfil. Ausente = pt-BR. */
+  locale?: string;
 }): Promise<PlatformSimulateResult> {
   if (!isPlatformNotificationsEnabled()) {
     return { ok: false, error: 'Motor de notificações da plataforma desligado.' };
@@ -139,12 +164,11 @@ export async function runPlatformTransactionalNotification(params: {
     return { ok: false, error: 'Apenas canal whatsapp suportado no MVP da plataforma.' };
   }
 
-  const systemTpl = await getPlatformSystemTemplate(params.pool, params.eventKey, channel, DEFAULT_LOCALE);
-  if (!systemTpl) {
+  const loaded = await loadPlatformChannelTemplate(params.pool, params.eventKey, channel, params.locale);
+  if (!loaded) {
     return { ok: false, error: 'Template sistema da plataforma não encontrado para evento/canal/locale.' };
   }
-
-  const override = await getPlatformOverride(params.pool, params.eventKey, channel, DEFAULT_LOCALE);
+  const { systemTpl, override } = loaded;
   const subjectTpl = override?.subject_template ?? systemTpl.subject_template;
   const bodyTpl = override?.body_template ?? systemTpl.body_template;
 
@@ -358,6 +382,8 @@ export async function runPlatformTransactionalEmailDelivery(params: {
   eventOccurredAt: Date | null;
   actor: Record<string, unknown>;
   metadata: Record<string, unknown>;
+  /** IX6 — idioma da sessão ou do perfil. Ausente = pt-BR. */
+  locale?: string;
 }): Promise<PlatformSimulateResult> {
   if (!isPlatformNotificationsEnabled()) {
     return { ok: false, error: 'Motor de notificações da plataforma desligado.' };
@@ -387,12 +413,14 @@ export async function runPlatformTransactionalEmailDelivery(params: {
     return { ok: false, error: 'Evento da plataforma não encontrado ou inativo.' };
   }
 
-  const systemTpl = await getPlatformSystemTemplate(params.pool, params.eventKey, 'email', DEFAULT_LOCALE);
+  const loadedEmail = await loadPlatformChannelTemplate(params.pool, params.eventKey, 'email', params.locale);
+  const systemTpl = loadedEmail?.systemTpl ?? null;
+  const resolvedEmailLocale = loadedEmail?.locale ?? normalizePlatformLocale(params.locale);
   if (!systemTpl) {
     pnLogWarn('platform_notification_email_template_missing', {
       event_key: params.eventKey,
       channel: 'email',
-      locale: DEFAULT_LOCALE,
+      locale: resolvedEmailLocale,
       target_tenant_id: params.targetTenantId,
     });
     const { created, row: deliveryRow } = await insertPlatformDelivery(params.pool, {
@@ -441,7 +469,7 @@ export async function runPlatformTransactionalEmailDelivery(params: {
     };
   }
 
-  const override = await getPlatformOverride(params.pool, params.eventKey, 'email', DEFAULT_LOCALE);
+  const override = loadedEmail?.override ?? null;
   const subjectTpl = override?.subject_template ?? systemTpl.subject_template;
   const bodyTpl = override?.body_template ?? systemTpl.body_template;
 

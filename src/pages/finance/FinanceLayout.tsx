@@ -25,30 +25,33 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { useTranslation } from "react-i18next";
 
 
 
 const nav = [
 
-  { to: "/finance", label: "Resumo geral", icon: LayoutDashboard, end: true },
+  { to: "/finance", label: "nav_summary", icon: LayoutDashboard, end: true },
 
-  { to: "/finance/accounts", label: "Bancos e contas", icon: Landmark },
+  { to: "/finance/accounts", label: "nav_accounts", icon: Landmark },
 
-  { to: "/finance/transactions", label: "Entradas e saídas", icon: ArrowLeftRight },
+  { to: "/finance/transactions", label: "nav_cashflow", icon: ArrowLeftRight },
 
-  { to: "/finance/accounts-payable", label: "Contas a pagar", icon: ClipboardList },
+  { to: "/finance/accounts-payable", label: "nav_payables", icon: ClipboardList },
 
-  { to: "/finance/credit-cards", label: "Cartões de crédito", icon: CreditCard },
+  { to: "/finance/credit-cards", label: "nav_cards", icon: CreditCard },
 
-  { to: "/finance/categories", label: "Categorias", icon: Tags },
+  { to: "/finance/categories", label: "nav_categories", icon: Tags },
 
-  { to: "/finance/relatorios", label: "Relatórios", icon: PieChart },
+  { to: "/finance/relatorios", label: "nav_reports", icon: PieChart },
 
 ] as const;
 
 
 
 const FinanceLayout = () => {
+
+  const { t } = useTranslation("finance");
 
   const location = useLocation();
 
@@ -95,7 +98,7 @@ const FinanceLayout = () => {
 
         <div className="flex items-start justify-between gap-3 md:block">
 
-          <h1 className="text-xl font-bold tracking-tight md:text-2xl">Financeiro</h1>
+          <h1 className="text-xl font-bold tracking-tight md:text-2xl">{t("title")}</h1>
 
           <NavLink
 
@@ -105,7 +108,7 @@ const FinanceLayout = () => {
 
           >
 
-            Faturas
+            {t("invoices_link")}
 
           </NavLink>
 
@@ -113,17 +116,15 @@ const FinanceLayout = () => {
 
         <p className="hidden text-sm text-muted-foreground md:block md:mt-1 md:max-w-3xl">
 
-          Visão consolidada da empresa: contas, movimentos e indicadores. Em{" "}
+          {t("intro_before")}{" "}
 
-          <strong className="font-medium text-foreground">Contas a pagar</strong> concentra avulsas e recorrentes num único
+          <strong className="font-medium text-foreground">{t("nav_payables")}</strong> {t("intro_mid")}{" "}
 
-          ecrã. As{" "}
-
-          <strong className="font-medium text-foreground">Faturas</strong> (cobranças a clientes) continuam em{" "}
+          <strong className="font-medium text-foreground">{t("invoices_link")}</strong> {t("intro_after")}{" "}
 
           <NavLink to="/customer-invoices" className="text-primary font-medium underline-offset-2 hover:underline">
 
-            Faturas
+            {t("invoices_link")}
 
           </NavLink>
 
@@ -147,7 +148,7 @@ const FinanceLayout = () => {
 
         )}
 
-        aria-label="Seções do financeiro"
+        aria-label={t("nav_aria")}
 
       >
 
@@ -183,7 +184,7 @@ const FinanceLayout = () => {
 
             <Icon className="h-3.5 w-3.5 shrink-0 opacity-80 md:h-4 md:w-4" />
 
-            <span>{label}</span>
+            <span>{t(label)}</span>
 
           </NavLink>
 
@@ -197,7 +198,7 @@ const FinanceLayout = () => {
 
         <Suspense
 
-          fallback={<div className="py-12 text-center text-sm text-muted-foreground">Carregando seção…</div>}
+          fallback={<div className="py-12 text-center text-sm text-muted-foreground">{t("loading_section")}</div>}
 
         >
 

@@ -30,6 +30,8 @@ interface User {
   /** Foto de perfil (mesmo campo em GET /api/auth/me — perfil ou utilizador). */
   avatar_url?: string | null;
   company_name?: string;
+  /** Preferência de idioma (profiles.locale): pt-BR, en, es. Null = sem preferência. */
+  locale?: string | null;
   whatsapp_connected?: boolean;
   registration_complete?: boolean;
   created_at?: string;

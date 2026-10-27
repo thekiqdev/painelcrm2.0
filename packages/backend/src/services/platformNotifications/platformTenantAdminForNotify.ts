@@ -11,6 +11,7 @@ export type TenantAdminNotifyRow = {
   responsible_name: string | null;
   billing_email: string | null;
   billing_phone: string | null;
+  locale: string | null;
 };
 
 export async function loadPrimaryTenantAdminForNotify(
@@ -32,7 +33,8 @@ export async function loadPrimaryTenantAdminForNotify(
             t.name AS tenant_name,
             t.responsible_name,
             t.billing_email,
-            regexp_replace(COALESCE(t.billing_phone, ''), '\\D', '', 'g') AS billing_phone
+            regexp_replace(COALESCE(t.billing_phone, ''), '\\D', '', 'g') AS billing_phone,
+            NULLIF(btrim(p.locale), '') AS locale
      FROM users u
      INNER JOIN tenants t ON t.id = u.tenant_id
      LEFT JOIN profiles p ON p.id = u.id
@@ -41,7 +43,7 @@ export async function loadPrimaryTenantAdminForNotify(
      WHERE u.tenant_id = $1::uuid
        AND COALESCE(u.is_super_admin, false) = false
      GROUP BY u.id, u.email, u.whatsapp_number, p.whatsapp_number, p.first_name, p.last_name,
-              t.name, t.responsible_name, t.billing_email, t.billing_phone, u.created_at
+              t.name, t.responsible_name, t.billing_email, t.billing_phone, p.locale, u.created_at
      ORDER BY COALESCE(bool_or(up.is_admin), false) DESC, u.created_at ASC
      LIMIT 1`,
     [tenantId],

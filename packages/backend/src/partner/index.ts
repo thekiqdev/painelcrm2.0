@@ -3,8 +3,10 @@ export { default as partnerRoutes } from './partnerRoutes.js';
 export {
   isPartnerChannelEnabled,
   isPartnerDomainVerifyBypassEnabled,
+  isPartnerEdgeCloudflareSaasEnabled,
   PARTNER_CHANNEL_FLAG_KEY,
   PARTNER_DOMAIN_VERIFY_BYPASS_FLAG_KEY,
+  PARTNER_EDGE_CLOUDFLARE_SAAS_FLAG_KEY,
   PARTNER_MASTER_OFF_FLAG_KEY,
 } from './partnerFlags.js';
 export {
@@ -19,6 +21,7 @@ export {
   resolveTransactionalBrandName,
   normalizeHostname,
 } from './partnerBrandResolver.js';
+export { isPartnerSubdomainHostname } from './partnerHostname.js';
 export {
   getPartnerLicenseSummary,
   assertPartnerPoolAllowsNewUser,

@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import { formatDistanceToNow } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
+import { dateFnsLocale } from '@/lib/i18n/formatApp';
 import {
   CheckCircle2,
   ExternalLink,
@@ -161,7 +161,7 @@ export const TicketKanbanCard = memo(function TicketKanbanCard({
                 ) : null}
               </div>
               <span className={cn('shrink-0 text-[10px] tabular-nums', ticketSlaTimeClass[slaTone])}>
-                {formatDistanceToNow(new Date(timeRef), { addSuffix: true, locale: ptBR })}
+                {formatDistanceToNow(new Date(timeRef), { addSuffix: true, locale: dateFnsLocale() })}
               </span>
             </div>
 

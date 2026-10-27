@@ -88,6 +88,7 @@ const createBodySchema = z.object({
   max_cycles: z.number().int().positive().nullable().optional(),
   /** CRM2 — Pix Automático na criação (default false). */
   pix_automatic: z.boolean().optional(),
+  currency: z.enum(['BRL', 'USD', 'EUR']).optional(),
 })
   .refine((data) => (data.items?.length ?? 0) > 0 || (data.amount_cents != null && data.amount_cents >= 1), {
     message: 'Informe amount_cents ou pelo menos um item',
@@ -382,6 +383,7 @@ export async function createCustomerInvoice(req: AuthRequest, res: Response): Pr
           cycles_unlimited: parsed.data.cycles_unlimited,
           max_cycles: parsed.data.max_cycles ?? null,
           pix_automatic: parsed.data.pix_automatic === true,
+          currency: parsed.data.currency ?? null,
         })
       : await createManualInvoice(tenantId, {
           client_id: parsed.data.client_id,
@@ -395,6 +397,7 @@ export async function createCustomerInvoice(req: AuthRequest, res: Response): Pr
           charge_id: parsed.data.charge_id ?? null,
           project_id: parsed.data.project_id ?? null,
           pix_automatic: parsed.data.pix_automatic === true,
+          currency: parsed.data.currency ?? null,
         });
 
     res.status(201).json({

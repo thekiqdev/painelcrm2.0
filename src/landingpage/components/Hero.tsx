@@ -1,4 +1,5 @@
 import { Suspense, lazy } from "react";
+import { useTranslation } from "react-i18next";
 import ArrowRight from "lucide-react/dist/esm/icons/arrow-right.js";
 import { Button } from "@/components/ui/button";
 import { SignupEntryLink } from "@/components/acquisition/SignupEntryLink";
@@ -7,17 +8,21 @@ const HeroInteractiveMockup = lazy(() =>
   import("./hero-mockup/HeroInteractiveMockup").then((m) => ({ default: m.HeroInteractiveMockup })),
 );
 
-const HeroMockupFallback = () => (
+const HeroMockupFallback = () => {
+  const { t } = useTranslation("landing");
+  return (
   <div
     className="flex min-h-[14rem] items-center justify-center md:min-h-[17rem]"
     role="status"
-    aria-label="A carregar demonstração"
+    aria-label={t("hero_loading")}
   >
     <div className="h-7 w-7 animate-spin rounded-full border-2 border-primary/30 border-t-primary" />
   </div>
-);
+  );
+};
 
 const Hero = () => {
+  const { t } = useTranslation("landing");
   return (
     <section className="relative overflow-hidden pt-16">
       <div className="absolute inset-0 bg-grid opacity-40" />
@@ -28,18 +33,18 @@ const Hero = () => {
           <div className="text-center lg:col-span-5 lg:text-left">
             <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-border bg-secondary px-4 py-1.5 text-xs text-muted-foreground animate-fade-up">
               <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-              Plataforma CRM completa para PMEs
+              {t("hero_badge")}
             </div>
 
             <h1
               className="font-display text-3xl font-extrabold leading-tight tracking-tight text-foreground sm:text-4xl lg:text-[2.35rem] xl:text-5xl animate-fade-up"
               style={{ animationDelay: "0.1s" }}
             >
-              Transforme conversas em vendas e{" "}
+              {t("hero_title_before")}{" "}
               <span className="text-gradient">
-                gerencie toda sua{" "}
+                {t("hero_title_mid")}{" "}
                 <span className="font-black tracking-tight text-[1.14em] sm:text-[1.12em] xl:text-[1.1em]">
-                  empresa
+                  {t("hero_title_em")}
                 </span>
               </span>
             </h1>
@@ -48,8 +53,7 @@ const Hero = () => {
               className="mt-5 max-w-xl text-base text-muted-foreground sm:text-lg lg:mx-0 lg:max-w-none animate-fade-up"
               style={{ animationDelay: "0.15s" }}
             >
-              Atenda seus clientes pelo WhatsApp, organize oportunidades no Kanban e automatize etapas comerciais
-              dentro do PainelCRM.
+              {t("hero_lead")}
             </p>
 
             <div
@@ -58,7 +62,7 @@ const Hero = () => {
             >
               <Button size="lg" className="gap-2 px-8 text-base font-semibold" asChild>
                 <SignupEntryLink className="inline-flex items-center gap-2">
-                  Começar agora
+                  {t("hero_cta")}
                   <ArrowRight size={18} />
                 </SignupEntryLink>
               </Button>
@@ -68,8 +72,7 @@ const Hero = () => {
               className="mt-8 text-sm text-muted-foreground animate-fade-up lg:mt-10"
               style={{ animationDelay: "0.35s" }}
             >
-              Usado por <span className="font-semibold text-foreground">+10 mil empresas</span> · Agências, consultorias e
-              equipes comerciais
+              <span dangerouslySetInnerHTML={{ __html: t("hero_social") }} />
             </p>
           </div>
 

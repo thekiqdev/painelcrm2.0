@@ -1,0 +1,10 @@
+{
+  "title": "Agenda",
+  "filters": "Filtros",
+  "filters_active": "Filtros ativos",
+  "export_csv": "Exportar CSV",
+  "new": "+ Novo",
+  "new_aria": "Novo compromisso",
+  "google_on": "Google conectado",
+  "week_span": "Semana de {{from}} a {{to}}"
+}

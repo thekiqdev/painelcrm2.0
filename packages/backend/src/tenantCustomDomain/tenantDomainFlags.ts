@@ -9,6 +9,7 @@ import { resolvePlatformPublicAppBaseUrl } from '../utils/platformPublicUrls.js'
 
 export const TENANT_CUSTOM_DOMAIN_FLAG_KEY = 'tenant.custom_domain_v1' as const;
 export const TENANT_DOMAIN_VERIFY_BYPASS_FLAG_KEY = 'tenant.domain_verify_bypass' as const;
+export const TENANT_EDGE_CLOUDFLARE_SAAS_FLAG_KEY = 'tenant.edge_cloudflare_saas_v1' as const;
 export const TENANT_MASTER_OFF_FLAG_KEY = 'tenant.master_off' as const;
 
 /** Host padrão de produção quando PUBLIC_APP_URL / FRONTEND_URL não resolvem. */
@@ -75,6 +76,7 @@ export function getTenantCustomDomainCnameTarget(): string {
 /**
  * Hosts reservados (não podem ser cadastrados como custom domain).
  * Env `TENANT_CUSTOM_DOMAIN_BLOCKED_HOSTS` (CSV) estende a lista default.
+ * TE4 — também bloqueia hosts da plataforma (FRONTEND_URL / PUBLIC_APP_URL) e CNAME SaaS.
  */
 export function getTenantCustomDomainBlockedHosts(): string[] {
   const defaults = [
@@ -89,8 +91,21 @@ export function getTenantCustomDomainBlockedHosts(): string[] {
     .split(',')
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean);
+  const platformHosts = [
+    hostnameFromPlatformPublicBase(),
+    (() => {
+      try {
+        const raw = process.env.FRONTEND_URL || process.env.PUBLIC_APP_URL || '';
+        if (!raw.trim()) return null;
+        const u = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+        return u.hostname.trim().toLowerCase() || null;
+      } catch {
+        return null;
+      }
+    })(),
+  ].filter((h): h is string => Boolean(h));
   const cname = getTenantCustomDomainCnameTarget();
-  return [...new Set([...defaults, ...fromEnv, cname])];
+  return [...new Set([...defaults, ...fromEnv, ...platformHosts, cname])];
 }
 
 async function isTenantMasterOff(ctx?: {
@@ -144,5 +159,31 @@ export async function isTenantDomainVerifyBypassEnabled(ctx?: {
     /* fall through */
   }
   const fromEnv = parseEnvBool(process.env.TENANT_DOMAIN_VERIFY_BYPASS);
+  return fromEnv === true;
+}
+
+/**
+ * TE Sprint 2 — provisiona Custom Hostname na Cloudflare no verify/clear de tenant_hosts.
+ * Ligar só após smoke TE1 (Origin rewrite + CNAME SaaS).
+ */
+export async function isTenantEdgeCloudflareSaasEnabled(ctx?: {
+  tenantId?: string | null;
+  userId?: string | null;
+}): Promise<boolean> {
+  if (await isTenantMasterOff(ctx)) return false;
+  try {
+    const res = await featureFlagRegistry.resolve(TENANT_EDGE_CLOUDFLARE_SAAS_FLAG_KEY, {
+      tenantId: ctx?.tenantId ?? null,
+      userId: ctx?.userId ?? null,
+    });
+    if (res.reason !== 'unknown_flag') {
+      return res.enabled;
+    }
+  } catch {
+    /* fall through */
+  }
+  const fromEnv = parseEnvBool(
+    process.env.TENANT_EDGE_CLOUDFLARE_SAAS_V1 || process.env.CF_SAAS_ENABLED
+  );
   return fromEnv === true;
 }

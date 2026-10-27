@@ -1,3 +1,6 @@
+import { formatAppMoneyMajor } from "@/lib/i18n/formatApp";
+import i18n from "@/lib/i18n/i18n";
+
 export interface ProductVariation {
   id?: string;
   name: string; // ex: "Cor", "Tamanho" 
@@ -136,14 +139,9 @@ export function resolvePublicCatalogUnitPrice(
 export function formatPublicCatalogListPrice(product: PublicCatalogProduct): string | null {
   const unit = resolvePublicCatalogUnitPrice(product);
   if (unit == null) return null;
-  const fmt = (n: number) =>
-    n.toLocaleString('pt-BR', { style: 'currency', currency: product.currency || 'BRL' });
+  const fmt = (n: number) => formatAppMoneyMajor(n, product.currency || "BRL");
   if (product.has_variants) {
-    const max = product.price_max != null ? Number(product.price_max) : null;
-    if (max != null && max > unit) {
-      return `A partir de ${fmt(unit)}`;
-    }
-    return `A partir de ${fmt(unit)}`;
+    return i18n.t("from_price", { ns: "store", price: fmt(unit) });
   }
   return fmt(unit);
 }

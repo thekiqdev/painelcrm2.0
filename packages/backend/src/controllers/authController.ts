@@ -23,6 +23,7 @@ import {
   persistTenantMarketingAttribution,
 } from '../services/marketingAttributionService.js';
 import { findPartnerMembershipForUser } from '../partner/partnerRepository.js';
+import { getRequestLocale } from '../middleware/localeMiddleware.js';
 
 const registerSchema = z.object({
   email: z.string().email(),
@@ -256,7 +257,7 @@ export async function register(req: Request, res: Response): Promise<void> {
       ensureWhatsAppTemplateDefaults(registeredTenantId).catch((err) =>
         console.error('[auth] ensureWhatsAppTemplateDefaults', err),
       );
-      schedulePublishPlatformAccountCreated(registeredTenantId);
+      schedulePublishPlatformAccountCreated(registeredTenantId, getRequestLocale(req));
       if (registerHadTrial) {
         schedulePublishPlatformTrialStarted(registeredTenantId);
       }

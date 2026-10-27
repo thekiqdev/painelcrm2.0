@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { format, parseISO, addDays, startOfWeek, startOfDay, endOfDay } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
+import { dateFnsLocale } from '@/lib/i18n/formatApp';
 import { Video, User } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Appointment } from '@/services/appointments';
@@ -319,10 +319,10 @@ export function AgendaWeekView({
                 )}
               >
                 <span className="text-[10px] font-semibold uppercase leading-none text-muted-foreground">
-                  {format(d, 'EEE', { locale: ptBR })}
+                  {format(d, 'EEE', { locale: dateFnsLocale() })}
                 </span>
                 <span className={cn('mt-0.5 text-lg font-bold tabular-nums', sel && 'text-primary')}>
-                  {format(d, 'd', { locale: ptBR })}
+                  {format(d, 'd', { locale: dateFnsLocale() })}
                 </span>
               </button>
             );
@@ -336,7 +336,7 @@ export function AgendaWeekView({
           )}
         >
           <p className="text-xs font-semibold capitalize text-foreground">
-            {format(activeDay, "EEEE, d 'de' MMMM", { locale: ptBR })}
+            {format(activeDay, "EEEE, d MMMM", { locale: dateFnsLocale() })}
           </p>
           {list.length === 0 ? (
             <button
@@ -484,9 +484,9 @@ export function AgendaWeekView({
                       isTodayCol && 'bg-primary/[0.07]',
                     )}
                   >
-                    <div className="text-muted-foreground">{format(d, 'EEE', { locale: ptBR })}</div>
+                    <div className="text-muted-foreground">{format(d, 'EEE', { locale: dateFnsLocale() })}</div>
                     <div className={cn('text-sm tabular-nums', isTodayCol && 'font-bold text-primary')}>
-                      {format(d, 'd', { locale: ptBR })}
+                      {format(d, 'd', { locale: dateFnsLocale() })}
                     </div>
                   </div>
                   {dayHolidays.length > 0 ? (

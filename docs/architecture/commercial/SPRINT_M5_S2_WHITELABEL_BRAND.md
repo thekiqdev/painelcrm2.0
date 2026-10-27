@@ -32,12 +32,15 @@
 ## DNS
 
 | Método | Como |
-|--------|------|
-| **TXT** | Host `_painelcrm-partner.<dominio>` = token (ou TXT no apex com o token) |
-| **CNAME** | `<dominio>` → `PARTNER_WL_CNAME_TARGET` (env) |
+|--------|-------|
+| **Tipo de host (go-live 2026-10-19)** | **Somente subdomínio** (ex. `crm.suaempresa.com.br`). Apex fora — ver [`PLAN_IMPLANTACAO_PARTNER_SUBDOMINIO.md`](./PLAN_IMPLANTACAO_PARTNER_SUBDOMINIO.md) |
+| **TXT** | Host `_painelcrm-partner.<subdominio>` = token |
+| **CNAME** | `<subdominio>` → `PARTNER_WL_CNAME_TARGET` (env; em prod = target Cloudflare for SaaS) |
 | **Dev** | Super Admin → Feature Flags → **`partner.domain_verify_bypass` = ON** (marca `active` sem DNS) |
 
 Após verify OK → `domain_status = active` → Host passa a servir marca 100% (sem “PainelCRM”).
+
+**O que o Host abre:** marca WL + checkout do canal em `/cadastro` (planos do Partner) — detalhe S7 e plano de implantação PE-Go.
 
 ---
 

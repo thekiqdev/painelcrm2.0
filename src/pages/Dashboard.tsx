@@ -1,5 +1,6 @@
 import React, { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { markDashboardReady } from "@/lib/devPerfMarks";
+import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -46,6 +47,7 @@ const DashboardRevenueChart = lazy(
 type PeriodPreset = "current_month" | "last_month" | "ytd";
 
 const Dashboard = () => {
+  const { t } = useTranslation('dashboard');
   useEffect(() => {
     markDashboardReady();
   }, []);
@@ -700,7 +702,7 @@ const Dashboard = () => {
                 to="/crm-subscriptions"
                 className="min-h-[4.25rem] rounded-2xl border border-border bg-card p-3.5 shadow-sm transition-transform active:scale-[0.98]"
               >
-                <p className="text-xs text-muted-foreground">Assinaturas ativas</p>
+                <p className="text-xs text-muted-foreground">{t("active_subscriptions")}</p>
                 <p className="mt-1 text-xl font-semibold tabular-nums">{overview.clients.active_subscriptions}</p>
               </Link>
             ) : null}
@@ -709,8 +711,8 @@ const Dashboard = () => {
                 to="/chat"
                 className="min-h-[4.25rem] rounded-2xl border border-border bg-card p-3.5 shadow-sm transition-transform active:scale-[0.98]"
               >
-                <p className="text-xs text-muted-foreground">Mensagens</p>
-                <p className="mt-1 text-sm font-medium leading-snug">Abrir chat</p>
+                <p className="text-xs text-muted-foreground">{t("messages")}</p>
+                <p className="mt-1 text-sm font-medium leading-snug">{t("open_chat")}</p>
               </Link>
             ) : null}
           </div>
@@ -720,19 +722,19 @@ const Dashboard = () => {
 
       <div className="order-5 flex flex-col gap-6 md:order-4">
       <div className="hidden gap-3 md:flex md:flex-row md:items-center md:justify-between">
-        <h1 className="text-2xl font-bold">Dashboard Executivo</h1>
+        <h1 className="text-2xl font-bold">{t("title")}</h1>
         <div className="flex gap-2">
           <Select value={preset} onValueChange={(v) => setPreset(v as PeriodPreset)}>
             <SelectTrigger className="w-[180px]">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="current_month">Este mês</SelectItem>
-              <SelectItem value="last_month">Mês passado</SelectItem>
-              <SelectItem value="ytd">Ano atual</SelectItem>
+              <SelectItem value="current_month">{t("this_month")}</SelectItem>
+              <SelectItem value="last_month">{t("last_month")}</SelectItem>
+              <SelectItem value="ytd">{t("ytd")}</SelectItem>
             </SelectContent>
           </Select>
-          <Button variant="outline">Exportar</Button>
+          <Button variant="outline">{t("export")}</Button>
         </div>
       </div>
 

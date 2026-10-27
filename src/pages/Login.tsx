@@ -1,4 +1,5 @@
 
+import { useTranslation } from "react-i18next";
 import React, { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -11,6 +12,7 @@ import { getPostAuthHomePath } from "@/utils/superAdminRedirect";
 import { useSignupEntry } from "@/hooks/useSignupEntry";
 
 const Login = () => {
+  const { t } = useTranslation("auth");
   const navigate = useNavigate();
   const { user, signIn } = useAuth();
   const { signupPath, signupLabel, showSignupOnLogin } = useSignupEntry();
@@ -54,7 +56,7 @@ const Login = () => {
     e.preventDefault();
     
     if (!identifier || !password) {
-      toast.error("Por favor, preencha todos os campos");
+      toast.error(t("fill_fields"));
       return;
     }
     
@@ -67,7 +69,7 @@ const Login = () => {
       }
     } catch (error: any) {
       console.error("Erro ao fazer login:", error);
-      toast.error(error.message || "Ocorreu um erro desconhecido");
+      toast.error(error.message || t("unknown_error"));
     } finally {
       setIsLoading(false);
     }
@@ -76,16 +78,16 @@ const Login = () => {
   return (
     <Card className="w-full">
       <CardHeader className="space-y-1">
-        <CardTitle className="text-2xl">Login</CardTitle>
+        <CardTitle className="text-2xl">{t("login_title")}</CardTitle>
         <CardDescription>
-          Entre com seu e-mail ou telefone e senha para acessar sua conta
+          {t("login_desc")}
         </CardDescription>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="identifier">
-              {loginType === "email" ? "E-mail" : "Telefone"}
+              {loginType === "email" ? t("email") : t("phone")}
             </Label>
             <div className="flex gap-2">
               <Input 
@@ -107,18 +109,18 @@ const Login = () => {
                   setIdentifier("");
                 }}
               >
-                {loginType === "email" ? "📱 Telefone" : "✉️ E-mail"}
+                {loginType === "email" ? t("switch_phone") : t("switch_email")}
               </Button>
             </div>
             <p className="text-xs text-muted-foreground">
-              Ou use {loginType === "email" ? "telefone" : "e-mail"} para fazer login
+              {t("use_other", { other: loginType === "email" ? t("other_phone") : t("other_email") })}
             </p>
           </div>
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <Label htmlFor="password">Senha</Label>
+              <Label htmlFor="password">{t("password")}</Label>
               <Button variant="link" className="p-0 h-auto text-sm" type="button">
-                Esqueceu sua senha?
+                {t("forgot")}
               </Button>
             </div>
             <Input 
@@ -131,14 +133,14 @@ const Login = () => {
             />
           </div>
           <Button type="submit" className="w-full" disabled={isLoading}>
-            {isLoading ? "Processando..." : "Entrar"}
+            {isLoading ? t("processing") : t("enter")}
           </Button>
         </form>
         
         {showSignupOnLogin ? (
           <div className="mt-6 text-center">
             <span className="text-sm text-muted-foreground">
-              Ainda não tem uma conta?{' '}
+              {t("no_account")}{' '}
               <Link to={signupPath} className="text-crm-primary font-medium hover:underline">
                 {signupLabel}
               </Link>

@@ -102,6 +102,7 @@ import {
 } from "@/lib/commercialListUi";
 import { CommercialListingPageShell } from "@/components/listing/CommercialListingPageShell";
 import { CommercialListingPageHeader } from "@/components/listing/CommercialListingPageHeader";
+import { useTranslation } from "react-i18next";
 import { MobileClientsSearchSheet } from "@/components/clients/MobileClientsSearchSheet";
 import { useFloatingChat } from "@/features/floating-chat";
 import { useFeatureFlag } from "@/hooks/useFeatureFlag";
@@ -168,6 +169,7 @@ function clientNotesPreview(raw: unknown, maxLen = 72): string | null {
 }
 
 const Clients = () => {
+  const { t } = useTranslation("crm");
   const navigate = useNavigate();
   const location = useLocation();
   const clientsListHref = `${location.pathname}${location.search}`;
@@ -334,6 +336,7 @@ const Clients = () => {
     status: "Ativo",
     group_id: "",
     notes: "",
+    observacao: "",
     cpf_cnpj: ""
   });
   
@@ -346,6 +349,7 @@ const Clients = () => {
     status: "",
     group_id: "",
     notes: "",
+    observacao: "",
     cpf_cnpj: ""
   });
 
@@ -378,6 +382,7 @@ const Clients = () => {
         group: client.client_groups?.name || "",
         group_id: client.group_id,
         notes: client.notes,
+        observacao: client.observacao ?? "",
         cpf_cnpj: client.cpf_cnpj ?? null,
         whatsapp_avatar_url: client.whatsapp_avatar_url ?? null,
       }));
@@ -496,6 +501,7 @@ const Clients = () => {
       status: client.status,
       group_id: client.group_id || "",
       notes: typeof client.notes === "string" ? client.notes : "",
+      observacao: typeof client.observacao === "string" ? client.observacao : "",
       cpf_cnpj: client.cpf_cnpj ?? "",
     });
     setNewClientGroup(client.group_id || "");
@@ -524,6 +530,7 @@ const Clients = () => {
         status: selectedClient.status,
         group_id: selectedClient.group_id || "",
         notes: selectedClient.notes || "",
+        observacao: selectedClient.observacao || "",
         cpf_cnpj: selectedClient.cpf_cnpj ?? ""
       });
       setIsEditMode(true);
@@ -544,7 +551,7 @@ const Clients = () => {
             phone: editedClient.phone,
             status: editedClient.status,
           group_id: editedClient.group_id || undefined,
-            notes: editedClient.notes,
+            observacao: editedClient.observacao?.trim() || null,
             cpf_cnpj: editedClient.cpf_cnpj?.replace(/\D/g, "").trim() || null
         });
         
@@ -561,7 +568,8 @@ const Clients = () => {
               status: editedClient.status,
               group_id: editedClient.group_id,
               group: updatedGroupName,
-              notes: editedClient.notes,
+              notes: client.notes,
+              observacao: editedClient.observacao,
               cpf_cnpj: editedClient.cpf_cnpj?.trim() || null
             };
           }
@@ -579,7 +587,8 @@ const Clients = () => {
           status: editedClient.status,
           group_id: editedClient.group_id,
           group: clientGroups.find(g => g.id === editedClient.group_id)?.name || "",
-          notes: editedClient.notes,
+          notes: selectedClient.notes,
+          observacao: editedClient.observacao,
           cpf_cnpj: editedClient.cpf_cnpj?.trim() || null
         });
         
@@ -637,7 +646,7 @@ const Clients = () => {
         phone: newClient.phone || undefined,
         status: newClient.status || undefined,
         group_id: newClient.group_id || undefined,
-        notes: newClient.notes || undefined,
+        observacao: newClient.observacao?.trim() || undefined,
         cpf_cnpj: newClient.cpf_cnpj?.trim() || undefined
       });
       
@@ -663,6 +672,7 @@ const Clients = () => {
         group: clientGroups.find(g => g.id === addedClient.group_id)?.name || "",
         group_id: addedClient.group_id,
         notes: addedClient.notes,
+        observacao: addedClient.observacao ?? "",
         cpf_cnpj: addedClient.cpf_cnpj ?? null
       };
       
@@ -680,6 +690,7 @@ const Clients = () => {
         status: "Ativo",
         group_id: "",
         notes: "",
+        observacao: "",
         cpf_cnpj: ""
       });
     } catch (error: any) {
@@ -1127,10 +1138,10 @@ const Clients = () => {
             </div>
           </div>
           <div className="space-y-2">
-            <Label htmlFor="notes">Observações</Label>
+            <Label htmlFor="observacao">Observação</Label>
             <Textarea
-              id="notes"
-              value={editedClient.notes}
+              id="observacao"
+              value={editedClient.observacao}
               onChange={handleEditInputChange}
               placeholder="Adicione informações relevantes sobre este cliente"
             />
@@ -1164,6 +1175,10 @@ const Clients = () => {
                 {selectedClient.status}
               </Badge>
             </p>
+          </div>
+          <div className="space-y-1 col-span-2">
+            <Label>Observação</Label>
+            <p className="text-sm whitespace-pre-wrap">{selectedClient.observacao || "Nenhuma observação registrada."}</p>
           </div>
           <div className="space-y-1">
             <Label>Grupo</Label>
@@ -1274,26 +1289,26 @@ const Clients = () => {
     <CommercialListingPageShell>
       <div className="contents" onPointerDownCapture={() => saveClientsListScrollPosition()}>
       <CommercialListingPageHeader
-        eyebrow="Base comercial"
+        eyebrow={t("clients_eyebrow")}
         EyebrowIcon={Building2}
-        title="Clientes"
-        description="Carteira ativa: dados principais, grupos e atalhos para relacionamento e vendas."
+        title={t("clients_title")}
+        description={t("clients_desc")}
         mobileSecondaryActions={[
           {
             icon: <Search className="h-4 w-4" aria-hidden />,
-            ariaLabel: "Buscar clientes",
+            ariaLabel: t("clients_search"),
             onClick: () => setMobileSearchOpen(true),
           },
           {
             icon: <Filter className="h-4 w-4" aria-hidden />,
-            ariaLabel: "Filtros",
+            ariaLabel: t("clients_filters"),
             onClick: () => setMobileFiltersOpen(true),
           },
         ]}
         mobilePrimaryAction={
           canCreate(MODULE_CLIENTS)
             ? {
-                label: "Novo cliente",
+                label: t("clients_new"),
                 icon: <Plus className="h-4 w-4" aria-hidden />,
                 onClick: () => setIsAddDialogOpen(true),
               }
@@ -1307,7 +1322,7 @@ const Clients = () => {
               size="icon"
               disabled={csvImportRunning}
               className="h-10 w-10 touch-manipulation text-muted-foreground hover:text-foreground"
-              aria-label="Importar clientes (CSV)"
+              aria-label={t("clients_import")}
               onClick={() => csvImportInputRef.current?.click()}
             >
               <Upload className="h-4 w-4" aria-hidden />
@@ -1543,11 +1558,11 @@ const Clients = () => {
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="notes">Observações</Label>
+                    <Label htmlFor="observacao">Observação</Label>
                     <Textarea 
-                      id="notes" 
+                      id="observacao" 
                       placeholder="Adicione informações relevantes sobre este cliente" 
-                      value={newClient.notes || ""}
+                      value={newClient.observacao || ""}
                       onChange={handleInputChange}
                     />
                   </div>

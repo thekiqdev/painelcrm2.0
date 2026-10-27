@@ -224,11 +224,12 @@ export async function createStorePublicCheckout(
     type: string;
     price: string | null;
     discount_price: string | null;
+    currency: string | null;
     has_variants: boolean;
     track_inventory: boolean;
     stock_quantity: number | null;
   }>(
-    `SELECT p.id, p.name, p.type, p.price, p.discount_price,
+    `SELECT p.id, p.name, p.type, p.price, p.discount_price, p.currency,
             COALESCE(p.has_variants, false) AS has_variants,
             COALESCE(p.track_inventory, true) AS track_inventory,
             p.stock_quantity
@@ -491,11 +492,24 @@ export async function createStorePublicCheckout(
           order_id: orderId,
           order_number: orderNumber,
           variant_id: variantId,
+          currency: (product.currency || 'BRL').toUpperCase(),
+          allowed_payment_methods:
+            (product.currency || 'BRL').toUpperCase() === 'BRL' ? undefined : ['CREDIT_CARD'],
         },
       });
 
       if (!invoice.payment_token) {
         throw new Error('Fatura sem payment_token');
+      }
+
+      const productCurrency = (product.currency || 'BRL').toUpperCase();
+      if (productCurrency === 'USD' || productCurrency === 'EUR') {
+        await pool.query(
+          `UPDATE customer_invoices
+           SET gateway = 'stripe', payment_method = 'CREDIT_CARD', updated_at = now()
+           WHERE id = $1::uuid`,
+          [invoice.id]
+        );
       }
 
       await pool.query(

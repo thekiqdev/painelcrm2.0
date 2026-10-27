@@ -1,6 +1,7 @@
 export {
   TENANT_CUSTOM_DOMAIN_FLAG_KEY,
   TENANT_DOMAIN_VERIFY_BYPASS_FLAG_KEY,
+  TENANT_EDGE_CLOUDFLARE_SAAS_FLAG_KEY,
   TENANT_MASTER_OFF_FLAG_KEY,
   TENANT_CUSTOM_DOMAIN_CNAME_FALLBACK,
   TENANT_HOST_ROLES,
@@ -10,12 +11,14 @@ export {
   hostnameFromPlatformPublicBase,
   isTenantCustomDomainEnabled,
   isTenantDomainVerifyBypassEnabled,
+  isTenantEdgeCloudflareSaasEnabled,
   type TenantHostRole,
 } from './tenantDomainFlags.js';
 export { TenantDomainError } from './tenantDomainErrors.js';
 export {
   setTenantDomain,
   verifyTenantDomain,
+  syncTenantDomainCloudflare,
   clearTenantDomain,
   changeTenantHostRole,
   getTenantDomainInstructions,
@@ -26,6 +29,12 @@ export {
   recheckActiveTenantHosts,
 } from './tenantDomainService.js';
 export type { TenantHostDnsRecheckResult } from './tenantDomainService.js';
+export {
+  provisionTenantCloudflareHostname,
+  deprovisionTenantCloudflareHostname,
+  syncTenantCloudflareHostnameStatus,
+  loadTenantHostCfSnapshot,
+} from './tenantCloudflareHostnameService.js';
 export { logTenantDomain } from './tenantDomainLogger.js';
 export {
   buildCanonicalStoreUrl,
@@ -36,9 +45,11 @@ export {
   getMyTenantDomain,
   postMyTenantDomain,
   postMyTenantDomainVerify,
+  postMyTenantDomainCfSync,
   postMyTenantDomainChangeRole,
   deleteMyTenantDomain,
   superadminGetTenantDomain,
+  superadminSyncTenantDomainCf,
   superadminClearTenantDomain,
 } from './tenantDomainControllers.js';
 export { resolveTenantHostByHostname } from './tenantHostResolver.js';

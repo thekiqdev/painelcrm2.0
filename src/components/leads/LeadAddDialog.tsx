@@ -24,6 +24,7 @@ const leadFormSchema = z.object({
   cpf_cnpj: z.string().optional(),
   status: z.string(),
   source: z.string(),
+  observacao: z.string().optional(),
 });
 
 type LeadFormValues = z.infer<typeof leadFormSchema>;
@@ -51,6 +52,7 @@ const LeadAddDialog: React.FC<LeadAddDialogProps> = ({
       cpf_cnpj: "",
       status: "Novo",
       source: "Direto",
+      observacao: "",
     },
   });
 

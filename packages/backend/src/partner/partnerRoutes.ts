@@ -15,6 +15,7 @@ import {
   partnerSetDomain,
   partnerVerifyDomain,
   partnerClearDomain,
+  partnerSyncDomainCloudflare,
 } from './partnerControllers.js';
 import {
   partnerGetGateway,
@@ -73,6 +74,7 @@ router.patch('/profile', requirePartnerAdmin, partnerPatchProfile);
 router.get('/domain', requirePartnerAdmin, partnerGetDomain);
 router.post('/domain', requirePartnerAdmin, partnerSetDomain);
 router.post('/domain/verify', requirePartnerAdmin, partnerVerifyDomain);
+router.post('/domain/cf-sync', requirePartnerAdmin, partnerSyncDomainCloudflare);
 router.delete('/domain', requirePartnerAdmin, partnerClearDomain);
 
 /** S3 — licenças, gateway, planos de venda */

@@ -18,6 +18,7 @@ import {
 import type { GatewayStatusItem } from "./gatewayPanelTypes";
 import { formatGatewayLastTest } from "./gatewayPanelUtils";
 import { apiClient } from "@/integrations/api/client";
+import { useTranslation } from "react-i18next";
 import { toast } from "@/components/ui/sonner";
 
 const API_TEST = "/api/me/tenant/payment-gateway/test";
@@ -29,6 +30,7 @@ interface AsaasGatewayCardProps {
 }
 
 export const AsaasGatewayCard: React.FC<AsaasGatewayCardProps> = ({ item, onStatusChange }) => {
+  const { t } = useTranslation("finance");
   const [testing, setTesting] = useState(false);
 
   const statusType = toGatewayStatusType({
@@ -74,10 +76,10 @@ export const AsaasGatewayCard: React.FC<AsaasGatewayCardProps> = ({ item, onStat
 
   const webhookBadge = item.configured ? (
     item.webhook_configured ? (
-      <Badge className="border-emerald-500/30 bg-emerald-500/12 text-emerald-900 dark:text-emerald-100">Ativo</Badge>
+      <Badge className="border-emerald-500/30 bg-emerald-500/12 text-emerald-900 dark:text-emerald-100">{t("active")}</Badge>
     ) : (
       <Badge variant="outline" className="font-normal">
-        Pendente
+        {t("pending")}
       </Badge>
     )
   ) : (
@@ -103,15 +105,15 @@ export const AsaasGatewayCard: React.FC<AsaasGatewayCardProps> = ({ item, onStat
 
         <div className={gatewayCardStatusSectionClass}>
           <div>
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Ambiente</p>
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{t("environment")}</p>
             <div className="mt-1.5">{envBadge}</div>
           </div>
           <div>
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Último teste</p>
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{t("last_test")}</p>
             <p className="mt-1.5 text-sm font-medium text-foreground">{formatGatewayLastTest(item.last_connection_test_at)}</p>
           </div>
           <div>
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Webhook</p>
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{t("webhook")}</p>
             <div className="mt-1.5">{webhookBadge}</div>
           </div>
         </div>
@@ -119,12 +121,12 @@ export const AsaasGatewayCard: React.FC<AsaasGatewayCardProps> = ({ item, onStat
 
       <CardContent className="flex min-h-0 flex-1 flex-col px-5 pb-5 pt-0">
         <div className={gatewayCardBodyClass}>
-          <GatewayFeatureList items={["Emissão de cobranças", "Pix, boleto e cartão", "Notificações automáticas"]} />
+          <GatewayFeatureList items={[t("asaas_features_1"), t("asaas_features_2"), t("asaas_features_3")]} />
           <div className={gatewayCardActionsRowClass}>
             <Button asChild variant="outline" size="sm">
               <Link to={`/settings/payments/${item.key}`}>
                 <Settings className="mr-2 h-4 w-4" />
-                Configurar
+                {t("configure")}
               </Link>
             </Button>
             {item.configured ? (
@@ -132,12 +134,12 @@ export const AsaasGatewayCard: React.FC<AsaasGatewayCardProps> = ({ item, onStat
                 {testing ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Testando…
+                    {t("testing")}
                   </>
                 ) : (
                   <>
                     <Wifi className="mr-2 h-4 w-4" />
-                    Testar conexão
+                    {t("test_connection")}
                   </>
                 )}
               </Button>

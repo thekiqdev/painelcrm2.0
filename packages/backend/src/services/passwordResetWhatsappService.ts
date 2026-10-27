@@ -119,6 +119,7 @@ async function sendPasswordResetCodeNotification(params: {
   recipientDigits: string;
   displayName: string;
   plainCode: string;
+  locale?: string;
 }): Promise<{ ok: boolean; error?: string }> {
   if (!isPlatformNotificationsEnabled()) {
     return { ok: false, error: 'Motor de notificações da plataforma desligado.' };
@@ -149,6 +150,7 @@ async function sendPasswordResetCodeNotification(params: {
       password_reset_code_id: params.codeRowId,
       user_id: params.userId,
     },
+    locale: params.locale,
   });
 
   if (!res.ok) {
@@ -163,6 +165,7 @@ export type PasswordResetRequestResult = { shownMessage: string };
 export async function requestPasswordResetByWhatsapp(
   pool: Pool,
   rawWhatsapp: string,
+  locale?: string,
 ): Promise<PasswordResetRequestResult> {
   const digitsOnly = rawWhatsapp.replace(/\D/g, '');
   if (digitsOnly.length < MIN_WHATSAPP_DIGITS) {
@@ -231,6 +234,7 @@ export async function requestPasswordResetByWhatsapp(
     recipientDigits: toBrazilWhatsappDialDigits(whatsapp_digits_canonical),
     displayName: displayNameFromRow(user),
     plainCode,
+    locale,
   });
 
   if (!send.ok) {

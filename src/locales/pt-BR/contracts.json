@@ -1,0 +1,10 @@
+{
+  "title": "Contratos",
+  "new": "Novo contrato",
+  "templates": "Modelos",
+  "import": "Importar contratos (CSV)",
+  "start": "Início",
+  "end": "Fim",
+  "updated": "Atual.",
+  "client_unknown": "Cliente não identificado"
+}

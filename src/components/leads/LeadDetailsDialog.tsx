@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
-import { ptBR } from "date-fns/locale";
+import i18n from "@/lib/i18n/i18n";
+import { dateFnsLocale } from "@/lib/i18n/formatApp";
 import {
   CalendarPlus,
   CheckCircle2,
@@ -52,19 +53,21 @@ import { cn } from "@/lib/utils";
 import { formatCpfCnpjDisplay } from "@/utils/cpfCnpj";
 
 function formatLeadLastTouch(iso?: string | null): string {
-  if (!iso) return "Não informado";
+  const missing = i18n.t("not_informed", { ns: "crm" });
+  if (!iso) return missing;
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "Não informado";
+  if (Number.isNaN(d.getTime())) return missing;
   const now = new Date();
+  const time = format(d, "HH:mm", { locale: dateFnsLocale() });
   if (d.toDateString() === now.toDateString()) {
-    return `Hoje às ${format(d, "HH:mm", { locale: ptBR })}`;
+    return i18n.t("today_at", { ns: "crm", time });
   }
   const yesterday = new Date(now);
   yesterday.setDate(yesterday.getDate() - 1);
   if (d.toDateString() === yesterday.toDateString()) {
-    return `Ontem às ${format(d, "HH:mm", { locale: ptBR })}`;
+    return i18n.t("yesterday_at", { ns: "crm", time });
   }
-  return format(d, "dd/MM/yyyy HH:mm", { locale: ptBR });
+  return format(d, "P p", { locale: dateFnsLocale() });
 }
 
 interface LeadDetailsDialogProps {
@@ -591,10 +594,10 @@ const LeadDetailsDialog: React.FC<LeadDetailsDialogProps> = ({
                     </div>
                     <div className="mt-3 rounded-xl border border-border/55 bg-muted/15 px-3 py-2.5 shadow-sm">
                       <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                        Observações
+                        Observação
                       </p>
                       <p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
-                        {lead.notes || "Nenhuma observação registrada."}
+                        {lead.observacao || "Nenhuma observação registrada."}
                       </p>
                     </div>
                   </div>
@@ -617,11 +620,11 @@ const LeadDetailsDialog: React.FC<LeadDetailsDialogProps> = ({
                     </Card>
                     <Card className="border-border/70 shadow-sm">
                       <CardHeader className="pb-2">
-                        <CardTitle className="text-base">Observações</CardTitle>
+                        <CardTitle className="text-base">Observação</CardTitle>
                       </CardHeader>
                       <CardContent>
                         <p className="whitespace-pre-wrap text-sm text-muted-foreground">
-                          {lead.notes || "Nenhuma observação registrada."}
+                          {lead.observacao || "Nenhuma observação registrada."}
                         </p>
                       </CardContent>
                     </Card>
@@ -641,7 +644,7 @@ const LeadDetailsDialog: React.FC<LeadDetailsDialogProps> = ({
                       <InfoField variant="row" label="CPF/CNPJ" value={formatCpfCnpjDisplay(lead.cpf_cnpj)} />
                       <InfoField variant="row" label="Origem" value={sourceLabel} />
                       <InfoField variant="row" label="Status" value={lead.status} />
-                      <InfoField variant="row" label="Observações" value={lead.notes} />
+                      <InfoField variant="row" label="Observação" value={lead.observacao} />
                     </div>
                     <Card className="mt-3 border-dashed border-border/60 bg-muted/10 py-3 shadow-none">
                       <CardHeader className="space-y-1 px-3 pb-2 pt-0">
@@ -670,7 +673,7 @@ const LeadDetailsDialog: React.FC<LeadDetailsDialogProps> = ({
                         <InfoField label="Origem" value={sourceLabel} />
                         <InfoField label="Status" value={lead.status} />
                         <div className="sm:col-span-2">
-                          <InfoField label="Observações" value={lead.notes} />
+                          <InfoField label="Observação" value={lead.observacao} />
                         </div>
                       </CardContent>
                     </Card>

@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/select";
 import { Pencil, Trash2, UserPlus, Users2 } from "lucide-react";
 import { SettingsSectionProps } from "./types";
+import { useTranslation } from "react-i18next";
 import {
   getTenantLimits,
   getMyTenantUsers,
@@ -37,6 +38,7 @@ function getInitials(user: TenantUser): string {
 }
 
 export const UsersSection: React.FC<SettingsSectionProps> = () => {
+  const { t } = useTranslation("settings");
   const { user: authUser } = useAuth();
   const { hasPermissionKey, loading: permLoading } = useModulePermissions();
   const [usersLimit, setUsersLimit] = useState<{ current: number; limit: number | null } | null>(null);
@@ -148,16 +150,16 @@ export const UsersSection: React.FC<SettingsSectionProps> = () => {
     <>
       <Card>
         <CardHeader>
-          <CardTitle>Usuários</CardTitle>
+          <CardTitle>{t("sec_users")}</CardTitle>
           <CardDescription>
-            Liste os usuários da conta, defina o perfil de acesso (role) de cada um e as equipes às quais pertencem. O limite de usuários depende do plano contratado.
+            {t("users_desc")}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
             <div className="flex justify-between items-center flex-wrap gap-2">
               <div className="flex items-center gap-2">
-                <h3 className="text-lg font-medium">Usuários</h3>
+                <h3 className="text-lg font-medium">{t("sec_users")}</h3>
                 {limitLabel && (
                   <span className="text-sm text-muted-foreground">({limitLabel})</span>
                 )}
@@ -167,15 +169,15 @@ export const UsersSection: React.FC<SettingsSectionProps> = () => {
                 disabled={atLimit || !canManageTenantUsers}
                 title={
                   !canManageTenantUsers
-                    ? "Sem permissão para adicionar utilizadores"
+                    ? t("users_no_perm")
                     : atLimit
-                      ? "Limite de usuários do plano atingido"
+                      ? t("users_limit")
                       : undefined
                 }
                 onClick={() => setNewUserDialogOpen(true)}
               >
                 <UserPlus className="mr-2 h-4 w-4" />
-                Novo Usuário
+                {t("users_new")}
               </Button>
             </div>
             {atLimit && (

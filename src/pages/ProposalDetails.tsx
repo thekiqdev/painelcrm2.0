@@ -34,6 +34,7 @@ import { toast } from "@/components/ui/sonner";
 import { proposalsService, Proposal, ProposalPublicLinkMeta, PostAcceptBillingMode } from "@/services/proposals";
 import { clientsService } from "@/services/clients";
 import { format } from "date-fns";
+import { formatAppMoneyMajor } from "@/lib/i18n/formatApp";
 import { formatDateOnlyIsoInput, formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
 import { useAuth } from "@/contexts/AuthContext";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
@@ -344,12 +345,7 @@ const ProposalDetails = () => {
     );
   }
 
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat("pt-BR", {
-      style: "currency",
-      currency: "BRL",
-    }).format(value);
-  };
+  const formatCurrency = (value: number) => formatAppMoneyMajor(value, "BRL");
 
   const statusLabels: Record<string, string> = {
     draft: "Rascunho",

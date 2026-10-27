@@ -1,0 +1,7 @@
+{
+  "title": "Chatbot Flows",
+  "desc": "Build flows on the canvas. On = published to WhatsApp; off = draft.",
+  "import": "Import",
+  "new_flow": "New flow",
+  "draft_toast": "Flow set to draft (off on WhatsApp)"
+}

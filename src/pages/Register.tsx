@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import RegisterOrganizationWizard from "./RegisterOrganizationWizard";
 
@@ -6,6 +7,7 @@ import RegisterOrganizationWizard from "./RegisterOrganizationWizard";
  * Rota /register — legado (wizard). Com VITE_REDIRECT_REGISTER_TO_CHECKOUT=true redireciona para /checkout.
  */
 export default function Register() {
+  const { t } = useTranslation("auth");
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -17,7 +19,7 @@ export default function Register() {
   if (import.meta.env.VITE_REDIRECT_REGISTER_TO_CHECKOUT === "true") {
     return (
       <div className="flex min-h-[40vh] items-center justify-center text-muted-foreground text-sm">
-        Redirecionando para o checkout…
+        {t("register_redirect")}
       </div>
     );
   }

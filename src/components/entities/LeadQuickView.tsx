@@ -108,6 +108,8 @@ export type LeadQuickViewData = {
 
   notes?: string | null;
 
+  observacao?: string | null;
+
   whatsapp_avatar_url?: string | null;
 
   migrated_client_id?: string | null;
@@ -340,6 +342,7 @@ export function LeadQuickView({ leadId, onRequestClose, onOpenFullProfile }: Pro
         phone: lead.phone || undefined,
 
         notes: lead.notes || undefined,
+        observacao: lead.observacao || undefined,
 
         status: "Ativo",
 

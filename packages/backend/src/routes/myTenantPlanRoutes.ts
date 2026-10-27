@@ -43,6 +43,16 @@ router.post(
   postPlanCheckoutPreparePayment
 );
 router.get('/commercial-billings', ...tenantAuthCommercialHub, myTenantPlanController.getMyTenantCommercialBillings);
+router.get(
+  '/late-renewal-restart',
+  ...tenantAuthCommercialHub,
+  myTenantPlanController.getLateRenewalRestart
+);
+router.post(
+  '/late-renewal-restart',
+  ...tenantAuthCommercialHub,
+  myTenantPlanController.postLateRenewalRestart
+);
 
 // Demais rotas: CRM comercial + período ativo
 // Leitura de assinatura / limites no hub (Meu plano com período vencido)
@@ -63,6 +73,9 @@ router.get('/payment-gateway', ...tenantAuth, myTenantPaymentGatewayController.g
 router.put('/payment-gateway', ...tenantAuth, myTenantPaymentGatewayController.putMyTenantPaymentGatewayConfig);
 router.post('/payment-gateway/test', ...tenantAuth, myTenantPaymentGatewayController.postMyTenantPaymentGatewayTest);
 router.post('/payment-gateway/disable', ...tenantAuth, myTenantPaymentGatewayController.postMyTenantPaymentGatewayDisable);
+router.get('/stripe-gateway', ...tenantAuth, myTenantPaymentGatewayController.getMyTenantStripeGateway);
+router.put('/stripe-gateway', ...tenantAuth, myTenantPaymentGatewayController.putMyTenantStripeGateway);
+router.post('/stripe-gateway/test', ...tenantAuth, myTenantPaymentGatewayController.postMyTenantStripeGatewayTest);
 
 router.get('/company', ...tenantAuthCrm, myTenantCompanyController.getMyTenantCompany);
 router.put('/company', ...tenantAuthCrm, myTenantCompanyController.putMyTenantCompany);
@@ -81,6 +94,10 @@ router.post('/domain', ...tenantAuthCrm, async (req, res, next) => {
 router.post('/domain/verify', ...tenantAuthCrm, async (req, res, next) => {
   const { postMyTenantDomainVerify } = await import('../tenantCustomDomain/tenantDomainControllers.js');
   return postMyTenantDomainVerify(req, res).catch(next);
+});
+router.post('/domain/cf-sync', ...tenantAuthCrm, async (req, res, next) => {
+  const { postMyTenantDomainCfSync } = await import('../tenantCustomDomain/tenantDomainControllers.js');
+  return postMyTenantDomainCfSync(req, res).catch(next);
 });
 router.post('/domain/change-role', ...tenantAuthCrm, async (req, res, next) => {
   const { postMyTenantDomainChangeRole } = await import('../tenantCustomDomain/tenantDomainControllers.js');

@@ -1,0 +1,20 @@
+{
+  "save": "Salvar",
+  "saving": "Salvando...",
+  "cancel": "Cancelar",
+  "loading": "Carregando...",
+  "empty": "Nada por aqui.",
+  "error_generic": "Não foi possível concluir. Tente de novo.",
+  "language_label": "Idioma do sistema",
+  "language_pt": "Português (Brasil)",
+  "language_en": "English",
+  "language_es": "Español",
+  "language_saved": "Idioma salvo.",
+  "language_save_failed": "Não foi possível salvar o idioma.",
+  "pilot_date": "Data",
+  "pilot_amount": "Valor",
+  "currency_label": "Moeda",
+  "currency_brl": "Real (BRL)",
+  "currency_usd": "Dólar (USD)",
+  "currency_eur": "Euro (EUR)"
+}

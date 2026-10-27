@@ -23,6 +23,13 @@ import { checkPaymentGatewayTestRateLimit } from '../middleware/paymentGatewayTe
 import { paymentMethodSlugsFromConfigRow } from '../services/gatewayPaymentMethodPolicy.js';
 import { filterMercadoPagoFromTenantGatewayList, isMercadoPagoGatewayEnabled } from '../config/mercadoPagoGatewayEnv.js';
 import { testMercadoPagoIntegration } from '../services/mercadoPagoIntegrationService.js';
+import { isStripeTenantEnabled, withStripeTenantCatalogFlag } from '../modules/gateways/stripe/stripeTenantFlags.js';
+import {
+  loadStripeTenantCredentials,
+  stripeTenantPublicView,
+  upsertStripeTenantCredentials,
+} from '../modules/gateways/stripe/stripeTenantCredentials.js';
+import { createStripePlatformClient } from '../modules/gateways/stripe/stripePlatformClient.js';
 
 function getTenantId(req: AuthRequest): string | null {
   return req.tenantId ?? null;
@@ -197,7 +204,9 @@ export async function getMyTenantPaymentGatewaysList(req: Request, res: Response
       res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
       return;
     }
-    const gateways = filterMercadoPagoFromTenantGatewayList(await listGateways());
+    const gateways = await withStripeTenantCatalogFlag(
+      filterMercadoPagoFromTenantGatewayList(await listGateways())
+    );
     res.json(gateways);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Internal server error';
@@ -217,7 +226,7 @@ export async function getMyTenantPaymentGatewaysStatus(req: Request, res: Respon
       res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
       return;
     }
-    const statusList = await getGatewaysStatus('tenant', tenantId);
+    const statusList = await withStripeTenantCatalogFlag(await getGatewaysStatus('tenant', tenantId));
     res.json(statusList);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Internal server error';
@@ -277,5 +286,73 @@ export async function postMyTenantPaymentGatewayDisable(req: Request, res: Respo
     const message = error instanceof Error ? error.message : 'Internal server error';
     console.error('postMyTenantPaymentGatewayDisable error:', error);
     res.status(500).json({ error: message });
+  }
+}
+
+export async function getMyTenantStripeGateway(req: Request, res: Response): Promise<void> {
+  const tenantId = getTenantId(req as AuthRequest);
+  if (!tenantId) {
+    res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
+    return;
+  }
+  const creds = await loadStripeTenantCredentials(tenantId);
+  const base =
+    (process.env.PUBLIC_API_URL && process.env.PUBLIC_API_URL.replace(/\/$/, '')) ||
+    `${req.protocol}://${req.get('host') || ''}`;
+  res.json({
+    ...stripeTenantPublicView(creds),
+    enabled: await isStripeTenantEnabled(),
+    webhook_url: `${base}/api/webhooks/stripe-tenant/${tenantId}`,
+  });
+}
+
+export async function putMyTenantStripeGateway(req: Request, res: Response): Promise<void> {
+  const tenantId = getTenantId(req as AuthRequest);
+  if (!tenantId) {
+    res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
+    return;
+  }
+  if (!(await isStripeTenantEnabled())) {
+    res.status(409).json({ error: 'Stripe do tenant está desligada' });
+    return;
+  }
+  const body = (req.body ?? {}) as { secret_key?: string; webhook_secret?: string; env?: string };
+  const env = body.env === 'production' ? 'production' : 'sandbox';
+  const saved = await upsertStripeTenantCredentials(tenantId, {
+    secretKey: body.secret_key,
+    webhookSecret: body.webhook_secret,
+    env,
+  });
+  invalidateGatewayCache();
+  res.json({
+    configured: Boolean(saved.secretMasked),
+    env: saved.env,
+    secret_key_masked: saved.secretMasked,
+    webhook_secret_masked: saved.webhookMasked,
+  });
+}
+
+export async function postMyTenantStripeGatewayTest(req: Request, res: Response): Promise<void> {
+  const tenantId = getTenantId(req as AuthRequest);
+  if (!tenantId) {
+    res.status(403).json({ error: 'Usuário não vinculado a uma empresa' });
+    return;
+  }
+  if (!(await isStripeTenantEnabled())) {
+    res.status(409).json({ connected: false, error: 'Stripe do tenant está desligada. Nenhuma chamada à Stripe.' });
+    return;
+  }
+  const creds = await loadStripeTenantCredentials(tenantId);
+  if (!creds?.secretKey) {
+    res.status(400).json({ connected: false, error: 'Secret key ausente' });
+    return;
+  }
+  try {
+    const client = createStripePlatformClient({ secretKey: creds.secretKey });
+    await client.get('/balance');
+    res.json({ connected: true, env: creds.env });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : 'Falha ao conectar';
+    res.status(502).json({ connected: false, error: message });
   }
 }

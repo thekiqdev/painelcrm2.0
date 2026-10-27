@@ -8,10 +8,11 @@ import React, {
   useState,
   useRef,
 } from 'react';
+import { useTranslation } from 'react-i18next';
+import { dateFnsLocale } from '@/lib/i18n/formatApp';
 import { useLocation, useParams, useSearchParams, Link } from 'react-router-dom';
 import { useQueryClient, useQuery } from '@tanstack/react-query';
 import { addMinutes, format, parse, parseISO } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
 import { toast } from '@/components/ui/sonner';
 import {
   RefreshCw,
@@ -373,6 +374,7 @@ type ChatProps = {
 };
 
 const Chat = ({ scope = 'tenant' }: ChatProps) => {
+  const { t } = useTranslation('chat');
   useChatPerfRender('Chat.tsx');
   const {
     user,
@@ -2952,7 +2954,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       (conv.assigned_to_user_id === user.id || adminBypass);
     const clientSinceLabel =
       kind === 'client' && currentClient?.created_at
-        ? format(parseISO(currentClient.created_at), "d 'de' MMM 'de' yyyy", { locale: ptBR })
+        ? format(parseISO(currentClient.created_at), "d 'de' MMM 'de' yyyy", { locale: dateFnsLocale() })
         : null;
 
     return {
@@ -4504,7 +4506,7 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
       // Enviar notificação
       const client = currentClient || currentLead;
       if (client) {
-        const dueDate = date ? format(new Date(date), 'dd/MM/yyyy', { locale: ptBR }) : 'Não definido';
+        const dueDate = date ? format(new Date(date), 'dd/MM/yyyy', { locale: dateFnsLocale() }) : 'Não definido';
         await sendNotification('tasks', 'created', {
           client_name: client.name || 'Cliente',
           task_title: title,
@@ -5645,23 +5647,23 @@ const Chat = ({ scope = 'tenant' }: ChatProps) => {
         <div className="rounded-xl border border-border/70 bg-card/80 px-4 py-3 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <h1 className="text-lg font-semibold leading-tight text-foreground">Chat da Plataforma</h1>
+              <h1 className="text-lg font-semibold leading-tight text-foreground">{t('platform_title')}</h1>
               <p className="mt-0.5 text-sm text-muted-foreground">
-                Mensagens dos canais conectados no Super Admin.
+                {t('platform_desc')}
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="secondary">UazAPI</Badge>
               {platformMetaStatusLoading ? (
-                <Badge variant="outline">Meta — a carregar…</Badge>
+                <Badge variant="outline">{t('meta_loading')}</Badge>
               ) : !platformMetaStatus?.feature_enabled ? (
-                <Badge variant="outline">API Oficial Meta (desativada)</Badge>
+                <Badge variant="outline">{t('meta_off')}</Badge>
               ) : platformMetaStatus.account?.is_active && platformMetaStatus.account.status === 'connected' ? (
                 <Badge variant="default" className="bg-emerald-700 hover:bg-emerald-700">
                   API Oficial Meta — {platformMetaStatus.account.display_phone_number || 'ligada'}
                 </Badge>
               ) : platformMetaStatus.account?.status === 'error' ? (
-                <Badge variant="destructive">Meta — token / conta em erro</Badge>
+                <Badge variant="destructive">{t('meta_error')}</Badge>
               ) : (
                 <Badge variant="outline">API Oficial Meta — não ligada</Badge>
               )}

@@ -137,6 +137,7 @@ const clientEditSchema = z.object({
   cpf_cnpj: z.string().optional(),
   status: z.string().optional(),
   source: z.string().optional(),
+  observacao: z.string().optional(),
 });
 
 /** Espelha a normalização do backend (`normalizeLeadPhoneToWhatsappDigits`) para aviso de UX. */
@@ -313,6 +314,7 @@ const ClientProfile = () => {
       cpf_cnpj: "",
       status: "",
       source: "",
+      observacao: "",
     },
   });
 
@@ -522,6 +524,7 @@ const ClientProfile = () => {
       cpf_cnpj: client.cpf_cnpj || "",
       status: client.status || "Ativo",
       source: client.source || "",
+      observacao: client.observacao || "",
     });
   }, [client, clientForm]);
 
@@ -826,6 +829,7 @@ const ClientProfile = () => {
         cpf_cnpj: values.cpf_cnpj?.replace(/\D/g, "").trim() || null,
         status: values.status?.trim() || undefined,
         source: values.source?.trim() || undefined,
+        observacao: values.observacao?.trim() || null,
       };
       const updated = await clientsService.updateClient(client.id, payload);
       setClient((prev: any) => ({ ...prev, ...updated }));
@@ -1625,6 +1629,13 @@ const ClientProfile = () => {
                               <FormMessage />
                             </FormItem>
                           )} />
+                          <FormField control={clientForm.control} name="observacao" render={({ field }) => (
+                            <FormItem className="md:col-span-2">
+                              <FormLabel>Observação</FormLabel>
+                              <FormControl><Textarea rows={3} {...field} value={field.value || ""} /></FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )} />
                         </div>
                       </form>
                     </Form>
@@ -1638,6 +1649,7 @@ const ClientProfile = () => {
                         <div><Label>CPF ou CNPJ</Label><p className="text-sm mt-1">{formatCpfCnpjDisplay(client.cpf_cnpj) === "—" ? "Não informado" : formatCpfCnpjDisplay(client.cpf_cnpj)}</p></div>
                         <div><Label>Status</Label><p className="text-sm mt-1">{client.status || "Ativo"}</p></div>
                         <div className="md:col-span-2"><Label>Origem</Label><p className="text-sm mt-1">{client.source || "Não informado"}</p></div>
+                        <div className="md:col-span-2"><Label>Observação</Label><p className="text-sm mt-1 whitespace-pre-wrap">{client.observacao || "Não informado"}</p></div>
                       </div>
                     </div>
                   )}

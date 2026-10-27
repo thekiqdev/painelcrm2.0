@@ -1,0 +1,5 @@
+{
+  "source": "pt-BR",
+  "targets": ["en", "es"],
+  "complete": ["common", "landing", "auth", "checkout", "legal", "nav", "dashboard", "crm", "chat", "agenda", "tickets", "settings", "finance", "contracts", "proposals", "store", "automation", "superadmin", "partner"]
+}

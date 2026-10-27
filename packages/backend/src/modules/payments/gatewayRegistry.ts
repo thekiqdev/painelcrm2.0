@@ -93,9 +93,16 @@ registerGateway('asaas', (config) => {
   return gw;
 });
 
-// Sprint 11 — Stripe skeleton (inerte até adapter real + multi_gateway ON)
+// Sprint 11 / IX4 — Stripe SaaS. Sem secret no registry cai no skeleton (sem HTTP).
+import { getStripeSaasGateway } from '../gateways/stripe/stripeSaasGateway.js';
+import { getStripeTenantGateway } from '../gateways/stripe/stripeTenantGateway.js';
 import { getStripeSaasSkeletonGateway } from '../gateways/stripe/index.js';
 
 registerGateway('stripe', (config) => {
-  return getStripeSaasSkeletonGateway(credentialsToStripeConfig(config.credentials));
+  const cred = credentialsToStripeConfig(config.credentials);
+  if (config.options?.stripe_scope === 'tenant') {
+    return getStripeTenantGateway({ secretKey: cred.api_key });
+  }
+  if (!cred.api_key) return getStripeSaasSkeletonGateway(cred);
+  return getStripeSaasGateway(cred);
 });

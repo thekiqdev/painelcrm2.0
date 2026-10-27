@@ -163,6 +163,10 @@ export async function getPartnerDetail(
     theme_json: Record<string, unknown>;
     custom_domain: string | null;
     domain_status: string;
+    cf_custom_hostname_id: string | null;
+    cf_ssl_status: string | null;
+    cf_ownership_status: string | null;
+    cf_last_error: string | null;
     payout_cadence_preference: string;
     purchased_seats: number;
     used_seats_cache: number;
@@ -180,6 +184,7 @@ export async function getPartnerDetail(
             pp.public_name, pp.product_name, pp.program_type, pp.status AS partner_status,
             pp.program_config_json, pp.logo_url, pp.theme_json,
             pp.custom_domain, pp.domain_status, pp.payout_cadence_preference,
+            pp.cf_custom_hostname_id, pp.cf_ssl_status, pp.cf_ownership_status, pp.cf_last_error,
             pp.wholesale_plan_id::text AS wholesale_plan_id,
             COALESCE(pp.wholesale_status, 'none') AS wholesale_status,
             pp.wholesale_subscription_id::text AS wholesale_subscription_id,
@@ -245,6 +250,10 @@ export async function getPartnerDetail(
     theme_json: row.theme_json ?? {},
     custom_domain: row.custom_domain,
     domain_status: row.domain_status as PartnerDetail['domain_status'],
+    cf_custom_hostname_id: row.cf_custom_hostname_id,
+    cf_ssl_status: row.cf_ssl_status,
+    cf_ownership_status: row.cf_ownership_status,
+    cf_last_error: row.cf_last_error,
     payout_cadence_preference: row.payout_cadence_preference as PartnerDetail['payout_cadence_preference'],
     wholesale_plan_id: row.wholesale_plan_id,
     wholesale_status: (row.wholesale_status || 'none') as PartnerDetail['wholesale_status'],

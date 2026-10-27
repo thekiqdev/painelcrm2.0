@@ -11,6 +11,7 @@ export interface ClientData {
   group_id?: string;
   status?: string;
   notes?: string;
+  observacao?: string | null;
   profile_id?: string;
   cpf_cnpj?: string | null;
 }
@@ -37,6 +38,7 @@ export const addClient = async (clientData: ClientData) => {
     if (clientData.company && clientData.company.trim()) cleanData.company = clientData.company.trim();
     if (clientData.status && clientData.status.trim()) cleanData.status = clientData.status.trim();
     if (clientData.notes && clientData.notes.trim()) cleanData.notes = clientData.notes.trim();
+    if (clientData.observacao && clientData.observacao.trim()) cleanData.observacao = clientData.observacao.trim();
     if (clientData.group_id && clientData.group_id.trim()) cleanData.group_id = clientData.group_id;
     if (clientData.profile_id && clientData.profile_id.trim()) cleanData.profile_id = clientData.profile_id;
     if (clientData.cpf_cnpj != null && String(clientData.cpf_cnpj).trim()) {

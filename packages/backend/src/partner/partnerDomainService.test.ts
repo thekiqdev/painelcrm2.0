@@ -14,6 +14,13 @@ vi.mock('./partnerRepository.js', () => ({
   getPartnerProfile: vi.fn(),
 }));
 
+vi.mock('./partnerCloudflareHostnameService.js', () => ({
+  provisionPartnerCloudflareHostname: vi.fn().mockResolvedValue(undefined),
+  deprovisionPartnerCloudflareHostname: vi.fn().mockResolvedValue(undefined),
+  loadPartnerCfSnapshot: vi.fn().mockResolvedValue(null),
+  syncPartnerCloudflareHostnameStatus: vi.fn().mockResolvedValue(null),
+}));
+
 vi.mock('node:dns/promises', () => ({
   default: {
     resolveTxt: vi.fn(),
@@ -24,6 +31,7 @@ vi.mock('node:dns/promises', () => ({
 import dns from 'node:dns/promises';
 import { getPartnerProfile } from './partnerRepository.js';
 import { isPartnerDomainVerifyBypassEnabled } from './partnerFlags.js';
+import { provisionPartnerCloudflareHostname } from './partnerCloudflareHostnameService.js';
 import { setPartnerDomain, verifyPartnerDomain } from './partnerDomainService.js';
 
 const PARTNER_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -70,6 +78,10 @@ describe('partnerDomainService', () => {
     const result = await verifyPartnerDomain(PARTNER_ID);
     expect(result.verified).toBe(true);
     expect(result.method).toBe('bypass');
+    expect(provisionPartnerCloudflareHostname).toHaveBeenCalledWith({
+      partnerTenantId: PARTNER_ID,
+      hostname: 'crm.parceiro.com',
+    });
   });
 
   it('verifyPartnerDomain aceita TXT', async () => {
@@ -105,5 +117,15 @@ describe('partnerDomainService', () => {
     await expect(setPartnerDomain(PARTNER_ID, 'loja.empresa.com')).rejects.toMatchObject({
       code: 'DOMAIN_TAKEN_TENANT',
     });
+  });
+
+  it('setPartnerDomain rejeita domínio raiz (apex)', async () => {
+    await expect(setPartnerDomain(PARTNER_ID, 'empresa.com.br')).rejects.toMatchObject({
+      code: 'DOMAIN_SUBDOMAIN_REQUIRED',
+    });
+    await expect(setPartnerDomain(PARTNER_ID, 'empresa.com')).rejects.toMatchObject({
+      code: 'DOMAIN_SUBDOMAIN_REQUIRED',
+    });
+    expect(query).not.toHaveBeenCalled();
   });
 });

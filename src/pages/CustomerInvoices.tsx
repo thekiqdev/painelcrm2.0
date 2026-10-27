@@ -40,6 +40,9 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { customerInvoicesService } from "@/services/customerInvoices";
+import { formatAppMoney } from "@/lib/i18n/formatApp";
+import { resolveRecordCurrency } from "@/lib/i18n/recordCurrency";
+import { useTranslation } from "react-i18next";
 import type { CustomerInvoicesSummary, ListCustomerInvoicesParams } from "@/services/customerInvoices";
 import { clientsService } from "@/services/clients";
 import type { CustomerInvoice } from "@/services/customerInvoices";
@@ -84,11 +87,8 @@ const PAGE_SIZE = 20;
 /** Filtro agrupado: pendente + aguardando pagamento (alinhado ao card e ao resumo). */
 const PENDING_OPEN_FILTER = "pending_open";
 
-function formatAmount(cents: number): string {
-  return new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  }).format(cents / 100);
+function formatAmount(cents: number, currency = "BRL"): string {
+  return formatAppMoney(cents, currency);
 }
 
 function isSubscriptionRecurringListItem(inv: CustomerInvoice): boolean {
@@ -110,6 +110,7 @@ function buildInvoiceListRows(invoices: CustomerInvoice[]): ListRowModel[] {
 }
 
 const CustomerInvoices = () => {
+  const { t } = useTranslation("finance");
   const navigate = useNavigate();
   const { hasPermissionKey, loading: permLoading } = useModulePermissions();
   const canCreateInvoice = hasPermissionKey("billing.create_invoice") && !permLoading;
@@ -285,7 +286,7 @@ const CustomerInvoices = () => {
 
       <div className="md:hidden sticky top-0 z-30 -mx-0.5 border-b border-border/70 bg-background/95 px-0.5 pb-2 pt-1 backdrop-blur supports-[backdrop-filter]:bg-background/90">
         <MobilePageHeader
-          title="Faturas"
+          title={t("invoices_title")}
           secondarySlot={
             canCreateInvoice ? (
               <DropdownMenu>
@@ -307,15 +308,15 @@ const CustomerInvoices = () => {
           }
           primaryAction={
             canCreateInvoice
-              ? { label: "Nova fatura", icon: <Plus className="h-4 w-4" aria-hidden />, href: "/customer-invoices/new" }
+              ? { label: t("new_invoice"), icon: <Plus className="h-4 w-4" aria-hidden />, href: "/customer-invoices/new" }
               : undefined
           }
         />
       </div>
       <div className="hidden md:flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-2xl font-bold">Faturas</h1>
-          <p className="mt-0.5 text-xs text-muted-foreground">Operação rápida de cobranças e acompanhamento.</p>
+          <h1 className="text-2xl font-bold">{t("invoices_title")}</h1>
+          <p className="mt-0.5 text-xs text-muted-foreground">{t("invoices_desc")}</p>
         </div>
         <div className="flex items-center gap-2">
           {canCreateInvoice ? (
@@ -621,7 +622,7 @@ const CustomerInvoices = () => {
                         stopPropagationOnClick
                       />
                     </TableCell>
-                    <TableCell>{formatAmount(inv.amount_cents)}</TableCell>
+                    <TableCell>{formatAmount(inv.amount_cents, resolveRecordCurrency(inv))}</TableCell>
                     <TableCell>
                       <CustomerInvoiceStatusBadge status={inv.status} />
                     </TableCell>
@@ -799,7 +800,7 @@ const CustomerInvoices = () => {
                     </div>
                     <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                       <CustomerInvoiceStatusBadge status={inv.status} />
-                      <span className="text-base font-semibold tabular-nums">{formatAmount(inv.amount_cents)}</span>
+                      <span className="text-base font-semibold tabular-nums">{formatAmount(inv.amount_cents, resolveRecordCurrency(inv))}</span>
                     </div>
                     <p className="mt-2 text-xs text-muted-foreground">
                       Venc. {format(new Date(inv.due_date), "dd/MM/yyyy", { locale: ptBR })}

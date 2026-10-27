@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Search, Plus, Users, Upload } from "lucide-react";
 import { CommercialListingPageHeader } from "@/components/listing/CommercialListingPageHeader";
+import { useTranslation } from "react-i18next";
 
 interface LeadHeaderProps {
   searchTerm: string;
@@ -24,13 +25,14 @@ const LeadHeader: React.FC<LeadHeaderProps> = ({
   onImportClick,
   className,
 }) => {
+  const { t } = useTranslation("crm");
   return (
     <CommercialListingPageHeader
       className={className}
-      eyebrow="Comercial"
+      eyebrow={t("leads_eyebrow")}
       EyebrowIcon={Users}
-      title="Leads"
-      description="Captação, qualificação, acompanhamento e conversão num só lugar."
+      title={t("leads_title")}
+      description={t("leads_desc")}
       mobileSecondarySlot={
         canImport && onImportClick ? (
           <Button
@@ -39,7 +41,7 @@ const LeadHeader: React.FC<LeadHeaderProps> = ({
             size="icon"
             className="h-10 w-10 touch-manipulation text-muted-foreground hover:text-foreground"
             disabled={importRunning}
-            aria-label="Importar leads (CSV)"
+            aria-label={t("leads_import_csv")}
             onClick={onImportClick}
           >
             <Upload className="h-4 w-4" aria-hidden />
@@ -47,7 +49,7 @@ const LeadHeader: React.FC<LeadHeaderProps> = ({
         ) : null
       }
       mobilePrimaryAction={{
-        label: "Novo lead",
+        label: t("leads_new"),
         icon: <Plus className="h-4 w-4" aria-hidden />,
         onClick: onAddClick,
       }}
@@ -60,11 +62,11 @@ const LeadHeader: React.FC<LeadHeaderProps> = ({
             />
             <Input
               type="search"
-              placeholder="Buscar nome, empresa, e-mail ou telefone…"
+              placeholder={t("leads_search")}
               className="h-10 pl-9"
               value={searchTerm}
               onChange={onSearchChange}
-              aria-label="Buscar leads"
+              aria-label={t("leads_search_label")}
             />
           </div>
           {canImport && onImportClick ? (
@@ -76,13 +78,13 @@ const LeadHeader: React.FC<LeadHeaderProps> = ({
               onClick={onImportClick}
             >
               <Upload className="h-4 w-4 shrink-0" aria-hidden />
-              Importar
+              {t("leads_import")}
             </Button>
           ) : null}
           <div className="hidden md:flex">
             <Button type="button" onClick={onAddClick} className="h-10 shrink-0 touch-manipulation sm:px-4">
               <Plus className="mr-2 h-4 w-4" />
-              Novo lead
+              {t("leads_new")}
             </Button>
           </div>
         </div>

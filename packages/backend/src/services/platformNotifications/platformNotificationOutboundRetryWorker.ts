@@ -134,7 +134,7 @@ async function redispatchOnePlatform(p: Pool, deliveryId: string): Promise<void>
       phone: row.recipient_address,
       eventKey: row.event_key,
       channel: row.channel,
-      locale: 'pt-BR',
+      locale: typeof row.metadata?.locale === 'string' ? row.metadata.locale : 'pt-BR',
       metadata: row.metadata,
       entityType: row.entity_type,
       entityId: row.entity_id,

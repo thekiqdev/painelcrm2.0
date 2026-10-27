@@ -1,0 +1,15 @@
+{
+  "plans_title": "Planes",
+  "new_plan": "Nuevo plan",
+  "edit_plan": "Editar plan",
+  "price": "Precio",
+  "currencies": "Monedas",
+  "prices_by_currency": "Precios por moneda",
+  "price_for": "Precio ({{prefix}})",
+  "prices_per_user": "Precios por usuario / conexión y moneda",
+  "notifications_title": "Avisos de la plataforma",
+  "template_locale": "Idioma de la plantilla",
+  "catalog": "Catálogo",
+  "global": "Configuración global",
+  "history": "Historial"
+}

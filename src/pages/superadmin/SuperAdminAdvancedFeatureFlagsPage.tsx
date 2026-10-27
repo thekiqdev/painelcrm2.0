@@ -60,6 +60,7 @@ const NAMESPACE_ORDER = [
   'meta_readiness',
   'platform',
   'partner',
+  'tenant',
   'billing_recovery',
   'billing2',
   'crm',

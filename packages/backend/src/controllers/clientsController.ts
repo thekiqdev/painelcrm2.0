@@ -167,6 +167,7 @@ const clientSchema = z.object({
   source: z.any().optional().nullable(),
   funnel_stage: z.any().optional().nullable(),
   notes: z.any().optional().nullable(),
+  observacao: z.union([z.string(), z.literal(''), z.null()]).optional(),
   group_id: z.any().optional().nullable(),
   profile_id: z.any().optional().nullable(),
   cpf_cnpj: z.string().optional().nullable(),
@@ -1131,6 +1132,12 @@ export async function createClient(req: AuthRequest, res: Response): Promise<voi
     } else {
       cleanData.notes = null;
     }
+
+    if (clientData.observacao && typeof clientData.observacao === 'string' && clientData.observacao.trim()) {
+      cleanData.observacao = clientData.observacao.trim();
+    } else {
+      cleanData.observacao = null;
+    }
     
     if (clientData.group_id && typeof clientData.group_id === 'string' && clientData.group_id.trim()) {
       // Validate UUID format
@@ -1202,14 +1209,14 @@ export async function createClient(req: AuthRequest, res: Response): Promise<voi
     const result = await pool.query(
       `INSERT INTO clients (
         user_id, name, email, phone, company, status, source,
-        funnel_stage, notes, group_id, profile_id, cpf_cnpj
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        funnel_stage, notes, group_id, profile_id, cpf_cnpj, observacao
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING *`,
       [
         userId, cleanData.name, cleanData.email, cleanData.phone,
         cleanData.company, cleanData.status, cleanData.source,
         cleanData.funnel_stage, cleanData.notes, cleanData.group_id,
-        cleanData.profile_id, cleanData.cpf_cnpj
+        cleanData.profile_id, cleanData.cpf_cnpj, cleanData.observacao
       ]
     );
 

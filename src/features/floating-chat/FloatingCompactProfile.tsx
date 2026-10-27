@@ -77,6 +77,7 @@ type LeadProfileForConversion = {
   email?: string | null;
   phone?: string | null;
   notes?: string | null;
+  observacao?: string | null;
 };
 const chatActionNotificationDebugEnabled = (() => {
   const env = (import.meta as unknown as { env?: Record<string, unknown> }).env ?? {};
@@ -244,6 +245,7 @@ export function FloatingCompactProfile({
         email: lead.email || undefined,
         phone: lead.phone || conversation?.phoneNumber || undefined,
         notes: lead.notes || undefined,
+        observacao: lead.observacao || undefined,
         status: 'Ativo',
       });
       if (!clientResult.success || !clientResult.data || !(clientResult.data as { id?: string }).id) {

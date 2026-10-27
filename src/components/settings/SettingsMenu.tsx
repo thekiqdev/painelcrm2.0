@@ -12,6 +12,8 @@ import {
   type SettingSection,
   type SettingsNavItem,
 } from "@/config/settingsNavigation";
+import { useSettingsLabels } from "@/lib/i18n/settingsLabels";
+import { useApiKeysAccess } from "@/components/settings/useApiKeysAccess";
 
 interface SettingsMenuProps {
   activeSection: SettingSection;
@@ -21,7 +23,13 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection }) => 
   const location = useLocation();
   const isPaymentsRoute = location.pathname.startsWith("/settings/payments");
 
-  const menuItems = useMemo(() => getSettingsNavItems(), []);
+  const apiKeys = useApiKeysAccess();
+  const menuItems = useMemo(() => {
+    const items = getSettingsNavItems();
+    if (apiKeys.visible) return items;
+    return items.filter((item) => item.id !== "apiKeys");
+  }, [apiKeys.visible]);
+  const labels = useSettingsLabels();
 
   const highlightSection = useMemo((): SettingSection => {
     if (
@@ -69,7 +77,7 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection }) => 
         >
           <Link to="/settings/payments">
             <Icon className="h-4 w-4" />
-            <span className="ml-2">{item.title}</span>
+            <span className="ml-2">{labels.title(item)}</span>
           </Link>
         </Button>
       );
@@ -89,7 +97,7 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection }) => 
       >
         <Link to={href}>
           <Icon className="h-4 w-4" />
-          <span className="ml-2">{item.title}</span>
+          <span className="ml-2">{labels.title(item)}</span>
         </Link>
       </Button>
     );
@@ -105,7 +113,7 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection }) => 
 
           return (
             <div key={category} className="mb-6 last:mb-0">
-              <h4 className="mb-2 text-sm font-medium text-muted-foreground">{category}</h4>
+              <h4 className="mb-2 text-sm font-medium text-muted-foreground">{labels.category(category)}</h4>
               {category === "Integrações" ? (
                 <div className="space-y-3">
                   {INTEGRATIONS_SUBCATEGORY_ORDER.map((sub) => {
@@ -114,7 +122,7 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ activeSection }) => 
                     return (
                       <div key={sub}>
                         <p className="mb-1.5 pl-0.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
-                          {sub}
+                          {labels.subcategory(sub)}
                         </p>
                         <div className="space-y-1">{subItems.map(renderMenuButton)}</div>
                       </div>

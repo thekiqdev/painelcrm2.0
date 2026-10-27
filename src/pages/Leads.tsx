@@ -57,6 +57,7 @@ import {
 import { CommercialListingPageShell } from "@/components/listing/CommercialListingPageShell";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { prepareLeadsFromCsv, type LeadCsvProfile } from "@/utils/importLeadsCsv";
+import { useTranslation } from "react-i18next";
 import { useFloatingChatOptional } from "@/features/floating-chat";
 import { scheduleInvalidateFloatingChatAggregates } from "@/features/floating-chat/floatingChatQueries";
 import { chatService, type ChatInstance } from "@/services/chat";
@@ -71,6 +72,7 @@ const leadFormSchema = z.object({
   cpf_cnpj: z.string().optional(),
   status: z.string(),
   source: z.string(),
+  observacao: z.string().optional(),
 });
 
 const taskFormSchema = z.object({
@@ -94,6 +96,7 @@ const DEFAULT_LEAD_STATUSES = [
 ];
 
 const Leads = () => {
+  const { t } = useTranslation("crm");
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -426,6 +429,10 @@ const Leads = () => {
       } else {
         leadData.source = "Outros"; // Default source
       }
+
+      if (values.observacao && values.observacao.trim()) {
+        leadData.observacao = values.observacao.trim();
+      }
       
       const response = await apiClient.post("/api/leads", leadData);
       if (response.error) throw new Error(response.error);
@@ -631,55 +638,55 @@ const Leads = () => {
     }[] = [
       {
         key: "total",
-        label: "Total",
-        hint: "Todos os estágios nesta base",
+        label: t("metric_total"),
+        hint: t("hint_total"),
         value: leads.length,
         filter: "all",
         Icon: Layers,
       },
       {
         key: "novo",
-        label: "Novos",
-        hint: "Primeiro contacto",
+        label: t("metric_new"),
+        hint: t("hint_new"),
         value: sc("novo"),
         filter: "novo",
         Icon: UserPlus,
       },
       {
         key: "em",
-        label: "Em contato",
-        hint: "Qualificação em curso",
+        label: t("metric_contact"),
+        hint: t("hint_contact"),
         value: sc("em contato"),
         filter: "em contato",
         Icon: Phone,
       },
       {
         key: "qual",
-        label: "Qualificados",
-        hint: "Prontos para avançar",
+        label: t("metric_qualified"),
+        hint: t("hint_qualified"),
         value: sc("qualificado"),
         filter: "qualificado",
         Icon: Target,
       },
       {
         key: "perd",
-        label: "Perdidos",
-        hint: "Arquivados neste funil",
+        label: t("metric_lost"),
+        hint: t("hint_lost"),
         value: sc("perdido"),
         filter: "perdido",
         Icon: XCircle,
       },
       {
         key: "conv",
-        label: "Convertidos",
-        hint: "Já viraram cliente",
+        label: t("metric_won"),
+        hint: t("hint_won"),
         value: sc("convertido"),
         filter: "convertidos",
         Icon: CheckCircle2,
       },
     ];
     return rows;
-  }, [leads]);
+  }, [leads, t]);
 
   const totalPages = Math.max(1, Math.ceil(filteredLeads.length / itemsPerPage));
   const paginatedLeads = filteredLeads.slice(
@@ -895,14 +902,14 @@ const Leads = () => {
         <CardHeader className="flex flex-col gap-2 border-b border-border/50 pb-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <CardTitle className="text-lg font-semibold tracking-tight">
-              {viewMode === "kanban" ? "Kanban de leads" : "Lista de leads"}
+              {viewMode === "kanban" ? t("leads_kanban") : t("leads_list")}
             </CardTitle>
             <p className="mt-0.5 text-sm text-muted-foreground">
               {filteredLeads.length === 0
-                ? "Nenhum resultado"
+                ? t("leads_none")
                 : viewMode === "kanban"
-                  ? `${filteredLeads.length} lead${filteredLeads.length === 1 ? "" : "s"} neste quadro`
-                  : `Mostrando ${paginatedLeads.length} de ${filteredLeads.length} neste filtro`}
+                  ? (filteredLeads.length === 1 ? t("leads_board_one", { count: filteredLeads.length }) : t("leads_board_many", { count: filteredLeads.length }))
+                  : t("leads_showing", { shown: paginatedLeads.length, total: filteredLeads.length })}
             </p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -915,7 +922,7 @@ const Leads = () => {
                 onClick={() => setLeadViewMode("list")}
               >
                 <List className="h-3.5 w-3.5" aria-hidden />
-                Lista
+                {t("list")}
               </Button>
               <Button
                 type="button"
@@ -925,12 +932,12 @@ const Leads = () => {
                 onClick={() => setLeadViewMode("kanban")}
               >
                 <KanbanSquare className="h-3.5 w-3.5" aria-hidden />
-                Kanban
+                {t("kanban")}
               </Button>
             </div>
             {viewMode === "list" ? (
               <div className="flex items-center gap-2">
-                <span className="hidden text-sm text-muted-foreground sm:inline">Por página</span>
+                <span className="hidden text-sm text-muted-foreground sm:inline">{t("per_page")}</span>
                 <Select
                   value={String(itemsPerPage)}
                   onValueChange={(v) => {

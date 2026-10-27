@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import MessageCircle from "lucide-react/dist/esm/icons/message-circle.js";
 import Users from "lucide-react/dist/esm/icons/users.js";
 
@@ -8,6 +9,7 @@ type FloatingChatPreviewProps = {
 };
 
 export function FloatingChatPreview({ phase, showPulse, showAcceptedLine }: FloatingChatPreviewProps) {
+  const { t } = useTranslation("landing");
   return (
     <div className="absolute bottom-3 right-3 z-20 flex flex-col items-end gap-2" aria-hidden>
       <div className="w-[min(100%,220px)] overflow-hidden rounded-xl border border-border/50 bg-[hsl(222_44%_10%/0.92)] shadow-xl backdrop-blur-md">
@@ -33,18 +35,18 @@ export function FloatingChatPreview({ phase, showPulse, showAcceptedLine }: Floa
         <div className="max-h-[120px] space-y-2 overflow-y-auto p-2.5">
           <div className="flex justify-start">
             <div className="max-w-[92%] rounded-lg rounded-tl-sm bg-secondary/80 px-2.5 py-1.5 text-[10px] leading-snug text-foreground">
-              Oi, gostei do plano. Você consegue me enviar uma proposta?
+              {t("mock_bubble_in")}
             </div>
           </div>
           <div className="flex justify-end">
             <div className="max-w-[92%] rounded-lg rounded-tr-sm bg-primary/25 px-2.5 py-1.5 text-[10px] leading-snug text-foreground">
-              Claro! Vou preparar agora.
+              {t("mock_bubble_out")}
             </div>
           </div>
           {showAcceptedLine ? (
             <div className="flex justify-start">
               <div className="max-w-[92%] rounded-lg rounded-tl-sm border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 text-[10px] leading-snug text-emerald-100">
-                Cliente aceitou a proposta ✓
+                {t("mock_bubble_won")}
               </div>
             </div>
           ) : null}
@@ -53,7 +55,7 @@ export function FloatingChatPreview({ phase, showPulse, showAcceptedLine }: Floa
           <div className="flex h-6 w-6 items-center justify-center rounded-md bg-muted/50">
             <Users className="h-3 w-3 text-muted-foreground" />
           </div>
-          <div className="h-6 flex-1 rounded-md bg-muted/30 text-[9px] leading-6 text-muted-foreground/70">Mensagem…</div>
+          <div className="h-6 flex-1 rounded-md bg-muted/30 text-[9px] leading-6 text-muted-foreground/70">{t("mock_placeholder")}</div>
         </div>
       </div>
 

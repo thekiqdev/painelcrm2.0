@@ -32,6 +32,57 @@ import {
 import { useMobileMoreQuickAccessPreferences } from "@/hooks/useMobileMoreQuickAccessPreferences";
 import { MobileMoreQuickAccessCustomizeDialog } from "@/components/navigation/MobileMoreQuickAccessCustomizeDialog";
 import { MobileQuickAccessSortableGrid } from "@/components/navigation/MobileQuickAccessSortableGrid";
+import { useTranslation } from "react-i18next";
+
+const NAV_BY_ID: Record<string, string> = {
+  dashboard: "dashboard",
+  clients: "clients",
+  leads: "leads",
+  funnel: "funnel",
+  "customer-invoices": "invoices",
+  "crm-subscriptions": "subscriptions",
+  proposals: "proposals",
+  contracts: "contracts",
+  "project-templates": "project_templates",
+  "proposal-templates": "proposal_templates",
+  "contract-templates": "contract_templates",
+  chat: "chat",
+  "chat-kanban": "chat_kanban",
+  tickets: "tickets",
+  chatbot_flows: "chatbot",
+  catalog: "catalog",
+  orders: "orders",
+  "store-settings": "store_short",
+  projects: "projects",
+  tasks: "tasks",
+  agenda: "agenda",
+  updates: "updates",
+  "finance-overview": "finance_summary",
+  "finance-accounts": "banks",
+  "finance-transactions": "cashflow",
+  "finance-expenses": "payables",
+  "finance-categories": "categories",
+  "finance-cards": "credit_cards",
+  "finance-reports": "reports",
+  profile: "my_profile",
+  "meu-plano": "my_plan",
+  settings: "settings",
+  superadmin: "superadmin",
+};
+
+const GROUP_KEY: Record<string, string> = {
+  "Visão geral": "g_overview",
+  Relacionamento: "g_relationship",
+  Atendimento: "g_service",
+  Faturamento: "g_billing",
+  Vendas: "g_sales",
+  "Documentação comercial": "g_commercial_docs",
+  Modelos: "g_templates",
+  "Loja online": "g_store",
+  Projetos: "g_projects",
+  Financeiro: "g_finance",
+  Conta: "g_account",
+};
 
 type MobileNavItem = {
   key: string;
@@ -62,15 +113,17 @@ function isChatMainTabActive(pathname: string): boolean {
   return pathname === "/chat" || pathname.startsWith("/chat/");
 }
 
-function defToMoreItem(def: (typeof MOBILE_MORE_ITEM_DEFS)[number]): MoreItem {
+function defToMoreItem(
+  def: (typeof MOBILE_MORE_ITEM_DEFS)[number],
+  labelFor: (id: string) => string,
+): MoreItem {
   const Icon = MOBILE_MORE_ICONS[def.icon];
   const preload = def.preload ? routePreload[def.preload] : undefined;
   return {
     id: def.id,
-    label: def.label,
+    label: labelFor(def.id),
     to: def.to,
     icon: Icon,
-    description: def.description,
     preload,
   };
 }
@@ -79,6 +132,7 @@ function MobileAppNavigationImpl() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
+  const { t } = useTranslation("nav");
   const { canView } = useModulePermissions();
   const { prefs, setPrefs, reset } = useMobileMoreQuickAccessPreferences(user?.id);
 
@@ -161,7 +215,7 @@ function MobileAppNavigationImpl() {
   const homeItem: MobileNavItem | null = show(hasDashboard, "dashboard")
     ? {
         key: "home",
-        label: "Início",
+        label: t("home"),
         to: "/dashboard",
         icon: Home,
         isActive: (p) => p === "/dashboard",
@@ -169,7 +223,7 @@ function MobileAppNavigationImpl() {
       }
     : {
         key: "home",
-        label: "Início",
+        label: t("home"),
         to: "/",
         icon: Home,
         isActive: (p) => p === "/" || p === "",
@@ -178,7 +232,7 @@ function MobileAppNavigationImpl() {
   const clientsItem: MobileNavItem | null = show(hasClients, "clients")
     ? {
         key: "clients",
-        label: "Clientes",
+        label: t("clients"),
         to: "/clients",
         icon: Users,
         isActive: (p) => isRoutePrefix(p, "/clients"),
@@ -189,7 +243,7 @@ function MobileAppNavigationImpl() {
   const chargesItem: MobileNavItem | null = show(hasInvoices, "billing")
     ? {
         key: "charges",
-        label: "Faturas",
+        label: t("invoices"),
         to: "/customer-invoices",
         icon: CreditCard,
         isActive: (p) => isRoutePrefix(p, "/customer-invoices"),
@@ -200,7 +254,7 @@ function MobileAppNavigationImpl() {
   const chatItem: MobileNavItem | null = show(hasChat, "chat")
     ? {
         key: "chat",
-        label: "Chat",
+        label: t("chat"),
         to: "/chat",
         icon: MessageSquare,
         isActive: isChatMainTabActive,
@@ -212,6 +266,8 @@ function MobileAppNavigationImpl() {
     (item): item is MobileNavItem => item !== null,
   );
 
+  const labelFor = useCallback((id: string) => t(NAV_BY_ID[id] ?? "dashboard"), [t]);
+
   const { quickAccessItems, moreMenuGroups } = useMemo((): { quickAccessItems: MoreItem[]; moreMenuGroups: MoreGroup[] } => {
     const visible = MOBILE_MORE_ITEM_DEFS.filter((d) => isMobileMoreItemVisible(d, moreCtx));
     const byGroup = new Map<string, typeof visible>();
@@ -221,23 +277,23 @@ function MobileAppNavigationImpl() {
       byGroup.set(d.group, arr);
     }
     const groups: MoreGroup[] = [...byGroup.entries()]
+      .sort((a, b) => groupIndex(a[0]) - groupIndex(b[0]))
       .map(([title, items]) => ({
-        title,
-        items: [...items].sort((a, b) => a.quickRank - b.quickRank).map(defToMoreItem),
-      }))
-      .sort((a, b) => groupIndex(a.title) - groupIndex(b.title));
+        title: t(GROUP_KEY[title] ?? "g_overview"),
+        items: [...items].sort((a, b) => a.quickRank - b.quickRank).map((item) => defToMoreItem(item, labelFor)),
+      }));
 
     const strip = computeMobileQuickAccessStrip(moreCtx, prefs);
     const quickAccessItems: MoreItem[] = strip.map((s) => ({
       id: s.id,
-      label: s.label,
+      label: labelFor(s.id),
       to: s.to,
       icon: s.icon,
       preload: s.preload,
     }));
 
     return { quickAccessItems, moreMenuGroups: groups };
-  }, [moreCtx, prefs]);
+  }, [moreCtx, prefs, labelFor, t]);
 
   const handleQuickAccessReorder = useCallback(
     (orderedIds: MobileMoreQuickActionId[]) => {
@@ -289,7 +345,7 @@ function MobileAppNavigationImpl() {
               )}
             >
               <Ellipsis className="h-[1.35rem] w-[1.35rem] shrink-0" />
-              <span className="max-w-full truncate">Mais</span>
+              <span className="max-w-full truncate">{t("more")}</span>
             </button>
           </SheetTrigger>
           <SheetContent
@@ -411,7 +467,7 @@ function MobileAppNavigationImpl() {
                   }}
                 >
                   <LogOut className="h-4 w-4" />
-                  Sair
+                  {t("logout")}
                 </Button>
               </div>
             </div>

@@ -28,6 +28,7 @@ import {
 import { getPublicCatalogMediaRaw } from '../controllers/publicCatalogMediaController.js';
 import {
   getPublicSaasBillingSummary,
+  getPublicSaasBillingPdf,
   postPublicSaasBillingPreparePayment,
   getPublicSaasBillingStatus,
   postPublicSaasBillingPayWithCard,
@@ -48,6 +49,7 @@ import {
   postPublicAppointmentConfirmationByToken,
 } from '../controllers/publicAppointmentsConfirmationController.js';
 import { getPublicPlatformTrackingSettings } from '../controllers/publicPlatformTrackingController.js';
+import { getPublicLocaleContext } from '../controllers/publicLocaleContextController.js';
 import {
   getPublicSupportPortalBySlug,
   getPublicTicketByToken,
@@ -116,6 +118,9 @@ const signupFlowPublicLimiter = rateLimit({
 
 router.get('/signup-flow', signupFlowPublicLimiter, getPublicSignupFlow);
 router.get('/signup-health', signupFlowPublicLimiter, getPublicSignupHealth);
+
+/** IX2 — idioma + moeda sugeridos (flag i18n.locale_detection_v1) */
+router.get('/locale-context', signupFlowPublicLimiter, getPublicLocaleContext);
 
 const legalPublicLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -266,6 +271,7 @@ const saasPublicWriteLimiter = rateLimit({
 });
 
 router.get('/saas-billing/:token', saasPublicReadLimiter, getPublicSaasBillingSummary);
+router.get('/saas-billing/:token/pdf', saasPublicReadLimiter, getPublicSaasBillingPdf);
 router.post('/saas-billing/:token/prepare-payment', saasPublicWriteLimiter, postPublicSaasBillingPreparePayment);
 router.get('/saas-billing/:token/status', saasPublicReadLimiter, getPublicSaasBillingStatus);
 router.post(

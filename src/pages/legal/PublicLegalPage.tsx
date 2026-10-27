@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import LandingLayout from '@/landingpage/components/LandingLayout';
@@ -7,21 +8,8 @@ import { formatLegalPublicationDate, replaceLegalDatePlaceholders } from '@/lib/
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { cn } from '@/lib/utils';
 
-const COPY: Record<
-  LegalPageSlug,
-  { h1: string; lead: string }
-> = {
-  'privacy-policy': {
-    h1: 'Política de Privacidade',
-    lead: 'Transparência sobre o tratamento de dados na plataforma PainelCRM.',
-  },
-  'terms-of-service': {
-    h1: 'Termos de Uso',
-    lead: 'Condições gerais de utilização dos serviços PainelCRM.',
-  },
-};
-
 function PublicLegalPage({ kind }: { kind: LegalPageSlug }) {
+  const { t } = useTranslation('legal');
   const [html, setHtml] = useState<string>('');
   const [publishedAt, setPublishedAt] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
@@ -36,7 +24,7 @@ function PublicLegalPage({ kind }: { kind: LegalPageSlug }) {
       const res = await fetchPublicLegalPage(kind);
       if (cancelled) return;
       if (res.error || !res.data) {
-        setError(res.error ?? 'Não foi possível carregar esta página.');
+        setError(res.error ?? t('load_error'));
         setHtml('');
         setPublishedAt(null);
         setUpdatedAt(null);
@@ -66,7 +54,10 @@ function PublicLegalPage({ kind }: { kind: LegalPageSlug }) {
     return sanitizeHtml(withDates);
   }, [html, dateForPlaceholders]);
 
-  const meta = COPY[kind];
+  const meta =
+    kind === 'privacy-policy'
+      ? { h1: t('privacy_h1'), lead: t('privacy_lead') }
+      : { h1: t('terms_h1'), lead: t('terms_lead') };
   const isEmpty = !loading && !error && safe.replace(/<[^>]+>/g, '').trim().length === 0;
 
   /** Navbar da landing: fixed + h-16 (4rem) + safe-area iOS/Android + folga para não cortar breadcrumb/título */
@@ -80,7 +71,7 @@ function PublicLegalPage({ kind }: { kind: LegalPageSlug }) {
         <div className="mx-auto max-w-[min(100%,58rem)] px-4 pb-10 pt-2 md:pb-14 md:pt-3">
           <nav className="text-sm font-medium text-foreground/80">
             <Link to="/" className="text-crm-primary hover:underline">
-              Início
+              {t('home')}
             </Link>
             <span className="mx-2 text-muted-foreground">/</span>
             <span className="text-foreground">{meta.h1}</span>
@@ -92,7 +83,7 @@ function PublicLegalPage({ kind }: { kind: LegalPageSlug }) {
             <p className="text-lg text-foreground/85 md:text-xl">{meta.lead}</p>
             {publicationLabel ? (
               <p className="text-sm font-medium text-foreground/90">
-                Última publicação: <time dateTime={referenceIso ?? undefined}>{publicationLabel}</time>
+                {t('published')} <time dateTime={referenceIso ?? undefined}>{publicationLabel}</time>
               </p>
             ) : null}
           </header>
@@ -102,17 +93,17 @@ function PublicLegalPage({ kind }: { kind: LegalPageSlug }) {
       <div className="bg-background pb-20 pt-8 md:pb-24 md:pt-10">
         <div className="mx-auto max-w-[min(100%,58rem)] px-4">
           {loading ? (
-            <p className="text-sm text-muted-foreground">A carregar…</p>
+            <p className="text-sm text-muted-foreground">{t('loading')}</p>
           ) : error ? (
             <Alert variant="destructive">
-              <AlertTitle>Não foi possível apresentar o documento</AlertTitle>
+              <AlertTitle>{t('error_title')}</AlertTitle>
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           ) : isEmpty ? (
             <Alert className="border-border bg-card text-card-foreground shadow-sm">
-              <AlertTitle>Documento em preparação</AlertTitle>
+              <AlertTitle>{t('empty_title')}</AlertTitle>
               <AlertDescription className="text-muted-foreground">
-                O texto legal ainda não foi publicado. Volte mais tarde ou contacte o suporte PainelCRM.
+                {t('empty_body')}
               </AlertDescription>
             </Alert>
           ) : (

@@ -1,0 +1,10 @@
+{
+  "title": "Contracts",
+  "new": "New contract",
+  "templates": "Templates",
+  "import": "Import contracts (CSV)",
+  "start": "Start",
+  "end": "End",
+  "updated": "Updated",
+  "client_unknown": "Customer not identified"
+}

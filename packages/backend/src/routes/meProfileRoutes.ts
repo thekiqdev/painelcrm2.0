@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import * as meProfileController from '../controllers/meProfileController.js';
+import * as meLocaleController from '../controllers/meLocaleController.js';
 import { authenticateToken, setCurrentTenant, setRequestDb } from '../middleware/auth.js';
 import { catalogMediaUploadSingle } from '../middleware/catalogMediaMulter.js';
 
@@ -7,6 +8,7 @@ const router = Router();
 
 router.use(authenticateToken, setCurrentTenant, setRequestDb);
 
+router.patch('/locale', meLocaleController.patchMeLocale);
 router.get('/profile', meProfileController.getMeProfile);
 router.put('/profile', meProfileController.putMeProfile);
 router.post('/profile/avatar', catalogMediaUploadSingle, meProfileController.postMeProfileAvatar);

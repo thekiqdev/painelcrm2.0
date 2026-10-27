@@ -1,0 +1,493 @@
+{
+  "note": "IX10. Aumentar count ou acrescentar arquivo sem atualizar esta lista quebra npm run check:i18n-hardcode.",
+  "files": {
+    "src/components/chat-kanban/ChatKanbanBoardColumn.tsx": {
+      "count": 1,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/components/chat-kanban/ChatKanbanCard.tsx": {
+      "count": 1,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/components/chat-kanban/ChatKanbanOpsLeadDialog.tsx": {
+      "count": 1,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/components/chat/ChatContactProfileSheet.tsx": {
+      "count": 1,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/components/chat/ChatContactProfileSummary.tsx": {
+      "count": 1,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/components/clients/client-drive/ClientDriveDesktopTile.tsx": {
+      "count": 1,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/components/clients/ClientProfileBillingPanels.tsx": {
+      "count": 1,
+      "why": "tela de assinatura ainda formata BRL; o centavo gravado não muda com USD/EUR"
+    },
+    "src/components/contracts/ContractCreateForm.tsx": {
+      "count": 1,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/components/dashboard/dashboardChartFormat.ts": {
+      "count": 1,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/components/entities/useEntityQuickViewMetrics.ts": {
+      "count": 1,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/components/finance/FinancialAccountSettingsDrawer.tsx": {
+      "count": 1,
+      "why": "livro sem coluna de moeda; o valor gravado é BRL"
+    },
+    "src/components/finance/FinancialSummary.tsx": {
+      "count": 3,
+      "why": "livro sem coluna de moeda; o valor gravado é BRL"
+    },
+    "src/components/layout/GlobalSearchPanelContent.tsx": {
+      "count": 1,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/components/leads/tabs/LeadProposalsTab.tsx": {
+      "count": 1,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/components/plan/PlanPurchaseModal.tsx": {
+      "count": 1,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/components/products/ProductFormDialog.tsx": {
+      "count": 2,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/components/products/ProductVariantsEditor.tsx": {
+      "count": 2,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/components/projects/ProjectFinance.tsx": {
+      "count": 2,
+      "why": "livro sem coluna de moeda; o valor gravado é BRL"
+    },
+    "src/components/projects/utils.ts": {
+      "count": 1,
+      "why": "livro sem coluna de moeda; o valor gravado é BRL"
+    },
+    "src/components/proposals/ProposalCreateForm.tsx": {
+      "count": 10,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/components/proposals/ProposalItemsEditor.tsx": {
+      "count": 3,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/components/settings/MercadoPagoGatewaySection.tsx": {
+      "count": 1,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/components/settings/PaymentGatewaySection.tsx": {
+      "count": 2,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/components/settings/WhatsappMessageTemplatesPanel.tsx": {
+      "count": 1,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/components/subscriptions/experience/subscriptionExperienceFormat.ts": {
+      "count": 1,
+      "why": "tela de assinatura ainda formata BRL; o centavo gravado não muda com USD/EUR"
+    },
+    "src/components/subscriptions/subscriptionContractHistoryDisplay.ts": {
+      "count": 1,
+      "why": "tela de assinatura ainda formata BRL; o centavo gravado não muda com USD/EUR"
+    },
+    "src/components/subscriptions/SubscriptionOperationalTimelinePanel.tsx": {
+      "count": 1,
+      "why": "tela de assinatura ainda formata BRL; o centavo gravado não muda com USD/EUR"
+    },
+    "src/components/subscriptions/subscriptionsListUtils.ts": {
+      "count": 1,
+      "why": "tela de assinatura ainda formata BRL; o centavo gravado não muda com USD/EUR"
+    },
+    "src/components/whatsapp/WhatsAppInstanceDetailsSheet.tsx": {
+      "count": 2,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/features/chatbot-flows/components/FlowVersionBadge.tsx": {
+      "count": 1,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/features/chatbot-flows/lib/flowInvoiceVars.ts": {
+      "count": 2,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/lib/billingAggregate/aggregateDateUtils.ts": {
+      "count": 2,
+      "why": "tela de assinatura ainda formata BRL; o centavo gravado não muda com USD/EUR"
+    },
+    "src/lib/billingSubscriptionExperience.test.ts": {
+      "count": 1,
+      "why": "fixture de teste"
+    },
+    "src/lib/billingSubscriptionExperience.ts": {
+      "count": 1,
+      "why": "tela de assinatura ainda formata BRL; o centavo gravado não muda com USD/EUR"
+    },
+    "src/lib/billingSubscriptionExperiencePolish.test.ts": {
+      "count": 1,
+      "why": "fixture de teste"
+    },
+    "src/lib/billingSubscriptionExperiencePolish.ts": {
+      "count": 1,
+      "why": "tela de assinatura ainda formata BRL; o centavo gravado não muda com USD/EUR"
+    },
+    "src/lib/brlCurrencyInput.ts": {
+      "count": 3,
+      "why": "máscara de digitação em real"
+    },
+    "src/lib/chatCommerceCreationFollowUp.ts": {
+      "count": 2,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/lib/financialEventHelpers.ts": {
+      "count": 1,
+      "why": "livro sem coluna de moeda; o valor gravado é BRL"
+    },
+    "src/lib/financialInsightsEngine.test.ts": {
+      "count": 1,
+      "why": "fixture de teste"
+    },
+    "src/lib/operationalCompetencyResolver.test.ts": {
+      "count": 1,
+      "why": "fixture de teste"
+    },
+    "src/lib/planCheckoutDisplay.ts": {
+      "count": 1,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/lib/renewalRecoveryCompletion.test.ts": {
+      "count": 1,
+      "why": "fixture de teste"
+    },
+    "src/lib/subscriptionActionExperience.test.ts": {
+      "count": 1,
+      "why": "fixture de teste"
+    },
+    "src/lib/subscriptionBillingVisibility.test.ts": {
+      "count": 1,
+      "why": "fixture de teste"
+    },
+    "src/lib/subscriptionCyclesContract.test.ts": {
+      "count": 1,
+      "why": "fixture de teste"
+    },
+    "src/lib/subscriptionExperienceSimplification.test.ts": {
+      "count": 1,
+      "why": "fixture de teste"
+    },
+    "src/lib/subscriptionFinancialConsistency.test.ts": {
+      "count": 1,
+      "why": "fixture de teste"
+    },
+    "src/lib/subscriptionFinancialConsistency.ts": {
+      "count": 1,
+      "why": "livro sem coluna de moeda; o valor gravado é BRL"
+    },
+    "src/lib/subscriptionFinancialConsistencyAudit.test.ts": {
+      "count": 1,
+      "why": "fixture de teste"
+    },
+    "src/lib/subscriptionFinancialEventBuilder.test.ts": {
+      "count": 1,
+      "why": "fixture de teste"
+    },
+    "src/lib/subscriptionFinancialEvents.test.ts": {
+      "count": 1,
+      "why": "fixture de teste"
+    },
+    "src/lib/subscriptionFinancialEventStore.ts": {
+      "count": 1,
+      "why": "livro sem coluna de moeda; o valor gravado é BRL"
+    },
+    "src/lib/subscriptionFinancialExperience.test.ts": {
+      "count": 1,
+      "why": "fixture de teste"
+    },
+    "src/lib/subscriptionFinancialExperience.ts": {
+      "count": 2,
+      "why": "livro sem coluna de moeda; o valor gravado é BRL"
+    },
+    "src/lib/subscriptionFinancialGenerateActions.test.ts": {
+      "count": 1,
+      "why": "fixture de teste"
+    },
+    "src/lib/subscriptionFinancialOcreConvergence.test.ts": {
+      "count": 1,
+      "why": "fixture de teste"
+    },
+    "src/lib/subscriptionFinancialOverview.test.ts": {
+      "count": 1,
+      "why": "fixture de teste"
+    },
+    "src/lib/subscriptionFinancialProjection.test.ts": {
+      "count": 1,
+      "why": "fixture de teste"
+    },
+    "src/lib/subscriptionFinancialUxRefinement.test.ts": {
+      "count": 1,
+      "why": "fixture de teste"
+    },
+    "src/lib/subscriptionNextInvoiceResolver.test.ts": {
+      "count": 1,
+      "why": "fixture de teste"
+    },
+    "src/lib/subscriptionRenewalRecovery.test.ts": {
+      "count": 1,
+      "why": "fixture de teste"
+    },
+    "src/pages/ClientProfile.tsx": {
+      "count": 1,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/pages/Clients.tsx": {
+      "count": 1,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/pages/CustomerChargeDetail.tsx": {
+      "count": 1,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/pages/CustomerCharges.tsx": {
+      "count": 1,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/pages/CustomerInvoiceNew.tsx": {
+      "count": 6,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/pages/CustomerInvoicePay.tsx": {
+      "count": 4,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/pages/Dashboard.tsx": {
+      "count": 7,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/pages/Finance.tsx": {
+      "count": 2,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/pages/finance/FinanceAccountDetailPage.tsx": {
+      "count": 1,
+      "why": "livro sem coluna de moeda; o valor gravado é BRL"
+    },
+    "src/pages/finance/FinanceAccountsPage.tsx": {
+      "count": 1,
+      "why": "livro sem coluna de moeda; o valor gravado é BRL"
+    },
+    "src/pages/finance/FinanceCreditCardDetailPage.tsx": {
+      "count": 1,
+      "why": "livro sem coluna de moeda; o valor gravado é BRL"
+    },
+    "src/pages/finance/FinanceCreditCardsPage.tsx": {
+      "count": 1,
+      "why": "livro sem coluna de moeda; o valor gravado é BRL"
+    },
+    "src/pages/finance/FinanceCreditCardStatementPage.tsx": {
+      "count": 1,
+      "why": "livro sem coluna de moeda; o valor gravado é BRL"
+    },
+    "src/pages/finance/FinanceExpensesPage.tsx": {
+      "count": 1,
+      "why": "livro sem coluna de moeda; o valor gravado é BRL"
+    },
+    "src/pages/finance/FinanceIncomesPage.tsx": {
+      "count": 1,
+      "why": "livro sem coluna de moeda; o valor gravado é BRL"
+    },
+    "src/pages/finance/FinancialAccountsPayablePage.tsx": {
+      "count": 4,
+      "why": "livro sem coluna de moeda; o valor gravado é BRL"
+    },
+    "src/pages/finance/FinancialOverviewPage.tsx": {
+      "count": 1,
+      "why": "livro sem coluna de moeda; o valor gravado é BRL"
+    },
+    "src/pages/finance/FinancialRecurringExpensesPage.tsx": {
+      "count": 1,
+      "why": "livro sem coluna de moeda; o valor gravado é BRL"
+    },
+    "src/pages/finance/FinancialReportsPage.tsx": {
+      "count": 1,
+      "why": "livro sem coluna de moeda; o valor gravado é BRL"
+    },
+    "src/pages/finance/FinancialUnifiedAccountDetailPage.tsx": {
+      "count": 2,
+      "why": "livro sem coluna de moeda; o valor gravado é BRL"
+    },
+    "src/pages/finance/FinancialUnifiedAccountsPage.tsx": {
+      "count": 1,
+      "why": "livro sem coluna de moeda; o valor gravado é BRL"
+    },
+    "src/pages/finance/FinancialUnifiedTransactionsPage.tsx": {
+      "count": 1,
+      "why": "livro sem coluna de moeda; o valor gravado é BRL"
+    },
+    "src/pages/MeuPlano.tsx": {
+      "count": 1,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/pages/partner/PartnerLicensesPage.tsx": {
+      "count": 1,
+      "why": "D16: licença de parceiro permanece em BRL"
+    },
+    "src/pages/partner/partnerTypes.ts": {
+      "count": 2,
+      "why": "D16: licença de parceiro permanece em BRL"
+    },
+    "src/pages/ProductForm.tsx": {
+      "count": 1,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/pages/ProposalTemplateFormPage.tsx": {
+      "count": 8,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/pages/PublicTicketView.tsx": {
+      "count": 1,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/pages/RegisterOrganizationWizard.tsx": {
+      "count": 1,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/pages/superadmin/billing2/SuperAdminBilling2CollectionPolicyPage.tsx": {
+      "count": 1,
+      "why": "interior operacional do Super Admin, fora do chrome de planos e notificações"
+    },
+    "src/pages/superadmin/billing2/SuperAdminBilling2LogsPage.tsx": {
+      "count": 1,
+      "why": "interior operacional do Super Admin, fora do chrome de planos e notificações"
+    },
+    "src/pages/superadmin/billing2/SuperAdminBilling2SubscriptionsPage.tsx": {
+      "count": 3,
+      "why": "interior operacional do Super Admin, fora do chrome de planos e notificações"
+    },
+    "src/pages/superadmin/billing2/SuperAdminBilling2WebhooksPage.tsx": {
+      "count": 2,
+      "why": "interior operacional do Super Admin, fora do chrome de planos e notificações"
+    },
+    "src/pages/superadmin/LifecycleDashboard.tsx": {
+      "count": 1,
+      "why": "interior operacional do Super Admin, fora do chrome de planos e notificações"
+    },
+    "src/pages/superadmin/SuperAdminAdvancedFeatureFlagsPage.tsx": {
+      "count": 1,
+      "why": "interior operacional do Super Admin, fora do chrome de planos e notificações"
+    },
+    "src/pages/superadmin/SuperAdminAdvancedScriptsPage.tsx": {
+      "count": 1,
+      "why": "interior operacional do Super Admin, fora do chrome de planos e notificações"
+    },
+    "src/pages/superadmin/SuperAdminAnnouncements.tsx": {
+      "count": 1,
+      "why": "interior operacional do Super Admin, fora do chrome de planos e notificações"
+    },
+    "src/pages/superadmin/SuperAdminAnnouncementSendDetail.tsx": {
+      "count": 2,
+      "why": "interior operacional do Super Admin, fora do chrome de planos e notificações"
+    },
+    "src/pages/superadmin/SuperAdminAnnouncementSends.tsx": {
+      "count": 1,
+      "why": "interior operacional do Super Admin, fora do chrome de planos e notificações"
+    },
+    "src/pages/superadmin/SuperAdminAudit.tsx": {
+      "count": 1,
+      "why": "interior operacional do Super Admin, fora do chrome de planos e notificações"
+    },
+    "src/pages/superadmin/SuperAdminBillingOperations.tsx": {
+      "count": 2,
+      "why": "interior operacional do Super Admin, fora do chrome de planos e notificações"
+    },
+    "src/pages/superadmin/SuperAdminChatMigrationFlagsPage.tsx": {
+      "count": 1,
+      "why": "interior operacional do Super Admin, fora do chrome de planos e notificações"
+    },
+    "src/pages/superadmin/SuperAdminClientCommercial.tsx": {
+      "count": 3,
+      "why": "interior operacional do Super Admin, fora do chrome de planos e notificações"
+    },
+    "src/pages/superadmin/SuperAdminClientFaturamento.tsx": {
+      "count": 1,
+      "why": "interior operacional do Super Admin, fora do chrome de planos e notificações"
+    },
+    "src/pages/superadmin/SuperAdminClientLogs.tsx": {
+      "count": 1,
+      "why": "interior operacional do Super Admin, fora do chrome de planos e notificações"
+    },
+    "src/pages/superadmin/SuperAdminDashboard.tsx": {
+      "count": 2,
+      "why": "interior operacional do Super Admin, fora do chrome de planos e notificações"
+    },
+    "src/pages/superadmin/SuperAdminNotifications.tsx": {
+      "count": 1,
+      "why": "interior operacional do Super Admin, fora do chrome de planos e notificações"
+    },
+    "src/pages/superadmin/SuperAdminPartnerDetail.tsx": {
+      "count": 1,
+      "why": "interior operacional do Super Admin, fora do chrome de planos e notificações"
+    },
+    "src/pages/superadmin/SuperAdminPlans.tsx": {
+      "count": 7,
+      "why": "interior operacional do Super Admin, fora do chrome de planos e notificações"
+    },
+    "src/pages/superadmin/SuperAdminPlatformBillings.tsx": {
+      "count": 1,
+      "why": "interior operacional do Super Admin, fora do chrome de planos e notificações"
+    },
+    "src/pages/UpdateDetailPage.tsx": {
+      "count": 1,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/services/superadminCommercialAnalytics.ts": {
+      "count": 2,
+      "why": "interior operacional do Super Admin, fora do chrome de planos e notificações"
+    },
+    "src/services/superadminTenantCommercial.ts": {
+      "count": 2,
+      "why": "interior operacional do Super Admin, fora do chrome de planos e notificações"
+    },
+    "src/themes/moderno/ModernProductCard.tsx": {
+      "count": 2,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/themes/moderno/ModernProductDetail.tsx": {
+      "count": 2,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/utils/importContractsCsv.ts": {
+      "count": 1,
+      "why": "importação: moeda default do dado legado é BRL"
+    },
+    "src/utils/importLeadsCsv.ts": {
+      "count": 1,
+      "why": "importação: moeda default do dado legado é BRL"
+    },
+    "src/utils/importWooProductsCsv.ts": {
+      "count": 1,
+      "why": "importação: moeda default do dado legado é BRL"
+    },
+    "src/utils/proposalsToFunnelDeals.ts": {
+      "count": 1,
+      "why": "registro sem moeda própria; o default do Brasil continua BRL e pt-BR"
+    },
+    "src/utils/publicProductVariants.test.ts": {
+      "count": 1,
+      "why": "fixture de teste"
+    }
+  }
+}

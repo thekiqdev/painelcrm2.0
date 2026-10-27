@@ -4,6 +4,7 @@
 import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { useParams } from "react-router-dom";
 import { publicApiGet, publicApiPost } from "@/integrations/api/client";
+import { formatAppMoneyMajor } from "@/lib/i18n/formatApp";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -114,8 +115,7 @@ const PublicProposalView = () => {
     void load();
   }, [load]);
 
-  const formatCurrency = (n: number) =>
-    new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(n);
+  const formatCurrency = (n: number) => formatAppMoneyMajor(n, "BRL");
 
   const formatDate = (iso: string | null | undefined) => formatDateOnlyPtBr(iso);
 

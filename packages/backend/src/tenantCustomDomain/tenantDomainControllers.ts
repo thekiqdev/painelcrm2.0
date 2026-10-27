@@ -18,6 +18,7 @@ import {
   getTenantDomainInstructions,
   listTenantHostsForAdmin,
   setTenantDomain,
+  syncTenantDomainCloudflare,
   verifyTenantDomain,
 } from './tenantDomainService.js';
 
@@ -134,6 +135,33 @@ export async function postMyTenantDomainVerify(req: AuthRequest, res: Response):
   }
 }
 
+/** POST /api/me/tenant/domain/cf-sync — TE3 */
+export async function postMyTenantDomainCfSync(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId!;
+    const tenantId = requireTenantId(req, res);
+    if (!tenantId) return;
+    await assertModulePermission(userId, 'settings', 'edit', undefined, req);
+
+    const role = z.enum(['store', 'support']).parse(req.body?.role ?? req.query.role);
+    const instructions = await syncTenantDomainCloudflare({ tenantId, role });
+    if (!instructions) {
+      res.status(404).json({ error: 'Nenhum domínio configurado para este uso', code: 'DOMAIN_MISSING' });
+      return;
+    }
+    logTenantDomain('domain_cf_sync', {
+      tenant_id: tenantId,
+      user_id: userId,
+      role,
+      hostname: instructions.hostname,
+      cf_ssl_status: instructions.cf_ssl_status ?? null,
+    });
+    res.json(instructions);
+  } catch (err) {
+    handleErr(err, res);
+  }
+}
+
 /** POST /api/me/tenant/domain/change-role — TD12 */
 export async function postMyTenantDomainChangeRole(req: AuthRequest, res: Response): Promise<void> {
   try {
@@ -201,6 +229,41 @@ export async function superadminGetTenantDomain(req: AuthRequest, res: Response)
     const tenantId = req.params.id;
     const items = await listTenantHostsForAdmin(tenantId);
     res.json({ items });
+  } catch (err) {
+    handleErr(err, res);
+  }
+}
+
+/** POST /api/superadmin/tenants/:id/domain/cf-sync — TE4 */
+export async function superadminSyncTenantDomainCf(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = req.params.id;
+    const role = z.enum(['store', 'support']).parse(req.body?.role ?? req.query.role);
+    const instructions = await syncTenantDomainCloudflare({
+      tenantId,
+      role,
+      asAdmin: true,
+    });
+    if (!instructions) {
+      res.status(404).json({ error: 'Nenhum domínio configurado para este uso', code: 'DOMAIN_MISSING' });
+      return;
+    }
+    if (req.userId) {
+      await logSuperAdminAction(
+        req.userId,
+        'tenant.custom_domain_cf_sync',
+        'tenant',
+        tenantId,
+        { role, hostname: instructions.hostname, cf_ssl_status: instructions.cf_ssl_status ?? null }
+      );
+    }
+    logTenantDomain('domain_cf_sync_admin', {
+      tenant_id: tenantId,
+      role,
+      hostname: instructions.hostname,
+      cf_ssl_status: instructions.cf_ssl_status ?? null,
+    });
+    res.json(instructions);
   } catch (err) {
     handleErr(err, res);
   }

@@ -2,6 +2,7 @@
 import React from "react";
 import { FormField, FormItem, FormLabel, FormControl, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatCpfCnpjDigits } from "@/lib/brazilInputMasks";
@@ -165,6 +166,25 @@ const LeadFormFields: React.FC<LeadFormFieldsProps> = ({ form, leadStatuses }) =
           )}
         />
       </div>
+
+      <FormField
+        control={form.control}
+        name="observacao"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>Observação</FormLabel>
+            <FormControl>
+              <Textarea
+                placeholder="Informações sobre este lead"
+                rows={3}
+                {...field}
+                value={field.value || ""}
+              />
+            </FormControl>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
 
       {/* Campo oculto para o user_id */}
       <input type="hidden" {...form.register("user_id")} />

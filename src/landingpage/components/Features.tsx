@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import BarChart3 from "lucide-react/dist/esm/icons/bar-chart-3.js";
 import Bell from "lucide-react/dist/esm/icons/bell.js";
 import CalendarDays from "lucide-react/dist/esm/icons/calendar-days.js";
@@ -22,88 +23,87 @@ import TrendingDown from "lucide-react/dist/esm/icons/trending-down.js";
 import UserCog from "lucide-react/dist/esm/icons/user-cog.js";
 import Users from "lucide-react/dist/esm/icons/users.js";
 import Wallet from "lucide-react/dist/esm/icons/wallet.js";
+import type { LucideIcon } from "lucide-react";
 
-const categories = [
+const categories: { titleKey: string; items: { icon: LucideIcon; key: string }[] }[] = [
   {
-    title: "Vendas e CRM",
+    titleKey: "cat_sales",
     items: [
-      { icon: Target, name: "Leads", desc: "Captação, qualificação e pipeline de leads." },
-      { icon: Users, name: "Clientes", desc: "Cadastro, histórico e segmentação." },
-      { icon: GitBranch, name: "Funil de vendas", desc: "Múltiplos funis e etapas configuráveis." },
-      { icon: FileText, name: "Propostas", desc: "Criação e envio de propostas profissionais." },
-      { icon: FileSignature, name: "Contratos", desc: "Gestão do ciclo completo de contratos." },
-      { icon: Package, name: "Loja e produtos", desc: "Catálogo, vitrine pública e pedidos." },
+      { icon: Target, key: "leads" },
+      { icon: Users, key: "clients" },
+      { icon: GitBranch, key: "funnel" },
+      { icon: FileText, key: "proposals" },
+      { icon: FileSignature, key: "contracts" },
+      { icon: Package, key: "store" },
     ],
   },
   {
-    title: "Operação e entrega",
+    titleKey: "cat_ops",
     items: [
-      { icon: FolderKanban, name: "Projetos", desc: "Etapas, entregas e acompanhamento." },
-      { icon: CheckSquare, name: "Tarefas", desc: "Prazos, lembretes e atribuições." },
-      { icon: Headphones, name: "Tickets", desc: "Atendimento e suporte integrados." },
-      { icon: CalendarDays, name: "Agenda", desc: "Compromissos, lembretes e confirmações." },
+      { icon: FolderKanban, key: "projects" },
+      { icon: CheckSquare, key: "tasks" },
+      { icon: Headphones, key: "tickets" },
+      { icon: CalendarDays, key: "agenda" },
     ],
   },
   {
-    title: "Comunicação",
+    titleKey: "cat_comms",
     items: [
-      { icon: MessageCircle, name: "Chat / WhatsApp", desc: "Conversas integradas ao CRM." },
-      { icon: Smartphone, name: "WhatsApp API", desc: "Conecte múltiplas instâncias." },
-      { icon: LayoutTemplate, name: "Templates", desc: "Modelos para e-mail e WhatsApp." },
-      { icon: Cloud, name: "WhatsApp Cloud (Meta)", desc: "API oficial, templates e campanhas." },
-      { icon: Kanban, name: "Kanban de chat", desc: "Organize atendimentos em colunas." },
+      { icon: MessageCircle, key: "chat" },
+      { icon: Smartphone, key: "wa_api" },
+      { icon: LayoutTemplate, key: "templates" },
+      { icon: Cloud, key: "wa_cloud" },
+      { icon: Kanban, key: "kanban" },
     ],
   },
   {
-    title: "Financeiro",
+    titleKey: "cat_finance",
     items: [
-      { icon: Receipt, name: "Faturas", desc: "Emissão e controle de faturas." },
-      { icon: Wallet, name: "Contas a pagar", desc: "Fornecedores, vencimentos e despesas recorrentes." },
-      { icon: TrendingDown, name: "Despesas", desc: "Registro e controle financeiro." },
-      { icon: BarChart3, name: "Relatórios", desc: "Indicadores de desempenho." },
-      { icon: Landmark, name: "Cobrança online", desc: "Gateways, boletos e links de pagamento." },
+      { icon: Receipt, key: "invoices" },
+      { icon: Wallet, key: "payables" },
+      { icon: TrendingDown, key: "expenses" },
+      { icon: BarChart3, key: "reports" },
+      { icon: Landmark, key: "billing" },
     ],
   },
 ];
 
-const extras = [
-  { icon: LayoutDashboard, name: "Dashboard", desc: "Visão geral e KPIs." },
-  { icon: Settings, name: "Configurações", desc: "Preferências, logo e idioma." },
-  { icon: UserCog, name: "Perfis", desc: "Permissões por usuário." },
-  { icon: Bell, name: "Notificações", desc: "Alertas em tempo real no painel." },
+const extras: { icon: LucideIcon; key: string }[] = [
+  { icon: LayoutDashboard, key: "dashboard" },
+  { icon: Settings, key: "settings" },
+  { icon: UserCog, key: "profiles" },
+  { icon: Bell, key: "notifications" },
 ];
 
 const Features = () => {
+  const { t } = useTranslation("landing");
   return (
     <section id="recursos" className="relative py-24">
       <div className="absolute inset-0 bg-grid opacity-20" />
       <div className="container relative mx-auto px-4 lg:px-8">
         <div className="mb-16 text-center">
           <h2 className="font-display text-3xl font-bold text-foreground sm:text-4xl">
-            Tudo que sua equipe precisa para{" "}
-            <span className="text-gradient">vender e entregar</span>
+            {t("features_title_before")} <span className="text-gradient">{t("features_title_em")}</span>
           </h2>
-          <p className="mt-4 text-lg text-muted-foreground">
-            Uma plataforma, todos os processos — do primeiro contato ao faturamento.
-          </p>
+          <p className="mt-4 text-lg text-muted-foreground">{t("features_lead")}</p>
         </div>
 
         <div className="grid gap-12 lg:grid-cols-2">
           {categories.map((cat) => (
-            <div key={cat.title}>
-              <h3 className="mb-4 font-display text-lg font-semibold text-foreground">{cat.title}</h3>
+            <div key={cat.titleKey}>
+              <h3 className="mb-4 font-display text-lg font-semibold text-foreground">{t(cat.titleKey)}</h3>
               <div className="grid gap-3">
                 {cat.items.map((item) => (
                   <div
-                    key={item.name}
+                    key={item.key}
                     className="group flex items-start gap-4 rounded-lg border border-border/50 bg-card/50 p-4 transition-all hover:border-primary/30 hover:bg-card hover:glow-primary"
                   >
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-secondary text-primary transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
                       <item.icon size={20} />
                     </div>
                     <div>
-                      <h4 className="font-semibold text-foreground">{item.name}</h4>
-                      <p className="text-sm text-muted-foreground">{item.desc}</p>
+                      <h4 className="font-semibold text-foreground">{t(`item_${item.key}`)}</h4>
+                      <p className="text-sm text-muted-foreground">{t(`item_${item.key}_desc`)}</p>
                     </div>
                   </div>
                 ))}
@@ -115,13 +115,13 @@ const Features = () => {
         <div className="mt-12 grid gap-3 sm:grid-cols-3">
           {extras.map((item) => (
             <div
-              key={item.name}
+              key={item.key}
               className="flex items-center gap-3 rounded-lg border border-border/50 bg-card/50 p-4 transition-all hover:border-primary/30"
             >
               <item.icon size={18} className="shrink-0 text-primary" />
               <div>
-                <span className="font-medium text-foreground">{item.name}</span>
-                <span className="ml-2 text-sm text-muted-foreground">{item.desc}</span>
+                <span className="font-medium text-foreground">{t(`extra_${item.key}`)}</span>
+                <span className="ml-2 text-sm text-muted-foreground">{t(`extra_${item.key}_desc`)}</span>
               </div>
             </div>
           ))}

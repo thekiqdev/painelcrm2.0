@@ -9,9 +9,27 @@ export function renderSignatureBlockPdfKit(
   doc: PdfDoc,
   model: ContractSignatureDisplayModel,
   contentWidth: number,
+  labels?: {
+    imageUnavailable: string;
+    waiting: string;
+    taxId: string;
+    email: string;
+    signedAt: string;
+    method: string;
+    signatureId: string;
+  },
 ): void {
-  const ml = doc.page.margins.left;
+  const L = labels ?? {
+    imageUnavailable: '(Imagem da assinatura indisponível)',
+    waiting: 'Aguardando assinatura',
+    taxId: 'CPF',
+    email: 'E-mail',
+    signedAt: 'Data da assinatura',
+    method: 'Método',
+    signatureId: 'ID da assinatura',
+  };
 
+  const ml = doc.page.margins.left;
   const ruleW = Math.min(200, contentWidth * 0.5);
   doc.moveDown(0.5);
   const topRuleY = doc.y;
@@ -29,13 +47,13 @@ export function renderSignatureBlockPdfKit(
         doc.y = imgY + imgMaxH + 8;
       }
     } catch {
-      doc.fontSize(8.5).fillColor('#64748b').text('(Imagem da assinatura indisponível)', ml, doc.y, {
+      doc.fontSize(8.5).fillColor('#64748b').text(L.imageUnavailable, ml, doc.y, {
         width: contentWidth,
       });
       doc.moveDown(0.4);
     }
   } else if (!model.signed) {
-    doc.fontSize(8.5).fillColor('#64748b').text('Aguardando assinatura', ml, doc.y, { width: contentWidth });
+    doc.fontSize(8.5).fillColor('#64748b').text(L.waiting, ml, doc.y, { width: contentWidth });
     doc.moveDown(0.5);
   }
 
@@ -51,12 +69,12 @@ export function renderSignatureBlockPdfKit(
 
   doc.font('Helvetica').fontSize(8.5).fillColor('#334155');
   const metaLines: string[] = [];
-  if (model.taxId) metaLines.push(`CPF: ${model.taxId}`);
-  metaLines.push(`E-mail: ${model.email}`);
-  if (model.signedAtLabel) metaLines.push(`Data da assinatura: ${model.signedAtLabel}`);
+  if (model.taxId) metaLines.push(`${L.taxId}: ${model.taxId}`);
+  metaLines.push(`${L.email}: ${model.email}`);
+  if (model.signedAtLabel) metaLines.push(`${L.signedAt}: ${model.signedAtLabel}`);
   if (model.ip) metaLines.push(`IP: ${model.ip}`);
-  if (model.methodLabel) metaLines.push(`Método: ${model.methodLabel}`);
-  if (model.signatureId) metaLines.push(`ID da assinatura: ${model.signatureId}`);
+  if (model.methodLabel) metaLines.push(`${L.method}: ${model.methodLabel}`);
+  if (model.signatureId) metaLines.push(`${L.signatureId}: ${model.signatureId}`);
 
   for (const line of metaLines) {
     doc.text(line, ml, doc.y, { width: contentWidth, lineGap: 1.5 });

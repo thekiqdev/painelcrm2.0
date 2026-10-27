@@ -10,6 +10,7 @@ import { featureFlagRegistry } from '../platform/featureFlagRegistry.js';
 import {
   isPartnerChannelEnabled,
   isPartnerDomainVerifyBypassEnabled,
+  isPartnerEdgeCloudflareSaasEnabled,
 } from './partnerFlags.js';
 
 describe('partnerFlags (Super Admin registry)', () => {
@@ -69,5 +70,15 @@ describe('partnerFlags (Super Admin registry)', () => {
       reason: 'rollout_off',
     });
     await expect(isPartnerDomainVerifyBypassEnabled()).resolves.toBe(false);
+  });
+
+  it('edge cloudflare: Super Admin ON', async () => {
+    vi.mocked(featureFlagRegistry.resolve).mockResolvedValue({
+      key: 'partner.edge_cloudflare_saas_v1',
+      enabled: true,
+      shadow: false,
+      reason: 'rollout_global',
+    });
+    await expect(isPartnerEdgeCloudflareSaasEnabled()).resolves.toBe(true);
   });
 });

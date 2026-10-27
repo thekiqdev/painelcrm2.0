@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { format, startOfMonth, subMonths, subDays, endOfMonth, startOfDay, endOfDay } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
+import { dateFnsLocale } from '@/lib/i18n/formatApp';
 import { Loader2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -281,7 +281,7 @@ export function AgendaReportsView({ members, typeFilterOptions = TYPE_OPTIONS, o
             <Popover>
               <PopoverTrigger asChild>
                 <Button variant="outline" className="w-full justify-start text-left font-normal">
-                  {format(dateFrom, 'P', { locale: ptBR })}
+                  {format(dateFrom, 'P', { locale: dateFnsLocale() })}
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-auto p-0" align="start">
@@ -303,7 +303,7 @@ export function AgendaReportsView({ members, typeFilterOptions = TYPE_OPTIONS, o
             <Popover>
               <PopoverTrigger asChild>
                 <Button variant="outline" className="w-full justify-start text-left font-normal">
-                  {format(dateTo, 'P', { locale: ptBR })}
+                  {format(dateTo, 'P', { locale: dateFnsLocale() })}
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-auto p-0" align="start">

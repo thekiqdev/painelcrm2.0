@@ -10,6 +10,7 @@ import { PaymentGatewaySection } from "@/components/settings/PaymentGatewaySecti
 import { MercadoPagoGatewaySection } from "@/components/settings/MercadoPagoGatewaySection";
 import { apiClient } from "@/integrations/api/client";
 import NotFound from "@/pages/NotFound";
+import { useTranslation } from "react-i18next";
 
 const API_GATEWAYS = "/api/me/tenant/payment-gateways";
 
@@ -20,6 +21,7 @@ interface GatewayListItem {
 }
 
 export default function GatewayConfigPage() {
+  const { t } = useTranslation("finance");
   const { gatewayKey } = useParams<{ gatewayKey: string }>();
   const navigate = useNavigate();
   const [valid, setValid] = useState<boolean | null>(null);
@@ -45,7 +47,7 @@ export default function GatewayConfigPage() {
     return (
       <div className="container mx-auto py-6 flex items-center gap-2 text-muted-foreground">
         <Loader2 className="h-4 w-4 animate-spin" />
-        Carregando...
+        {t("loading")}
       </div>
     );
   }
@@ -58,12 +60,12 @@ export default function GatewayConfigPage() {
           variant="ghost"
           size="icon"
           onClick={() => navigate("/settings/payments")}
-          aria-label="Voltar ao painel"
+          aria-label={t("back_panel")}
         >
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <h1 className="text-2xl font-bold capitalize">
-          Configurar {gatewayKey}
+          {t("configure_named", { name: gatewayKey })}
         </h1>
       </div>
       {gatewayKey === "mercado_pago" ? (

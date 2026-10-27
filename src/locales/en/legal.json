@@ -1,0 +1,13 @@
+{
+  "home": "Home",
+  "privacy_h1": "Privacy policy",
+  "privacy_lead": "How PainelCRM handles data on the platform.",
+  "terms_h1": "Terms of use",
+  "terms_lead": "General conditions for using PainelCRM services.",
+  "published": "Last published:",
+  "loading": "Loading…",
+  "load_error": "Could not load this page.",
+  "error_title": "Could not show the document",
+  "empty_title": "Document in preparation",
+  "empty_body": "The legal text has not been published yet. Come back later or contact PainelCRM support."
+}

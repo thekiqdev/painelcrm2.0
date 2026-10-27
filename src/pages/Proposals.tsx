@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { useTranslation } from "react-i18next";
+import { formatAppMoneyMajor } from "@/lib/i18n/formatApp";
 import { Button } from "@/components/ui/button";
 import {
   Plus,
@@ -192,7 +194,8 @@ function ValidadeTableCell({ p }: { p: Proposal }) {
   return <span className="text-sm text-muted-foreground tabular-nums">{dateStr}</span>;
 }
 
-const Proposals = () => {
+  const Proposals = () => {
+  const { t } = useTranslation("proposals");
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
@@ -439,8 +442,7 @@ const Proposals = () => {
     setStageFilterId(null);
   };
 
-  const formatCurrency = (value: number) =>
-    new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
+  const formatCurrency = (value: number) => formatAppMoneyMajor(value, "BRL");
 
   const canCreateProposal = canCreate("proposals") && !permLoading;
 
@@ -490,44 +492,44 @@ const Proposals = () => {
     <CommercialListingPageShell>
       <div className="md:hidden sticky top-0 z-30 -mx-0.5 border-b border-border/70 bg-background/95 px-0.5 pb-2 pt-1 backdrop-blur supports-[backdrop-filter]:bg-background/90">
         <MobilePageHeader
-          title="Propostas"
+          title={t("title")}
           secondaryActions={[
             {
               icon: <FileText className="h-4 w-4" aria-hidden />,
-              ariaLabel: "Modelos de proposta",
+              ariaLabel: t("templates_aria"),
               onClick: () => navigate("/proposals/templates"),
             },
           ]}
           primaryAction={
             canCreateProposal
-              ? { label: "Nova proposta", icon: <Plus className="h-4 w-4" aria-hidden />, href: "/proposals/new" }
-              : { label: "Nova proposta", icon: <Plus className="h-4 w-4" aria-hidden />, disabled: true }
+              ? { label: t("new"), icon: <Plus className="h-4 w-4" aria-hidden />, href: "/proposals/new" }
+              : { label: t("new"), icon: <Plus className="h-4 w-4" aria-hidden />, disabled: true }
           }
         />
       </div>
       <div className="hidden md:flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <h1 className="text-2xl font-bold tracking-tight">Propostas</h1>
+          <h1 className="text-2xl font-bold tracking-tight">{t("title")}</h1>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Pipeline comercial: envios, respostas e conversão em faturas.
+            {t("desc")}
           </p>
         </div>
         <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
           <Button type="button" variant="outline" size="sm" className="sm:h-10" onClick={() => navigate("/proposals/templates")}>
             <FileText className="mr-2 h-4 w-4" />
-            Modelos
+            {t("templates")}
           </Button>
           {canCreateProposal ? (
             <Button type="button" size="sm" className="sm:h-10" asChild>
               <Link to="/proposals/new">
                 <Plus className="mr-2 h-4 w-4" />
-                Nova proposta
+                {t("new")}
               </Link>
             </Button>
           ) : (
             <Button type="button" size="sm" className="sm:h-10" disabled>
               <Plus className="mr-2 h-4 w-4" />
-              Nova proposta
+              {t("new")}
             </Button>
           )}
         </div>

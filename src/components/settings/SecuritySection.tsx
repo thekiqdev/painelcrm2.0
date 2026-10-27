@@ -6,31 +6,33 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
+import { useTranslation } from "react-i18next";
 
 export const SecuritySection: React.FC = () => {
+  const { t } = useTranslation("settings");
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Segurança</CardTitle>
-        <CardDescription>Configure as opções de segurança da sua conta</CardDescription>
+        <CardTitle>{t("sec_security")}</CardTitle>
+        <CardDescription>{t("security_desc")}</CardDescription>
       </CardHeader>
       <CardContent>
         <div className="space-y-6">
           <div className="space-y-4">
-            <h3 className="text-lg font-medium">Alterar Senha</h3>
+            <h3 className="text-lg font-medium">{t("security_change")}</h3>
             <div className="space-y-2">
-              <Label htmlFor="currentPassword">Senha Atual</Label>
+              <Label htmlFor="currentPassword">{t("security_current")}</Label>
               <Input id="currentPassword" type="password" />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="newPassword">Nova Senha</Label>
+              <Label htmlFor="newPassword">{t("security_new")}</Label>
               <Input id="newPassword" type="password" />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="confirmPassword">Confirmar Nova Senha</Label>
+              <Label htmlFor="confirmPassword">{t("security_confirm")}</Label>
               <Input id="confirmPassword" type="password" />
             </div>
-            <Button>Atualizar Senha</Button>
+            <Button>{t("security_update")}</Button>
           </div>
           
           <Separator />
@@ -38,9 +40,9 @@ export const SecuritySection: React.FC = () => {
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-lg font-medium">Autenticação em Dois Fatores</h3>
+                <h3 className="text-lg font-medium">{t("security_2fa")}</h3>
                 <p className="text-sm text-muted-foreground">
-                  Aumente a segurança da sua conta com autenticação em dois fatores
+                  {t("security_2fa_desc")}
                 </p>
               </div>
               <Switch id="2fa" />
@@ -50,15 +52,15 @@ export const SecuritySection: React.FC = () => {
           <Separator />
           
           <div className="space-y-4">
-            <h3 className="text-lg font-medium">Sessões Ativas</h3>
+            <h3 className="text-lg font-medium">{t("security_sessions")}</h3>
             <div className="space-y-2">
               <div className="p-4 border rounded-md">
                 <div className="flex justify-between">
                   <div>
                     <p className="font-medium">Chrome - Windows 10</p>
-                    <p className="text-xs text-muted-foreground">São Paulo, Brasil · Ativo agora</p>
+                    <p className="text-xs text-muted-foreground">{t("security_now")}</p>
                   </div>
-                  <p className="text-xs text-green-600">Sessão Atual</p>
+                  <p className="text-xs text-green-600">{t("security_current_session")}</p>
                 </div>
               </div>
               
@@ -66,13 +68,13 @@ export const SecuritySection: React.FC = () => {
                 <div className="flex justify-between">
                   <div>
                     <p className="font-medium">Safari - iPhone</p>
-                    <p className="text-xs text-muted-foreground">São Paulo, Brasil · Último acesso: 2 dias atrás</p>
+                    <p className="text-xs text-muted-foreground">{t("security_last")}</p>
                   </div>
-                  <Button variant="ghost" size="sm">Encerrar</Button>
+                  <Button variant="ghost" size="sm">{t("security_end")}</Button>
                 </div>
               </div>
             </div>
-            <Button variant="outline">Encerrar Todas as Outras Sessões</Button>
+            <Button variant="outline">{t("security_end_all")}</Button>
           </div>
         </div>
       </CardContent>

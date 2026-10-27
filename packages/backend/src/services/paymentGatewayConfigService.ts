@@ -177,6 +177,7 @@ async function loadActiveTenantGateway(
             enabled_payment_methods, default_payment_method
      FROM payment_gateway_configs
      WHERE scope = 'tenant' AND tenant_id = $1 AND is_active = true AND status = 'active'
+     ORDER BY CASE WHEN gateway_key = 'stripe' THEN 1 ELSE 0 END, updated_at DESC
      LIMIT 1`,
     [billingTenantId]
   );
@@ -258,6 +259,7 @@ export async function getConfigForTest(
               enabled_payment_methods, default_payment_method
        FROM payment_gateway_configs
        WHERE scope = 'tenant' AND tenant_id = $1 AND is_active = true
+       ORDER BY CASE WHEN gateway_key = 'stripe' THEN 1 ELSE 0 END, updated_at DESC
        LIMIT 1`,
       [tenantId]
     );
@@ -427,6 +429,7 @@ export async function getTenantConfig(tenantId: string): Promise<PaymentGatewayC
             enabled_payment_methods, default_payment_method
      FROM payment_gateway_configs
      WHERE scope = 'tenant' AND tenant_id = $1 AND is_active = true
+     ORDER BY CASE WHEN gateway_key = 'stripe' THEN 1 ELSE 0 END, updated_at DESC
      LIMIT 1`,
     [tenantId]
   );
@@ -479,7 +482,8 @@ export async function saveTenantConfig(
   }
 
   await pool.query(
-    `UPDATE payment_gateway_configs SET is_active = false WHERE scope = 'tenant' AND tenant_id = $1 AND is_active = true`,
+    `UPDATE payment_gateway_configs SET is_active = false
+     WHERE scope = 'tenant' AND tenant_id = $1 AND is_active = true AND gateway_key <> 'stripe'`,
     [tenantId]
   );
 

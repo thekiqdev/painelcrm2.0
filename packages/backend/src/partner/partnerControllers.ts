@@ -298,6 +298,29 @@ export async function partnerClearDomain(req: PartnerAuthRequest, res: Response)
   }
 }
 
+/** PE Etapa 5 — sync SSL/Custom Hostname Cloudflare */
+export async function partnerSyncDomainCloudflare(
+  req: PartnerAuthRequest,
+  res: Response
+): Promise<void> {
+  try {
+    const ctx = req.partnerContext;
+    if (!ctx) {
+      res.status(403).json({ error: 'Partner context missing' });
+      return;
+    }
+    const { syncPartnerDomainCloudflare } = await import('./partnerDomainService.js');
+    const instructions = await syncPartnerDomainCloudflare(ctx.partnerTenantId);
+    if (!instructions) {
+      res.status(404).json({ error: 'Nenhum domínio configurado', code: 'DOMAIN_MISSING' });
+      return;
+    }
+    res.json(instructions);
+  } catch (err) {
+    handlePartnerError(err, res);
+  }
+}
+
 export async function publicGetPartnerBrand(req: AuthRequest, res: Response): Promise<void> {
   try {
     const { resolvePartnerBrandByHost, normalizeHostname } = await import('./partnerBrandResolver.js');

@@ -1,3 +1,5 @@
-export function formatFinancialAmount(cents: number): string {
-  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cents / 100);
+import { formatAppMoney } from "@/lib/i18n/formatApp";
+
+export function formatFinancialAmount(cents: number, currency = "BRL"): string {
+  return formatAppMoney(cents, currency);
 }

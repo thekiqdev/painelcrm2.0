@@ -1384,6 +1384,8 @@ export async function subscribePlan(
     zeroSettlementSource?: ZeroAmountSettlementSource;
   }
 ): Promise<SubscribePlanResult> {
+  const { assertSaasGatewayCompatible } = await import('../modules/gateways/stripe/stripePlatformPolicy.js');
+  await assertSaasGatewayCompatible(tenantId, 'asaas', 'BRL');
   await validatePlanForPurchase(planId, options?.usersCount ?? null);
   const billingReason: BillingReason = options?.billingReason ?? 'plan_purchase';
   const amountCents = await calculateInvoiceAmount(planId, billingInterval, options?.usersCount ?? null, {

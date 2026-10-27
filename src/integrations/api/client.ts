@@ -1,5 +1,6 @@
 import { getDevApiBaseUrl } from '@/lib/devBackendOrigin';
 import { redirectIfPaymentRequiredFromApi } from '@/lib/commercialAccessPaths';
+import { readLocaleCookie } from '@/lib/i18n/appLocale';
 
 // Em produção (HTTPS), usar URLs relativas para evitar Mixed Content
 // O Nginx faz proxy de /api para o backend
@@ -228,6 +229,11 @@ class ApiClient {
 
     if (this.token) {
       headers.set('Authorization', `Bearer ${this.token}`);
+    }
+
+    if (!headers.has('X-App-Locale')) {
+      const appLocale = readLocaleCookie();
+      if (appLocale) headers.set('X-App-Locale', appLocale);
     }
 
     // Debug: log da URL em desenvolvimento

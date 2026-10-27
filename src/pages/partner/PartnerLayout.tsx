@@ -14,6 +14,7 @@ import {
   partnerSellerNavItems,
 } from './partnerNavConfig';
 import PartnerPaywallGate, { isPartnerPaywallActive } from './PartnerPaywallGate';
+import { useTranslation } from 'react-i18next';
 
 function PartnerNavLinks({
   onNavigate,
@@ -23,13 +24,14 @@ function PartnerNavLinks({
   className?: string;
 }) {
   const { me, isAdmin } = usePartnerPanel();
+  const { t } = useTranslation('partner');
   const { pathname } = useLocation();
 
   if (!me) return null;
 
   if (!isAdmin) {
     return (
-      <nav className={cn('flex flex-col gap-1', className)} aria-label="Painel do revendedor">
+      <nav className={cn('flex flex-col gap-1', className)} aria-label={t('panel_title')}>
         {partnerSellerNavItems.map(({ to, label, icon: Icon, end }) => (
           <NavLink
             key={to}
@@ -46,7 +48,7 @@ function PartnerNavLinks({
             }
           >
             <Icon className="h-4 w-4 shrink-0 opacity-80" />
-            {label}
+            {t(label)}
           </NavLink>
         ))}
       </nav>
@@ -54,12 +56,12 @@ function PartnerNavLinks({
   }
 
   return (
-    <nav className={cn('flex flex-col gap-4', className)} aria-label="Painel do revendedor">
+    <nav className={cn('flex flex-col gap-4', className)} aria-label={t('panel_title')}>
       {partnerAdminNavGroups.map((group) => (
         <div key={group.id} className="space-y-1">
           {group.id !== 'home' ? (
             <p className="px-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-              {group.label}
+              {t(group.label)}
             </p>
           ) : null}
           {group.items.map(({ to, label, icon: Icon, end }) => (
@@ -78,7 +80,7 @@ function PartnerNavLinks({
               }
             >
               <Icon className="h-4 w-4 shrink-0 opacity-80" />
-              {label}
+              {t(label)}
             </NavLink>
           ))}
         </div>
@@ -89,6 +91,7 @@ function PartnerNavLinks({
 
 function PartnerHorizontalTabs() {
   const { isAdmin } = usePartnerPanel();
+  const { t } = useTranslation('partner');
   const items = isAdmin
     ? partnerAdminNavGroups.flatMap((g) => g.items)
     : partnerSellerNavItems;
@@ -100,7 +103,7 @@ function PartnerHorizontalTabs() {
         'flex-nowrap overflow-x-auto overflow-y-hidden [-webkit-overflow-scrolling:touch]',
         'scrollbar-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'
       )}
-      aria-label="Seções do painel"
+      aria-label={t('sections')}
     >
       {items.map(({ to, label, icon: Icon, end }) => (
         <NavLink
@@ -117,7 +120,7 @@ function PartnerHorizontalTabs() {
           }
         >
           <Icon className="h-3.5 w-3.5 shrink-0 opacity-80" />
-          <span>{label}</span>
+          <span>{t(label)}</span>
         </NavLink>
       ))}
     </nav>
@@ -125,6 +128,7 @@ function PartnerHorizontalTabs() {
 }
 
 function PartnerLayoutInner() {
+  const { t } = useTranslation('partner');
   const { signOut, user } = useAuth();
   const navigate = useNavigate();
   const { me, loading, error, isAdmin } = usePartnerPanel();
@@ -138,13 +142,13 @@ function PartnerLayoutInner() {
           <div className="flex min-w-0 items-center gap-2">
             <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
               <SheetTrigger asChild>
-                <Button variant="ghost" size="icon" className="md:hidden" aria-label="Menu">
+                <Button variant="ghost" size="icon" className="md:hidden" aria-label={t('menu')}>
                   <Menu className="h-5 w-5" />
                 </Button>
               </SheetTrigger>
               <SheetContent side="left" className="w-[280px] p-0">
                 <SheetHeader className="border-b px-4 py-3 text-left">
-                  <SheetTitle className="text-base">Painel do Revendedor</SheetTitle>
+                  <SheetTitle className="text-base">{t('panel_title')}</SheetTitle>
                 </SheetHeader>
                 <div className="p-3">
                   <PartnerNavLinks onNavigate={() => setMobileOpen(false)} />
@@ -153,25 +157,25 @@ function PartnerLayoutInner() {
             </Sheet>
             <div className="min-w-0">
               <p className="text-[11px] font-semibold uppercase tracking-wider text-primary/90">
-                White Label
+                {t('white_label')}
               </p>
               <h1 className="truncate text-lg font-bold tracking-tight md:text-xl">
-                Painel do Revendedor
+                {t('panel_title')}
               </h1>
               <p className="hidden text-xs text-muted-foreground sm:block">
-                Gerencie sua marca, vendas, clientes e configurações do seu canal.
+                {t('panel_desc')}
               </p>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             {me ? (
               <Badge variant="outline" className="hidden sm:inline-flex">
-                {me.role === 'partner_admin' ? 'Admin' : 'Vendedor'}
+                {me.role === 'partner_admin' ? t('admin') : t('seller')}
               </Badge>
             ) : null}
             {paywall ? (
               <Badge variant="destructive" className="hidden sm:inline-flex">
-                Inadimplente
+                {t('delinquent')}
               </Badge>
             ) : null}
             <span className="hidden max-w-[160px] truncate text-xs text-muted-foreground lg:inline">

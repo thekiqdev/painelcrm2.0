@@ -86,6 +86,11 @@ export type PartnerDetail = PartnerListItem & {
   theme_json: Record<string, unknown>;
   custom_domain: string | null;
   domain_status: PartnerDomainStatus;
+  /** PE Etapa 5 — espelho Cloudflare (ops Super Admin) */
+  cf_custom_hostname_id?: string | null;
+  cf_ssl_status?: string | null;
+  cf_ownership_status?: string | null;
+  cf_last_error?: string | null;
   payout_cadence_preference: PartnerPayoutCadence;
   wholesale_plan_id: string | null;
   wholesale_status: 'none' | 'active' | 'past_due' | 'canceled';

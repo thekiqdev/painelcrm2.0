@@ -5,6 +5,7 @@
 const ALL_KNOWN = [
   { key: 'asaas' as const, label: 'Asaas' },
   { key: 'mercado_pago' as const, label: 'Mercado Pago' },
+  { key: 'stripe' as const, label: 'Stripe' },
 ];
 
 function mercadoPagoEnabled(): boolean {
@@ -15,11 +16,16 @@ function mercadoPagoEnabled(): boolean {
 
 export type FinancialGatewaySelectableKey = (typeof ALL_KNOWN)[number]['key'];
 
-/** Chaves que podem ser seleccionadas e persistidas. */
-export function getAvailableFinancialGatewayKeys(): FinancialGatewaySelectableKey[] {
+/** Chaves que podem ser seleccionadas e persistidas. Stripe entra só com a flag do tenant. */
+export function getAvailableFinancialGatewayKeys(options?: {
+  includeStripeTenant?: boolean;
+}): FinancialGatewaySelectableKey[] {
   const keys: FinancialGatewaySelectableKey[] = ['asaas'];
   if (mercadoPagoEnabled()) {
     keys.push('mercado_pago');
+  }
+  if (options?.includeStripeTenant) {
+    keys.push('stripe');
   }
   return keys;
 }
@@ -41,8 +47,9 @@ export function assertFinancialGatewayKeyAvailable(key: string, context = 'gatew
 }
 
 /** Resposta GET /api/financial/gateways/available */
-export function getFinancialGatewaysAvailablePayload(): { key: string; label: string; enabled: true }[] {
-  const keys = new Set(getAvailableFinancialGatewayKeys());
+export async function getFinancialGatewaysAvailablePayload(): Promise<{ key: string; label: string; enabled: true }[]> {
+  const { isStripeTenantEnabled } = await import('../modules/gateways/stripe/stripeTenantFlags.js');
+  const keys = new Set(getAvailableFinancialGatewayKeys({ includeStripeTenant: await isStripeTenantEnabled() }));
   return ALL_KNOWN.filter((r) => keys.has(r.key)).map((r) => ({
     key: r.key,
     label: r.label,

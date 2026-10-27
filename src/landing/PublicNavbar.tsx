@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import Menu from "lucide-react/dist/esm/icons/menu.js";
 import X from "lucide-react/dist/esm/icons/x.js";
 import { Link } from "react-router-dom";
@@ -6,12 +7,14 @@ import { Button } from "@/components/ui/button";
 import { SignupEntryLink } from "@/components/acquisition/SignupEntryLink";
 import { Logo } from "@/components/Logo";
 import { cn } from "@/lib/utils";
+import { PublicLandingLocaleCurrencyControls } from "./PublicLandingLocaleCurrencyControls";
 
 /**
  * Navbar da landing estática — sem AuthProvider (bundle mínimo).
  * CTAs para login/checkout usam navegação completa para o SPA principal.
  */
 export default function PublicNavbar() {
+  const { t } = useTranslation("landing");
   const [open, setOpen] = useState(false);
 
   return (
@@ -24,29 +27,31 @@ export default function PublicNavbar() {
 
         <div className="hidden items-center gap-8 md:flex">
           <a href="#recursos" className="text-sm text-muted-foreground transition-colors hover:text-foreground">
-            Recursos
+            {t("nav_features")}
           </a>
           <a href="#como-funciona" className="text-sm text-muted-foreground transition-colors hover:text-foreground">
-            Como funciona
+            {t("nav_how")}
           </a>
           <a href="#planos" className="text-sm text-muted-foreground transition-colors hover:text-foreground">
-            Planos
+            {t("nav_plans")}
           </a>
           <a href="/login?redirect=%2Fsuporte" className="text-sm text-muted-foreground transition-colors hover:text-foreground">
-            Suporte
+            {t("nav_support")}
           </a>
         </div>
 
         <div className="hidden items-center gap-3 md:flex">
+          <PublicLandingLocaleCurrencyControls />
           <Button variant="ghost" size="sm" asChild>
-            <a href="/login">Acessar</a>
+            <a href="/login">{t("nav_login")}</a>
           </Button>
           <Button size="sm" asChild>
-            <SignupEntryLink>Começar grátis</SignupEntryLink>
+            <SignupEntryLink>{t("nav_signup")}</SignupEntryLink>
           </Button>
         </div>
 
         <div className="flex items-center gap-2 md:hidden">
+          <PublicLandingLocaleCurrencyControls />
           <Button
             type="button"
             size="lg"
@@ -55,12 +60,12 @@ export default function PublicNavbar() {
             )}
             asChild
           >
-            <a href="/login">Acessar</a>
+            <a href="/login">{t("nav_login")}</a>
           </Button>
           <button
             type="button"
             className="text-foreground"
-            aria-label={open ? "Fechar menu" : "Abrir menu"}
+            aria-label={open ? t("nav_close") : t("nav_open")}
             onClick={() => setOpen((v) => !v)}
           >
             {open ? <X size={24} /> : <Menu size={24} />}
@@ -72,19 +77,19 @@ export default function PublicNavbar() {
         <div className="border-t border-border/50 bg-background/95 backdrop-blur-xl md:hidden">
           <div className="flex flex-col gap-3 p-4">
             <a href="#recursos" className="text-sm text-muted-foreground" onClick={() => setOpen(false)}>
-              Recursos
+              {t("nav_features")}
             </a>
             <a href="#como-funciona" className="text-sm text-muted-foreground" onClick={() => setOpen(false)}>
-              Como funciona
+              {t("nav_how")}
             </a>
             <a href="#planos" className="text-sm text-muted-foreground" onClick={() => setOpen(false)}>
-              Planos
+              {t("nav_plans")}
             </a>
             <a href="/login?redirect=%2Fsuporte" className="text-sm text-muted-foreground" onClick={() => setOpen(false)}>
-              Suporte
+              {t("nav_support")}
             </a>
             <Button size="sm" asChild onClick={() => setOpen(false)}>
-              <SignupEntryLink>Começar grátis</SignupEntryLink>
+              <SignupEntryLink>{t("nav_signup")}</SignupEntryLink>
             </Button>
           </div>
         </div>

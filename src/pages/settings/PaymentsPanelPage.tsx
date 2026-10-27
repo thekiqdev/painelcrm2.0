@@ -13,12 +13,15 @@ import type { GatewayStatusItem } from "@/components/settings/gatewayPanelTypes"
 import { GatewaySummaryStrip } from "@/components/settings/GatewaySummaryStrip";
 import { AsaasGatewayCard } from "@/components/settings/AsaasGatewayCard";
 import { MercadoPagoGatewayPanelCard } from "@/components/settings/MercadoPagoGatewayPanelCard";
+import { StripeTenantGatewayCard } from "@/components/settings/StripeTenantGatewayCard";
+import { useTranslation } from "react-i18next";
 
 const API_STATUS = "/api/me/tenant/payment-gateways/status";
 
 export type { GatewayStatusItem };
 
 export default function PaymentsPanelPage() {
+  const { t } = useTranslation("finance");
   const navigate = useNavigate();
   const [items, setItems] = useState<GatewayStatusItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -47,17 +50,18 @@ export default function PaymentsPanelPage() {
   const enabledGateways = useMemo(() => items.filter((g) => g.is_enabled), [items]);
   const asaasItem = useMemo(() => enabledGateways.find((g) => g.key === "asaas"), [enabledGateways]);
   const mercadoPagoItem = useMemo(() => enabledGateways.find((g) => g.key === "mercado_pago"), [enabledGateways]);
+  const stripeItem = useMemo(() => enabledGateways.find((g) => g.key === "stripe"), [enabledGateways]);
 
   return (
     <div className="container mx-auto max-w-5xl space-y-6 py-5">
       <div className="flex items-start gap-3">
-        <Button variant="ghost" size="icon" onClick={() => navigate("/settings")} className="shrink-0" aria-label="Voltar">
+        <Button variant="ghost" size="icon" onClick={() => navigate("/settings")} className="shrink-0" aria-label={t("gateway_back")}>
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <div className="min-w-0">
-          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Gateways de pagamento</h1>
+          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">{t("gateway_title")}</h1>
           <p className="mt-1 text-sm text-muted-foreground sm:max-w-xl">
-            Conecte e gerencie os métodos usados para receber pagamentos dos seus clientes.
+            {t("gateway_desc")}
           </p>
         </div>
       </div>
@@ -67,13 +71,13 @@ export default function PaymentsPanelPage() {
       {loading ? (
         <div className="flex items-center justify-center gap-2 py-16 text-muted-foreground">
           <Loader2 className="h-5 w-5 animate-spin" />
-          Carregando gateways…
+          {t("gateway_loading")}
         </div>
       ) : enabledGateways.length === 0 ? (
         <Card>
           <CardHeader>
-            <CardTitle>Nenhum gateway disponível</CardTitle>
-            <CardDescription>Nenhum gateway de pagamento está habilitado no momento.</CardDescription>
+            <CardTitle>{t("gateway_empty")}</CardTitle>
+            <CardDescription>{t("gateway_empty_desc")}</CardDescription>
           </CardHeader>
         </Card>
       ) : (
@@ -82,6 +86,7 @@ export default function PaymentsPanelPage() {
           {mercadoPagoItem ? (
             <MercadoPagoGatewayPanelCard key="mercado_pago" item={mercadoPagoItem} onStatusChange={loadStatus} />
           ) : null}
+          {stripeItem ? <StripeTenantGatewayCard key="stripe" item={stripeItem} /> : null}
         </div>
       )}
 

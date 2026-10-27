@@ -64,6 +64,8 @@ export interface CreateSubscriptionInput {
   customer_id?: string | null;
   plan_id: string | null;
   amount_cents: number;
+  /** IX4: moeda da assinatura. Default BRL (Asaas). USD/EUR só no checkout Stripe. */
+  currency?: 'BRL' | 'USD' | 'EUR';
   billing_interval: BillingInterval;
   next_billing_date: string; // YYYY-MM-DD
   current_period_start: string;
@@ -99,7 +101,7 @@ export async function createSubscription(data: CreateSubscriptionInput): Promise
       billing_cycle_count, billing_interval, status, next_billing_date,
       current_period_start, current_period_end, grace_period_days, default_payment_method, users_count, gateway, created_by,
       cycles_unlimited, max_cycles
-    ) VALUES ($1, $2, $3, $4, $5, 'BRL', $6, 0, $7, $18, $8, $9, $10, COALESCE($11, 3), $12, $13, $14, $15, $16, $17)
+    ) VALUES ($1, $2, $3, $4, $5, $19, $6, 0, $7, $18, $8, $9, $10, COALESCE($11, 3), $12, $13, $14, $15, $16, $17)
     RETURNING id, type, tenant_id, customer_id, plan_id, amount_cents, currency, billing_anchor_day,
       billing_cycle_count, billing_interval, status, next_billing_date, current_period_start, current_period_end,
       cancel_at_period_end, grace_period_days, default_payment_method, users_count, gateway, last_job_at, created_by, created_at, updated_at,
@@ -125,6 +127,7 @@ export async function createSubscription(data: CreateSubscriptionInput): Promise
       unlimited,
       maxCycles,
       status,
+      data.currency === 'USD' || data.currency === 'EUR' ? data.currency : 'BRL',
     ]
   );
   return mapSubscriptionRow(r.rows[0] as SubscriptionRowDb);
@@ -983,9 +986,17 @@ export async function persistContractSnapshotFromPaidBilling(params: {
 
   let catalogPu: number | null = null;
   if (planType === 'custom' && (!(billing.users_count != null && billing.users_count > 0))) {
+    const subCurrency = await pool.query<{ currency: string | null }>(
+      `SELECT currency FROM subscriptions WHERE id = $1::uuid`,
+      [subscriptionId]
+    );
+    const priceCurrency =
+      subCurrency.rows[0]?.currency === 'USD' || subCurrency.rows[0]?.currency === 'EUR'
+        ? subCurrency.rows[0].currency
+        : 'BRL';
     const pip = await pool.query<{ price_per_user_cents: number }>(
-      'SELECT price_per_user_cents FROM plan_interval_prices WHERE plan_id = $1 AND billing_interval = $2',
-      [billing.plan_id, interval]
+      'SELECT price_per_user_cents FROM plan_interval_prices WHERE plan_id = $1 AND billing_interval = $2 AND currency = $3',
+      [billing.plan_id, interval, priceCurrency]
     );
     catalogPu = pip.rows[0]?.price_per_user_cents ?? null;
   }
@@ -1006,7 +1017,7 @@ export async function persistContractSnapshotFromPaidBilling(params: {
          contracted_billing_interval = $2,
          contracted_plan_price_cents = $3,
          contracted_price_per_user_cents = $4,
-         contract_currency = 'BRL',
+         contract_currency = currency,
          pricing_snapshot_source = $5,
          updated_at = now()
      WHERE id = $6::uuid AND tenant_id = $7::uuid AND type = 'saas' AND status = 'active'
@@ -1080,11 +1091,19 @@ export async function updateSubscriptionContractSnapshotFromCalculatedContract(p
     params.planId,
   ]);
   const planType = planRow.rows[0]?.plan_type ?? 'standard';
+  const subCurrency = await pool.query<{ currency: string | null }>(
+    `SELECT currency FROM subscriptions WHERE id = $1::uuid AND tenant_id = $2::uuid`,
+    [params.subscriptionId, params.tenantId]
+  );
+  const priceCurrency =
+    subCurrency.rows[0]?.currency === 'USD' || subCurrency.rows[0]?.currency === 'EUR'
+      ? subCurrency.rows[0].currency
+      : 'BRL';
   let catalogPu: number | null = null;
   if (planType === 'custom' && !(params.usersCount != null && params.usersCount > 0)) {
     const pip = await pool.query<{ price_per_user_cents: number }>(
-      'SELECT price_per_user_cents FROM plan_interval_prices WHERE plan_id = $1 AND billing_interval = $2',
-      [params.planId, params.billingInterval]
+      'SELECT price_per_user_cents FROM plan_interval_prices WHERE plan_id = $1 AND billing_interval = $2 AND currency = $3',
+      [params.planId, params.billingInterval, priceCurrency]
     );
     catalogPu = pip.rows[0]?.price_per_user_cents ?? null;
   }
@@ -1102,7 +1121,7 @@ export async function updateSubscriptionContractSnapshotFromCalculatedContract(p
          contracted_billing_interval = $1,
          contracted_plan_price_cents = $2,
          contracted_price_per_user_cents = $3,
-         contract_currency = 'BRL',
+         contract_currency = currency,
          pricing_snapshot_source = 'self_service',
          updated_at = now()
      WHERE id = $4::uuid AND tenant_id = $5::uuid AND type = 'saas' AND status = 'active'`,

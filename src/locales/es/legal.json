@@ -1,0 +1,13 @@
+{
+  "home": "Inicio",
+  "privacy_h1": "Política de privacidad",
+  "privacy_lead": "Transparencia sobre el tratamiento de datos en la plataforma PainelCRM.",
+  "terms_h1": "Términos de uso",
+  "terms_lead": "Condiciones generales de uso de los servicios PainelCRM.",
+  "published": "Última publicación:",
+  "loading": "Cargando…",
+  "load_error": "No se pudo cargar esta página.",
+  "error_title": "No se pudo mostrar el documento",
+  "empty_title": "Documento en preparación",
+  "empty_body": "El texto legal aún no se ha publicado. Vuelve más tarde o contacta al soporte de PainelCRM."
+}

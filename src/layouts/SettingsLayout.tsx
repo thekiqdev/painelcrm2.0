@@ -12,6 +12,7 @@ import {
   settingsPathForSection,
   type SettingSection,
 } from "@/config/settingsNavigation";
+import { useTranslation } from "react-i18next";
 
 export type { SettingSection } from "@/config/settingsNavigation";
 
@@ -28,6 +29,7 @@ export default function SettingsLayout() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const isMobile = useIsMobile();
+  const { t } = useTranslation("settings");
 
   useEffect(() => {
     if (!location.pathname.startsWith("/settings") || location.pathname.startsWith("/settings/payments")) {
@@ -72,7 +74,7 @@ export default function SettingsLayout() {
         </div>
       ) : (
         <div className="container mx-auto px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 md:px-4 md:py-6">
-          <h1 className="mb-4 text-xl font-bold text-foreground md:mb-6 md:text-2xl">Configurações</h1>
+          <h1 className="mb-4 text-xl font-bold text-foreground md:mb-6 md:text-2xl">{t("page_title")}</h1>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-12 md:gap-6">
             <div className="min-w-0 md:col-span-3">
               <div className="max-md:max-h-[min(56vh,28rem)] max-md:overflow-y-auto max-md:rounded-xl max-md:border max-md:border-border max-md:bg-card max-md:shadow-sm md:max-h-none md:overflow-visible md:rounded-none md:border-0 md:bg-transparent md:shadow-none">

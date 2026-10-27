@@ -274,7 +274,8 @@ async function loadActiveOverrides(at: Date): Promise<TenantCommercialOverrideRo
 async function loadPlanIntervalPrices(): Promise<Map<string, number>> {
   const r = await pool.query<{ plan_id: string; billing_interval: string; price_per_user_cents: string }>(
     `SELECT plan_id::text, billing_interval, price_per_user_cents::text
-     FROM plan_interval_prices`,
+     FROM plan_interval_prices
+     WHERE currency = 'BRL'`,
   );
   const map = new Map<string, number>();
   for (const row of r.rows) {

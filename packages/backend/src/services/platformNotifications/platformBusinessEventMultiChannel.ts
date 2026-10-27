@@ -14,6 +14,7 @@ import {
   normalizeTenantAdminEmail,
   resolveRecipientWhatsapp,
 } from './platformTenantAdminForNotify.js';
+import { normalizeAppLocale } from '../../i18n/appLocale.js';
 
 const ACTOR_SYSTEM = { type: 'system', source: 'platform_business_events' };
 
@@ -30,6 +31,8 @@ export async function publishPlatformBusinessEventMultiChannel(params: {
   eventOccurredAt: Date | null;
   metadata?: Record<string, unknown>;
   channels?: PlatformBusinessChannel[];
+  /** Locale do destinatário (perfil). Ausente cai em pt-BR. */
+  locale?: string;
 }): Promise<void> {
   const db = params.pool ?? pool;
   const channels = params.channels ?? ['whatsapp', 'email'];
@@ -57,9 +60,11 @@ export async function publishPlatformBusinessEventMultiChannel(params: {
     idempotency_base_key: params.idempotencyBaseKey,
   });
 
+  const locale = params.locale ?? normalizeAppLocale(admin.locale) ?? 'pt-BR';
   const baseMetadata = {
     engine: 'platform_notifications',
     phase: 3,
+    locale,
     ...(params.metadata ?? {}),
   };
 
@@ -85,6 +90,7 @@ export async function publishPlatformBusinessEventMultiChannel(params: {
         eventOccurredAt: params.eventOccurredAt,
         actor: ACTOR_SYSTEM,
         metadata: { ...baseMetadata, channel: 'whatsapp' },
+        locale,
       });
 
       if (!res.ok) {
@@ -144,6 +150,7 @@ export async function publishPlatformBusinessEventMultiChannel(params: {
         eventOccurredAt: params.eventOccurredAt,
         actor: ACTOR_SYSTEM,
         metadata: { ...baseMetadata, channel: 'email' },
+        locale,
       });
 
       if (!emailRes.ok) {

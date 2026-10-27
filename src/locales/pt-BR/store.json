@@ -1,0 +1,11 @@
+{
+  "catalog": "Catálogo",
+  "checkout": "Finalizar compra",
+  "checkout_unavailable": "Checkout não disponível",
+  "checkout_unavailable_desc": "Produto inválido, sem preço ou indisponível para compra online.",
+  "back_store": "Voltar à loja",
+  "loading_checkout": "Carregando checkout…",
+  "store_missing": "Loja não encontrada",
+  "from_price": "A partir de {{price}}",
+  "network_error": "Erro de rede. Tente novamente."
+}

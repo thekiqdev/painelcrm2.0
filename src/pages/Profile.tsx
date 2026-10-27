@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from '@/components/ui/sonner';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
+import { useTranslation } from 'react-i18next';
 import { useProfile } from '@/hooks/useProfile';
 import {
   addressFieldsPayload,
@@ -61,6 +62,7 @@ function resolveRoleLabel(
 }
 
 const Profile: React.FC = () => {
+  const { t } = useTranslation('settings');
   const { refreshUser, signOut, user } = useAuth();
   const { loading, error, data, reload } = useProfile();
 
@@ -262,7 +264,7 @@ const Profile: React.FC = () => {
       await reload();
       await refreshUser();
       setPersonalEditing(false);
-      toast.success('Perfil atualizado.');
+      toast.success(t('profile_saved'));
     } finally {
       setSavingPersonal(false);
     }
@@ -394,8 +396,8 @@ const Profile: React.FC = () => {
       )}
     >
       <div className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight md:text-3xl">Perfil</h1>
-        <p className="text-sm text-muted-foreground">Sua identidade e dados da empresa em um só lugar.</p>
+        <h1 className="text-2xl font-semibold tracking-tight md:text-3xl">{t('profile_title')}</h1>
+        <p className="text-sm text-muted-foreground">{t('profile_desc')}</p>
       </div>
 
       <Tabs
@@ -416,7 +418,7 @@ const Profile: React.FC = () => {
             className="min-h-11 shrink-0 rounded-xl px-5 py-2.5 text-sm font-medium data-[state=active]:bg-background data-[state=active]:shadow-sm"
           >
             <UserRound className="mr-2 h-4 w-4 opacity-80" />
-            Pessoal
+            {t('profile_personal')}
           </TabsTrigger>
           {canBusiness ? (
             <TabsTrigger
@@ -424,7 +426,7 @@ const Profile: React.FC = () => {
               className="min-h-11 shrink-0 rounded-xl px-5 py-2.5 text-sm font-medium data-[state=active]:bg-background data-[state=active]:shadow-sm"
             >
               <Building2 className="mr-2 h-4 w-4 opacity-80" />
-              Negócio
+              {t('profile_business')}
             </TabsTrigger>
           ) : null}
         </TabsList>

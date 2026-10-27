@@ -11,6 +11,7 @@ import { TicketsKanbanBoard } from '@/components/tickets/TicketsKanbanBoard';
 import { TicketsKanbanStatsBar } from '@/components/tickets/TicketsKanbanStatsBar';
 import { TicketsKanbanBulkBar } from '@/components/tickets/TicketsKanbanBulkBar';
 import { useAuth } from '@/contexts/AuthContext';
+import { useTranslation } from 'react-i18next';
 import { toast } from '@/hooks/use-toast';
 import type { Ticket } from '@/types/tickets';
 import type { TicketsKanbanColumnId } from '@/utils/ticketsKanbanStatus';
@@ -21,6 +22,7 @@ import { cn } from '@/lib/utils';
 type QuickFilter = 'unassigned' | 'urgent' | 'no_response';
 
 export default function TicketsKanban() {
+  const { t } = useTranslation('tickets');
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -224,7 +226,7 @@ export default function TicketsKanban() {
             </Link>
           </Button>
           <div>
-            <h1 className="text-2xl font-bold">Tickets — Kanban</h1>
+            <h1 className="text-2xl font-bold">{t('kanban_title')}</h1>
             <p className="text-sm text-muted-foreground">Gestão visual e ações em massa</p>
           </div>
         </div>

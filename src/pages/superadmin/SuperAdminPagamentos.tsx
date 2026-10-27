@@ -365,6 +365,142 @@ export default function SuperAdminPagamentos() {
           )}
         </CardContent>
       </Card>
+
+      <StripePlatformCard />
     </div>
+  );
+}
+
+function StripePlatformCard() {
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [env, setEnv] = useState<'sandbox' | 'production'>('sandbox');
+  const [secretKey, setSecretKey] = useState('');
+  const [webhookSecret, setWebhookSecret] = useState('');
+  const [masked, setMasked] = useState<{ secret: string | null; webhook: string | null; flag: boolean }>({
+    secret: null,
+    webhook: null,
+    flag: false,
+  });
+
+  const load = async () => {
+    setLoading(true);
+    const res = await apiClient.get<{
+      secret_key_masked: string | null;
+      webhook_secret_masked: string | null;
+      env: 'sandbox' | 'production';
+      multi_gateway_enabled: boolean;
+    }>('/api/superadmin/stripe-platform');
+    if (res.data) {
+      setEnv(res.data.env === 'production' ? 'production' : 'sandbox');
+      setMasked({
+        secret: res.data.secret_key_masked,
+        webhook: res.data.webhook_secret_masked,
+        flag: res.data.multi_gateway_enabled === true,
+      });
+    }
+    if (res.error) toast.error(res.error);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    const res = await apiClient.put('/api/superadmin/stripe-platform', {
+      env,
+      ...(secretKey.trim() ? { secret_key: secretKey.trim() } : {}),
+      ...(webhookSecret.trim() ? { webhook_secret: webhookSecret.trim() } : {}),
+    });
+    setSaving(false);
+    if (res.error) {
+      toast.error(res.error);
+      return;
+    }
+    setSecretKey('');
+    setWebhookSecret('');
+    toast.success('Credencial Stripe salva');
+    void load();
+  };
+
+  const test = async () => {
+    setTesting(true);
+    const res = await apiClient.post<{ ok?: boolean; error?: string }>('/api/superadmin/stripe-platform/test', {});
+    setTesting(false);
+    if (res.error || res.data?.ok === false) {
+      toast.error(res.error || res.data?.error || 'Falha no teste');
+      return;
+    }
+    toast.success('Conexão Stripe ok');
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Stripe da plataforma</CardTitle>
+        <CardDescription>
+          USD e EUR da assinatura PainelCRM. O real continua no gateway ativo (Asaas). A secret não volta na API.
+          Sandbox primeiro; produção só depois do webhook. Flag billing2.multi_gateway precisa estar ON para cobrar.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <p className="text-muted-foreground">Carregando...</p>
+        ) : (
+          <form onSubmit={save} className="space-y-4 max-w-md">
+            <p className="text-xs text-muted-foreground">
+              Flag multi_gateway: {masked.flag ? 'ON' : 'OFF'}. Secret: {masked.secret ?? 'não configurada'}. Webhook:{' '}
+              {masked.webhook ?? 'não configurado'}.
+            </p>
+            <div className="grid gap-2">
+              <Label>Modo</Label>
+              <Select value={env} onValueChange={(v) => setEnv(v as 'sandbox' | 'production')}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="sandbox">Sandbox (teste)</SelectItem>
+                  <SelectItem value="production">Produção</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="stripe-secret">Secret key</Label>
+              <Input
+                id="stripe-secret"
+                type="password"
+                autoComplete="off"
+                placeholder={masked.secret ? 'Em branco mantém a atual' : 'sk_test_...'}
+                value={secretKey}
+                onChange={(e) => setSecretKey(e.target.value)}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="stripe-webhook">Webhook secret</Label>
+              <Input
+                id="stripe-webhook"
+                type="password"
+                autoComplete="off"
+                placeholder={masked.webhook ? 'Em branco mantém a atual' : 'whsec_...'}
+                value={webhookSecret}
+                onChange={(e) => setWebhookSecret(e.target.value)}
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button type="submit" disabled={saving}>
+                {saving ? 'Salvando...' : 'Salvar Stripe'}
+              </Button>
+              <Button type="button" variant="outline" disabled={testing} onClick={() => void test()}>
+                {testing ? 'Testando...' : 'Testar conexão'}
+              </Button>
+            </div>
+          </form>
+        )}
+      </CardContent>
+    </Card>
   );
 }

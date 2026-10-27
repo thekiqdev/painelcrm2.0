@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
+import i18n from '@/lib/i18n/i18n';
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -116,6 +118,8 @@ export interface PlanCheckoutPlan {
   name: string;
   plan_type: 'standard' | 'custom';
   price_cents: number;
+  /** IX4: moeda do catálogo. USD/EUR abre Stripe; ausente = BRL/Asaas. */
+  currency?: string;
   interval_prices?: IntervalPrice[];
   description?: string | null;
   benefits?: { icon?: string; label: string }[];
@@ -174,6 +178,7 @@ interface CheckoutLocationState {
   plan: PlanCheckoutPlan;
   billingInterval: string;
   usersCount?: number;
+  preferred_currency?: string;
   /** Hub /meu-plano: abrir diretamente uma cobrança pai (tenant_billing) no passo de pagamento. */
   focusBillingId?: string;
   /** Fluxo dedicado: sem etapas Empresa/Admin; só resumo + pagamento. */
@@ -201,6 +206,8 @@ interface PurchaseResult {
   status: string;
   tenant_id: string;
   payment_method?: string;
+  checkout_url?: string;
+  currency?: string;
   invoice_url?: string;
   bank_slip_url?: string;
   /** Linha digitável do boleto (quando o gateway envia). */
@@ -313,8 +320,8 @@ const CHECKOUT_STORAGE_TTL_MS = 30 * 60 * 1000;
 
 function copyToClipboard(text: string) {
   navigator.clipboard.writeText(text).then(
-    () => toast.success('Copiado!'),
-    () => toast.error('Não foi possível copiar')
+    () => toast.success(i18n.t('copied', { ns: 'checkout' })),
+    () => toast.error(i18n.t('copy_failed', { ns: 'checkout' }))
   );
 }
 
@@ -371,17 +378,17 @@ function effectivePaymentDisplayMethod(
 }
 
 const STEP_DEFS = [
-  { id: 1, title: 'Plano', icon: LayoutGrid },
-  { id: 2, title: 'Empresa', icon: Building2 },
-  { id: 3, title: 'Administrador', icon: Users },
-  { id: 4, title: 'Resumo', icon: ClipboardList },
-  { id: 5, title: 'Pagamento', icon: CreditCard },
+  { id: 1, titleKey: 'step_plan', icon: LayoutGrid },
+  { id: 2, titleKey: 'step_company', icon: Building2 },
+  { id: 3, titleKey: 'step_admin', icon: Users },
+  { id: 4, titleKey: 'step_summary', icon: ClipboardList },
+  { id: 5, titleKey: 'step_pay', icon: CreditCard },
 ];
 
 /** Stepper dedicado ao modo assentos adicionais (sem Plano / Empresa / Admin). */
 const SEAT_ADDON_STEP_DEFS = [
-  { id: 4, title: 'Resumo de assentos', icon: Users },
-  { id: 5, title: 'Pagamento', icon: CreditCard },
+  { id: 4, titleKey: 'step_seats_summary', icon: Users },
+  { id: 5, titleKey: 'step_pay', icon: CreditCard },
 ];
 
 function persistCheckout(ctx: PersistedCheckout | null) {
@@ -419,28 +426,28 @@ function loadPersistedCheckout(): PersistedCheckout | null {
 function toastFromPlanPurchaseCode(code: string | undefined, fallback: string) {
   switch (code) {
     case 'EMAIL_ALREADY_REGISTERED_USE_LOGIN':
-      toast.error('Este e-mail já possui cadastro. Faça login ou use outro e-mail.');
+      toast.error(i18n.t('email_taken', { ns: 'checkout' }));
       return;
     case 'WHATSAPP_ALREADY_REGISTERED_USE_LOGIN':
-      toast.error('Este WhatsApp já possui cadastro. Faça login ou use outro número.');
+      toast.error(i18n.t('phone_taken', { ns: 'checkout' }));
       return;
     case 'PLAN_REQUIRED':
-      toast.error('Selecione um plano válido.');
+      toast.error(i18n.t('pick_plan', { ns: 'checkout' }));
       return;
     case 'CPF_CNPJ_REQUIRED_FOR_PAYMENT_METHOD':
-      toast.error('CPF ou CNPJ válido é obrigatório para este método de pagamento.');
+      toast.error(i18n.t('cpf_required', { ns: 'checkout' }));
       return;
     case 'INVALID_CHECKOUT_CONTEXT':
-      toast.error('Dados insuficientes ou inválidos. Verifique as informações e tente novamente.');
+      toast.error(i18n.t('invalid_data', { ns: 'checkout' }));
       return;
     case 'TRIAL_ALREADY_CONSUMED':
-      toast.error('Trial já utilizado para estes dados. Faça login ou conclua o pagamento na retomada.');
+      toast.error(i18n.t('trial_used', { ns: 'checkout' }));
       return;
     case 'PLAN_HAS_NO_TRIAL':
-      toast.error('Este plano não oferece período de trial.');
+      toast.error(i18n.t('no_trial', { ns: 'checkout' }));
       return;
     case 'ALREADY_AUTHENTICATED':
-      toast.error('Você já está logado. Use o fluxo de pagamento no painel.');
+      toast.error(i18n.t('already_logged', { ns: 'checkout' }));
       return;
     case 'CHECKOUT_TENANT_IDENTITY_MISMATCH':
       toast.error(
@@ -448,7 +455,7 @@ function toastFromPlanPurchaseCode(code: string | undefined, fallback: string) {
       );
       return;
     case 'CHECKOUT_PREPARE_PAYMENT_FAILED':
-      toast.error('Não foi possível preparar este pagamento. Atualize a página ou tente outro método.');
+      toast.error(i18n.t('prepare_failed', { ns: 'checkout' }));
       return;
     default:
       toast.error(fallback);
@@ -456,6 +463,7 @@ function toastFromPlanPurchaseCode(code: string | undefined, fallback: string) {
 }
 
 export default function PlanCheckout() {
+  const { t } = useTranslation('checkout');
   const location = useLocation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -486,6 +494,10 @@ export default function PlanCheckout() {
   const [billingCpf, setBillingCpf] = useState('');
 
   const [paymentMethod, setPaymentMethod] = useState<'BOLETO' | 'PIX' | 'CREDIT_CARD'>('PIX');
+  const stripeCurrency: 'USD' | 'EUR' | null = (() => {
+    const raw = (plan?.currency || state?.preferred_currency || '').toUpperCase();
+    return raw === 'USD' || raw === 'EUR' ? raw : null;
+  })();
   const [pixAutomatic, setPixAutomatic] = useState<PixAutomaticPreference | null>(null);
   const [pixAutoUserOptedOff, setPixAutoUserOptedOff] = useState(false);
   const [cpfCnpjError, setCpfCnpjError] = useState('');
@@ -593,6 +605,12 @@ export default function PlanCheckout() {
     setEnteredWithPlanFromContext(true);
   }, []);
 
+  useEffect(() => {
+    if (searchParams.get('stripe') !== 'success') return;
+    toast.success(i18n.t('stripe_sent', { ns: 'checkout' }));
+    navigate('/meu-plano', { replace: true });
+  }, [searchParams, navigate]);
+
   /** Sair de `?mode=resume|renew` reseta flags; ao entrar, reabre loading (resume limpa sessão antiga). */
   useEffect(() => {
     if (!isResumeMode && !isRenewMode) {
@@ -624,7 +642,7 @@ export default function PlanCheckout() {
       return;
     }
     if (!seatAddonBillingIdQuery?.trim() && !state?.focusBillingId?.trim()) {
-      toast.error('Acesse a contratação de assentos pela central Meu plano.');
+      toast.error(i18n.t('seat_from_plan', { ns: 'checkout' }));
       navigate('/meu-plano', { replace: true });
     }
   }, [isSeatAddonMode, authLoading, user?.id, seatAddonBillingIdQuery, state?.focusBillingId, navigate]);
@@ -705,7 +723,7 @@ export default function PlanCheckout() {
     }
     const st = location.state as CheckoutLocationState | null;
     if (!st?.plan?.id) {
-      toast.error('Volte a Meu plano para iniciar a renovação com o plano selecionado.');
+      toast.error(i18n.t('renew_from_plan', { ns: 'checkout' }));
       navigate('/meu-plano', { replace: true });
       return;
     }
@@ -1118,7 +1136,7 @@ export default function PlanCheckout() {
           navigateToSignupSuccess(navigate, '/dashboard');
           return;
         }
-        toast.error('Pagamento confirmado, mas o login automático falhou. Acesse com seu e-mail e senha.');
+        toast.error(i18n.t('login_after_pay', { ns: 'checkout' }));
         navigate('/login', { replace: true });
         return;
       }
@@ -1270,7 +1288,7 @@ export default function PlanCheckout() {
   const validateCompanyStep = (): boolean => {
     if (isCheckoutUpgrade) return true;
     if (!company.company_name?.trim()) {
-      toast.error('Informe o nome da empresa.');
+      toast.error(i18n.t('company_required', { ns: 'checkout' }));
       return false;
     }
     return true;
@@ -1279,16 +1297,16 @@ export default function PlanCheckout() {
   const validateAdminStep = (): boolean => {
     if (isCheckoutUpgrade) return true;
     if (!company.responsible_name?.trim()) {
-      toast.error('Informe o nome do administrador.');
+      toast.error(i18n.t('admin_required', { ns: 'checkout' }));
       return false;
     }
     if (!company.email?.trim()) {
-      toast.error('Informe o e-mail.');
+      toast.error(i18n.t('email_required', { ns: 'checkout' }));
       return false;
     }
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(company.email.trim())) {
-      toast.error('E-mail inválido.');
+      toast.error(i18n.t('email_invalid', { ns: 'checkout' }));
       return false;
     }
     const wa = adminWhatsapp.replace(/\D/g, '');
@@ -1588,7 +1606,7 @@ export default function PlanCheckout() {
     }
     setCpfCnpjError('');
     const docDigits = billingCpf.replace(/\D/g, '');
-    if (method === 'PIX' && !isValidCpfOrCnpj(docDigits)) {
+    if (!stripeCurrency && method === 'PIX' && !isValidCpfOrCnpj(docDigits)) {
       setCpfCnpjError('Informe um CPF ou CNPJ válido para pagamento PIX.');
       toastFromPlanPurchaseCode('CPF_CNPJ_REQUIRED_FOR_PAYMENT_METHOD', 'CPF/CNPJ inválido.');
       return;
@@ -1656,7 +1674,8 @@ export default function PlanCheckout() {
     const body = withMarketingAttribution({
       plan_id: plan.id,
       billing_interval: billingInterval,
-      payment_method: method,
+      payment_method: stripeCurrency ? 'CREDIT_CARD' : method,
+      ...(stripeCurrency ? { currency: stripeCurrency } : {}),
       ...(isCustom ? { users_count: usersCount } : {}),
       /** Reuso após 1ª cobrança (troca PIX↔cartão↔boleto) — evita EMAIL_ALREADY_REGISTERED. */
       ...(existingTenantId ? { tenant_id: existingTenantId } : {}),
@@ -1702,6 +1721,10 @@ export default function PlanCheckout() {
       return;
     }
     if (res.data) {
+      if (res.data.checkout_url) {
+        window.location.assign(res.data.checkout_url);
+        return;
+      }
       setResult(res.data);
       toast.success('Pagamento preparado. Siga as instruções abaixo.');
     }
@@ -1763,7 +1786,7 @@ export default function PlanCheckout() {
               navigateToSignupSuccess(navigate, '/dashboard');
               return;
             }
-            toast.error('Pagamento confirmado, mas o login automático falhou. Acesse com seu e-mail e senha.');
+            toast.error(i18n.t('login_after_pay', { ns: 'checkout' }));
             navigate('/login', { replace: true });
             return;
           }
@@ -1825,16 +1848,16 @@ export default function PlanCheckout() {
   );
 
   const visibleSteps = useMemo(() => {
-    if (seatAddonBillingContextActive) {
-      return SEAT_ADDON_STEP_DEFS;
-    }
-    return STEP_DEFS.filter((s) => {
-      if ((isResumeMode || (isRenewMode && resumePaymentOnly)) && s.id < 5) return false;
-      if (s.id === 1 && skipPlanStep) return false;
-      /** Upgrade logado: pula cadastro de administrador. */
-      if (isCheckoutUpgrade && s.id === 3) return false;
-      return true;
-    });
+    const raw = seatAddonBillingContextActive
+      ? SEAT_ADDON_STEP_DEFS
+      : STEP_DEFS.filter((s) => {
+          if ((isResumeMode || (isRenewMode && resumePaymentOnly)) && s.id < 5) return false;
+          if (s.id === 1 && skipPlanStep) return false;
+          /** Upgrade logado: pula cadastro de administrador. */
+          if (isCheckoutUpgrade && s.id === 3) return false;
+          return true;
+        });
+    return raw.map((s) => ({ ...s, title: t(s.titleKey) }));
   }, [
     seatAddonBillingContextActive,
     isResumeMode,
@@ -1842,6 +1865,7 @@ export default function PlanCheckout() {
     resumePaymentOnly,
     skipPlanStep,
     isCheckoutUpgrade,
+    t,
   ]);
 
   const displayStepIndex = (s: number) => {
@@ -1882,7 +1906,7 @@ export default function PlanCheckout() {
               <Loader2 className="h-7 w-7 animate-spin text-muted-foreground" />
             </div>
           ) : plansCatalog.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Nenhum plano disponível no momento.</p>
+            <p className="text-sm text-muted-foreground">{t('no_plans')}</p>
           ) : (
             <div
               className={cn(
@@ -1976,7 +2000,7 @@ export default function PlanCheckout() {
 
                         <div className="grid gap-3 border-t border-border/60 pt-3 sm:grid-cols-2 sm:gap-4">
                           <div>
-                            <p className="mb-1 text-[11px] font-medium text-muted-foreground">Período</p>
+                            <p className="mb-1 text-[11px] font-medium text-muted-foreground">{t('period')}</p>
                             {hasIntervalSelector ? (
                               <div className="flex max-w-[16rem] items-center gap-1">
                                 <button
@@ -2015,7 +2039,7 @@ export default function PlanCheckout() {
                             )}
                           </div>
                           <div>
-                            <p className="mb-1 text-[11px] font-medium text-muted-foreground">Usuários</p>
+                            <p className="mb-1 text-[11px] font-medium text-muted-foreground">{t('users')}</p>
                             {isCustom ? (
                               <div className="flex w-fit items-center gap-1 rounded-lg border border-border bg-muted/40 p-0.5">
                                 <button
@@ -2040,7 +2064,7 @@ export default function PlanCheckout() {
                                 </button>
                               </div>
                             ) : (
-                              <p className="text-sm font-medium text-muted-foreground">Definido pelo plano</p>
+                              <p className="text-sm font-medium text-muted-foreground">{t('defined_by_plan')}</p>
                             )}
                           </div>
                         </div>
@@ -2119,7 +2143,7 @@ export default function PlanCheckout() {
       return (
         <div className="flex flex-col items-center justify-center gap-3 py-12 text-sm text-muted-foreground">
           <Loader2 className="h-8 w-8 animate-spin" />
-          <span>Verificando sessão…</span>
+          <span>{t('checking_session')}</span>
         </div>
       );
     }
@@ -2135,7 +2159,7 @@ export default function PlanCheckout() {
           className="space-y-4"
         >
           <div>
-            <Label htmlFor="phone">Telefone (opcional)</Label>
+            <Label htmlFor="phone">{t('phone_optional')}</Label>
             <Input
               id="phone"
               value={company.phone}
@@ -2176,10 +2200,10 @@ export default function PlanCheckout() {
         </div>
 
         <div className="space-y-1.5">
-          <Label className="text-sm text-muted-foreground">Logos (opcional)</Label>
+          <Label className="text-sm text-muted-foreground">{t('logos_optional')}</Label>
           <div className="grid w-full min-w-0 grid-cols-2 gap-2 sm:gap-3">
             <div className="min-w-0 space-y-1">
-              <Label className="text-xs text-muted-foreground sm:text-sm">Fundo escuro</Label>
+              <Label className="text-xs text-muted-foreground sm:text-sm">{t('logo_dark')}</Label>
               <CompanyLogoUpload
                 logoUrl={logoDarkPreview}
                 uploading={uploadingLogo === 'dark' || uploadingLogo === 'flush'}
@@ -2198,7 +2222,7 @@ export default function PlanCheckout() {
               ) : null}
             </div>
             <div className="min-w-0 space-y-1">
-              <Label className="text-xs text-muted-foreground sm:text-sm">Fundo claro</Label>
+              <Label className="text-xs text-muted-foreground sm:text-sm">{t('logo_light')}</Label>
               <CompanyLogoUpload
                 logoUrl={logoLightPreview}
                 uploading={uploadingLogo === 'light' || uploadingLogo === 'flush'}
@@ -2228,7 +2252,7 @@ export default function PlanCheckout() {
       return (
         <div className="flex flex-col items-center justify-center gap-3 py-12 text-sm text-muted-foreground">
           <Loader2 className="h-8 w-8 animate-spin" />
-          <span>Verificando sessão…</span>
+          <span>{t('checking_session')}</span>
         </div>
       );
     }
@@ -2247,11 +2271,11 @@ export default function PlanCheckout() {
             <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
               Perfil
             </p>
-            <p className="text-xs text-muted-foreground">Dados de contato do administrador.</p>
+            <p className="text-xs text-muted-foreground">{t('admin_contact')}</p>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="sm:col-span-2">
-              <Label htmlFor="responsible_name">Nome do administrador *</Label>
+              <Label htmlFor="responsible_name">{t('admin_name')}</Label>
               <Input
                 id="responsible_name"
                 value={company.responsible_name}
@@ -2262,7 +2286,7 @@ export default function PlanCheckout() {
               />
             </div>
             <div>
-              <Label htmlFor="email">E-mail *</Label>
+              <Label htmlFor="email">{t('email')}</Label>
               <Input
                 id="email"
                 type="email"
@@ -2296,11 +2320,11 @@ export default function PlanCheckout() {
               <Lock className="h-3 w-3" aria-hidden />
               Segurança
             </p>
-            <p className="text-xs text-muted-foreground">Senha de acesso ao painel.</p>
+            <p className="text-xs text-muted-foreground">{t('password_hint')}</p>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
-              <Label htmlFor="password">Senha *</Label>
+              <Label htmlFor="password">{t('password')}</Label>
               <Input
                 id="password"
                 type="password"
@@ -2313,7 +2337,7 @@ export default function PlanCheckout() {
               />
             </div>
             <div>
-              <Label htmlFor="password_confirm">Confirmar senha *</Label>
+              <Label htmlFor="password_confirm">{t('password_confirm')}</Label>
               <Input
                 id="password_confirm"
                 type="password"
@@ -2341,28 +2365,28 @@ export default function PlanCheckout() {
             </p>
             <div className="space-y-1.5 rounded-lg border bg-muted/20 px-3 py-2.5 text-sm">
               <div className="flex justify-between gap-2">
-                <span className="text-muted-foreground">Plano</span>
+                <span className="text-muted-foreground">{t('plan')}</span>
                 <span className="font-medium text-right">{plan?.name}</span>
               </div>
               <div className="flex justify-between gap-2">
-                <span className="text-muted-foreground">Assentos</span>
+                <span className="text-muted-foreground">{t('seats')}</span>
                 <span className="font-medium">
                   {seatAddonQuote.current_contracted} → {seatAddonQuote.new_total} (+
                   {seatAddonQuote.additional_seats})
                 </span>
               </div>
               <div className="flex justify-between gap-2">
-                <span className="text-muted-foreground">Dias restantes</span>
+                <span className="text-muted-foreground">{t('days_left')}</span>
                 <span className="font-medium">{seatAddonQuote.remaining_period_days}</span>
               </div>
               <div className="mt-1.5 flex justify-between gap-2 border-t pt-2">
-                <span className="text-muted-foreground">A pagar agora</span>
+                <span className="text-muted-foreground">{t('due_now')}</span>
                 <span className="text-base font-semibold">
                   {formatPrice(seatAddonQuote.amount_cents_now)}
                 </span>
               </div>
               <div className="flex justify-between gap-2">
-                <span className="text-muted-foreground">Próximos ciclos</span>
+                <span className="text-muted-foreground">{t('next_cycles')}</span>
                 <span className="font-medium">
                   {formatPrice(seatAddonQuote.new_recurring_period_cents)}
                 </span>
@@ -2377,7 +2401,7 @@ export default function PlanCheckout() {
       return (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            Pagamento de <strong>assentos adicionais</strong>. Na próxima etapa você escolhe o método.
+            <span dangerouslySetInnerHTML={{ __html: t('seat_addon_note') }} />
           </p>
           {result ? (
             <p className="text-sm font-medium">Valor: {formatPrice(result.amount_cents)}</p>
@@ -2395,27 +2419,27 @@ export default function PlanCheckout() {
       <div className="space-y-3">
         <div className="space-y-1.5 rounded-lg border bg-muted/20 px-3 py-2.5 text-sm">
           <div className="flex justify-between gap-2">
-            <span className="text-muted-foreground">Plano</span>
+            <span className="text-muted-foreground">{t('plan')}</span>
             <span className="font-medium text-right">{plan?.name}</span>
           </div>
           <div className="flex justify-between gap-2">
-            <span className="text-muted-foreground">Intervalo</span>
+            <span className="text-muted-foreground">{t('interval')}</span>
             <span className="font-medium text-right">{intervalLabel}</span>
           </div>
           {isCustom && (
             <div className="flex justify-between gap-2">
-              <span className="text-muted-foreground">Usuários</span>
+              <span className="text-muted-foreground">{t('users')}</span>
               <span className="font-medium text-right">{usersCount}</span>
             </div>
           )}
           <div className="flex justify-between gap-2">
-            <span className="text-muted-foreground">Empresa</span>
+            <span className="text-muted-foreground">{t('company')}</span>
             <span className="max-w-[65%] truncate text-right font-medium" title={company.company_name}>
               {company.company_name || '—'}
             </span>
           </div>
           <div className="flex justify-between gap-2">
-            <span className="text-muted-foreground">Admin</span>
+            <span className="text-muted-foreground">{t('admin')}</span>
             <span
               className="max-w-[65%] truncate text-right font-medium"
               title={company.responsible_name}
@@ -2424,17 +2448,17 @@ export default function PlanCheckout() {
             </span>
           </div>
           <div className="flex justify-between gap-2">
-            <span className="text-muted-foreground">E-mail</span>
+            <span className="text-muted-foreground">{t('email_label')}</span>
             <span className="max-w-[65%] break-all text-right font-medium">{company.email || '—'}</span>
           </div>
           {!isCheckoutUpgrade && (
             <div className="flex justify-between gap-2">
-              <span className="text-muted-foreground">WhatsApp</span>
+              <span className="text-muted-foreground">{t('whatsapp')}</span>
               <span className="font-medium text-right">{adminWhatsapp || '—'}</span>
             </div>
           )}
           <div className="mt-1.5 flex justify-between gap-2 border-t pt-2 text-base font-semibold">
-            <span>Valor total</span>
+            <span>{t('total')}</span>
             <span>{formatPrice(amountCents)}</span>
           </div>
         </div>
@@ -2540,7 +2564,7 @@ export default function PlanCheckout() {
 
         {!paymentConfirmed && (
           <div className="space-y-2">
-            {!seatAddonBillingContextActive && pixAutomatic?.available ? (
+            {!seatAddonBillingContextActive && !stripeCurrency && pixAutomatic?.available ? (
               <div className="rounded-md border border-border/50 px-2 py-1.5">
                 <PixAutomaticConsentSwitch
                   state={{
@@ -2615,7 +2639,13 @@ export default function PlanCheckout() {
             ) : null}
 
             <div>
-              <Label className="text-xs font-medium sm:text-sm">Forma de pagamento</Label>
+              {stripeCurrency && !seatAddonBillingContextActive ? (
+                <p className="text-sm text-muted-foreground">
+                  Pagamento em {stripeCurrency} no cartão, pela Stripe. PIX e boleto ficam disponíveis só em real.
+                </p>
+              ) : (
+                <>
+              <Label className="text-xs font-medium sm:text-sm">{t('pay_method')}</Label>
               <div className="mt-1.5 grid grid-cols-3 gap-1.5 sm:gap-2">
                 {PAYMENT_METHODS.map((pm) => {
                   const Icon = pm.icon;
@@ -2654,8 +2684,10 @@ export default function PlanCheckout() {
                 </p>
               ) : (
                 <p className="mt-1 text-[11px] text-muted-foreground">
-                  Escolha o método e use <strong className="text-foreground">Gerar cobrança</strong> abaixo.
+                  <span dangerouslySetInnerHTML={{ __html: t('choose_method') }} />
                 </p>
+              )}
+                </>
               )}
             </div>
           </div>
@@ -2709,7 +2741,7 @@ export default function PlanCheckout() {
                   {cpfCnpjError}
                 </p>
               ) : (
-                <p className="mt-1 text-[11px] text-muted-foreground">Obrigatório para PIX.</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">{t('pix_cpf_required')}</p>
               )}
             </div>
           )}
@@ -2727,8 +2759,8 @@ export default function PlanCheckout() {
                 <Check className="h-10 w-10 text-green-600" />
               </div>
               <div>
-                <p className="text-base font-semibold text-foreground">Pagamento confirmado!</p>
-                <p className="mt-0.5 text-sm text-muted-foreground">Abrindo o painel…</p>
+                <p className="text-base font-semibold text-foreground">{t('paid_title')}</p>
+                <p className="mt-0.5 text-sm text-muted-foreground">{t('paid_body')}</p>
               </div>
             </div>
           )}
@@ -2741,7 +2773,7 @@ export default function PlanCheckout() {
               <div className="space-y-3">
                 <div className="flex items-center gap-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-800 dark:text-amber-200 sm:text-sm">
                   <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
-                  <span className="font-medium">Aguardando confirmação do PIX…</span>
+                  <span className="font-medium">{t('pix_waiting')}</span>
                 </div>
 
                 <div className="grid gap-3 sm:grid-cols-[auto_1fr] sm:items-start sm:gap-4">
@@ -2777,7 +2809,7 @@ export default function PlanCheckout() {
                     </p>
                     {result.pix_copy_paste ? (
                       <div className="space-y-1">
-                        <Label className="text-[11px] text-muted-foreground">Pix copia e cola</Label>
+                        <Label className="text-[11px] text-muted-foreground">{t('pix_copy')}</Label>
                         <div className="flex gap-2">
                           <Input
                             readOnly
@@ -2811,7 +2843,7 @@ export default function PlanCheckout() {
             hasRenderablePayloadForMethod(result, 'BOLETO') && (
               <div className="space-y-2.5">
                 <div className="flex items-center gap-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-800 dark:text-amber-200">
-                  <span className="font-medium">Aguardando pagamento do boleto</span>
+                  <span className="font-medium">{t('boleto_waiting')}</span>
                 </div>
                 <p className="text-xs text-muted-foreground sm:text-sm">
                   {seatAddonBillingContextActive ? (
@@ -2828,7 +2860,7 @@ export default function PlanCheckout() {
                 </p>
                 {result.bank_slip_digitable_line?.trim() && (
                   <div className="space-y-1">
-                    <Label className="text-[11px] text-muted-foreground">Linha digitável</Label>
+                    <Label className="text-[11px] text-muted-foreground">{t('boleto_line')}</Label>
                     <div className="flex gap-2">
                       <Input
                         readOnly
@@ -2916,7 +2948,7 @@ export default function PlanCheckout() {
       ? 'Pagamento confirmado'
       : seatAddonBillingContextActive && step === 4
         ? 'Resumo — assentos adicionais'
-        : STEP_DEFS[step - 1]?.title ?? '';
+        : STEP_DEFS[step - 1] ? t(STEP_DEFS[step - 1].titleKey) : '';
   const checkoutDisplayPm = effectivePaymentDisplayMethod(result, paymentMethod);
   /** Bloqueia passos 1–3 até sessão + checkout-context concluírem (evita disputa com fluxo normal). */
   const showResumeBlockingLoader =
@@ -2937,7 +2969,7 @@ export default function PlanCheckout() {
             ? 'Aguardando confirmação do PIX.'
             : 'Conclua o pagamento da sua conta.'
           : step === 1
-          ? 'Selecione o plano e ajuste intervalo/usuários.'
+          ? t('step1_desc')
           : step === 2
             ? isCheckoutUpgrade
               ? 'Confirme o telefone (opcional) e continue.'
@@ -2957,14 +2989,14 @@ export default function PlanCheckout() {
                   : '';
 
   const shellTitle = isResumeMode
-    ? 'Retomada — pagamento'
+    ? t('shell_resume')
     : isRenewMode
-      ? 'Renovação — pagamento'
+      ? t('shell_renew')
       : seatAddonBillingContextActive
-        ? 'Assentos adicionais'
+        ? t('shell_seats')
         : plan
-          ? `Checkout — ${plan.name}`
-          : 'Checkout — escolha seu plano';
+          ? t('shell_named', { name: plan.name })
+          : t('shell_pick');
 
   const stepperActiveIndex = Math.max(
     0,
@@ -3002,7 +3034,7 @@ export default function PlanCheckout() {
         onClick={handleBack}
         disabled={loading || identityCheckLoading || plansLoading}
       >
-        Voltar
+        {t('back')}
       </Button>
     );
 
@@ -3011,7 +3043,7 @@ export default function PlanCheckout() {
         <div className="flex w-full flex-wrap items-center justify-between gap-2">
           {backBtn}
           <Button type="button" onClick={() => void handleNext()} disabled={!plan || plansLoading} className="motion-safe:active:scale-[0.98]">
-            Continuar
+            {t('next')}
           </Button>
         </div>
       );
@@ -3022,7 +3054,7 @@ export default function PlanCheckout() {
         <div className="flex w-full flex-wrap items-center justify-between gap-2">
           {backBtn}
           <Button type="submit" form="checkout-company-form" disabled={authLoading}>
-            Continuar
+            {t('next')}
           </Button>
         </div>
       );
@@ -3039,7 +3071,7 @@ export default function PlanCheckout() {
                 Validando…
               </>
             ) : (
-              'Continuar'
+              t('next')
             )}
           </Button>
         </div>
@@ -3146,7 +3178,7 @@ export default function PlanCheckout() {
                   Gerando…
                 </>
               ) : (
-                'Gerar cobrança'
+                stripeCurrency ? t('pay_card') : t('generate_charge')
               )}
             </Button>
           </div>
@@ -3179,7 +3211,7 @@ export default function PlanCheckout() {
       return (
         <div className="flex w-full flex-wrap items-center justify-between gap-2">
           {left}
-          <span className="text-xs text-muted-foreground sm:text-sm">Complete o pagamento acima</span>
+          <span className="text-xs text-muted-foreground sm:text-sm">{t('complete_above')}</span>
         </div>
       );
     }
@@ -3264,7 +3296,7 @@ export default function PlanCheckout() {
             </p>
             <div className="flex flex-wrap justify-center gap-2">
               <Button type="button" variant="default" onClick={() => navigate('/meu-plano')}>
-                Voltar ao Meu plano
+                {t('back')}
               </Button>
               {!isRenewMode ? (
                 <Button type="button" variant="outline" onClick={() => navigate('/dashboard')}>

@@ -106,6 +106,7 @@ type PartnerPanelContextValue = {
   saveBrand: () => Promise<boolean>;
   saveDomain: () => Promise<boolean>;
   verifyDomain: () => Promise<boolean>;
+  syncDomainCloudflare: () => Promise<boolean>;
   clearDomain: () => Promise<boolean>;
   saveGateway: () => Promise<boolean>;
   testGateway: () => Promise<boolean>;
@@ -360,6 +361,26 @@ export function PartnerPanelProvider({ children }: { children: React.ReactNode }
     else toast.error('DNS ainda não encontrado — confira TXT/CNAME');
     await reload();
     return Boolean(res.data?.verified);
+  };
+
+  const syncDomainCloudflare = async () => {
+    setSaving(true);
+    const res = await apiClient.post<DomainInstructions>('/api/partner/domain/cf-sync', {});
+    setSaving(false);
+    if (res.error) {
+      toast.error(res.error);
+      return false;
+    }
+    if (res.data) setDomainInfo(res.data);
+    if (res.data?.cf_last_error) {
+      toast.error(`Cloudflare: ${res.data.cf_last_error}`);
+    } else if (res.data?.cf_ssl_status === 'active') {
+      toast.success('SSL Cloudflare ativo');
+    } else {
+      toast.success(`Status SSL: ${res.data?.cf_ssl_status || 'atualizado'}`);
+    }
+    await reload();
+    return true;
   };
 
   const clearDomain = async () => {
@@ -712,6 +733,7 @@ export function PartnerPanelProvider({ children }: { children: React.ReactNode }
     saveBrand,
     saveDomain,
     verifyDomain,
+    syncDomainCloudflare,
     clearDomain,
     saveGateway,
     testGateway,

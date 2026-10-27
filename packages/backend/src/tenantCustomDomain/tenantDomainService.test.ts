@@ -14,6 +14,12 @@ vi.mock('./tenantDomainFlags.js', () => ({
   getTenantCustomDomainCnameTarget: vi.fn().mockReturnValue('edge.platform.com'),
 }));
 
+vi.mock('./tenantCloudflareHostnameService.js', () => ({
+  provisionTenantCloudflareHostname: vi.fn().mockResolvedValue(undefined),
+  deprovisionTenantCloudflareHostname: vi.fn().mockResolvedValue(undefined),
+  syncTenantCloudflareHostnameStatus: vi.fn().mockResolvedValue(null),
+}));
+
 vi.mock('node:dns/promises', () => ({
   default: {
     resolveTxt: vi.fn(),
@@ -26,6 +32,10 @@ import {
   isTenantCustomDomainEnabled,
   isTenantDomainVerifyBypassEnabled,
 } from './tenantDomainFlags.js';
+import {
+  deprovisionTenantCloudflareHostname,
+  provisionTenantCloudflareHostname,
+} from './tenantCloudflareHostnameService.js';
 import {
   changeTenantHostRole,
   clearTenantDomain,
@@ -54,6 +64,13 @@ describe('tenantDomainService', () => {
     await expect(
       setTenantDomain({ tenantId: TENANT_ID, hostnameRaw: 'loja.empresa.com', role: 'store' })
     ).rejects.toMatchObject({ code: 'FEATURE_DISABLED' });
+  });
+
+  it('setTenantDomain rejeita domínio raiz (apex)', async () => {
+    query.mockResolvedValueOnce({ rows: [{ account_type: 'platform_customer' }] });
+    await expect(
+      setTenantDomain({ tenantId: TENANT_ID, hostnameRaw: 'empresa.com.br', role: 'store' })
+    ).rejects.toMatchObject({ code: 'DOMAIN_SUBDOMAIN_REQUIRED' });
   });
 
   it('setTenantDomain grava pending + token (store)', async () => {
@@ -130,6 +147,11 @@ describe('tenantDomainService', () => {
     expect(result.verified).toBe(true);
     expect(result.method).toBe('bypass');
     expect(result.status).toBe('active');
+    expect(provisionTenantCloudflareHostname).toHaveBeenCalledWith({
+      hostId: HOST_ID,
+      tenantId: TENANT_ID,
+      hostname: 'suporte.empresa.com',
+    });
   });
 
   it('verifyTenantDomain aceita TXT', async () => {
@@ -158,14 +180,41 @@ describe('tenantDomainService', () => {
     const result = await verifyTenantDomain({ tenantId: TENANT_ID, role: 'store' });
     expect(result.verified).toBe(true);
     expect(result.method).toBe('txt');
+    expect(provisionTenantCloudflareHostname).toHaveBeenCalledWith({
+      hostId: HOST_ID,
+      tenantId: TENANT_ID,
+      hostname: 'loja.empresa.com',
+    });
   });
 
-  it('clearTenantDomain remove por role', async () => {
-    query.mockResolvedValueOnce({ rows: [] });
+  it('clearTenantDomain deprovisiona e remove por role', async () => {
+    const row = {
+      id: HOST_ID,
+      tenant_id: TENANT_ID,
+      hostname: 'loja.empresa.com',
+      role: 'store',
+      status: 'active',
+      verification_token: 'tok',
+      verified_at: null,
+      activated_at: null,
+      last_check_at: null,
+      last_error: null,
+      cf_custom_hostname_id: 'cf-host-1',
+      created_at: '',
+      updated_at: '',
+    };
+    query
+      .mockResolvedValueOnce({ rows: [row] }) // getTenantHostByRole
+      .mockResolvedValueOnce({ rows: [] }); // DELETE by id
     await clearTenantDomain({ tenantId: TENANT_ID, role: 'store' });
+    expect(deprovisionTenantCloudflareHostname).toHaveBeenCalledWith({
+      hostId: HOST_ID,
+      hostname: 'loja.empresa.com',
+      cfCustomHostnameId: 'cf-host-1',
+    });
     expect(query).toHaveBeenCalledWith(
-      expect.stringContaining('DELETE FROM tenant_hosts'),
-      [TENANT_ID, 'store']
+      expect.stringContaining('DELETE FROM tenant_hosts WHERE id'),
+      [HOST_ID]
     );
   });
 

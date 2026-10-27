@@ -5,6 +5,7 @@ import { pool } from '../../utils/db.js';
 import { publishPlatformBusinessEventMultiChannel } from './platformBusinessEventMultiChannel.js';
 import { ensureTenantBillingPublicPayToken, getInvoiceById } from '../invoiceService.js';
 import { pnLogWarn } from './platformNotificationLog.js';
+import { normalizeAppLocale } from '../../i18n/appLocale.js';
 import { pickGatewayFallbackUrlFromBilling } from '../saasBillingLinkHelpers.js';
 import { buildPlatformSaasInvoiceUrl } from '../../utils/saasPlatformInvoiceUrl.js';
 import { formatBillingDueDatePtBr, formatYmdToPtBr } from '../../utils/calendarDateBr.js';
@@ -32,9 +33,28 @@ async function platformPublicName(tenantId?: string | null): Promise<string> {
   return resolveTransactionalBrandName({ tenantId: tenantId ?? null });
 }
 
-function formatBrlFromCents(cents: number): string {
-  const n = Number(cents) || 0;
-  return (n / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+async function resolveBillingCurrency(row: {
+  subscription_id: string | null;
+  gateway_metadata: Record<string, unknown> | null;
+}): Promise<'BRL' | 'USD' | 'EUR'> {
+  const meta = row.gateway_metadata;
+  const fromMeta = meta && typeof meta.currency === 'string' ? meta.currency.trim().toUpperCase() : '';
+  if (fromMeta === 'USD' || fromMeta === 'EUR' || fromMeta === 'BRL') return fromMeta;
+  if (row.subscription_id) {
+    const r = await pool.query<{ currency: string | null }>(
+      `SELECT currency FROM subscriptions WHERE id = $1 LIMIT 1`,
+      [row.subscription_id],
+    );
+    const c = (r.rows[0]?.currency || '').trim().toUpperCase();
+    if (c === 'USD' || c === 'EUR' || c === 'BRL') return c;
+  }
+  return 'BRL';
+}
+
+function formatBillingAmount(cents: number, currency: 'BRL' | 'USD' | 'EUR', localeRaw: string | null): string {
+  const loc = normalizeAppLocale(localeRaw) ?? 'pt-BR';
+  const intl = loc === 'en' ? 'en-US' : loc === 'es' ? 'es-ES' : 'pt-BR';
+  return ((Number(cents) || 0) / 100).toLocaleString(intl, { style: 'currency', currency });
 }
 
 function formatDateBr(isoOrDate: string | Date | null | undefined): string {
@@ -76,7 +96,10 @@ async function loadOfficialTenantIdentityForNotify(
   return { name: row.name.trim(), slug: row.slug.trim() };
 }
 
-export async function publishPlatformAccountCreated(tenantId: string): Promise<void> {
+export async function publishPlatformAccountCreated(
+  tenantId: string,
+  preferredLocale?: string | null,
+): Promise<void> {
   const official = await loadOfficialTenantIdentityForNotify(tenantId);
   if (!official) {
     pnLogWarn('platform_business_defer_account_created', {
@@ -90,6 +113,16 @@ export async function publishPlatformAccountCreated(tenantId: string): Promise<v
   if (!admin) {
     pnLogWarn('platform_business_skip_no_admin', { tenant_id: tenantId, event_key: 'platform.account.created' });
     return;
+  }
+  const locale = normalizeAppLocale(preferredLocale) ?? normalizeAppLocale(admin.locale) ?? undefined;
+  if (locale) {
+    await pool.query(
+      `UPDATE profiles
+          SET locale = $2
+        WHERE id = $1::uuid
+          AND (locale IS NULL OR btrim(locale) = '')`,
+      [admin.user_id, locale],
+    );
   }
   const fe = feBase();
   await publishPlatformBusinessEventMultiChannel({
@@ -108,6 +141,7 @@ export async function publishPlatformAccountCreated(tenantId: string): Promise<v
       'auth.login_link': `${fe}/login`,
     },
     eventOccurredAt: new Date(),
+    locale,
   });
 }
 
@@ -134,7 +168,7 @@ export async function publishPlatformBillingChargeCreated(billingId: string): Pr
       'platform.name': await platformPublicName(row.tenant_id),
       'tenant.name': admin.tenant_name,
       'tenant.admin_name': adminDisplayName(admin),
-      'billing.amount': formatBrlFromCents(row.amount_cents),
+      'billing.amount': formatBillingAmount(row.amount_cents, await resolveBillingCurrency(row), admin.locale),
       'billing.due_date': formatBillingDueDatePtBr(row.due_date),
       'billing.payment_link': gatewayFallback,
       'billing.platform_invoice_url': platformInvoiceUrl,
@@ -169,7 +203,7 @@ export async function publishPlatformBillingChargeOverdue(billingId: string): Pr
       'platform.support_link': buildPlatformSupportLink(),
       'tenant.name': admin.tenant_name,
       'tenant.admin_name': adminDisplayName(admin),
-      'billing.amount': formatBrlFromCents(row.amount_cents),
+      'billing.amount': formatBillingAmount(row.amount_cents, await resolveBillingCurrency(row), admin.locale),
       'billing.due_date': formatBillingDueDatePtBr(row.due_date),
       'billing.payment_link': gatewayFallback,
       'billing.platform_invoice_url': platformInvoiceUrl,
@@ -222,7 +256,7 @@ export async function publishPlatformBillingPaymentConfirmed(billingId: string):
       'tenant.admin_name': adminDisplayName(admin),
       'tenant.admin_email': admin.email ?? '',
       'plan.name': planLabel,
-      'billing.amount': formatBrlFromCents(row.amount_cents),
+      'billing.amount': formatBillingAmount(row.amount_cents, await resolveBillingCurrency(row), admin.locale),
       'billing.invoice_number': row.invoice_number ?? '',
       'auth.login_link': `${fe}/login`,
     },
@@ -365,9 +399,9 @@ export async function publishPlatformTrialExpiring(tenantId: string, daysLeft: n
   });
 }
 
-export function schedulePublishPlatformAccountCreated(tenantId: string): void {
+export function schedulePublishPlatformAccountCreated(tenantId: string, preferredLocale?: string | null): void {
   setImmediate(() => {
-    void publishPlatformAccountCreated(tenantId).catch((e) =>
+    void publishPlatformAccountCreated(tenantId, preferredLocale).catch((e) =>
       console.error('[platform-notifications/business] account.created', e),
     );
   });

@@ -1,0 +1,7 @@
+{
+  "title": "Chatbot Flows",
+  "desc": "Arma los flujos en el lienzo. Encendido = publicado en WhatsApp; apagado = borrador.",
+  "import": "Importar",
+  "new_flow": "Nuevo flow",
+  "draft_toast": "Flow en borrador (apagado en WhatsApp)"
+}

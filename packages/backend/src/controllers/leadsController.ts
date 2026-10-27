@@ -7,6 +7,13 @@ import { resolveLeadsGranularFromLegacy } from '../permissions/permissionCatalog
 import { normalizeConversationPhone } from '../services/conversationMatchingService.js';
 import { migrateConversationLeadToClient } from '../services/conversationLinkService.js';
 import { migrateLeadLinkedCrmRecordsToClient } from '../services/leadConversionMigrationService.js';
+import {
+  LeadValidationError,
+  insertLead,
+  isValidCpfCnpjLength,
+  normalizeCpfCnpj,
+  prepareLeadFields,
+} from '../services/leadCreateService.js';
 
 const MODULE_LEADS = 'leads';
 
@@ -65,16 +72,6 @@ function firstQueryString(value: unknown): string | undefined {
   return undefined;
 }
 
-function normalizeCpfCnpj(value: string | null | undefined): string | null {
-  if (value == null || typeof value !== 'string') return null;
-  const digits = value.replace(/\D/g, '');
-  return digits.length === 0 ? null : digits;
-}
-
-function isValidCpfCnpjLength(digits: string): boolean {
-  return digits.length === 11 || digits.length === 14;
-}
-
 const leadSchema = z.object({
   name: z.string().min(1),
   email: z.union([z.string().email(), z.literal(""), z.null()]).optional(),
@@ -85,6 +82,7 @@ const leadSchema = z.object({
   notes: z.union([z.string(), z.literal(""), z.null()]).optional(),
   profile_id: z.string().uuid().optional().nullable(),
   cpf_cnpj: z.string().optional().nullable(),
+  observacao: z.union([z.string(), z.literal(""), z.null()]).optional(),
 });
 
 /** PATCH: aceita `migrated_client_id` para migrar conversas lead→cliente sem depender só do match por telefone. */
@@ -311,90 +309,16 @@ export async function createLead(req: AuthRequest, res: Response): Promise<void>
     await assertModulePermission(userId, MODULE_LEADS, 'create', undefined, req);
     await assertPermissionKey(userId, 'leads.create', req);
     const leadData = leadSchema.parse(req.body);
-
-    // Clean up the data - convert empty strings to null for optional fields
-    const cleanData: any = {
-      name: leadData.name,
-    };
-    
-    // Validate and clean email
-    if (leadData.email && typeof leadData.email === 'string' && leadData.email.trim()) {
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(leadData.email.trim())) {
-        res.status(400).json({ error: 'Invalid email format' });
-        return;
-      }
-      cleanData.email = leadData.email.trim();
-    } else {
-      cleanData.email = null;
-    }
-    
-    // Clean phone
-    if (leadData.phone && typeof leadData.phone === 'string' && leadData.phone.trim()) {
-      cleanData.phone = leadData.phone.trim();
-    } else {
-      cleanData.phone = null;
-    }
-    
-    // Clean company
-    if (leadData.company && typeof leadData.company === 'string' && leadData.company.trim()) {
-      cleanData.company = leadData.company.trim();
-    } else {
-      cleanData.company = null;
-    }
-
-    const rawCpfCnpj =
-      leadData.cpf_cnpj != null && typeof leadData.cpf_cnpj === 'string' ? leadData.cpf_cnpj.trim() : '';
-    cleanData.cpf_cnpj = normalizeCpfCnpj(rawCpfCnpj || null);
-    if (cleanData.cpf_cnpj !== null && !isValidCpfCnpjLength(cleanData.cpf_cnpj)) {
-      res.status(400).json({ error: 'CPF/CNPJ deve ter 11 (CPF) ou 14 (CNPJ) dígitos.' });
-      return;
-    }
-    
-    // Source is required, but we'll use a default if empty
-    if (leadData.source && typeof leadData.source === 'string' && leadData.source.trim()) {
-      cleanData.source = leadData.source.trim();
-    } else {
-      cleanData.source = 'Outros'; // Default source
-    }
-    
-    // Clean status
-    if (leadData.status && typeof leadData.status === 'string' && leadData.status.trim()) {
-      cleanData.status = leadData.status.trim();
-    } else {
-      cleanData.status = null;
-    }
-    
-    // Clean notes
-    if (leadData.notes && typeof leadData.notes === 'string' && leadData.notes.trim()) {
-      cleanData.notes = leadData.notes.trim();
-    } else {
-      cleanData.notes = null;
-    }
-    
-    // Clean profile_id
-    if (leadData.profile_id && typeof leadData.profile_id === 'string' && leadData.profile_id.trim()) {
-      cleanData.profile_id = leadData.profile_id.trim();
-    } else {
-      cleanData.profile_id = null;
-    }
-
-    const result = await pool.query(
-      `INSERT INTO leads (
-        user_id, name, email, phone, company, source, status, notes, profile_id, cpf_cnpj
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-      RETURNING *`,
-      [
-        userId, cleanData.name, cleanData.email, cleanData.phone,
-        cleanData.company, cleanData.source, cleanData.status,
-        cleanData.notes, cleanData.profile_id, cleanData.cpf_cnpj
-      ]
-    );
-
-    res.status(201).json(result.rows[0]);
+    const prepared = prepareLeadFields(leadData, 'Outros');
+    const row = await insertLead(userId, prepared);
+    res.status(201).json(row);
   } catch (error) {
     if (error instanceof ModulePermissionError) {
       res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
+    if (error instanceof LeadValidationError) {
+      res.status(400).json({ error: error.message });
       return;
     }
     if (error instanceof z.ZodError) {

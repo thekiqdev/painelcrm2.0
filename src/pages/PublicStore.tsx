@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,7 @@ import { productDescriptionPlainText } from "@/utils/productRichText";
 import { buildStoreWhatsAppPurchaseMessage } from "@/utils/storeWhatsAppPurchaseMessage";
 
 export const PublicStore = () => {
+  const { t } = useTranslation("store");
   const { storeSlug, href } = useStorefrontSlug();
   const [storeProfile, setStoreProfile] = useState<StoreProfile | null>(null);
   const [products, setProducts] = useState<PublicCatalogProduct[]>([]);
@@ -91,7 +93,7 @@ export const PublicStore = () => {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center max-w-md">
-          <h1 className="text-2xl font-bold mb-4">Loja não encontrada</h1>
+          <h1 className="text-2xl font-bold mb-4">{t("store_missing")}</h1>
           <p className="text-muted-foreground">
             A loja que você procura não existe ou não está mais disponível.
           </p>

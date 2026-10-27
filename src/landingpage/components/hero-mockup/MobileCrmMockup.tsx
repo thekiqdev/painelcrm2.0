@@ -1,4 +1,7 @@
+import { useTranslation } from "react-i18next";
 import MessageCircle from "lucide-react/dist/esm/icons/message-circle.js";
+import { formatAppMoney } from "@/lib/i18n/formatApp";
+import { useLocaleCurrency } from "@/lib/i18n/LocaleProvider";
 import { AutomationToast } from "./AutomationToast";
 import { AnimatedDealCard } from "./AnimatedDealCard";
 import {
@@ -7,13 +10,16 @@ import {
   getGlowColumn,
 } from "./heroMockupState";
 
-const STAGES = ["Novo lead", "Em atendimento", "Proposta enviada", "Fechado"] as const;
+const STAGE_KEYS = ["new", "service", "proposal", "won"] as const;
 
 type MobileCrmMockupProps = {
   phase: number;
 };
 
 export function MobileCrmMockup({ phase }: MobileCrmMockupProps) {
+  const { t } = useTranslation("landing");
+  const { currency } = useLocaleCurrency();
+  const amount = formatAppMoney(49700, currency);
   const cardColumn = getCardColumn(phase);
   const glowColumn = getGlowColumn(phase);
   const badges = getDealBadges(phase);
@@ -42,16 +48,16 @@ export function MobileCrmMockup({ phase }: MobileCrmMockupProps) {
         </div>
         <div className="space-y-2 p-3">
           <div className="rounded-xl rounded-tl-sm bg-secondary/85 px-3 py-2 text-[11px] leading-snug">
-            Oi, gostei do plano. Você consegue me enviar uma proposta?
+            {t("mock_bubble_in")}
           </div>
           <div className="flex justify-end">
             <div className="max-w-[88%] rounded-xl rounded-tr-sm bg-primary/25 px-3 py-2 text-[11px] leading-snug">
-              Claro! Vou preparar agora.
+              {t("mock_bubble_out")}
             </div>
           </div>
           {phase >= 4 ? (
             <div className="rounded-xl rounded-tl-sm border border-emerald-500/35 bg-emerald-500/12 px-3 py-2 text-[11px] text-emerald-100">
-              Cliente aceitou a proposta ✓
+              {t("mock_bubble_won")}
             </div>
           ) : null}
         </div>
@@ -63,27 +69,27 @@ export function MobileCrmMockup({ phase }: MobileCrmMockupProps) {
                 : "bg-muted/40 text-muted-foreground"
             }`}
           >
-            {showAddFunnel ? "✓ No funil comercial" : "Nova mensagem"}
+            {showAddFunnel ? t("mock_in_funnel") : t("mock_new_message")}
           </span>
         </div>
       </div>
 
       <div className="rounded-xl border border-border/45 bg-secondary/15 p-2.5">
         <p className="mb-2 text-center text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Funil · Kanban
+          {t("mock_funnel_label")}
         </p>
         <div className="space-y-2">
-          {STAGES.map((label, i) => {
+          {STAGE_KEYS.map((key, i) => {
             const active = cardColumn === i;
             const glow = glowColumn === i;
             return (
               <div
-                key={label}
+                key={key}
                 className={`rounded-lg border border-border/35 p-2 transition-all duration-500 ${
                   glow ? "hero-mockup-col-glow border-primary/45 bg-primary/8" : "bg-background/25"
                 } ${active ? "ring-1 ring-primary/30" : ""}`}
               >
-                <p className="mb-1.5 text-[9px] font-semibold text-muted-foreground">{label}</p>
+                <p className="mb-1.5 text-[9px] font-semibold text-muted-foreground">{t(`mock_stage_${key}`)}</p>
                 {active ? (
                   <AnimatedDealCard badges={badges} emphasis={phase === 5} />
                 ) : (
@@ -100,22 +106,22 @@ export function MobileCrmMockup({ phase }: MobileCrmMockupProps) {
       <div className="flex min-h-[52px] flex-wrap justify-center gap-2 px-1">
         {phase === 0 ? (
           <AutomationToast visible variant="automation">
-            Nova conversa recebida
+            {t("mock_toast_new")}
           </AutomationToast>
         ) : null}
         {phase === 2 ? (
           <AutomationToast visible variant="automation">
-            Proposta enviada automaticamente
+            {t("mock_toast_proposal")}
           </AutomationToast>
         ) : null}
         {phase === 3 ? (
           <AutomationToast visible variant="finance">
-            Fatura gerada — R$ 497,00
+            {t("mock_toast_invoice", { amount })}
           </AutomationToast>
         ) : null}
         {phase === 5 ? (
           <AutomationToast visible variant="success">
-            Venda concluída automaticamente
+            {t("mock_toast_sale")}
           </AutomationToast>
         ) : null}
       </div>

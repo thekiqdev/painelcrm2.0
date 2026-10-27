@@ -130,8 +130,8 @@ export async function getCheckoutContext(req: AuthRequest, res: Response): Promi
     const pricesRows =
       plan.plan_type === 'custom'
         ? await pool.query(
-            'SELECT billing_interval, price_per_user_cents FROM plan_interval_prices WHERE plan_id = $1',
-            [plan.id]
+            'SELECT billing_interval, price_per_user_cents FROM plan_interval_prices WHERE plan_id = $1 AND currency = $2',
+            [plan.id, 'BRL']
           )
         : { rows: [] as { billing_interval: string; price_per_user_cents: number }[] };
 

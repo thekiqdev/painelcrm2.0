@@ -74,5 +74,13 @@ export function normalizeGatewayStatus(
     if (lower === 'expired') return 'cancelled';
   }
 
+  if (gatewayKey === 'stripe') {
+    const lower = externalStatus.trim().toLowerCase();
+    if (lower === 'paid' || lower === 'succeeded' || lower === 'complete') return 'paid';
+    if (lower === 'unpaid' || lower === 'open' || lower === 'pending') return 'pending';
+    if (lower === 'canceled' || lower === 'cancelled' || lower === 'expired') return 'cancelled';
+    if (lower === 'failed') return 'failed';
+  }
+
   return 'pending';
 }

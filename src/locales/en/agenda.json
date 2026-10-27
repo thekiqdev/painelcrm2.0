@@ -1,0 +1,10 @@
+{
+  "title": "Calendar",
+  "filters": "Filters",
+  "filters_active": "Active filters",
+  "export_csv": "Export CSV",
+  "new": "+ New",
+  "new_aria": "New appointment",
+  "google_on": "Google connected",
+  "week_span": "Week of {{from}} to {{to}}"
+}

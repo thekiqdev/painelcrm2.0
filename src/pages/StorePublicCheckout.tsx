@@ -17,6 +17,8 @@ import { resolveStorefrontTheme } from "@/themes/registry";
 import { canUseStoreCheckout } from "@/utils/storeCheckoutVisibility";
 import { getPublicProductThumbnailUrl } from "@/utils/publicCatalogImages";
 import { useStorefrontSlug } from "@/hooks/useStorefrontSlug";
+import { useTranslation } from "react-i18next";
+import { formatAppMoneyMajor } from "@/lib/i18n/formatApp";
 import {
   isVariantPurchasable,
   resolveVariantUnitPrice,
@@ -36,6 +38,7 @@ function checkoutProductTeaser(product: PublicCatalogProduct): string {
 }
 
 const StorePublicCheckout = () => {
+  const { t } = useTranslation("store");
   const { storeSlug, href } = useStorefrontSlug();
   const [searchParams] = useSearchParams();
   const productId = (searchParams.get("productId") || "").trim();
@@ -252,7 +255,7 @@ const StorePublicCheckout = () => {
       window.location.assign(`/pay/${res.data.payment_token}`);
     } catch (err) {
       console.error(err);
-      setSubmitError("Erro de rede. Tente novamente.");
+      setSubmitError(t("network_error"));
     } finally {
       setSubmitting(false);
     }
@@ -263,7 +266,7 @@ const StorePublicCheckout = () => {
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center">
           <Loader2 className="h-8 w-8 animate-spin mx-auto text-primary" />
-          <p className="mt-4 text-muted-foreground">Carregando checkout…</p>
+          <p className="mt-4 text-muted-foreground">{t("loading_checkout")}</p>
         </div>
       </div>
     );
@@ -273,15 +276,15 @@ const StorePublicCheckout = () => {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
         <div className="text-center max-w-md space-y-4">
-          <h1 className="text-xl font-semibold">Checkout não disponível</h1>
+          <h1 className="text-xl font-semibold">{t("checkout_unavailable")}</h1>
           <p className="text-muted-foreground text-sm">
-            Produto inválido, sem preço ou indisponível para compra online.
+            {t("checkout_unavailable_desc")}
           </p>
           {storeSlug && (
             <Link to={href()}>
               <Button variant="outline">
                 <ArrowLeft className="h-4 w-4 mr-2" />
-                Voltar à loja
+                {t("back_store")}
               </Button>
             </Link>
           )}
@@ -301,7 +304,8 @@ const StorePublicCheckout = () => {
       ? resolveVariantUnitPrice(checkoutVariant)
       : null
     : resolvePublicCatalogUnitPrice(product);
-  const displayPrice = unitPrice != null ? unitPrice.toFixed(2) : "—";
+  const displayPrice =
+    unitPrice != null ? formatAppMoneyMajor(unitPrice, product.currency || "BRL") : "—";
   const thumb =
     (checkoutVariant?.images?.[0] && checkoutVariant.images[0].trim()) ||
     getPublicProductThumbnailUrl(product);
@@ -330,7 +334,7 @@ const StorePublicCheckout = () => {
 
       <div className="container mx-auto px-4 py-8 max-w-6xl">
         <div className="mb-8">
-          <h1 className="text-2xl font-semibold tracking-tight">Finalizar compra</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">{t("checkout")}</h1>
           <p className="text-sm text-muted-foreground mt-1">{storeProfile.store_name}</p>
         </div>
 
@@ -378,7 +382,7 @@ const StorePublicCheckout = () => {
                       </div>
                       <div className="text-right">
                         <p className="text-xs text-muted-foreground uppercase tracking-wide">Total</p>
-                        <p className="text-xl font-semibold text-primary tabular-nums">R$ {displayPrice}</p>
+                        <p className="text-xl font-semibold text-primary tabular-nums">{displayPrice}</p>
                       </div>
                     </div>
                   </div>

@@ -13,13 +13,21 @@ import { MobileSettingsProfileCard } from "./MobileSettingsProfileCard";
 import { SettingsViewToggle } from "./SettingsViewToggle";
 import { MobileSettingsGrid } from "./MobileSettingsGrid";
 import { MobileSettingsList } from "./MobileSettingsList";
+import { useSettingsLabels } from "@/lib/i18n/settingsLabels";
+import { useApiKeysAccess } from "@/components/settings/useApiKeysAccess";
 
 function resolveHref(item: SettingsNavItem): string {
   return settingsPathForSection(item.id);
 }
 
 export function MobileSettingsHome() {
-  const items = useMemo(() => getSettingsNavItems(), []);
+  const apiKeys = useApiKeysAccess();
+  const items = useMemo(() => {
+    const all = getSettingsNavItems();
+    if (apiKeys.visible) return all;
+    return all.filter((item) => item.id !== "apiKeys");
+  }, [apiKeys.visible]);
+  const labels = useSettingsLabels();
   const [q, setQ] = useState("");
   const [mode, setMode] = useState<SettingsMobileViewMode>(() => {
     if (typeof window === "undefined") return "grid";
@@ -36,13 +44,13 @@ export function MobileSettingsHome() {
   }, [mode]);
 
   const filtered = useMemo(() => {
-    const t = q.trim().toLowerCase();
-    if (!t) return items;
+    const qn = q.trim().toLowerCase();
+    if (!qn) return items;
     return items.filter((it) => {
-      const hay = `${it.title} ${it.description} ${it.mobileCategory} ${it.sidebarCategory}`.toLowerCase();
-      return hay.includes(t);
+      const hay = `${labels.title(it)} ${labels.description(it)} ${labels.mobileCategory(it.mobileCategory)}`.toLowerCase();
+      return hay.includes(qn);
     });
-  }, [items, q]);
+  }, [items, q, labels]);
 
   const grouped = useMemo(() => {
     const map = new Map<string, SettingsNavItem[]>();
@@ -59,8 +67,8 @@ export function MobileSettingsHome() {
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background pb-[calc(7rem+env(safe-area-inset-bottom,0px))] pt-[max(0.75rem,env(safe-area-inset-top,0px))] animate-in fade-in duration-200">
       <div className="pb-2">
-        <h1 className="text-2xl font-bold tracking-tight text-foreground">Configurações</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Gerencie sua conta e o workspace.</p>
+        <h1 className="text-2xl font-bold tracking-tight text-foreground">{labels.t("page_title")}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">{labels.t("page_subtitle")}</p>
       </div>
 
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto">
@@ -69,11 +77,11 @@ export function MobileSettingsHome() {
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
           <Input
-            placeholder="Buscar configuração..."
+            placeholder={labels.t("search")}
             value={q}
             onChange={(e) => setQ(e.target.value)}
             className="h-11 rounded-xl border-border bg-muted/30 pl-10"
-            aria-label="Buscar configuração"
+            aria-label={labels.t("search_label")}
             autoComplete="off"
           />
         </div>
@@ -89,7 +97,7 @@ export function MobileSettingsHome() {
                 id={`settings-cat-${cat}`}
                 className="px-0.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
               >
-                {cat}
+                {labels.mobileCategory(cat)}
               </h2>
               {mode === "grid" ? (
                 <MobileSettingsGrid items={group} resolveHref={resolveHref} />

@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useTranslation } from "react-i18next";
+import { formatAppMoneyMajor } from "@/lib/i18n/formatApp";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -141,6 +143,7 @@ function parseSortFromSearchParams(sp: URLSearchParams): {
 }
 
 const Contracts = () => {
+  const { t } = useTranslation("contracts");
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
@@ -564,7 +567,7 @@ const Contracts = () => {
 
       <div className="md:hidden sticky top-0 z-30 -mx-0.5 border-b border-border/70 bg-background/95 px-0.5 pb-2 pt-1 backdrop-blur supports-[backdrop-filter]:bg-background/90">
         <MobilePageHeader
-          title="Contratos"
+          title={t("title")}
           secondaryActions={[
             {
               icon: (
@@ -580,7 +583,7 @@ const Contracts = () => {
             },
             {
               icon: <FileText className="h-4 w-4" aria-hidden />,
-              ariaLabel: "Modelos de contrato",
+              ariaLabel: t("templates"),
               onClick: () => navigate("/contracts/templates"),
             },
           ]}
@@ -592,7 +595,7 @@ const Contracts = () => {
                 size="icon"
                 className="h-10 w-10 touch-manipulation text-muted-foreground hover:text-foreground"
                 disabled={contractsCsvImportRunning}
-                aria-label="Importar contratos (CSV)"
+                aria-label={t("import")}
                 onClick={() => contractsCsvInputRef.current?.click()}
               >
                 <Upload className="h-4 w-4" aria-hidden />
@@ -600,7 +603,7 @@ const Contracts = () => {
             ) : null
           }
           primaryAction={{
-            label: "Novo contrato",
+            label: t("new"),
             icon: <Plus className="h-4 w-4" aria-hidden />,
             onClick: () => navigate("/contracts/new"),
             disabled: !canCreateContractShortcut,
@@ -609,11 +612,11 @@ const Contracts = () => {
       </div>
 
       <div className="hidden md:flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-2xl font-bold">Contratos</h1>
+        <h1 className="text-2xl font-bold">{t("title")}</h1>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => navigate("/contracts/templates")}>
             <FileText className="mr-2 h-4 w-4" />
-            Modelos
+            {t("templates")}
           </Button>
           {canCreateContractShortcut ? (
             <Button
@@ -637,7 +640,7 @@ const Contracts = () => {
       <div className="flex gap-2 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:flex-wrap">
         {canCreateContractShortcut ? (
           <Button type="button" size="sm" variant="secondary" className="shrink-0 rounded-full" onClick={() => navigate("/contracts/new")}>
-            Novo contrato
+            {t("new")}
           </Button>
         ) : null}
         <Button
@@ -885,7 +888,7 @@ const Contracts = () => {
                         <ClientEntityLink
                           clientId={cid}
                           name={resolveContractClientLabel(contract, clientNameById)}
-                          disabledFallbackText="Cliente não identificado"
+                          disabledFallbackText={t("client_unknown")}
                           variant="table"
                           stopPropagationOnClick
                         />
@@ -1023,7 +1026,7 @@ const Contracts = () => {
                       <ClientEntityLink
                         clientId={cid}
                         name={resolveContractClientLabel(contract, clientNameById)}
-                        disabledFallbackText="Cliente não identificado"
+                        disabledFallbackText={t("client_unknown")}
                         variant="compact"
                         stopPropagationOnClick
                       />
@@ -1034,18 +1037,16 @@ const Contracts = () => {
                   {getStatusBadge(contract.status)}
                   {contract.total_value != null && contract.total_value > 0 ? (
                     <span className="text-sm font-semibold tabular-nums">
-                      {new Intl.NumberFormat("pt-BR", { style: "currency", currency: contract.currency || "BRL" }).format(
-                        contract.total_value,
-                      )}
+                      {formatAppMoneyMajor(contract.total_value, contract.currency || "BRL")}
                     </span>
                   ) : null}
                 </div>
                 <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-                  <span>Início {contract.start_date ? format(new Date(contract.start_date), "dd/MM/yyyy") : "—"}</span>
-                  <span>Fim {contract.end_date ? format(new Date(contract.end_date), "dd/MM/yyyy") : "—"}</span>
+                  <span>{t("start")} {contract.start_date ? format(new Date(contract.start_date), "dd/MM/yyyy") : "—"}</span>
+                  <span>{t("end")} {contract.end_date ? format(new Date(contract.end_date), "dd/MM/yyyy") : "—"}</span>
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Atual. {format(new Date(contract.updated_at), "dd/MM/yyyy HH:mm")}
+                  {t("updated")} {format(new Date(contract.updated_at), "dd/MM/yyyy HH:mm")}
                 </p>
               </button>
               <div className="mt-3 flex justify-end border-t border-border/60 pt-2">

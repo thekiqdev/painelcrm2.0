@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import ArrowRight from "lucide-react/dist/esm/icons/arrow-right.js";
 import Check from "lucide-react/dist/esm/icons/check.js";
@@ -9,11 +10,11 @@ import Plus from "lucide-react/dist/esm/icons/plus.js";
 import { Button } from "@/components/ui/button";
 import { apiClient } from "@/integrations/api/client";
 import {
-  formatVitrinePriceLabel,
-  freeAccessDaysBadge,
   getCheckoutListPriceCents,
 } from "@/lib/planCheckoutDisplay";
 import { LANDING_CHECKOUT_PREFILL_KEY } from "@/lib/landingCheckoutPrefill";
+import { useLocaleCurrency } from "@/lib/i18n/LocaleProvider";
+import { formatAppMoney } from "@/lib/i18n/formatApp";
 import BarChart3 from "lucide-react/dist/esm/icons/bar-chart-3.js";
 import Building2 from "lucide-react/dist/esm/icons/building-2.js";
 import Calendar from "lucide-react/dist/esm/icons/calendar.js";
@@ -32,11 +33,11 @@ import Star from "lucide-react/dist/esm/icons/star.js";
 import Users from "lucide-react/dist/esm/icons/users.js";
 import Zap from "lucide-react/dist/esm/icons/zap.js";
 
-const INTERVALS = [
-  { key: "monthly", label: "Mensal", short: "mês" },
-  { key: "quarterly", label: "Trimestral", short: "trim" },
-  { key: "semi_annual", label: "Semestral", short: "sem" },
-  { key: "yearly", label: "Anual", short: "ano" },
+const INTERVAL_KEYS = [
+  { key: "monthly", labelKey: "pricing_monthly", shortKey: "pricing_per_month" },
+  { key: "quarterly", labelKey: "pricing_quarterly", shortKey: "pricing_per_quarter" },
+  { key: "semi_annual", labelKey: "pricing_semi", shortKey: "pricing_per_semi" },
+  { key: "yearly", labelKey: "pricing_yearly", shortKey: "pricing_per_year" },
 ] as const;
 
 const BENEFIT_ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -68,6 +69,7 @@ interface PlanBenefit {
 interface IntervalPrice {
   billing_interval: string;
   price_per_user_cents: number;
+  currency?: string;
 }
 
 interface Plan {
@@ -76,6 +78,7 @@ interface Plan {
   slug: string;
   description: string | null;
   price_cents: number;
+  currency?: string;
   billing_interval: string;
   /** Assentos inclusos; null = ilimitado. */
   max_users?: number | null;
@@ -87,23 +90,29 @@ interface Plan {
   interval_prices?: IntervalPrice[];
 }
 
-function formatMoneyBRLFromCents(cents: number): string {
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
-}
-
-function seatsIncludedLabel(maxUsers: number): string {
-  return maxUsers === 1 ? "1 usuário incluso" : `Até ${maxUsers} usuários`;
+function seatsIncludedLabel(maxUsers: number, t: (key: string, opts?: Record<string, unknown>) => string): string {
+  return maxUsers === 1 ? t("pricing_seat_one") : t("pricing_seats", { count: maxUsers });
 }
 
 const Pricing = () => {
+  const { t } = useTranslation("landing");
   const navigate = useNavigate();
+  const { currency: preferredCurrency, locale, ready } = useLocaleCurrency();
   const [plans, setPlans] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(true);
   const [intervalIndex, setIntervalIndex] = useState<Record<string, number>>({});
   const [usersCount, setUsersCount] = useState<Record<string, number>>({});
 
   useEffect(() => {
-    apiClient.get<Plan[]>("/api/plans").then((res) => {
+    if (!ready) return;
+    let cancelled = false;
+    setLoading(true);
+    const qs = new URLSearchParams({
+      currency: preferredCurrency,
+      locale,
+    });
+    apiClient.get<Plan[]>(`/api/plans?${qs.toString()}`).then((res) => {
+      if (cancelled) return;
       if (res.data && Array.isArray(res.data)) {
         setPlans(res.data);
         const next: Record<string, number> = {};
@@ -112,7 +121,7 @@ const Pricing = () => {
           users[p.id] = 1;
           if (p.plan_type === "custom" && p.interval_prices && p.interval_prices.length > 0) {
             const first = p.interval_prices[0].billing_interval;
-            const i = INTERVALS.findIndex((x) => x.key === first);
+            const i = INTERVAL_KEYS.findIndex((x) => x.key === first);
             next[p.id] = i >= 0 ? i : 0;
           } else {
             next[p.id] = 0;
@@ -120,10 +129,19 @@ const Pricing = () => {
         });
         setIntervalIndex(next);
         setUsersCount(users);
+      } else {
+        setPlans([]);
       }
       setLoading(false);
     });
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, preferredCurrency, locale]);
+
+  const displayCurrency = (plan: Plan) => plan.currency ?? preferredCurrency ?? "BRL";
+
+  const formatPlanMoney = (cents: number, currency: string) => formatAppMoney(cents, currency);
 
   const setPlanInterval = (planId: string, idx: number) => {
     setIntervalIndex((prev) => ({ ...prev, [planId]: idx }));
@@ -143,9 +161,9 @@ const Pricing = () => {
         <div className="container relative mx-auto px-4 lg:px-8">
           <div className="mb-16 text-center">
             <h2 className="font-display text-3xl font-bold text-foreground sm:text-4xl">
-              Planos que se adaptam ao seu <span className="text-gradient">crescimento</span>
+              {t("pricing_title_before")} <span className="text-gradient">{t("pricing_title_em")}</span>
             </h2>
-            <p className="mt-4 text-lg text-muted-foreground">Carregando planos...</p>
+            <p className="mt-4 text-lg text-muted-foreground">{t("pricing_loading")}</p>
           </div>
         </div>
       </section>
@@ -158,9 +176,9 @@ const Pricing = () => {
         <div className="container relative mx-auto px-4 lg:px-8">
           <div className="mb-16 text-center">
             <h2 className="font-display text-3xl font-bold text-foreground sm:text-4xl">
-              Planos que se adaptam ao seu <span className="text-gradient">crescimento</span>
+              {t("pricing_title_before")} <span className="text-gradient">{t("pricing_title_em")}</span>
             </h2>
-            <p className="mt-4 text-lg text-muted-foreground">Nenhum plano disponível no momento.</p>
+            <p className="mt-4 text-lg text-muted-foreground">{t("pricing_empty")}</p>
           </div>
         </div>
       </section>
@@ -173,10 +191,10 @@ const Pricing = () => {
       <div className="container relative mx-auto px-4 lg:px-8">
         <div className="mb-16 text-center">
           <h2 className="font-display text-3xl font-bold text-foreground sm:text-4xl">
-            Planos que se adaptam ao seu <span className="text-gradient">crescimento</span>
+            {t("pricing_title_before")} <span className="text-gradient">{t("pricing_title_em")}</span>
           </h2>
           <p className="mt-4 text-lg text-muted-foreground">
-            Comece grátis e escale conforme sua operação cresce.
+            {t("pricing_lead")}
           </p>
         </div>
 
@@ -191,23 +209,27 @@ const Pricing = () => {
         >
           {plans.map((plan) => {
             const isCustom = plan.plan_type === "custom";
+            const planCurrency = displayCurrency(plan);
             const idx = intervalIndex[plan.id] ?? 0;
             const users = usersCount[plan.id] ?? 1;
-            const interval = INTERVALS[idx];
+            const interval = INTERVAL_KEYS[idx];
             const prices = plan.interval_prices ?? [];
             const vitrineCents = getCheckoutListPriceCents(plan, {
               usersCount: users,
               billingInterval: interval.key,
             });
             const periodLabel = isCustom && interval
-              ? interval.short
+              ? t(interval.shortKey)
               : plan.billing_interval === "yearly"
-                ? "ano"
-                : "mês";
-            const trialBadge = freeAccessDaysBadge(plan.is_free, plan.free_access_days);
+                ? t("pricing_per_year")
+                : t("pricing_per_month");
+            const trialDays = plan.is_free === true && plan.free_access_days != null ? Number(plan.free_access_days) : 0;
+            const trialBadge = trialDays >= 1
+              ? t(trialDays === 1 ? "pricing_trial_one" : "pricing_trial_many", { count: trialDays })
+              : null;
             const hasIntervalSelector = isCustom && prices.length > 1;
             const canPrev = hasIntervalSelector && idx > 0;
-            const canNext = hasIntervalSelector && idx < INTERVALS.length - 1;
+            const canNext = hasIntervalSelector && idx < INTERVAL_KEYS.length - 1;
 
             return (
               <div
@@ -241,7 +263,7 @@ const Pricing = () => {
                     <div className="mt-3 space-y-1">
                       <div className="inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary">
                         <Users className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                        {seatsIncludedLabel(plan.max_users)}
+                        {seatsIncludedLabel(plan.max_users, t)}
                       </div>
                       {(() => {
                         const avulso =
@@ -252,7 +274,7 @@ const Pricing = () => {
                         if (avulso <= 0) return null;
                         return (
                           <p className="text-xs text-muted-foreground">
-                            + {formatMoneyBRLFromCents(avulso)} por usuário adicional
+                            {t("pricing_extra_seat", { price: formatPlanMoney(avulso, planCurrency) })}
                           </p>
                         );
                       })()}
@@ -264,7 +286,7 @@ const Pricing = () => {
                     {hasIntervalSelector && (
                       <button
                         type="button"
-                        aria-label="Intervalo anterior"
+                        aria-label={t("pricing_prev_interval")}
                         onClick={() => setPlanInterval(plan.id, idx - 1)}
                         disabled={!canPrev}
                         className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
@@ -274,14 +296,14 @@ const Pricing = () => {
                     )}
                     <div className="flex items-baseline gap-1">
                       <span className="font-display text-4xl font-extrabold text-foreground">
-                        {formatVitrinePriceLabel(vitrineCents)}
+                        {vitrineCents > 0 ? formatPlanMoney(vitrineCents, planCurrency) : t("pricing_on_request")}
                       </span>
                       <span className="text-muted-foreground">/{periodLabel}</span>
                     </div>
                     {hasIntervalSelector && (
                       <button
                         type="button"
-                        aria-label="Próximo intervalo"
+                        aria-label={t("pricing_next_interval")}
                         onClick={() => setPlanInterval(plan.id, idx + 1)}
                         disabled={!canNext}
                         className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
@@ -291,17 +313,17 @@ const Pricing = () => {
                     )}
                   </div>
                   {hasIntervalSelector && (
-                    <p className="mt-1 text-xs text-muted-foreground">{interval?.label}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{interval ? t(interval.labelKey) : null}</p>
                   )}
 
                   {/* Usuários (-) [N] (+) só para custom */}
                   {isCustom && (
                     <div className="mt-4 flex items-center gap-2">
-                      <span className="text-sm text-muted-foreground">Usuários</span>
+                      <span className="text-sm text-muted-foreground">{t("pricing_users")}</span>
                       <div className="flex items-center gap-1 rounded-lg border border-border bg-muted/30 p-1">
                         <button
                           type="button"
-                          aria-label="Menos um usuário"
+                          aria-label={t("pricing_less_user")}
                           onClick={() => setPlanUsers(plan.id, -1)}
                           disabled={users <= 1}
                           className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
@@ -313,7 +335,7 @@ const Pricing = () => {
                         </span>
                         <button
                           type="button"
-                          aria-label="Mais um usuário"
+                          aria-label={t("pricing_more_user")}
                           onClick={() => setPlanUsers(plan.id, 1)}
                           className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
                         >
@@ -351,14 +373,17 @@ const Pricing = () => {
                         name: plan.name,
                         plan_type: plan.plan_type,
                         price_cents: plan.price_cents,
+                        currency: planCurrency,
                         interval_prices: plan.interval_prices,
                         description: plan.description,
                         benefits: plan.benefits,
                         is_free: plan.is_free,
                         free_access_days: plan.free_access_days,
                       },
-                      billingInterval: INTERVALS[intervalIndex[plan.id] ?? 0]?.key ?? "monthly",
+                      billingInterval: INTERVAL_KEYS[intervalIndex[plan.id] ?? 0]?.key ?? "monthly",
                       usersCount: usersCount[plan.id] ?? 1,
+                      /** IX3: moeda do catálogo; cobrança Stripe USD/EUR na IX4. */
+                      preferred_currency: planCurrency,
                     };
                     void (async () => {
                       const { buildSignupUrl, loadSignupEntryConfig } = await import("@/lib/signupEntry");
@@ -384,7 +409,7 @@ const Pricing = () => {
                     return;
                   }}
                 >
-                  Contratar
+                  {t("pricing_cta")}
                   <ArrowRight size={16} />
                 </Button>
               </div>

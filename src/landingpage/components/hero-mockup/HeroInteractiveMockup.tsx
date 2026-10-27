@@ -1,14 +1,22 @@
+import { useTranslation } from "react-i18next";
 import { useHeroMockupPhase } from "./useHeroMockupPhase";
 import { DesktopCrmMockup } from "./DesktopCrmMockup";
 import { MobileCrmMockup } from "./MobileCrmMockup";
-import { HERO_MOCKUP_CAPTIONS } from "./heroMockupState";
+import { formatAppMoney } from "@/lib/i18n/formatApp";
+import { useLocaleCurrency } from "@/lib/i18n/LocaleProvider";
 
 /**
  * Mockup decorativo da demo — não é UI funcional do produto.
  */
 export function HeroInteractiveMockup() {
+  const { t } = useTranslation("landing");
+  const { currency } = useLocaleCurrency();
   const { phase, reducedMotion } = useHeroMockupPhase();
-  const caption = HERO_MOCKUP_CAPTIONS[phase] ?? HERO_MOCKUP_CAPTIONS[0];
+  const amount = formatAppMoney(49700, currency);
+  const captions = [0, 1, 2, 3, 4, 5].map((i) =>
+    i === 3 ? t("mock_caption_3", { amount }) : t(`mock_caption_${i}`)
+  );
+  const caption = captions[phase] ?? captions[0];
 
   return (
     <div className="relative w-full">
@@ -28,8 +36,8 @@ export function HeroInteractiveMockup() {
         <span className="font-medium text-foreground">{caption}</span>
       </p>
       <p className="sr-only">
-        Demonstração animada do fluxo: conversa WhatsApp, Kanban comercial, proposta, fatura e fechamento.
-        {reducedMotion ? " Animação reduzida conforme preferências do sistema." : ""}
+        {t("mock_sr")}
+        {reducedMotion ? t("mock_sr_reduced") : ""}
       </p>
     </div>
   );

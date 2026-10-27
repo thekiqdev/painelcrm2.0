@@ -9,9 +9,11 @@
 | **Escopo** | Revenda white-label: Partner com painel próprio, programas comerciais, planos/licenças, gateway próprio, carteira, vendedores com regras de comissão; Platform governa piso/envelope e cria Partners |
 | **Princípio** | Platform **fora** da árvore; **sem** L2; Partner compra/revende; **marca 100% Partner**; vendedor = user do Partner com **painel próprio** (link + ganhos) |
 | **Status** | **S7 feito** (2026-08-18) · S0–S7 ok · aberto: NF (D19), `revenue_share` · **M5-W MVP feito** (S1–S4) |
-| **Próximo** | Soften UX WL · NF (D19) · `revenue_share` |
+| **Atualizado** | 2026-10-19 — go-live canal: **somente subdomínio**; apex fora |
+| **Próximo** | Soften UX WL · NF (D19) · `revenue_share` · TE tenant edge · piloto prod PE ([`PLAN_IMPLANTACAO_PARTNER_SUBDOMINIO.md`](./PLAN_IMPLANTACAO_PARTNER_SUBDOMINIO.md) E5) |
 | **MVP** | **S4** (fechado) · `license_pool` · 1 licença = 1 usuário · gateway Asaas |
 | **Pós-MVP** | **S5** comissões (**feito**) · **S6** suspensão/migração (**feito**) · `revenue_share` |
+| **Go-live domínio** | [`PLAN_IMPLANTACAO_PARTNER_SUBDOMINIO.md`](./PLAN_IMPLANTACAO_PARTNER_SUBDOMINIO.md) — subdomínio + Cloudflare for SaaS (etapas 0–5) |
 | **S0** | [`SPRINT_M5_S0_INVENTORY_AND_SCHEMA.md`](./SPRINT_M5_S0_INVENTORY_AND_SCHEMA.md) |
 | **S1** | [`SPRINT_M5_S1_PARTNER_FOUNDATION.md`](./SPRINT_M5_S1_PARTNER_FOUNDATION.md) |
 | **S2** | [`SPRINT_M5_S2_WHITELABEL_BRAND.md`](./SPRINT_M5_S2_WHITELABEL_BRAND.md) |
@@ -22,7 +24,6 @@
 | **S7** | [`SPRINT_M5_S7_PARTNER_CHANNEL_CHECKOUT.md`](./SPRINT_M5_S7_PARTNER_CHANNEL_CHECKOUT.md) — cadastro/checkout exclusivo do canal |
 | **S8** | [`INVESTIGACAO_S8_SUPERADMIN_SEGREGACAO_CLIENTES.md`](./INVESTIGACAO_S8_SUPERADMIN_SEGREGACAO_CLIENTES.md) — Super Admin: lista SaaS ≠ clientes Partner (investigação) |
 | **M5-W** | [`PLAN_SPRINTS_M5_W_PARTNER_WHOLESALE.md`](./PLAN_SPRINTS_M5_W_PARTNER_WHOLESALE.md) — Platform→Partner: planos atacado, atrelar, licenças avulsas, renovação |
-| **Próximo** | Soften UX WL · NF (D19) · `revenue_share` |
 
 ---
 
@@ -130,6 +131,7 @@ Superadmin, ao criar o Partner, associa **um programa** (extensível depois):
 | **D6** | Planos | `license_pool`: cria planos com preço livre **≥ piso**. `revenue_share`: **não altera** valores dos planos Platform | **Fechado** |
 | **D7** | Venda direta | Mantida em paralelo; tenant sem `partner_id` = direto | **Fechado** |
 | **D8** | White-label | **Domínio próprio**; marca em **tudo** (login, checkout, e-mails, app); **100% marca Partner** | **Fechado** |
+| **D8b** | Tipo de host (go-live) | **Somente subdomínio** (ex. `crm.revenda.com.br`). **Apex fora** nesta implantação | **Fechado** (2026-10-19) |
 | **D9** | Atribuição | `partner_id` obrigatório no canal; `seller_id` opcional → carteira **casa** | **Fechado** |
 | **D10** | Reatribuição | Partner tem **controle total** dos vendedores; pode reatribuir; ledger futuro muda, passado congelado | **Fechado** |
 | **D11** | Payout | MVP/S5: extrato + marcar pago. Frequência de repasse: **Partner escolhe**. Quem paga seller: **sempre o Partner** | **Fechado** |

@@ -131,6 +131,8 @@ export type EnsureSwitchAttemptParams = {
   amountCents: number;
   dueDate: string;
   description: string;
+  /** Moeda do documento (BRL, USD, EUR). Stripe do tenant usa isto no Checkout. */
+  currency?: string | null;
 };
 
 /**
@@ -150,6 +152,7 @@ export async function ensureReusablePaymentAttemptForSwitch(
     amountCents,
     dueDate,
     description,
+    currency,
   } = params;
 
   if (!(await hasInvoicePaymentAttemptsTable())) {
@@ -387,6 +390,7 @@ export async function ensureReusablePaymentAttemptForSwitch(
       description,
       idempotencyKey: generatedIdem,
       externalReference,
+      currency: currency ?? undefined,
     });
   } catch (e) {
     if (!isAsaasInvalidCustomerError(e)) {
@@ -416,6 +420,7 @@ export async function ensureReusablePaymentAttemptForSwitch(
       description,
       idempotencyKey: generatedIdem,
       externalReference,
+      currency: currency ?? undefined,
     });
   }
 

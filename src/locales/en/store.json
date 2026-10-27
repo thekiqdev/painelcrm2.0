@@ -1,0 +1,11 @@
+{
+  "catalog": "Catalog",
+  "checkout": "Checkout",
+  "checkout_unavailable": "Checkout unavailable",
+  "checkout_unavailable_desc": "Invalid product, missing price, or not available for online purchase.",
+  "back_store": "Back to store",
+  "loading_checkout": "Loading checkout…",
+  "store_missing": "Store not found",
+  "from_price": "From {{price}}",
+  "network_error": "Network error. Try again."
+}

@@ -13,7 +13,8 @@ import {
   addWeeks,
   addMonths,
 } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
+import { useTranslation } from 'react-i18next';
+import { dateFnsLocale } from '@/lib/i18n/formatApp';
 import {
   AlertTriangle,
   CalendarClock,
@@ -198,6 +199,7 @@ const buildCompleteForm = (baseStartIso?: string): CompleteForm => {
 };
 
 export default function Agenda() {
+  const { t } = useTranslation('agenda');
   const { user } = useAuth();
   const { canCreate, canEdit, isEditOwnOnly } = useModulePermissions();
   const hasAgenda = useFeatureFlag('agenda');
@@ -563,28 +565,31 @@ export default function Agenda() {
       const a = startOfWeek(calendarWeekStart, { weekStartsOn: 1 });
       const b = endOfWeek(calendarWeekStart, { weekStartsOn: 1 });
       if (a.getMonth() === b.getMonth() && a.getFullYear() === b.getFullYear()) {
-        return `Semana de ${format(a, 'd')} a ${format(b, "d 'de' MMMM yyyy", { locale: ptBR })}`;
+        return t('week_span', { from: format(a, 'd'), to: format(b, 'd MMMM yyyy', { locale: dateFnsLocale() }) });
       }
-      return `Semana de ${format(a, "d 'de' MMM", { locale: ptBR })} a ${format(b, "d 'de' MMMM yyyy", { locale: ptBR })}`;
+      return t('week_span', {
+        from: format(a, 'd MMM', { locale: dateFnsLocale() }),
+        to: format(b, 'd MMMM yyyy', { locale: dateFnsLocale() }),
+      });
     }
     if (layoutMode === 'month') {
-      return format(startOfMonth(calendarMonth), "MMMM 'de' yyyy", { locale: ptBR });
+      return format(startOfMonth(calendarMonth), "MMMM yyyy", { locale: dateFnsLocale() });
     }
     return '';
-  }, [layoutMode, calendarWeekStart, calendarMonth]);
+  }, [layoutMode, calendarWeekStart, calendarMonth, t]);
 
   const listPeriodLabel = useMemo(() => {
     if (datePreset === 'today') {
-      return format(dateFrom, "EEEE, d 'de' MMMM yyyy", { locale: ptBR });
+      return format(dateFrom, "EEEE, d MMMM yyyy", { locale: dateFnsLocale() });
     }
     if (datePreset === 'week') {
       if (format(dateFrom, 'yyyy-MM') === format(dateTo, 'yyyy-MM')) {
-        return `${format(dateFrom, 'd', { locale: ptBR })} – ${format(dateTo, "d 'de' MMMM yyyy", { locale: ptBR })}`;
+        return `${format(dateFrom, 'd', { locale: dateFnsLocale() })} – ${format(dateTo, "d MMMM yyyy", { locale: dateFnsLocale() })}`;
       }
-      return `${format(dateFrom, "d MMM", { locale: ptBR })} – ${format(dateTo, "d MMM yyyy", { locale: ptBR })}`;
+      return `${format(dateFrom, "d MMM", { locale: dateFnsLocale() })} – ${format(dateTo, "d MMM yyyy", { locale: dateFnsLocale() })}`;
     }
     if (datePreset === 'month') {
-      return format(dateFrom, "MMMM 'de' yyyy", { locale: ptBR });
+      return format(dateFrom, "MMMM yyyy", { locale: dateFnsLocale() });
     }
     return `${format(dateFrom, 'dd/MM/yyyy')} – ${format(dateTo, 'dd/MM/yyyy')}`;
   }, [datePreset, dateFrom, dateTo]);
@@ -592,13 +597,13 @@ export default function Agenda() {
   /** Rótulo curto do período (lista) só para toolbar mobile. */
   const listPeriodLabelMobile = useMemo(() => {
     if (datePreset === 'today') {
-      return format(dateFrom, "d MMM yyyy", { locale: ptBR });
+      return format(dateFrom, "d MMM yyyy", { locale: dateFnsLocale() });
     }
     if (datePreset === 'week') {
-      return `${format(dateFrom, 'd MMM', { locale: ptBR })} – ${format(dateTo, 'd MMM', { locale: ptBR })}`;
+      return `${format(dateFrom, 'd MMM', { locale: dateFnsLocale() })} – ${format(dateTo, 'd MMM', { locale: dateFnsLocale() })}`;
     }
     if (datePreset === 'month') {
-      return format(dateFrom, 'MMM yyyy', { locale: ptBR });
+      return format(dateFrom, 'MMM yyyy', { locale: dateFnsLocale() });
     }
     return `${format(dateFrom, 'dd/MM')} – ${format(dateTo, 'dd/MM')}`;
   }, [datePreset, dateFrom, dateTo]);
@@ -607,10 +612,10 @@ export default function Agenda() {
     if (layoutMode === 'week') {
       const a = startOfWeek(calendarWeekStart, { weekStartsOn: 1 });
       const b = endOfWeek(calendarWeekStart, { weekStartsOn: 1 });
-      return `${format(a, 'd MMM', { locale: ptBR })} – ${format(b, 'd MMM', { locale: ptBR })}`;
+      return `${format(a, 'd MMM', { locale: dateFnsLocale() })} – ${format(b, 'd MMM', { locale: dateFnsLocale() })}`;
     }
     if (layoutMode === 'month') {
-      return format(startOfMonth(calendarMonth), 'MMM yyyy', { locale: ptBR });
+      return format(startOfMonth(calendarMonth), 'MMM yyyy', { locale: dateFnsLocale() });
     }
     return '';
   }, [layoutMode, calendarWeekStart, calendarMonth]);
@@ -1361,39 +1366,39 @@ export default function Agenda() {
                           {reportsMobileChrome.hasActiveFilters ? (
                             <span
                               className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-primary ring-2 ring-background"
-                              title="Filtros ativos"
+                              title={t('filters_active')}
                               aria-hidden
                             />
                           ) : null}
                         </span>
                       ),
                       onClick: reportsMobileChrome.openFilters,
-                      ariaLabel: 'Filtros',
+                      ariaLabel: t('filters'),
                     },
                     {
                       icon: <Download className="h-4 w-4" aria-hidden />,
                       onClick: () => reportsMobileChrome.exportCsv(),
-                      ariaLabel: 'Exportar CSV',
+                      ariaLabel: t('export_csv'),
                       disabled: !reportsMobileChrome.canExport,
                     },
                   ]
                 : []
           }
           primaryAction={
-            canCreateA ? { label: '+ Novo', onClick: openNew, ariaLabel: 'Novo compromisso' } : undefined
+            canCreateA ? { label: t('new'), onClick: openNew, ariaLabel: t('new_aria') } : undefined
           }
         />
       </div>
 
       <div className="hidden items-center justify-between gap-3 md:flex">
         <div className="flex min-w-0 items-center gap-3">
-          <h1 className="text-2xl font-semibold tracking-tight">Agenda</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">{t('title')}</h1>
           {gStatus && googleConnected ? (
             <Badge
               variant="outline"
               className="h-6 shrink-0 border-emerald-500/35 bg-emerald-500/10 px-2 text-[11px] font-normal text-emerald-900 dark:text-emerald-100"
             >
-              Google conectado
+              {t('google_on')}
             </Badge>
           ) : null}
         </div>
@@ -1858,7 +1863,7 @@ export default function Agenda() {
                               className="h-7 w-[8.75rem] justify-start text-left text-xs font-normal md:w-36"
                               aria-label="Data inicial do período"
                             >
-                              {format(dateFrom, 'P', { locale: ptBR })}
+                              {format(dateFrom, 'P', { locale: dateFnsLocale() })}
                             </Button>
                           </PopoverTrigger>
                           <PopoverContent className="w-auto p-0" align="start">
@@ -1872,7 +1877,7 @@ export default function Agenda() {
                               className="h-7 w-[8.75rem] justify-start text-left text-xs font-normal md:w-36"
                               aria-label="Data final do período"
                             >
-                              {format(dateTo, 'P', { locale: ptBR })}
+                              {format(dateTo, 'P', { locale: dateFnsLocale() })}
                             </Button>
                           </PopoverTrigger>
                           <PopoverContent className="w-auto p-0" align="start">
@@ -2159,7 +2164,7 @@ export default function Agenda() {
                     const range =
                       Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())
                         ? 'Horário indisponível'
-                        : `${format(s, 'HH:mm')} às ${format(e, 'HH:mm')}`;
+                        : `${format(s, 'HH:mm')} – ${format(e, 'HH:mm')}`;
                     return (
                       <p key={c.id} className="text-xs">
                         {c.title} — {range}
@@ -2231,7 +2236,7 @@ export default function Agenda() {
               <Popover>
                 <PopoverTrigger asChild>
                   <Button variant="outline" className="w-full justify-start" disabled={formDisabled}>
-                    {format(form.day, 'P', { locale: ptBR })}
+                    {format(form.day, 'P', { locale: dateFnsLocale() })}
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-auto p-0">
@@ -2714,7 +2719,7 @@ export default function Agenda() {
                 {editingRow.completed_at ? (
                   <p>
                     <span className="text-muted-foreground">Concluído em:</span>{' '}
-                    {format(parseISO(editingRow.completed_at), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+                    {format(parseISO(editingRow.completed_at), "P p", { locale: dateFnsLocale() })}
                   </p>
                 ) : null}
                 {editingRow.completion_notes ? (
@@ -2812,7 +2817,7 @@ export default function Agenda() {
                   <Popover>
                     <PopoverTrigger asChild>
                       <Button variant="outline" className="w-full justify-start text-left">
-                        {format(rescheduleDay, 'P', { locale: ptBR })}
+                        {format(rescheduleDay, 'P', { locale: dateFnsLocale() })}
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent className="w-auto p-0">
@@ -2858,7 +2863,7 @@ export default function Agenda() {
                     const range =
                       Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())
                         ? 'Horário indisponível'
-                        : `${format(s, 'HH:mm')} às ${format(e, 'HH:mm')}`;
+                        : `${format(s, 'HH:mm')} – ${format(e, 'HH:mm')}`;
                     return (
                       <p key={c.id} className="text-xs">
                         {c.title} — {range}
@@ -2933,7 +2938,7 @@ export default function Agenda() {
                   <Popover>
                     <PopoverTrigger asChild>
                       <Button variant="outline" className="w-full justify-start">
-                        {format(completeForm.followUpDay, 'P', { locale: ptBR })}
+                        {format(completeForm.followUpDay, 'P', { locale: dateFnsLocale() })}
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent className="w-auto p-0">

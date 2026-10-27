@@ -1,4 +1,5 @@
 import React, { useCallback, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -36,6 +37,7 @@ const MIN_NATIONAL_DIGITS = 10;
 type Step = 1 | 2 | 3;
 
 const ForgotPasswordWhatsapp: React.FC = () => {
+  const { t } = useTranslation('auth');
   const [step, setStep] = useState<Step>(1);
   const [whatsappNationalDigits, setWhatsappNationalDigits] = useState('');
   const [code, setCode] = useState('');
@@ -60,7 +62,7 @@ const ForgotPasswordWhatsapp: React.FC = () => {
 
   const sendCodeRequest = async (isResend: boolean) => {
     if (whatsappNationalDigits.length < MIN_NATIONAL_DIGITS) {
-      toast.error('Informe DDD + número (ex.: (11) 99999-9999).');
+      toast.error(t('forgot_invalid_phone'));
       return;
     }
     setLoading(true);
@@ -69,10 +71,10 @@ const ForgotPasswordWhatsapp: React.FC = () => {
         whatsapp: whatsappNationalDigits,
       });
       if (res.error || !res.data?.ok) {
-        toast.error(res.error || 'Não foi possível enviar o pedido.');
+        toast.error(res.error || t('forgot_send_fail'));
         return;
       }
-      toast.success(res.data.message || 'Pedido registado.');
+      toast.success(res.data.message || t('forgot_sent'));
       setStep(2);
       if (isResend) startResendCooldown();
     } finally {
@@ -84,7 +86,7 @@ const ForgotPasswordWhatsapp: React.FC = () => {
     e.preventDefault();
     const c = onlyDigits(code);
     if (c.length !== 6) {
-      toast.error('Digite o código de 6 dígitos.');
+      toast.error(t('forgot_code_invalid'));
       return;
     }
     setLoading(true);
@@ -94,12 +96,12 @@ const ForgotPasswordWhatsapp: React.FC = () => {
         code: c,
       });
       if (res.error || !res.data?.ok || !res.data.reset_token) {
-        toast.error(res.error || 'Código inválido ou expirado.');
+        toast.error(res.error || t('forgot_code_bad'));
         return;
       }
       setResetToken(res.data.reset_token);
       setStep(3);
-      toast.success('Código confirmado. Defina a nova senha.');
+      toast.success(t('forgot_code_ok'));
     } finally {
       setLoading(false);
     }
@@ -108,11 +110,11 @@ const ForgotPasswordWhatsapp: React.FC = () => {
   const handleComplete = async (e: React.FormEvent) => {
     e.preventDefault();
     if (newPassword.length < 6) {
-      toast.error('A senha deve ter pelo menos 6 caracteres.');
+      toast.error(t('forgot_short'));
       return;
     }
     if (newPassword !== confirmPassword) {
-      toast.error('As senhas não coincidem.');
+      toast.error(t('forgot_mismatch'));
       return;
     }
     setLoading(true);
@@ -123,10 +125,10 @@ const ForgotPasswordWhatsapp: React.FC = () => {
         confirm_password: confirmPassword,
       });
       if (res.error || !res.data?.ok) {
-        toast.error(res.error || 'Não foi possível atualizar a senha.');
+        toast.error(res.error || t('forgot_save_fail'));
         return;
       }
-      toast.success(res.data.message || 'Senha atualizada.');
+      toast.success(res.data.message || t('forgot_saved'));
       window.location.href = '/login';
     } finally {
       setLoading(false);
@@ -136,11 +138,11 @@ const ForgotPasswordWhatsapp: React.FC = () => {
   return (
     <Card className="w-full max-w-md mx-auto">
       <CardHeader className="space-y-1">
-        <CardTitle className="text-2xl">Recuperar senha</CardTitle>
+        <CardTitle className="text-2xl">{t('forgot_title')}</CardTitle>
         <CardDescription>
-          {step === 1 && 'Enviaremos um código numérico por WhatsApp ao número da sua conta.'}
-          {step === 2 && 'Digite o código de 6 dígitos recebido no WhatsApp.'}
-          {step === 3 && 'Escolha uma nova senha para a sua conta.'}
+          {step === 1 && t('forgot_step1')}
+          {step === 2 && t('forgot_step2')}
+          {step === 3 && t('forgot_step3')}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -163,11 +165,11 @@ const ForgotPasswordWhatsapp: React.FC = () => {
                 onChange={(e) => setWhatsappNationalDigits(toNationalBrazilDigits(e.target.value))}
               />
               <p className="text-xs text-muted-foreground">
-                Informe apenas DDD + número, como no cadastro. Não é necessário colocar o código do país (55).
+                {t('forgot_hint')}
               </p>
             </div>
             <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? 'A enviar…' : 'Enviar código'}
+              {loading ? t('forgot_sending') : t('forgot_send')}
             </Button>
           </form>
         )}
@@ -175,7 +177,7 @@ const ForgotPasswordWhatsapp: React.FC = () => {
         {step === 2 && (
           <form className="space-y-4" onSubmit={handleVerifyCode}>
             <div className="space-y-2">
-              <Label htmlFor="code">Código</Label>
+              <Label htmlFor="code">{t('forgot_code')}</Label>
               <Input
                 id="code"
                 inputMode="numeric"
@@ -185,10 +187,10 @@ const ForgotPasswordWhatsapp: React.FC = () => {
                 value={code}
                 onChange={(e) => setCode(onlyDigits(e.target.value).slice(0, 6))}
               />
-              <p className="text-xs text-muted-foreground">O código expira em 60 minutos.</p>
+              <p className="text-xs text-muted-foreground">{t('forgot_code_hint')}</p>
             </div>
             <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? 'A validar…' : 'Continuar'}
+              {loading ? t('forgot_validating') : t('forgot_continue')}
             </Button>
             <Button
               type="button"
@@ -197,10 +199,10 @@ const ForgotPasswordWhatsapp: React.FC = () => {
               disabled={loading || resendCooldown > 0}
               onClick={() => void sendCodeRequest(true)}
             >
-              {resendCooldown > 0 ? `Reenviar código (${resendCooldown}s)` : 'Reenviar código'}
+              {resendCooldown > 0 ? t('forgot_resend_wait', { seconds: resendCooldown }) : t('forgot_resend')}
             </Button>
             <Button type="button" variant="link" className="w-full" onClick={() => setStep(1)}>
-              Alterar número
+              {t('forgot_change_number')}
             </Button>
           </form>
         )}
@@ -208,7 +210,7 @@ const ForgotPasswordWhatsapp: React.FC = () => {
         {step === 3 && (
           <form className="space-y-4" onSubmit={handleComplete}>
             <div className="space-y-2">
-              <Label htmlFor="np">Nova senha</Label>
+              <Label htmlFor="np">{t('forgot_new_password')}</Label>
               <Input
                 id="np"
                 type="password"
@@ -219,7 +221,7 @@ const ForgotPasswordWhatsapp: React.FC = () => {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="cp">Confirmar senha</Label>
+              <Label htmlFor="cp">{t('forgot_confirm')}</Label>
               <Input
                 id="cp"
                 type="password"
@@ -230,14 +232,14 @@ const ForgotPasswordWhatsapp: React.FC = () => {
               />
             </div>
             <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? 'A guardar…' : 'Definir nova senha'}
+              {loading ? t('forgot_saving') : t('forgot_save')}
             </Button>
           </form>
         )}
 
         <p className="text-center text-sm text-muted-foreground">
           <Link to="/login" className="text-crm-primary font-medium hover:underline">
-            Voltar ao login
+            {t('forgot_back')}
           </Link>
         </p>
       </CardContent>

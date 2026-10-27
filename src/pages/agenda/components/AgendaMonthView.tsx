@@ -12,7 +12,7 @@ import {
   startOfDay,
   endOfDay,
 } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
+import { dateFnsLocale } from '@/lib/i18n/formatApp';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
@@ -291,7 +291,7 @@ export function AgendaMonthView({
           <div className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-muted-foreground/25 md:hidden" aria-hidden />
           <SheetHeader className="px-4 pb-2 pt-3 text-left">
             <SheetTitle className="text-lg">
-              {daySheet ? format(daySheet, "EEEE, d 'de' MMMM", { locale: ptBR }) : ''}
+              {daySheet ? format(daySheet, "EEEE, d MMMM", { locale: dateFnsLocale() }) : ''}
             </SheetTitle>
           </SheetHeader>
           <ul className="mt-1 min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain px-4 pb-2 pr-3">

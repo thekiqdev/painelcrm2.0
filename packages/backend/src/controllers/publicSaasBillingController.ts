@@ -22,6 +22,9 @@ import { isValidCpfOrCnpj, onlyDigits } from '../utils/cpfCnpj.js';
 import { yyyyMmDdFromDbDateValue } from '../utils/calendarDateBr.js';
 import { ASAAS_CPF_CNPJ_USER_MESSAGE } from '../services/subscriptionService.js';
 import { resolveTransactionalBrandName } from '../partner/partnerBrandResolver.js';
+import { normalizeAppLocale, type AppLocale } from '../i18n/appLocale.js';
+import { loadPrimaryTenantAdminForNotify } from '../services/platformNotifications/platformTenantAdminForNotify.js';
+import { buildPlatformChargePdfBuffer } from '../services/platformChargePdf.js';
 
 /** CA S2 — Asaas exige remoteIp na criação de Assinatura com cartão. */
 function clientIpForPayWithCard(req: Request): string {
@@ -64,6 +67,29 @@ function billingIntervalLabel(interval: string | null | undefined): string {
     default:
       return '';
   }
+}
+
+async function chargeCurrency(row: {
+  subscription_id: string | null;
+  gateway_metadata: Record<string, unknown> | null;
+}): Promise<'BRL' | 'USD' | 'EUR'> {
+  const meta = row.gateway_metadata;
+  const fromMeta = meta && typeof meta.currency === 'string' ? meta.currency.trim().toUpperCase() : '';
+  if (fromMeta === 'USD' || fromMeta === 'EUR' || fromMeta === 'BRL') return fromMeta;
+  if (row.subscription_id) {
+    const r = await pool.query<{ currency: string | null }>(
+      `SELECT currency FROM subscriptions WHERE id = $1 LIMIT 1`,
+      [row.subscription_id],
+    );
+    const c = (r.rows[0]?.currency || '').trim().toUpperCase();
+    if (c === 'USD' || c === 'EUR' || c === 'BRL') return c;
+  }
+  return 'BRL';
+}
+
+async function chargeLocale(tenantId: string): Promise<AppLocale> {
+  const admin = await loadPrimaryTenantAdminForNotify(pool, tenantId);
+  return normalizeAppLocale(admin?.locale) ?? 'pt-BR';
 }
 
 function ymdOnly(raw: string | null | undefined): string | null {
@@ -208,6 +234,8 @@ export async function getPublicSaasBillingSummary(req: Request, res: Response): 
       invoice_number: row.invoice_number,
       status: row.status,
       amount_cents: row.amount_cents,
+      currency: await chargeCurrency(row),
+      locale: await chargeLocale(row.tenant_id),
       due_date: yyyyMmDdFromDbDateValue(row.due_date as string | Date | null) || '',
       plan_label: planLabel,
       billing_reason: row.billing_reason ?? 'plan_purchase',
@@ -495,5 +523,45 @@ export async function postPublicSaasBillingCancelPixAutomatic(
   } catch (e) {
     console.error('[publicSaasBilling cancelPixAutomatic]', e);
     res.status(500).json({ ok: false, error: 'Erro ao desativar Pix Automático', code: 'server_error' });
+  }
+}
+
+export async function getPublicSaasBillingPdf(req: Request, res: Response): Promise<void> {
+  const token = resolveToken(req);
+  if (!token) {
+    res.status(400).json({ ok: false, error: 'Token inválido', code: 'invalid_token' });
+    return;
+  }
+  try {
+    const row = await getInvoiceByPlatformPublicPayToken(token);
+    if (!row) {
+      res.status(404).json({ ok: false, error: 'Cobrança não encontrada', code: 'not_found' });
+      return;
+    }
+    const tenantR = await pool.query<{ name: string | null }>(`SELECT name FROM tenants WHERE id = $1`, [row.tenant_id]);
+    const planLabel =
+      row.plan_name_snapshot?.trim() ||
+      (await pool.query<{ name: string }>(`SELECT name FROM plans WHERE id = $1 LIMIT 1`, [row.plan_id])).rows[0]?.name ||
+      '';
+    const platformName = await resolveTransactionalBrandName({
+      tenantId: row.tenant_id,
+      host: req.get('x-forwarded-host') || req.get('host'),
+    });
+    const buffer = await buildPlatformChargePdfBuffer({
+      locale: await chargeLocale(row.tenant_id),
+      currency: await chargeCurrency(row),
+      amountCents: row.amount_cents,
+      invoiceNumber: row.invoice_number ?? '',
+      dueDate: yyyyMmDdFromDbDateValue(row.due_date as string | Date | null) || '',
+      planLabel,
+      accountName: tenantR.rows[0]?.name ?? '',
+      platformName,
+    });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="charge-${row.invoice_number || row.id}.pdf"`);
+    res.send(buffer);
+  } catch (e) {
+    console.error('[publicSaasBilling pdf]', e);
+    res.status(500).json({ ok: false, error: 'Erro ao gerar PDF', code: 'server_error' });
   }
 }

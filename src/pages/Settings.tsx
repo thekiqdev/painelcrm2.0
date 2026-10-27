@@ -52,6 +52,9 @@ const GoogleCalendarSection = lazy(() =>
 const GoogleDriveSection = lazy(() =>
   import("@/components/settings/GoogleDriveSection").then((m) => ({ default: m.GoogleDriveSection })),
 );
+const ApiKeysSection = lazy(() =>
+  import("@/components/settings/ApiKeysSection").then((m) => ({ default: m.ApiKeysSection })),
+);
 const MediaLibrarySection = lazy(() =>
   import("@/components/settings/MediaLibrarySection").then((m) => ({ default: m.MediaLibrarySection })),
 );
@@ -187,6 +190,12 @@ const Settings = () => {
       return (
         <SectionSuspense>
           <GoogleDriveSection />
+        </SectionSuspense>
+      );
+    case "apiKeys":
+      return (
+        <SectionSuspense>
+          <ApiKeysSection />
         </SectionSuspense>
       );
     case "mediaLibrary":

@@ -1,0 +1,20 @@
+{
+  "save": "Save",
+  "saving": "Saving...",
+  "cancel": "Cancel",
+  "loading": "Loading...",
+  "empty": "Nothing here.",
+  "error_generic": "Something went wrong. Try again.",
+  "language_label": "System language",
+  "language_pt": "Portuguese (Brazil)",
+  "language_en": "English",
+  "language_es": "Spanish",
+  "language_saved": "Language saved.",
+  "language_save_failed": "Could not save the language.",
+  "pilot_date": "Date",
+  "pilot_amount": "Amount",
+  "currency_label": "Currency",
+  "currency_brl": "Real (BRL)",
+  "currency_usd": "US Dollar (USD)",
+  "currency_eur": "Euro (EUR)"
+}

@@ -22,6 +22,8 @@ const TENANT_SCOPED_TABLES = [
   'client_groups',
   'client_tasks',
   'leads',
+  'api_keys',
+  'api_idempotency_keys',
   'lead_statuses',
   'lead_tasks',
   'sales_funnels',

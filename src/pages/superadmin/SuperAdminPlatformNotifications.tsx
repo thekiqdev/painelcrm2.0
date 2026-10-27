@@ -10,7 +10,6 @@ import { PlatformNotificationsGlobalTab } from '@/components/superadmin/platform
 import { PlatformNotificationsHistoryTab } from '@/components/superadmin/platform-notifications/PlatformNotificationsHistoryTab';
 import {
   CHANNEL,
-  LOCALE,
   buildSampleMergeContext,
   channelLabel,
   eventTitle,
@@ -21,9 +20,11 @@ import {
   type PlatformGlobalSettings,
 } from '@/components/superadmin/platform-notifications/platformNotificationsUtils';
 import SuperAdminPlatformWhatsAppPanel from './SuperAdminPlatformWhatsAppPanel';
+import { useTranslation } from 'react-i18next';
 
 export default function SuperAdminPlatformNotifications() {
-  const [tab, setTab] = useState('whatsapp');
+  const { t } = useTranslation('superadmin');
+  const [editorLocale, setEditorLocale] = useState<'pt-BR' | 'en' | 'es'>('pt-BR');
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [events, setEvents] = useState<CatalogEvent[]>([]);
   const [togglingKey, setTogglingKey] = useState<string | null>(null);
@@ -153,7 +154,7 @@ export default function SuperAdminPlatformNotifications() {
     void loadGlobal();
   };
 
-  const openEditor = async (eventKey: string) => {
+  const openEditor = async (eventKey: string, locale: 'pt-BR' | 'en' | 'es' = editorLocale) => {
     setEditorKey(eventKey);
     setEditorOpen(true);
     setDetail(null);
@@ -163,7 +164,7 @@ export default function SuperAdminPlatformNotifications() {
     setPreviewInvalid(null);
     setDetailLoading(true);
     const res = await apiClient.get<EventDetail & { ok?: boolean }>(
-      `/api/superadmin/platform-notifications/catalog/events/${encodeURIComponent(eventKey)}?locale=${encodeURIComponent(LOCALE)}&channel=${encodeURIComponent(CHANNEL)}`,
+      `/api/superadmin/platform-notifications/catalog/events/${encodeURIComponent(eventKey)}?locale=${encodeURIComponent(locale)}&channel=${encodeURIComponent(CHANNEL)}`,
     );
     setDetailLoading(false);
     if (res.error || !res.data || !res.data.event) {
@@ -198,7 +199,7 @@ export default function SuperAdminPlatformNotifications() {
     const res = await apiClient.put<{ ok?: boolean }>('/api/superadmin/platform-notifications/template-overrides', {
       event_key: editorKey,
       channel: CHANNEL,
-      locale: LOCALE,
+      locale: editorLocale,
       body_template: draftBody,
       subject_template: draftSubject.trim() === '' ? null : draftSubject,
       send_whatsapp_pix_copy_paste_button:
@@ -219,7 +220,7 @@ export default function SuperAdminPlatformNotifications() {
     const q = new URLSearchParams({
       event_key: editorKey,
       channel: CHANNEL,
-      locale: LOCALE,
+      locale: editorLocale,
     });
     setOverrideSaving(true);
     const res = await apiClient.delete<{ ok?: boolean }>(
@@ -252,7 +253,7 @@ export default function SuperAdminPlatformNotifications() {
       missing_keys?: string[];
     }>('/api/superadmin/platform-notifications/preview', {
       event_key: editorKey,
-      locale: LOCALE,
+      locale: editorLocale,
       channel: CHANNEL,
       merge_context,
     });
@@ -313,9 +314,9 @@ export default function SuperAdminPlatformNotifications() {
             <MessageCircle className="h-3.5 w-3.5" />
             WhatsApp
           </TabsTrigger>
-          <TabsTrigger value="catalog">Catálogo</TabsTrigger>
-          <TabsTrigger value="global">Configuração global</TabsTrigger>
-          <TabsTrigger value="history">Histórico</TabsTrigger>
+          <TabsTrigger value="catalog">{t('catalog')}</TabsTrigger>
+          <TabsTrigger value="global">{t('global')}</TabsTrigger>
+          <TabsTrigger value="history">{t('history')}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="whatsapp" className="space-y-4">
@@ -370,6 +371,11 @@ export default function SuperAdminPlatformNotifications() {
       </Tabs>
 
       <PlatformNotificationTemplateOverrideDialog
+        locale={editorLocale}
+        onLocaleChange={(locale) => {
+          setEditorLocale(locale);
+          if (editorKey) void openEditor(editorKey, locale);
+        }}
         editorOpen={editorOpen}
         editorKey={editorKey}
         detailLoading={detailLoading}

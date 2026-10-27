@@ -17,6 +17,7 @@ import {
   wizardCompanyBodySchema,
   wizardUsersBodySchema,
 } from '../acquisition/onboardingWizardValidation.js';
+import { getRequestLocale } from '../middleware/localeMiddleware.js';
 import { resolveSessionAvatarDisplay } from '../acquisition/acquisitionSessionAvatarService.js';
 
 const whatsappSchema = z.object({
@@ -101,6 +102,7 @@ export async function postWizardCompany(req: AuthRequest, res: Response): Promis
       logoLightUrl: body.logo_light_url,
       logoDarkUrl: body.logo_dark_url,
       workspaceName: body.workspace_name,
+      locale: getRequestLocale(req),
     });
     if (!result.ok) {
       const slugMessages: Record<string, string> = {

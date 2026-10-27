@@ -9,6 +9,7 @@ import {
   verifyPasswordResetCode,
   completePasswordResetWithToken,
 } from '../services/passwordResetWhatsappService.js';
+import { getRequestLocale } from '../middleware/localeMiddleware.js';
 
 const requestSchema = z.object({
   whatsapp: z.string().min(1),
@@ -28,7 +29,7 @@ const completeSchema = z.object({
 export async function postPasswordResetRequest(req: Request, res: Response): Promise<void> {
   try {
     const body = requestSchema.parse(req.body ?? {});
-    const { shownMessage } = await requestPasswordResetByWhatsapp(pool, body.whatsapp);
+    const { shownMessage } = await requestPasswordResetByWhatsapp(pool, body.whatsapp, getRequestLocale(req));
     res.json({ ok: true, message: shownMessage });
   } catch (e) {
     if (e instanceof z.ZodError) {
