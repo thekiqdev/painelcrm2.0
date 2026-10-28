@@ -33,6 +33,7 @@ import { useMobileMoreQuickAccessPreferences } from "@/hooks/useMobileMoreQuickA
 import { MobileMoreQuickAccessCustomizeDialog } from "@/components/navigation/MobileMoreQuickAccessCustomizeDialog";
 import { MobileQuickAccessSortableGrid } from "@/components/navigation/MobileQuickAccessSortableGrid";
 import { useTranslation } from "react-i18next";
+import { formatUnseenCount, useLeadUnseenCount } from "@/hooks/useLeadUnseenCount";
 
 const NAV_BY_ID: Record<string, string> = {
   dashboard: "dashboard",
@@ -100,6 +101,7 @@ type MoreItem = {
   icon: React.ComponentType<{ className?: string }>;
   description?: string;
   preload?: () => Promise<unknown>;
+  badge?: string | null;
 };
 
 type MoreGroup = { title: string; items: MoreItem[] };
@@ -154,6 +156,9 @@ function MobileAppNavigationImpl() {
   const hasProducts = useFeatureFlag("products");
 
   const show = (feature: boolean, moduleId: string) => feature && canView(moduleId);
+  const unseenLeadsLabel = formatUnseenCount(
+    useLeadUnseenCount(show(hasLeads, "leads")),
+  );
 
   const moreCtx: MobileMoreMenuContext = useMemo(
     () => ({
@@ -290,10 +295,11 @@ function MobileAppNavigationImpl() {
       to: s.to,
       icon: s.icon,
       preload: s.preload,
+      badge: s.id === "leads" ? unseenLeadsLabel : null,
     }));
 
     return { quickAccessItems, moreMenuGroups: groups };
-  }, [moreCtx, prefs, labelFor, t]);
+  }, [moreCtx, prefs, labelFor, t, unseenLeadsLabel]);
 
   const handleQuickAccessReorder = useCallback(
     (orderedIds: MobileMoreQuickActionId[]) => {
@@ -344,7 +350,14 @@ function MobileAppNavigationImpl() {
                 "text-muted-foreground hover:bg-muted/55",
               )}
             >
-              <Ellipsis className="h-[1.35rem] w-[1.35rem] shrink-0" />
+              <span className="relative">
+                <Ellipsis className="h-[1.35rem] w-[1.35rem] shrink-0" />
+                {unseenLeadsLabel ? (
+                  <span className="absolute -right-2 -top-1.5 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-primary px-1 text-[9px] font-bold tabular-nums leading-none text-primary-foreground">
+                    {unseenLeadsLabel}
+                  </span>
+                ) : null}
+              </span>
               <span className="max-w-full truncate">{t("more")}</span>
             </button>
           </SheetTrigger>
@@ -434,6 +447,11 @@ function MobileAppNavigationImpl() {
                               <div className="min-w-0 flex-1">
                                 <div className="flex min-w-0 items-center gap-1.5">
                                   <span className="truncate">{item.label}</span>
+                                  {item.id === "leads" && unseenLeadsLabel ? (
+                                    <span className="flex h-5 min-w-[1.125rem] shrink-0 items-center justify-center rounded-full bg-primary px-1.5 text-[10px] font-semibold tabular-nums leading-none text-primary-foreground">
+                                      {unseenLeadsLabel}
+                                    </span>
+                                  ) : null}
                                   {item.id === "updates" && updatesUnread > 0 ? (
                                     <span
                                       className="h-2 w-2 shrink-0 rounded-full bg-primary"

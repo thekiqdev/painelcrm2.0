@@ -23,6 +23,7 @@ import { scheduleIdleChatPrefetch } from '@/lib/chatPrefetch';
 import { cn } from '@/lib/utils';
 import { useSharedChatNavUnreadCount } from '@/hooks/chatNavUnreadContext';
 import { useTicketMenuCount } from '@/hooks/useTicketMenuCount';
+import { formatUnseenCount, useLeadUnseenCount } from '@/hooks/useLeadUnseenCount';
 import { useTranslation } from 'react-i18next';
 
 const SidebarNavLinkItem = React.memo(function SidebarNavLinkItem({
@@ -33,6 +34,7 @@ const SidebarNavLinkItem = React.memo(function SidebarNavLinkItem({
   preload,
   excludeActiveWhenPathStartsWith,
   collapsed,
+  badge,
 }: {
   to: string;
   end?: boolean;
@@ -42,6 +44,7 @@ const SidebarNavLinkItem = React.memo(function SidebarNavLinkItem({
   /** Evita match por prefixo (ex.: `/finance/accounts` vs `/finance/accounts-payable`). */
   excludeActiveWhenPathStartsWith?: string;
   collapsed: boolean;
+  badge?: string | null;
 }) {
   const { pathname } = useLocation();
   const excluded =
@@ -60,10 +63,23 @@ const SidebarNavLinkItem = React.memo(function SidebarNavLinkItem({
           to={to}
           end={end}
           onMouseEnter={preload}
-          className={({ isActive }) => navLinkClassFn(isActive && !excluded)}
+          className={({ isActive }) => cn(navLinkClassFn(isActive && !excluded), 'relative', badge && 'gap-2')}
         >
           <Icon className="size-4 shrink-0 opacity-90" aria-hidden />
-          {!collapsed && <span className="truncate">{label}</span>}
+          {!collapsed ? (
+            <span className="flex min-w-0 flex-1 items-center justify-between gap-2">
+              <span className="truncate">{label}</span>
+              {badge ? (
+                <span className="flex h-5 min-w-[1.125rem] shrink-0 items-center justify-center rounded-full bg-primary px-1.5 text-[10px] font-semibold tabular-nums leading-none text-primary-foreground">
+                  {badge}
+                </span>
+              ) : null}
+            </span>
+          ) : badge ? (
+            <span className="pointer-events-none absolute right-0.5 top-0.5 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-primary px-0.5 text-[9px] font-bold tabular-nums leading-none text-primary-foreground">
+              {badge}
+            </span>
+          ) : null}
         </NavLink>
       </SidebarMenuButton>
     </SidebarMenuItem>
@@ -151,6 +167,8 @@ export const AppShellSidebar = React.memo(function AppShellSidebar() {
   ]);
 
   const show = (feature: boolean, moduleId: string) => feature && canView(moduleId);
+  const unseenLeads = useLeadUnseenCount(show(hasLeads, 'leads') && hasPermissionKey('leads.view'));
+  const unseenLeadsLabel = formatUnseenCount(unseenLeads);
 
   const navLinkClassFn = (isActive: boolean) =>
     cn(
@@ -347,6 +365,7 @@ export const AppShellSidebar = React.memo(function AppShellSidebar() {
                     );
                   }}
                   collapsed={collapsed}
+                  badge={unseenLeadsLabel}
                 />
               )}
               {show(hasAgenda, 'agenda') && (

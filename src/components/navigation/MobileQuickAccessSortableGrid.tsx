@@ -28,6 +28,7 @@ export type MobileQuickAccessGridItem = {
   to: string;
   icon: React.ComponentType<{ className?: string }>;
   preload?: () => Promise<unknown>;
+  badge?: string | null;
 };
 
 type SortableTileProps = {
@@ -74,8 +75,13 @@ function SortableQuickTile({ item }: SortableTileProps) {
             isDragging && "pointer-events-none",
           )}
         >
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 text-primary transition-colors group-hover:bg-primary/15">
+          <div className="relative flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 text-primary transition-colors group-hover:bg-primary/15">
             <item.icon className="h-5 w-5" aria-hidden />
+            {item.badge ? (
+              <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-primary px-1 text-[9px] font-bold tabular-nums leading-none text-primary-foreground">
+                {item.badge}
+              </span>
+            ) : null}
           </div>
           <span className="line-clamp-2 w-full px-0.5 text-[12px] font-semibold leading-tight text-foreground">
             {item.label}

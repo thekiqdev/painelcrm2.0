@@ -11,6 +11,7 @@ import {
   prepareLeadFields,
   type LeadWriteInput,
 } from '../services/leadCreateService.js';
+import { ensureDefaultLeadStatuses } from '../services/leadStatusDefaults.js';
 import { commercialAccessBlock, planPeriodBlock } from '../services/tenantAccessGate.js';
 import { logApiV1Request } from './apiV1UsageLog.js';
 
@@ -230,6 +231,7 @@ async function writeLead(
     },
     'API'
   );
+  await ensureDefaultLeadStatuses(key.tenant_id, key.owner_user_id);
   if (prepared.status) {
     prepared.status = await resolveTenantLeadStatus(key.tenant_id, prepared.status);
   }

@@ -574,5 +574,7 @@ export const MIGRATION_ORDER = [
   '357_api_keys_default_on.sql',
   /** Observação de texto no cadastro de lead e de cliente */
   '358_lead_client_observacao.sql',
+  /** Leads ainda não abertos — badge do menu */
+  '359_leads_seen_at.sql',
   'create-admin-user.sql',
 ];

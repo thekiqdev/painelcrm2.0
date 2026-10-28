@@ -6,9 +6,11 @@ import { requirePermission } from '../permissions/index.js';
 const router = Router();
 router.use(...tenantAuthCrm);
 
+router.get('/unseen-count', leadsController.getUnseenLeadCount);
 router.get('/', leadsController.getLeads);
 router.get('/:id', leadsController.getLeadById);
 router.post('/', requirePermission('leads.create'), leadsController.createLead);
+router.post('/:id/seen', leadsController.markLeadSeen);
 router.patch('/:id', leadsController.updateLead);
 router.delete('/:id', leadsController.deleteLead);
 

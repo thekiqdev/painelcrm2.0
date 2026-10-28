@@ -21,6 +21,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { apiClient } from "@/integrations/api/client";
+import { notifyLeadsUnseenChanged } from "@/lib/leadUnseenEvents";
 import { toast } from "@/components/ui/sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { z } from "zod";
@@ -197,6 +198,12 @@ const Leads = () => {
   const fetchLeads = () =>
     queryClient.invalidateQueries({ queryKey: ["leads", tenantId, userId] });
 
+  const markLeadSeen = (leadId: string) => {
+    void apiClient.post(`/api/leads/${leadId}/seen`, {}).then((response) => {
+      if (!response.error) notifyLeadsUnseenChanged();
+    });
+  };
+
   const openLeadIdParam = searchParams.get("openLeadId")?.trim() ?? "";
 
   useEffect(() => {
@@ -243,6 +250,7 @@ const Leads = () => {
       }
       setIsViewDialogOpen(true);
       setActiveTab("summary");
+      markLeadSeen(String(leadToOpen.id));
       await fetchLeadTasks(leadToOpen.id);
     };
 
@@ -304,6 +312,7 @@ const Leads = () => {
 
   // View lead details — alinhar ao perfil do cliente: carregar GET /api/leads/:id para whatsapp_avatar_url atualizado
   const handleViewLead = async (lead: any) => {
+    markLeadSeen(String(lead.id));
     try {
       const response = await apiClient.get(`/api/leads/${lead.id}`);
       if (!response.error && response.data) {

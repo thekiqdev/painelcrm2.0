@@ -1,6 +1,7 @@
-import { Request, Response } from 'express';
+import { Response } from 'express';
 import { pool } from '../utils/db.js';
 import { AuthRequest } from '../middleware/auth.js';
+import { ensureDefaultLeadStatuses } from '../services/leadStatusDefaults.js';
 import { z } from 'zod';
 
 const leadStatusSchema = z.object({
@@ -14,6 +15,10 @@ export async function getLeadStatuses(req: AuthRequest, res: Response): Promise<
     if (!tenantId) {
       res.json([]);
       return;
+    }
+
+    if (req.userId) {
+      await ensureDefaultLeadStatuses(tenantId, req.userId);
     }
 
     const result = await pool.query(

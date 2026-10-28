@@ -90,6 +90,85 @@ const updateLeadBodySchema = leadSchema.partial().extend({
   migrated_client_id: z.string().uuid().optional(),
 });
 
+export async function getUnseenLeadCount(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const tenantId = req.tenantId ?? null;
+    const userId = req.userId;
+    if (!tenantId || !userId) {
+      res.json({ count: 0 });
+      return;
+    }
+    const permMap = await assertPermissionKey(userId, 'leads.view', req);
+    const lg = resolveLeadsGranularFromLegacy(permMap);
+    const params: unknown[] = [tenantId];
+    let own = '';
+    if (lg.view_own && !lg.view_all) {
+      params.push(userId);
+      own = ` AND l.user_id = $2`;
+    }
+    const result = await pool.query<{ count: number }>(
+      `SELECT COUNT(*)::int AS count
+       FROM leads l
+       INNER JOIN users u ON u.id = l.user_id AND u.tenant_id = $1
+       WHERE l.seen_at IS NULL
+         AND (l.status IS NULL OR l.status <> 'Convertido')
+         ${own}`,
+      params
+    );
+    res.json({ count: Number(result.rows[0]?.count ?? 0) });
+  } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
+    console.error('Error fetching unseen lead count:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+export async function markLeadSeen(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId;
+    const tenantId = req.tenantId ?? null;
+    const { id } = req.params;
+    if (!userId || !tenantId) {
+      res.status(401).json({ error: 'Não autenticado' });
+      return;
+    }
+    const permMap = await assertPermissionKey(userId, 'leads.view', req);
+    const lg = resolveLeadsGranularFromLegacy(permMap);
+    const params: unknown[] = [id, tenantId];
+    let own = '';
+    if (lg.view_own && !lg.view_all) {
+      params.push(userId);
+      own = ` AND l.user_id = $3`;
+    }
+    const result = await pool.query(
+      `UPDATE leads l
+       SET seen_at = COALESCE(l.seen_at, now())
+       FROM users u
+       WHERE l.id = $1
+         AND u.id = l.user_id
+         AND u.tenant_id = $2
+         ${own}
+       RETURNING l.id`,
+      params
+    );
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: 'Lead not found' });
+      return;
+    }
+    res.json({ ok: true });
+  } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
+    console.error('Error marking lead seen:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
 export async function getLeads(req: AuthRequest, res: Response): Promise<void> {
   try {
     const tenantId = req.tenantId ?? null;
