@@ -14,6 +14,7 @@ import {
   normalizeCpfCnpj,
   prepareLeadFields,
 } from '../services/leadCreateService.js';
+import { ensureLeadSeenColumn } from '../services/leadSeenColumn.js';
 
 const MODULE_LEADS = 'leads';
 
@@ -99,6 +100,7 @@ export async function getUnseenLeadCount(req: AuthRequest, res: Response): Promi
       return;
     }
     const permMap = await assertPermissionKey(userId, 'leads.view', req);
+    await ensureLeadSeenColumn();
     const lg = resolveLeadsGranularFromLegacy(permMap);
     const params: unknown[] = [tenantId];
     let own = '';

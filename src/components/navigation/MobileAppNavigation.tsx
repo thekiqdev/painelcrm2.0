@@ -353,7 +353,7 @@ function MobileAppNavigationImpl() {
               <span className="relative">
                 <Ellipsis className="h-[1.35rem] w-[1.35rem] shrink-0" />
                 {unseenLeadsLabel ? (
-                  <span className="absolute -right-2 -top-1.5 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-primary px-1 text-[9px] font-bold tabular-nums leading-none text-primary-foreground">
+                  <span className="absolute -right-2 -top-1.5 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-amber-500 px-1 text-[9px] font-bold tabular-nums leading-none text-white">
                     {unseenLeadsLabel}
                   </span>
                 ) : null}
@@ -448,7 +448,7 @@ function MobileAppNavigationImpl() {
                                 <div className="flex min-w-0 items-center gap-1.5">
                                   <span className="truncate">{item.label}</span>
                                   {item.id === "leads" && unseenLeadsLabel ? (
-                                    <span className="flex h-5 min-w-[1.125rem] shrink-0 items-center justify-center rounded-full bg-primary px-1.5 text-[10px] font-semibold tabular-nums leading-none text-primary-foreground">
+                                    <span className="flex h-5 min-w-[1.125rem] shrink-0 items-center justify-center rounded-full bg-amber-500 px-1.5 text-[10px] font-semibold tabular-nums leading-none text-white">
                                       {unseenLeadsLabel}
                                     </span>
                                   ) : null}

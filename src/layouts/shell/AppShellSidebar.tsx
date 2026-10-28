@@ -63,20 +63,22 @@ const SidebarNavLinkItem = React.memo(function SidebarNavLinkItem({
           to={to}
           end={end}
           onMouseEnter={preload}
-          className={({ isActive }) => cn(navLinkClassFn(isActive && !excluded), 'relative', badge && 'gap-2')}
+          className={({ isActive }) =>
+            cn(navLinkClassFn(isActive && !excluded), 'relative overflow-visible', badge && 'gap-2')
+          }
         >
           <Icon className="size-4 shrink-0 opacity-90" aria-hidden />
           {!collapsed ? (
             <span className="flex min-w-0 flex-1 items-center justify-between gap-2">
               <span className="truncate">{label}</span>
               {badge ? (
-                <span className="flex h-5 min-w-[1.125rem] shrink-0 items-center justify-center rounded-full bg-primary px-1.5 text-[10px] font-semibold tabular-nums leading-none text-primary-foreground">
+                <span className="flex h-5 min-w-[1.125rem] shrink-0 items-center justify-center rounded-full bg-amber-500 px-1.5 text-[10px] font-semibold tabular-nums leading-none text-white">
                   {badge}
                 </span>
               ) : null}
             </span>
           ) : badge ? (
-            <span className="pointer-events-none absolute right-0.5 top-0.5 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-primary px-0.5 text-[9px] font-bold tabular-nums leading-none text-primary-foreground">
+            <span className="pointer-events-none absolute right-0.5 top-0.5 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-amber-500 px-0.5 text-[9px] font-bold tabular-nums leading-none text-white">
               {badge}
             </span>
           ) : null}
@@ -167,7 +169,7 @@ export const AppShellSidebar = React.memo(function AppShellSidebar() {
   ]);
 
   const show = (feature: boolean, moduleId: string) => feature && canView(moduleId);
-  const unseenLeads = useLeadUnseenCount(show(hasLeads, 'leads') && hasPermissionKey('leads.view'));
+  const unseenLeads = useLeadUnseenCount(show(hasLeads, 'leads'));
   const unseenLeadsLabel = formatUnseenCount(unseenLeads);
 
   const navLinkClassFn = (isActive: boolean) =>

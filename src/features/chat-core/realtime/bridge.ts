@@ -158,6 +158,7 @@ function attachWindowForwarders(socket: Socket): void {
   socket.on(CHAT_WS_EVENTS_V2.whatsappInstanceRemoved, (payload) =>
     emitWindowEvent(WINDOW_EVENTS.whatsappInstanceRemoved, payload),
   );
+  socket.on('lead.created', () => emitWindowEvent('painelcrm:realtime:lead.created', {}));
 
   const domainEvents = [
     CHAT_WS_EVENTS_V2.messageCreated,

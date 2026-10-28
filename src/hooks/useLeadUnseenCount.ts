@@ -27,12 +27,19 @@ export function useLeadUnseenCount(enabled: boolean): number {
     const onRefresh = () => {
       void refresh();
     };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') onRefresh();
+    };
     window.addEventListener(LEADS_UNSEEN_REFRESH_EVENT, onRefresh);
+    window.addEventListener('painelcrm:realtime:lead.created', onRefresh);
     window.addEventListener('focus', onRefresh);
-    const timer = window.setInterval(onRefresh, 30_000);
+    document.addEventListener('visibilitychange', onVisible);
+    const timer = window.setInterval(onRefresh, 8_000);
     return () => {
       window.removeEventListener(LEADS_UNSEEN_REFRESH_EVENT, onRefresh);
+      window.removeEventListener('painelcrm:realtime:lead.created', onRefresh);
       window.removeEventListener('focus', onRefresh);
+      document.removeEventListener('visibilitychange', onVisible);
       window.clearInterval(timer);
     };
   }, [enabled, refresh]);

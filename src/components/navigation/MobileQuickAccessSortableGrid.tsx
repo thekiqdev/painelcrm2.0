@@ -78,7 +78,7 @@ function SortableQuickTile({ item }: SortableTileProps) {
           <div className="relative flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 text-primary transition-colors group-hover:bg-primary/15">
             <item.icon className="h-5 w-5" aria-hidden />
             {item.badge ? (
-              <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-primary px-1 text-[9px] font-bold tabular-nums leading-none text-primary-foreground">
+              <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-amber-500 px-1 text-[9px] font-bold tabular-nums leading-none text-white">
                 {item.badge}
               </span>
             ) : null}

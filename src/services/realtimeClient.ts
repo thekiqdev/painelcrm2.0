@@ -75,6 +75,7 @@ function attachLegacyWindowForwarders(socket: Socket): void {
   socket.on(REALTIME_EVENTS.whatsappInstanceRemoved, (payload) =>
     emitWindowEvent(REALTIME_WINDOW_EVENTS.whatsappInstanceRemoved, payload)
   );
+  socket.on('lead.created', () => emitWindowEvent('painelcrm:realtime:lead.created', {}));
 }
 
 function connectLegacy(token: string): Socket {

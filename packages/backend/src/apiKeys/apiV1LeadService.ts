@@ -14,6 +14,7 @@ import {
 import { ensureDefaultLeadStatuses } from '../services/leadStatusDefaults.js';
 import { commercialAccessBlock, planPeriodBlock } from '../services/tenantAccessGate.js';
 import { logApiV1Request } from './apiV1UsageLog.js';
+import { emitToTenant } from '../services/realtimeService.js';
 
 const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
 const PUBLIC_LEAD_FIELDS = new Set([
@@ -271,13 +272,22 @@ export async function createPublicLead(input: {
   idempotencyKey: string | null;
 }): Promise<PublicLeadResult> {
   let keyId: string | null = null;
+  let tenantId: string | null = null;
   const tx = await withApiKeyTransaction(input.secret, (key) => {
     keyId = key.id;
+    tenantId = key.tenant_id;
     return createForKey(key, input.body, input.idempotencyKey);
   });
   const result: PublicLeadResult = tx.ok
     ? tx.value
     : { status: 401, body: { error: 'API key inválida.' } };
   logApiV1Request({ keyId, route: 'POST /api/v1/leads', status: result.status });
+  if (result.status === 201 && tenantId) {
+    try {
+      emitToTenant(tenantId, 'lead.created', {});
+    } catch {
+      /* o menu também atualiza na consulta seguinte */
+    }
+  }
   return result;
 }
