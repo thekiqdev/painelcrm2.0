@@ -147,7 +147,7 @@ export const ReportsFiltersSheet = React.memo(function ReportsFiltersSheet({
                         dateFrom: startOfDay(d),
                       }));
                     }}
-                    locale={ptBR}
+                    locale={dateFnsLocale()}
                   />
                 </PopoverContent>
               </Popover>
@@ -176,7 +176,7 @@ export const ReportsFiltersSheet = React.memo(function ReportsFiltersSheet({
                         dateTo: endOfDay(d),
                       }));
                     }}
-                    locale={ptBR}
+                    locale={dateFnsLocale()}
                   />
                 </PopoverContent>
               </Popover>

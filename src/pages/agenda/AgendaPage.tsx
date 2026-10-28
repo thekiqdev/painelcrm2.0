@@ -1867,7 +1867,7 @@ export default function Agenda() {
                             </Button>
                           </PopoverTrigger>
                           <PopoverContent className="w-auto p-0" align="start">
-                            <Calendar mode="single" selected={dateFrom} onSelect={onPickDateFrom} locale={ptBR} />
+                            <Calendar mode="single" selected={dateFrom} onSelect={onPickDateFrom} locale={dateFnsLocale()} />
                           </PopoverContent>
                         </Popover>
                         <Popover>
@@ -1881,7 +1881,7 @@ export default function Agenda() {
                             </Button>
                           </PopoverTrigger>
                           <PopoverContent className="w-auto p-0" align="start">
-                            <Calendar mode="single" selected={dateTo} onSelect={onPickDateTo} locale={ptBR} />
+                            <Calendar mode="single" selected={dateTo} onSelect={onPickDateTo} locale={dateFnsLocale()} />
                           </PopoverContent>
                         </Popover>
                       </>
@@ -2244,7 +2244,7 @@ export default function Agenda() {
                     mode="single"
                     selected={form.day}
                     onSelect={(d) => d && setForm((f) => ({ ...f, day: d }))}
-                    locale={ptBR}
+                    locale={dateFnsLocale()}
                   />
                 </PopoverContent>
               </Popover>
@@ -2825,7 +2825,7 @@ export default function Agenda() {
                         mode="single"
                         selected={rescheduleDay}
                         onSelect={(d) => d && setRescheduleDay(d)}
-                        locale={ptBR}
+                        locale={dateFnsLocale()}
                       />
                     </PopoverContent>
                   </Popover>
@@ -2946,7 +2946,7 @@ export default function Agenda() {
                         mode="single"
                         selected={completeForm.followUpDay}
                         onSelect={(d) => d && setCompleteForm((f) => ({ ...f, followUpDay: d }))}
-                        locale={ptBR}
+                        locale={dateFnsLocale()}
                       />
                     </PopoverContent>
                   </Popover>

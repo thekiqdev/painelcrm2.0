@@ -127,7 +127,7 @@ export const AgendaFiltersSheet = React.memo(function AgendaFiltersSheet({
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar mode="single" selected={dateFrom} onSelect={onPickDateFrom} locale={ptBR} />
+                      <Calendar mode="single" selected={dateFrom} onSelect={onPickDateFrom} locale={dateFnsLocale()} />
                     </PopoverContent>
                   </Popover>
                 </div>
@@ -144,7 +144,7 @@ export const AgendaFiltersSheet = React.memo(function AgendaFiltersSheet({
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar mode="single" selected={dateTo} onSelect={onPickDateTo} locale={ptBR} />
+                      <Calendar mode="single" selected={dateTo} onSelect={onPickDateTo} locale={dateFnsLocale()} />
                     </PopoverContent>
                   </Popover>
                 </div>

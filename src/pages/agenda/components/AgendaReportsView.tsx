@@ -293,7 +293,7 @@ export function AgendaReportsView({ members, typeFilterOptions = TYPE_OPTIONS, o
                     setPreset('custom');
                     setDateFrom(startOfDay(d));
                   }}
-                  locale={ptBR}
+                  locale={dateFnsLocale()}
                 />
               </PopoverContent>
             </Popover>
@@ -315,7 +315,7 @@ export function AgendaReportsView({ members, typeFilterOptions = TYPE_OPTIONS, o
                     setPreset('custom');
                     setDateTo(endOfDay(d));
                   }}
-                  locale={ptBR}
+                  locale={dateFnsLocale()}
                 />
               </PopoverContent>
             </Popover>
