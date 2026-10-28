@@ -96,7 +96,7 @@
   "api_keys_copy_error": "No se pudo copiar.",
   "api_keys_done": "Ya la copié",
   "api_keys_curl_title": "Registrar lead",
-  "api_keys_curl_hint": "Sustituye pcrm_SUA_CHAVE por la clave copiada. Los campos son los del registro: nombre, correo, teléfono, empresa, origen, status, observación y CPF/CNPJ. status solo vale si esa fase ya existe en el CRM. Sin source, el origen guardado es API.",
+  "api_keys_curl_hint": "Sustituye pcrm_SUA_CHAVE por la clave copiada. Los campos son los del registro: nombre, correo, teléfono, empresa, origen, status, observación y CPF/CNPJ. status vale si esa fase ya existe en el CRM; las mayúsculas no importan y el lead queda con el nombre de la fase. Sin source, el origen guardado es API.",
   "api_keys_load_error": "No se pudieron cargar las claves.",
   "api_keys_retry": "Reintentar",
   "users_desc": "Lista los usuarios de la cuenta, define el perfil de acceso y los equipos. El límite depende del plan.",

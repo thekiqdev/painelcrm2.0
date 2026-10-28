@@ -91,18 +91,22 @@ export function prepareLeadFields(input: LeadWriteInput, defaultSource: string):
   };
 }
 
-export async function assertOwnerLeadStatus(userId: string, tenantId: string, status: string): Promise<void> {
+/** Nome da fase como está no CRM. Aceita maiúsculas diferentes e qualquer fase da conta. */
+export async function resolveTenantLeadStatus(tenantId: string, status: string): Promise<string> {
   const result = await pool.query(
     `SELECT ls.name
      FROM lead_statuses ls
-     INNER JOIN users u ON u.id = ls.user_id AND u.tenant_id = $2
-     WHERE ls.user_id = $1 AND ls.name = $3
+     INNER JOIN users u ON u.id = ls.user_id AND u.tenant_id = $1
+     WHERE lower(btrim(ls.name)) = lower(btrim($2))
+     ORDER BY CASE WHEN ls.name = btrim($2) THEN 0 ELSE 1 END, ls.created_at
      LIMIT 1`,
-    [userId, tenantId, status]
+    [tenantId, status]
   );
-  if (result.rows.length === 0) {
+  const name = result.rows[0]?.name;
+  if (!name) {
     throw new LeadValidationError('Status de lead não encontrado.');
   }
+  return String(name);
 }
 
 export async function insertLead(userId: string, lead: PreparedLead): Promise<Record<string, unknown>> {

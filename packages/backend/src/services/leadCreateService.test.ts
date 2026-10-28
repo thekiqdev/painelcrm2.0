@@ -9,6 +9,7 @@ import {
   LeadValidationError,
   insertLead,
   prepareLeadFields,
+  resolveTenantLeadStatus,
 } from './leadCreateService.js';
 
 const query = vi.mocked(pool.query);
@@ -40,6 +41,25 @@ describe('prepareLeadFields', () => {
     const lead = prepareLeadFields({ name: 'Maria', observacao: '  Veio do site  ' }, 'API');
     expect(lead.observacao).toBe('Veio do site');
     expect(prepareLeadFields({ name: 'Maria', observacao: '   ' }, 'API').observacao).toBeNull();
+  });
+});
+
+describe('resolveTenantLeadStatus', () => {
+  beforeEach(() => {
+    query.mockReset();
+  });
+
+  it('devolve o nome da fase como está no CRM', async () => {
+    query.mockResolvedValue({ rows: [{ name: 'Novo' }], rowCount: 1 } as never);
+    await expect(resolveTenantLeadStatus('tenant-1', 'novo')).resolves.toBe('Novo');
+    const sql = String(query.mock.calls[0]?.[0]);
+    expect(sql).toContain('lower(btrim(ls.name))');
+    expect(sql).not.toContain('ls.user_id = $1');
+  });
+
+  it('rejeita fase que não existe na conta', async () => {
+    query.mockResolvedValue({ rows: [], rowCount: 0 } as never);
+    await expect(resolveTenantLeadStatus('tenant-1', 'Fantasma')).rejects.toThrow('Status de lead não encontrado.');
   });
 });
 

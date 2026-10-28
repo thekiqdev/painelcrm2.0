@@ -96,7 +96,7 @@
   "api_keys_copy_error": "Could not copy.",
   "api_keys_done": "I copied it",
   "api_keys_curl_title": "Create a lead",
-  "api_keys_curl_hint": "Replace pcrm_SUA_CHAVE with the key you copied. The fields match the lead form: name, email, phone, company, source, status, observation and tax id. status is accepted only if that phase already exists in the CRM. If source is omitted, it is stored as API.",
+  "api_keys_curl_hint": "Replace pcrm_SUA_CHAVE with the key you copied. The fields match the lead form: name, email, phone, company, source, status, observation and tax id. status is accepted when that phase already exists in the CRM; letter case is ignored and the lead keeps the phase name. If source is omitted, it is stored as API.",
   "api_keys_load_error": "Could not load the keys.",
   "api_keys_retry": "Try again",
   "users_desc": "List account users, set each access profile, and the teams they belong to. The user limit depends on the plan.",

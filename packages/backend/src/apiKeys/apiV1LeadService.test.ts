@@ -70,7 +70,7 @@ describe('createPublicLead', () => {
               phone: null,
               company: null,
               source: 'API',
-              status: null,
+              status: params?.[6] ?? null,
               observacao: params?.[10] ?? null,
               cpf_cnpj: null,
               created_at: '2026-10-27T15:00:00.000Z',
@@ -159,6 +159,32 @@ describe('createPublicLead', () => {
     expect(result.status).toBe(400);
     expect(String(result.body.error)).toMatch(/11/);
     expect(query.mock.calls.some((call) => String(call[0]).includes('INSERT INTO leads'))).toBe(false);
+  });
+
+  it('status novo casa com a fase Novo da conta', async () => {
+    useKey(key);
+    query.mockImplementation(async (sql: string, params?: unknown[]) => {
+      const text = String(sql);
+      if (text.includes('UPDATE api_keys')) return { rows: [], rowCount: 1 } as never;
+      if (text.includes('FROM lead_statuses')) return { rows: [{ name: 'Novo' }], rowCount: 1 } as never;
+      if (text.includes('INSERT INTO leads')) {
+        return {
+          rows: [{ id: 'lead-1', name: 'Maria', email: null, phone: null, company: null, source: 'API', status: params?.[6] ?? null, observacao: null, cpf_cnpj: null, created_at: '2026-10-27T15:00:00.000Z' }],
+          rowCount: 1,
+        } as never;
+      }
+      if (text.includes('SAVEPOINT') || text.includes('RELEASE') || text.includes('ROLLBACK TO')) {
+        return { rows: [], rowCount: 0 } as never;
+      }
+      return { rows: [], rowCount: 0 } as never;
+    });
+    const result = await createPublicLead({
+      secret: 'pcrm_x',
+      body: { name: 'Maria', status: 'novo' },
+      idempotencyKey: null,
+    });
+    expect(result.status).toBe(201);
+    expect(result.body.status).toBe('Novo');
   });
 
   it('status fora da lista do dono → 400', async () => {

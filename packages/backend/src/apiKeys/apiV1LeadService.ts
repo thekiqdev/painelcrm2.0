@@ -6,7 +6,7 @@ import { withApiKeyTransaction } from './apiKeyRequestContext.js';
 import type { ResolvedApiKey } from './apiKeyService.js';
 import {
   LeadValidationError,
-  assertOwnerLeadStatus,
+  resolveTenantLeadStatus,
   insertLead,
   prepareLeadFields,
   type LeadWriteInput,
@@ -231,7 +231,7 @@ async function writeLead(
     'API'
   );
   if (prepared.status) {
-    await assertOwnerLeadStatus(key.owner_user_id, key.tenant_id, prepared.status);
+    prepared.status = await resolveTenantLeadStatus(key.tenant_id, prepared.status);
   }
 
   await pool.query('SAVEPOINT api_v1_lead');
