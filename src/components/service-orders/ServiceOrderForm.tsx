@@ -28,6 +28,7 @@ import type {
 } from "@/types/serviceOrders";
 import { normalizeServiceOrderEquipmentList } from "@/types/serviceOrders";
 import { formatCepMask, lookupViaCep, onlyDigits } from "@/lib/viacep";
+import { useLocaleCurrency } from "@/lib/i18n/LocaleProvider";
 import { Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 
 type EquipmentDraft = {
@@ -272,6 +273,9 @@ export function ServiceOrderForm({
   onSubmit,
   onCancel,
 }: ServiceOrderFormProps) {
+  const { currency: appCurrency } = useLocaleCurrency();
+  const currency = initial?.currency?.trim() || appCurrency;
+
   const [clientId, setClientId] = useState<string | null>(
     initial?.client_id ?? initialClientId ?? null,
   );
@@ -525,7 +529,7 @@ export function ServiceOrderForm({
       equipment: equipmentPayload,
       observations: observations.trim() || null,
       billing_mode: billingMode,
-      currency: "BRL",
+      currency,
       items: items.map((it, idx) => ({
         kind: it.kind,
         product_id: it.product_id ?? null,
@@ -958,6 +962,7 @@ export function ServiceOrderForm({
             items={items}
             onChange={setItems}
             catalog={catalog}
+            currency={currency}
             disabled={submitting}
           />
         )}

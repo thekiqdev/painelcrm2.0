@@ -8,6 +8,7 @@ import { Briefcase, Package, Plus, Search, Trash2 } from "lucide-react";
 import type { Product } from "@/types/products";
 import { resolvePublicCatalogUnitPrice } from "@/types/products";
 import type { ServiceOrderItem, ServiceOrderItemKind } from "@/types/serviceOrders";
+import { DEFAULT_APP_CURRENCY } from "@/lib/i18n/appCurrency";
 import { formatAppMoney } from "@/lib/i18n/formatApp";
 import { cn } from "@/lib/utils";
 
@@ -79,7 +80,7 @@ export function ServiceOrderItemsEditor({
   onChange,
   catalog,
   disabled = false,
-  currency = "BRL",
+  currency = DEFAULT_APP_CURRENCY,
   className,
 }: ServiceOrderItemsEditorProps) {
   const [pickerOpen, setPickerOpen] = useState<ServiceOrderItemKind | null>(null);
