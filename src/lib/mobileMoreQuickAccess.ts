@@ -4,6 +4,7 @@ import {
   Calendar,
   CalendarSync,
   ClipboardCheck,
+  ClipboardList,
   CalendarDays,
   CreditCard,
   FileSearch,
@@ -61,6 +62,7 @@ export type MobileMoreMenuFlags = {
   tickets: boolean;
   chatbot_flows: boolean;
   proposals: boolean;
+  service_orders: boolean;
   contracts: boolean;
   invoices: boolean;
   expenses: boolean;
@@ -93,6 +95,7 @@ export const MOBILE_MORE_ICONS = {
   Store,
   Calendar,
   ClipboardCheck,
+  ClipboardList,
   CalendarDays,
   LayoutTemplate,
   Newspaper,
@@ -199,6 +202,19 @@ export const MOBILE_MORE_ITEM_DEFS = [
     quickRank: 1,
     tone: "bg-amber-500/10 text-amber-700 dark:text-amber-200",
     preload: "proposals",
+  },
+  {
+    id: "service-orders",
+    label: "Ordens de serviço",
+    to: "/service-orders",
+    description: "OS, visita, assinatura e fatura",
+    icon: "ClipboardList" as const,
+    group: "Documentação comercial",
+    featureFlag: "service_orders" as const,
+    moduleView: "service_orders",
+    quickRank: 3,
+    tone: "bg-teal-500/10 text-teal-800 dark:text-teal-200",
+    preload: "serviceOrders",
   },
   {
     id: "contracts",
@@ -688,13 +704,14 @@ export function resolveMobileQuickAccessRuntime(
   const def = MOBILE_MORE_ITEM_DEFS.find((d) => d.id === id);
   if (!def) return null;
   const Icon = MOBILE_MORE_ICONS[def.icon];
-  const preload = def.preload ? routePreload[def.preload] : undefined;
+  const preloadKey = "preload" in def ? def.preload : undefined;
+  const preloadFn = preloadKey ? routePreload[preloadKey] : undefined;
   return {
     label: def.label,
     to: def.to,
     icon: Icon,
     tone: def.tone,
-    preload,
+    preload: preloadFn ? () => Promise.resolve(preloadFn()) : undefined,
   };
 }
 

@@ -18,6 +18,7 @@ export const routePreload = {
   /** Configuração da loja pública (rota legada/tenant: `/admin/loja`). */
   storeSettings: () => import("./pages/StoreSettings"),
   proposals: () => import("./pages/Proposals"),
+  serviceOrders: () => import("./pages/ServiceOrders"),
   contracts: () => import("./pages/Contracts"),
   contractTemplates: () => import("./pages/ContractTemplates"),
   contractTemplateForm: () => import("./pages/ContractTemplateFormPage"),

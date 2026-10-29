@@ -45,6 +45,9 @@ import contractsEs from '@/locales/es/contracts.json';
 import proposalsPt from '@/locales/pt-BR/proposals.json';
 import proposalsEn from '@/locales/en/proposals.json';
 import proposalsEs from '@/locales/es/proposals.json';
+import serviceOrdersPt from '@/locales/pt-BR/serviceOrders.json';
+import serviceOrdersEn from '@/locales/en/serviceOrders.json';
+import serviceOrdersEs from '@/locales/es/serviceOrders.json';
 import storePt from '@/locales/pt-BR/store.json';
 import storeEn from '@/locales/en/store.json';
 import storeEs from '@/locales/es/store.json';
@@ -58,26 +61,26 @@ import partnerPt from '@/locales/pt-BR/partner.json';
 import partnerEn from '@/locales/en/partner.json';
 import partnerEs from '@/locales/es/partner.json';
 
-const NS = ['common', 'landing', 'auth', 'checkout', 'legal', 'nav', 'dashboard', 'crm', 'chat', 'agenda', 'tickets', 'settings', 'finance', 'contracts', 'proposals', 'store', 'automation', 'superadmin', 'partner'] as const;
+const NS = ['common', 'landing', 'auth', 'checkout', 'legal', 'nav', 'dashboard', 'crm', 'chat', 'agenda', 'tickets', 'settings', 'finance', 'contracts', 'proposals', 'serviceOrders', 'store', 'automation', 'superadmin', 'partner'] as const;
 
 void i18n.use(initReactI18next).init({
   resources: {
     'pt-BR': {
       common: commonPt, landing: landingPt, auth: authPt, checkout: checkoutPt, legal: legalPt,
       nav: navPt, dashboard: dashboardPt, crm: crmPt, chat: chatPt, agenda: agendaPt, tickets: ticketsPt, settings: settingsPt,
-      finance: financePt, contracts: contractsPt, proposals: proposalsPt, store: storePt, automation: automationPt,
+      finance: financePt, contracts: contractsPt, proposals: proposalsPt, serviceOrders: serviceOrdersPt, store: storePt, automation: automationPt,
       superadmin: superadminPt, partner: partnerPt,
     },
     en: {
       common: commonEn, landing: landingEn, auth: authEn, checkout: checkoutEn, legal: legalEn,
       nav: navEn, dashboard: dashboardEn, crm: crmEn, chat: chatEn, agenda: agendaEn, tickets: ticketsEn, settings: settingsEn,
-      finance: financeEn, contracts: contractsEn, proposals: proposalsEn, store: storeEn, automation: automationEn,
+      finance: financeEn, contracts: contractsEn, proposals: proposalsEn, serviceOrders: serviceOrdersEn, store: storeEn, automation: automationEn,
       superadmin: superadminEn, partner: partnerEn,
     },
     es: {
       common: commonEs, landing: landingEs, auth: authEs, checkout: checkoutEs, legal: legalEs,
       nav: navEs, dashboard: dashboardEs, crm: crmEs, chat: chatEs, agenda: agendaEs, tickets: ticketsEs, settings: settingsEs,
-      finance: financeEs, contracts: contractsEs, proposals: proposalsEs, store: storeEs, automation: automationEs,
+      finance: financeEs, contracts: contractsEs, proposals: proposalsEs, serviceOrders: serviceOrdersEs, store: storeEs, automation: automationEs,
       superadmin: superadminEs, partner: partnerEs,
     },
   },

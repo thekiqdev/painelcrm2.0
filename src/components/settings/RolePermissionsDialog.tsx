@@ -36,6 +36,7 @@ import {
   resolveFinanceGranularFromLegacy,
   resolveLeadsGranularFromLegacy,
   resolveProposalsGranularFromLegacy,
+  resolveServiceOrdersGranularFromLegacy,
   resolveTasksGranularFromLegacy,
 } from "@/permissions/permissionCatalog";
 
@@ -213,6 +214,14 @@ export function RolePermissionsDialog({
     });
   };
 
+  const patchServiceOrdersExtra = (key: string, val: boolean) => {
+    setPermissions((prev) => {
+      const m = { ...(prev.service_orders ?? defaultPermission()) };
+      const ex = { ...(m.module_extras ?? {}), [key]: val };
+      return { ...prev, service_orders: { ...m, module: "service_orders", module_extras: ex } };
+    });
+  };
+
   const patchTasksExtra = (key: string, val: boolean) => {
     setPermissions((prev) => {
       const m = { ...(prev.tasks ?? defaultPermission()) };
@@ -258,6 +267,7 @@ export function RolePermissionsDialog({
   const leadsG = resolveLeadsGranularFromLegacy(permissions);
   const proposalsG = resolveProposalsGranularFromLegacy(permissions);
   const contractsG = resolveContractsGranularFromLegacy(permissions);
+  const serviceOrdersG = resolveServiceOrdersGranularFromLegacy(permissions);
   const tasksG = resolveTasksGranularFromLegacy(permissions);
 
   return (
@@ -600,6 +610,144 @@ export function RolePermissionsDialog({
                                   <Label htmlFor="ct-doo" className="text-xs cursor-pointer">Excluir só próprios</Label>
                                 </div>
                               ) : null}
+                              </div>
+                            </div>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  }
+                  if (mod.id === "service_orders") {
+                    const p = permissions.service_orders ?? defaultPermission();
+                    const rowChecked = (extraKey: string, resolved: boolean) => {
+                      const raw = p.module_extras?.[extraKey];
+                      if (raw === true || raw === false) return raw === true;
+                      return resolved;
+                    };
+                    return (
+                      <TableRow key="service-orders-granular">
+                        <TableCell colSpan={7} className="align-top bg-muted/15 p-4">
+                          <div className="space-y-3">
+                            <p className="text-sm font-semibold">{mod.label} — ações detalhadas</p>
+                            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                              <ChatToggle
+                                id="so-own-list"
+                                label="Ver apenas próprias (autor ou responsável)"
+                                checked={rowChecked("service_orders_view_own_only", serviceOrdersG.view_own)}
+                                onChange={(v) => patchServiceOrdersExtra("service_orders_view_own_only", v)}
+                              />
+                              <ChatToggle
+                                id="so-send"
+                                label="Enviar OS / links"
+                                checked={rowChecked("service_orders_send", serviceOrdersG.send)}
+                                onChange={(v) => patchServiceOrdersExtra("service_orders_send", v)}
+                              />
+                              <ChatToggle
+                                id="so-sig"
+                                label="Solicitar assinatura"
+                                checked={rowChecked(
+                                  "service_orders_request_signature",
+                                  serviceOrdersG.request_signature,
+                                )}
+                                onChange={(v) =>
+                                  patchServiceOrdersExtra("service_orders_request_signature", v)
+                                }
+                              />
+                              <ChatToggle
+                                id="so-inv"
+                                label="Gerar fatura"
+                                checked={rowChecked(
+                                  "service_orders_generate_invoice",
+                                  serviceOrdersG.generate_invoice,
+                                )}
+                                onChange={(v) =>
+                                  patchServiceOrdersExtra("service_orders_generate_invoice", v)
+                                }
+                              />
+                              <ChatToggle
+                                id="so-can"
+                                label="Cancelar OS"
+                                checked={rowChecked("service_orders_cancel", serviceOrdersG.cancel)}
+                                onChange={(v) => patchServiceOrdersExtra("service_orders_cancel", v)}
+                              />
+                            </div>
+                            <div className="flex flex-col gap-2 border-t pt-3">
+                              <ModuleGeneralPermissionsHint />
+                              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                                <div className="flex items-center gap-2">
+                                  <Checkbox
+                                    id="so-v"
+                                    checked={p.can_view}
+                                    onCheckedChange={(v) => update("service_orders", "can_view", v === true)}
+                                  />
+                                  <Label htmlFor="so-v" className="text-xs cursor-pointer">
+                                    Visualizar
+                                  </Label>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Checkbox
+                                    id="so-c"
+                                    checked={p.can_create}
+                                    onCheckedChange={(v) =>
+                                      update("service_orders", "can_create", v === true)
+                                    }
+                                  />
+                                  <Label htmlFor="so-c" className="text-xs cursor-pointer">
+                                    Criar
+                                  </Label>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Checkbox
+                                    id="so-e"
+                                    checked={p.can_edit}
+                                    onCheckedChange={(v) => update("service_orders", "can_edit", v === true)}
+                                  />
+                                  <Label htmlFor="so-e" className="text-xs cursor-pointer">
+                                    Editar
+                                  </Label>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Checkbox
+                                    id="so-d"
+                                    checked={p.can_delete}
+                                    onCheckedChange={(v) =>
+                                      update("service_orders", "can_delete", v === true)
+                                    }
+                                  />
+                                  <Label htmlFor="so-d" className="text-xs cursor-pointer">
+                                    Excluir
+                                  </Label>
+                                </div>
+                                {mod.supportsEditOwn ? (
+                                  <div className="flex items-center gap-2">
+                                    <Checkbox
+                                      id="so-eoo"
+                                      checked={p.edit_own_only}
+                                      disabled={!p.can_edit}
+                                      onCheckedChange={(v) =>
+                                        update("service_orders", "edit_own_only", v === true)
+                                      }
+                                    />
+                                    <Label htmlFor="so-eoo" className="text-xs cursor-pointer">
+                                      Editar só próprias
+                                    </Label>
+                                  </div>
+                                ) : null}
+                                {mod.supportsDeleteOwn ? (
+                                  <div className="flex items-center gap-2">
+                                    <Checkbox
+                                      id="so-doo"
+                                      checked={p.delete_own_only}
+                                      disabled={!p.can_delete}
+                                      onCheckedChange={(v) =>
+                                        update("service_orders", "delete_own_only", v === true)
+                                      }
+                                    />
+                                    <Label htmlFor="so-doo" className="text-xs cursor-pointer">
+                                      Excluir só próprias
+                                    </Label>
+                                  </div>
+                                ) : null}
                               </div>
                             </div>
                           </div>

@@ -1,0 +1,29 @@
+{
+  "title": "Órdenes de servicio",
+  "new": "Nueva OS",
+  "empty": "Aún no hay órdenes de servicio",
+  "emptyFiltered": "Sin resultados para estos filtros",
+  "emptyClient": "No hay órdenes de servicio para este cliente",
+  "createFirst": "Crear primera OS",
+  "status": {
+    "draft": "Borrador",
+    "scheduled": "Programada",
+    "in_progress": "En ejecución",
+    "awaiting_signature": "Pendiente de firma",
+    "signed": "Firmada",
+    "invoiced": "Facturada",
+    "completed": "Completada",
+    "cancelled": "Cancelada"
+  },
+  "actions": {
+    "sendSignature": "Enviar a firma",
+    "generateInvoice": "Generar factura",
+    "scheduleVisit": "Programar visita",
+    "downloadPdf": "Descargar PDF"
+  },
+  "billing": {
+    "manual": "Manual",
+    "auto_on_sign": "Automático al firmar",
+    "none": "Sin factura"
+  }
+}

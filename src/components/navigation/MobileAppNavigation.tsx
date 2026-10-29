@@ -43,6 +43,7 @@ const NAV_BY_ID: Record<string, string> = {
   "customer-invoices": "invoices",
   "crm-subscriptions": "subscriptions",
   proposals: "proposals",
+  "service-orders": "service_orders",
   contracts: "contracts",
   "project-templates": "project_templates",
   "proposal-templates": "proposal_templates",
@@ -120,13 +121,16 @@ function defToMoreItem(
   labelFor: (id: string) => string,
 ): MoreItem {
   const Icon = MOBILE_MORE_ICONS[def.icon];
-  const preload = def.preload ? routePreload[def.preload] : undefined;
+  const preloadKey = "preload" in def ? def.preload : undefined;
+  const preloadFn = preloadKey ? routePreload[preloadKey] : undefined;
   return {
     id: def.id,
     label: labelFor(def.id),
     to: def.to,
     icon: Icon,
-    preload,
+    preload: preloadFn
+      ? () => Promise.resolve(preloadFn())
+      : undefined,
   };
 }
 
@@ -146,6 +150,7 @@ function MobileAppNavigationImpl() {
   const hasInvoices = useFeatureFlag("invoices");
   const hasExpenses = useFeatureFlag("expenses");
   const hasProposals = useFeatureFlag("proposals");
+  const hasServiceOrders = useFeatureFlag("service_orders");
   const hasContracts = useFeatureFlag("contracts");
   const hasTasks = useFeatureFlag("tasks");
   const hasAgenda = useFeatureFlag("agenda");
@@ -175,6 +180,7 @@ function MobileAppNavigationImpl() {
         tickets: hasTickets,
         chatbot_flows: hasChatbotFlows,
         proposals: hasProposals,
+        service_orders: hasServiceOrders,
         contracts: hasContracts,
         invoices: hasInvoices,
         expenses: hasExpenses,
@@ -196,6 +202,7 @@ function MobileAppNavigationImpl() {
       hasTickets,
       hasChatbotFlows,
       hasProposals,
+      hasServiceOrders,
       hasContracts,
       hasInvoices,
       hasExpenses,
@@ -263,7 +270,7 @@ function MobileAppNavigationImpl() {
         to: "/chat",
         icon: MessageSquare,
         isActive: isChatMainTabActive,
-        preload: routePreload.chat,
+        preload: () => Promise.resolve(routePreload.chat()),
       }
     : null;
 

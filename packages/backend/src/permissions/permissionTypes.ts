@@ -32,7 +32,8 @@ export type ModuleId =
   | 'settings'
   | 'meu_plano'
   | 'agenda'
-  | 'chatbot_flows';
+  | 'chatbot_flows'
+  | 'service_orders';
 
 /** Permissões de um módulo para um usuário (espelho de role_module_permissions / custom_role_module_permissions). */
 export interface ModulePermissionRow {

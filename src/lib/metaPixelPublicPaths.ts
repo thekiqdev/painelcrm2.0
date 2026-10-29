@@ -10,6 +10,8 @@ const PUBLIC_MARKETING_PREFIXES = [
   '/terms',
   '/contract-view/',
   '/contract-sign/',
+  '/service-order-view/',
+  '/service-order-sign/',
   '/proposal-view/',
   '/pay/',
   '/saas-billing/',

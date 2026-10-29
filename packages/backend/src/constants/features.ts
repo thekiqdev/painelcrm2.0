@@ -21,6 +21,7 @@ export const FEATURE_KEYS = [
   'message_templates',
   'whatsapp',
   'agenda',
+  'service_orders',
   'chatbot_flows',
   'chatbot_flows_runtime',
 ] as const;
@@ -46,6 +47,7 @@ export const FEATURE_LABELS: Record<string, string> = {
   message_templates: 'Modelos de mensagem',
   whatsapp: 'Integração WhatsApp',
   agenda: 'Agenda',
+  service_orders: 'Ordens de Serviço',
   chatbot_flows: 'Chatbot Flows',
   chatbot_flows_runtime: 'Chatbot Flows Runtime (WhatsApp)',
 };

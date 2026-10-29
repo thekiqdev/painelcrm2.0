@@ -1,0 +1,29 @@
+{
+  "title": "Ordens de serviço",
+  "new": "Nova OS",
+  "empty": "Nenhuma ordem de serviço ainda",
+  "emptyFiltered": "Nenhum resultado para os filtros",
+  "emptyClient": "Nenhuma ordem de serviço para este cliente",
+  "createFirst": "Criar primeira OS",
+  "status": {
+    "draft": "Rascunho",
+    "scheduled": "Agendada",
+    "in_progress": "Em execução",
+    "awaiting_signature": "Aguardando assinatura",
+    "signed": "Assinada",
+    "invoiced": "Faturada",
+    "completed": "Concluída",
+    "cancelled": "Cancelada"
+  },
+  "actions": {
+    "sendSignature": "Enviar para assinatura",
+    "generateInvoice": "Gerar fatura",
+    "scheduleVisit": "Marcar visita técnica",
+    "downloadPdf": "Baixar PDF"
+  },
+  "billing": {
+    "manual": "Manual",
+    "auto_on_sign": "Automático ao assinar",
+    "none": "Sem fatura"
+  }
+}

@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Wireframe OS-S0 — Ordem de Serviço A4</title>
+  <style>
+    /* Sprint OS-S0 — wireframe estático (fidelidade ao PDF modelo OIKOS / GestãoClick).
+       Implementação React/PDFKit a partir de S3. Abrir este arquivo no browser. */
+    :root {
+      --ink: #111;
+      --muted: #444;
+      --line: #222;
+      --bg: #e8e8e8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 24px 16px 48px;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .toolbar {
+      max-width: 210mm;
+      margin: 0 auto 16px;
+      font-size: 13px;
+      color: #333;
+    }
+    .toolbar code { background: #fff; padding: 1px 6px; border-radius: 3px; }
+    .sheet {
+      width: 210mm;
+      min-height: 297mm;
+      margin: 0 auto;
+      background: #fff;
+      padding: 12mm 14mm 14mm;
+      box-shadow: 0 4px 24px rgba(0,0,0,.12);
+    }
+    .header {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      border-bottom: 2px solid var(--line);
+      padding-bottom: 10px;
+      margin-bottom: 12px;
+    }
+    .brand-name {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: .02em;
+      margin: 0 0 4px;
+    }
+    .brand-meta { color: var(--muted); font-size: 11px; }
+    .brand-meta div { margin: 1px 0; }
+    .header-right {
+      text-align: right;
+      font-size: 11px;
+      color: var(--muted);
+      align-self: start;
+    }
+    .doc-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin: 14px 0 12px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 6px;
+    }
+    .doc-title h1 {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    .doc-title .issued { font-size: 12px; font-weight: 600; }
+    .section {
+      margin: 12px 0;
+    }
+    .section-title {
+      margin: 0 0 6px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      border-bottom: 1px solid #999;
+      padding-bottom: 2px;
+    }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px 16px;
+    }
+    .field { margin: 2px 0; }
+    .field .lbl {
+      color: var(--muted);
+      font-weight: 600;
+      margin-right: 4px;
+    }
+    .field .val { font-weight: 500; }
+    table.items {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 4px;
+      font-size: 11px;
+    }
+    table.items th,
+    table.items td {
+      border: 1px solid #555;
+      padding: 4px 6px;
+      text-align: left;
+    }
+    table.items th {
+      background: #f3f3f3;
+      font-weight: 700;
+      text-transform: uppercase;
+      font-size: 10px;
+    }
+    table.items td.num,
+    table.items th.num { text-align: right; white-space: nowrap; }
+    table.items td.center,
+    table.items th.center { text-align: center; }
+    table.items tfoot td {
+      font-weight: 700;
+      background: #fafafa;
+    }
+    .totals {
+      margin-top: 10px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 2px;
+      font-size: 12px;
+    }
+    .totals .grand {
+      font-size: 14px;
+      font-weight: 700;
+      margin-top: 4px;
+      border-top: 1px solid var(--line);
+      padding-top: 4px;
+    }
+    .obs-box {
+      min-height: 36px;
+      border: 1px solid #999;
+      padding: 8px;
+      white-space: pre-wrap;
+    }
+    .signatures {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 32px;
+      margin-top: 36px;
+      padding-top: 8px;
+    }
+    .sig {
+      text-align: center;
+    }
+    .sig .line {
+      border-top: 1px solid var(--line);
+      margin: 48px 12px 6px;
+    }
+    .sig .cap {
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .footer {
+      margin-top: 28px;
+      padding-top: 8px;
+      border-top: 1px dashed #aaa;
+      font-size: 10px;
+      color: #666;
+      text-align: center;
+    }
+    .ph {
+      background: rgba(251, 191, 36, .35);
+      padding: 0 3px;
+      border-radius: 2px;
+      font-family: ui-monospace, monospace;
+      font-size: 0.92em;
+    }
+    .note-dev {
+      max-width: 210mm;
+      margin: 16px auto 0;
+      font-size: 12px;
+      color: #444;
+      background: #fff8e6;
+      border: 1px solid #e6c200;
+      padding: 10px 12px;
+      border-radius: 6px;
+    }
+    @media print {
+      body { background: #fff; padding: 0; }
+      .toolbar, .note-dev { display: none; }
+      .sheet { box-shadow: none; margin: 0; width: auto; min-height: auto; }
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <strong>OS-S0 wireframe A4</strong> —
+    dados de exemplo do PDF
+    <code>Ordem_de_servico_138_OIKOS_…</code>.
+    Placeholders amarelos = merge fields (<code>MERGE_FIELDS_OS.md</code>).
+  </div>
+
+  <article class="sheet" aria-label="Ordem de Serviço A4">
+    <header class="header">
+      <div>
+        <p class="brand-name">Tec Suprema</p>
+        <div class="brand-meta">
+          <div>(11)94727-4015 - (11)94727-4015</div>
+          <div>tecsupremajhf@gmail.com</div>
+          <div>CNPJ: 62.710.770/0001-85</div>
+          <div>Responsável: FABIO GOMES</div>
+          <div>
+            Rua da Solidariedade, 32 - Conjunto Habitacional Instituto Adventista MORAIS<br />
+            São Paulo/SP - CEP: 05868-250
+          </div>
+        </div>
+      </div>
+      <div class="header-right">
+        <!-- logo placeholder -->
+        <div style="width:72px;height:72px;border:1px dashed #bbb;margin-left:auto;display:flex;align-items:center;justify-content:center;font-size:10px;color:#999;">
+          LOGO
+        </div>
+      </div>
+    </header>
+
+    <div class="doc-title">
+      <h1>Ordem de serviço Nº 138</h1>
+      <span class="issued">22/09/2026</span>
+    </div>
+
+    <section class="section">
+      <h2 class="section-title">Período de execução</h2>
+      <div class="grid-2">
+        <div class="field">
+          <span class="lbl">Entrada:</span>
+          <span class="val">22/09/2026 - 18:36</span>
+        </div>
+        <div class="field">
+          <span class="lbl">Saída:</span>
+          <span class="val">____/____/________ - ____:____</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">Dados do cliente</h2>
+      <div class="grid-2">
+        <div class="field">
+          <span class="lbl">Razão social:</span>
+          <span class="val">OIKOS SOLUCOES AMBIENTAIS LTDA</span>
+        </div>
+        <div class="field">
+          <span class="lbl">Nome fantasia:</span>
+          <span class="val">GRUPO OIKOS</span>
+        </div>
+        <div class="field">
+          <span class="lbl">CNPJ/CPF:</span>
+          <span class="val">17.024.794/0001-26</span>
+        </div>
+        <div class="field">
+          <span class="lbl">Endereço:</span>
+          <span class="val">RUA FRADIQUE COUTINHO, 2207 - PINHEIROS</span>
+        </div>
+        <div class="field">
+          <span class="lbl">CEP:</span>
+          <span class="val">05416-012</span>
+        </div>
+        <div class="field">
+          <span class="lbl">Cidade/UF:</span>
+          <span class="val">São Paulo/SP</span>
+        </div>
+        <div class="field">
+          <span class="lbl">Telefone:</span>
+          <span class="val">(11)3569-6581 - (11)94270-1557</span>
+        </div>
+        <div class="field">
+          <span class="lbl">E-mail:</span>
+          <span class="val">sonia@grupooikos.com.br</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">Equipamento</h2>
+      <div class="grid-2">
+        <div class="field">
+          <span class="lbl">Nome / marca:</span>
+          <span class="val">LAVA E SECA SAMSUNG</span>
+        </div>
+        <div class="field">
+          <span class="lbl">Modelo / série:</span>
+          <span class="val">—</span>
+        </div>
+      </div>
+      <div class="field" style="margin-top:6px">
+        <span class="lbl">Defeitos:</span>
+        <div class="val">NÃO ESTÁ SECANDO. PORTA NÃO ABRE CORRETAMENTE.</div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">Serviços</h2>
+      <table class="items">
+        <thead>
+          <tr>
+            <th class="center" style="width:48px">Item</th>
+            <th>Nome</th>
+            <th class="num" style="width:64px">Qtd.</th>
+            <th class="num" style="width:88px">Vr. unit.</th>
+            <th class="num" style="width:88px">Subtotal</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="center">1</td>
+            <td>MÃO DE OBRA</td>
+            <td class="num">1,00</td>
+            <td class="num">230,00</td>
+            <td class="num">230,00</td>
+          </tr>
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="2">TOTAL</td>
+            <td class="num">1,00</td>
+            <td></td>
+            <td class="num">230,00</td>
+          </tr>
+        </tfoot>
+      </table>
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">Produtos</h2>
+      <table class="items">
+        <thead>
+          <tr>
+            <th class="center" style="width:48px">Item</th>
+            <th>Nome</th>
+            <th class="center" style="width:48px">Und.</th>
+            <th class="num" style="width:64px">Qtd.</th>
+            <th class="num" style="width:88px">Vr. unit.</th>
+            <th class="num" style="width:88px">Subtotal</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="center">1</td>
+            <td>MAÇANETA DA PORTA</td>
+            <td class="center">UN</td>
+            <td class="num">1,00</td>
+            <td class="num">80,00</td>
+            <td class="num">80,00</td>
+          </tr>
+          <tr>
+            <td class="center">2</td>
+            <td>TERMOSTATO</td>
+            <td class="center">UN</td>
+            <td class="num">2,00</td>
+            <td class="num">60,00</td>
+            <td class="num">120,00</td>
+          </tr>
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="3">TOTAL</td>
+            <td class="num">3,00</td>
+            <td></td>
+            <td class="num">200,00</td>
+          </tr>
+        </tfoot>
+      </table>
+    </section>
+
+    <div class="totals">
+      <div>PRODUTOS: 200,00</div>
+      <div>SERVIÇOS: 230,00</div>
+      <div class="grand">TOTAL: R$ 430,00</div>
+    </div>
+
+    <section class="section">
+      <h2 class="section-title">Observações</h2>
+      <div class="obs-box">Unidade - IFC</div>
+    </section>
+
+    <div class="signatures">
+      <div class="sig">
+        <div class="line"></div>
+        <div class="cap">Assinatura do cliente</div>
+      </div>
+      <div class="sig">
+        <div class="line"></div>
+        <div class="cap">Assinatura do técnico</div>
+      </div>
+    </div>
+
+    <footer class="footer">
+      Ordem de serviço emitida no PainelCRM —
+      wireframe Sprint OS-S0 (substituir rodapé GestãoClick na implementação).
+    </footer>
+  </article>
+
+  <div class="note-dev">
+    <strong>Dev notes (S3):</strong>
+    mapear campos para
+    <span class="ph">{{system.tenant_name}}</span>,
+    <span class="ph">{{service_order.number}}</span>,
+    <span class="ph">{{client.*}}</span>,
+    <span class="ph">{{equipment.*}}</span>,
+    <span class="ph">{{service_order.services_table}}</span>,
+    <span class="ph">{{service_order.products_table}}</span>,
+    totais e bloco de assinatura runtime (S4).
+    Bloco Equipamento omitido se <code>equipment</code> for null.
+  </div>
+</body>
+</html>

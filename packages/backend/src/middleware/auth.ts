@@ -387,6 +387,18 @@ export const chatbotFlowsAuth = [
   setRequestDb,
 ];
 
+/** CRM com feature "service_orders" (ordens de serviço). */
+export const serviceOrdersAuth = [
+  authenticateToken,
+  setCurrentTenant,
+  bindRequestContext,
+  requireTenantForBusinessApp,
+  requireTenantCommercialAccess,
+  requireActivePlanPeriod,
+  requireFeature('service_orders'),
+  setRequestDb,
+];
+
 /** Cadeia para rotas superadmin: auth + superadmin + RLS (bypass). */
 export const superadminAuth = [authenticateToken, requireSuperAdmin, bindRequestContext, setRequestDb];
 

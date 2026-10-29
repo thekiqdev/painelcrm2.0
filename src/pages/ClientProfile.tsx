@@ -31,6 +31,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   Plus,
   Edit2,
@@ -67,6 +68,7 @@ import { scheduleInvalidateFloatingChatAggregates } from "@/features/floating-ch
 import { format, parseISO, startOfDay, endOfDay, addMonths } from "date-fns";
 import { ClientUpcomingAppointments } from "@/components/clients/ClientUpcomingAppointments";
 import { ClientAppointmentsHistory } from "@/components/clients/ClientAppointmentsHistory";
+import { ClientAddressesCard } from "@/components/clients/ClientAddressesCard";
 import { ClientProfileDriveFilesTab } from "@/components/clients/ClientProfileDriveFilesTab";
 import { ClientProfileTicketsTab } from "@/components/clients/ClientProfileTicketsTab";
 import { formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
@@ -118,6 +120,9 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { canDeleteContractStatus } from "@/utils/contractStatusUi";
 import { proposalsService, type Proposal } from "@/services/proposals";
+import { serviceOrdersService } from "@/services/serviceOrders";
+import type { ServiceOrder } from "@/types/serviceOrders";
+import { formatAppMoney } from "@/lib/i18n/formatApp";
 const taskSchema = z.object({
   title: z.string().min(3, "Título deve ter pelo menos 3 caracteres"),
   description: z.string().optional(),
@@ -245,6 +250,8 @@ const ClientProfile = () => {
   const [newClientGroup, setNewClientGroup] = useState("");
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [isLoadingContracts, setIsLoadingContracts] = useState(false);
+  const [clientServiceOrders, setClientServiceOrders] = useState<ServiceOrder[]>([]);
+  const [isLoadingServiceOrders, setIsLoadingServiceOrders] = useState(false);
   const [clientInvoices, setClientInvoices] = useState<CustomerInvoice[]>([]);
   const [clientSubscriptions, setClientSubscriptions] = useState<CrmSubscriptionListItem[]>([]);
   const [billingDataLoading, setBillingDataLoading] = useState(false);
@@ -276,6 +283,7 @@ const ClientProfile = () => {
   const { canDeleteRecord, canView, canCreate, canEdit, canChatReply } = useModulePermissions();
   const isMobile = useIsMobile();
   const hasTicketsModule = useFeatureFlag("tickets");
+  const hasServiceOrdersModule = useFeatureFlag("service_orders");
 
   const taskDetailForm = useForm<z.infer<typeof taskSchema>>({
     resolver: zodResolver(taskSchema),
@@ -332,6 +340,7 @@ const ClientProfile = () => {
     if (location.pathname.includes("/finance")) return "finance";
     if (location.pathname.includes("/timeline")) return "timeline";
     if (location.pathname.includes("/contracts")) return "contracts";
+    if (location.pathname.includes("/service-orders")) return "service-orders";
     if (location.pathname.includes("/settings")) return "settings";
     return "overview";
   };
@@ -817,6 +826,29 @@ const ClientProfile = () => {
       setIsLoadingContracts(false);
     }
   };
+
+  const loadClientServiceOrders = useCallback(async () => {
+    if (!id || !canView("service_orders") || !hasServiceOrdersModule) {
+      setClientServiceOrders([]);
+      return;
+    }
+    try {
+      setIsLoadingServiceOrders(true);
+      const res = await serviceOrdersService.list({ client_id: id, limit: 50, offset: 0 });
+      setClientServiceOrders(res.data ?? []);
+    } catch (error: unknown) {
+      console.error("Erro ao carregar ordens de serviço:", error);
+      toast.error("Erro ao carregar ordens de serviço");
+    } finally {
+      setIsLoadingServiceOrders(false);
+    }
+  }, [id, canView, hasServiceOrdersModule]);
+
+  useEffect(() => {
+    if (activeTab === "service-orders" || (hasServiceOrdersModule && canView("service_orders"))) {
+      void loadClientServiceOrders();
+    }
+  }, [activeTab, hasServiceOrdersModule, canView, loadClientServiceOrders]);
 
   const handleSaveClientDetails = async (values: z.infer<typeof clientEditSchema>) => {
     if (!client?.id) return;
@@ -1351,6 +1383,27 @@ const ClientProfile = () => {
                   ) : null}
                 </CardHeader>
                 <CardContent className="space-y-3 max-md:space-y-2.5 md:space-y-4">
+                  <div className="flex items-center gap-3">
+                    <Avatar className="h-16 w-16 shrink-0 border border-border/70 shadow-sm md:h-20 md:w-20">
+                      {profileAvatar.src ? (
+                        <AvatarImage src={profileAvatar.src} alt={client.name} />
+                      ) : null}
+                      <AvatarFallback className="text-lg font-semibold md:text-xl">
+                        {profileAvatar.initials}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0">
+                      <p className="truncate text-base font-semibold md:text-lg">{client.name}</p>
+                      {client.company ? (
+                        <p className="truncate text-sm text-muted-foreground">{client.company}</p>
+                      ) : null}
+                      {client.phone || client.whatsapp ? (
+                        <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                          {client.whatsapp || client.phone}
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
                   <div className="flex flex-wrap gap-2">
                     <Button
                       variant="default"
@@ -1445,6 +1498,16 @@ const ClientProfile = () => {
                         <p className="mt-0.5 text-lg font-bold tabular-nums md:mt-1 md:text-2xl">{contracts.length}</p>
                       </CardContent>
                     </Card>
+                    {hasServiceOrdersModule && canView("service_orders") ? (
+                      <Card className="max-md:border-border/70 max-md:shadow-none">
+                        <CardContent className="py-2.5 pt-3 pb-2 md:pt-5 md:pb-4">
+                          <Label className="text-[10px] text-muted-foreground md:text-xs">Ordens de serviço</Label>
+                          <p className="mt-0.5 text-lg font-bold tabular-nums md:mt-1 md:text-2xl">
+                            {isLoadingServiceOrders ? "…" : clientServiceOrders.length}
+                          </p>
+                        </CardContent>
+                      </Card>
+                    ) : null}
                     <Card className="max-md:border-border/70 max-md:shadow-none">
                       <CardContent className="py-2.5 pt-3 pb-2 md:pt-5 md:pb-4">
                         <Label className="text-[10px] text-muted-foreground md:text-xs">Faturas</Label>
@@ -1655,6 +1718,8 @@ const ClientProfile = () => {
                   )}
                 </CardContent>
               </Card>
+
+              {client?.id ? <ClientAddressesCard clientId={client.id} /> : null}
             </div>
           )}
 
@@ -2115,6 +2180,81 @@ const ClientProfile = () => {
                     </div>
                   )}
                 </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {activeTab === "service-orders" && hasServiceOrdersModule && canView("service_orders") && (
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle>Ordens de serviço</CardTitle>
+                  {canCreate("service_orders") ? (
+                    <Button onClick={() => navigate(`/service-orders/new?clientId=${id}`)} size="sm">
+                      <Plus className="mr-2 h-4 w-4" />
+                      Nova OS
+                    </Button>
+                  ) : null}
+                </div>
+              </CardHeader>
+              <CardContent>
+                {isLoadingServiceOrders ? (
+                  <div className="py-10 text-center text-muted-foreground">Carregando…</div>
+                ) : clientServiceOrders.length === 0 ? (
+                  <div className="py-10 text-center">
+                    <p className="mb-4 text-muted-foreground">Nenhuma ordem de serviço para este cliente</p>
+                    {canCreate("service_orders") ? (
+                      <Button
+                        variant="outline"
+                        onClick={() => navigate(`/service-orders/new?clientId=${id}`)}
+                      >
+                        <Plus className="mr-2 h-4 w-4" />
+                        Criar primeira OS
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Nº</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Total</TableHead>
+                        <TableHead>Criada em</TableHead>
+                        <TableHead>Ações</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {clientServiceOrders.map((so) => (
+                        <TableRow key={so.id}>
+                          <TableCell className="font-mono text-sm">{so.service_order_number}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline">{so.status}</Badge>
+                          </TableCell>
+                          <TableCell>
+                            {formatAppMoney(Number(so.total_cents) || 0, so.currency || "BRL")}
+                          </TableCell>
+                          <TableCell>
+                            {so.created_at ? format(new Date(so.created_at), "dd/MM/yyyy") : "—"}
+                          </TableCell>
+                          <TableCell>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() =>
+                                navigate(`/service-orders/${so.id}`, {
+                                  state: { fromClientProfile: true },
+                                })
+                              }
+                            >
+                              Abrir
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
               </CardContent>
             </Card>
           )}

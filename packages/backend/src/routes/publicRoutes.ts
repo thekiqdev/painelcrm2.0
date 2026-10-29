@@ -21,6 +21,13 @@ import {
   postPublicSignature,
 } from '../controllers/publicContractSignatureController.js';
 import {
+  getPublicServiceOrderSign,
+  getPublicServiceOrderSignPdf,
+  getPublicServiceOrderView,
+  getPublicServiceOrderViewPdf,
+  postPublicServiceOrderSign,
+} from '../controllers/publicServiceOrderController.js';
+import {
   getPublicProposalView,
   postPublicProposalAccept,
   postPublicProposalReject,
@@ -233,6 +240,32 @@ const contractPublicSignaturePostLimiter = rateLimit({
 router.get('/contracts/sign/:token', contractPublicSignatureReadLimiter, getPublicSignatureInvite);
 router.get('/contracts/sign/:token/pdf', contractPublicSignatureReadLimiter, getPublicSignaturePdf);
 router.post('/contracts/sign/:token', contractPublicSignaturePostLimiter, postPublicSignature);
+
+const serviceOrderPublicLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_PUBLIC_SERVICE_ORDER_VIEW_MAX || '120', 10),
+  message: { ok: false, error: 'Muitas visualizações. Aguarde e tente novamente.', code: 'rate_limited' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'development',
+  keyGenerator: (req) => `${req.ip || ''}:${req.params.token || ''}`,
+});
+
+const serviceOrderPublicSignPostLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_PUBLIC_SERVICE_ORDER_SIGN_POST_MAX || '30', 10),
+  message: { ok: false, error: 'Muitas tentativas de assinatura. Aguarde.', code: 'rate_limited' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'development',
+  keyGenerator: (req) => `${req.ip || ''}:${req.params.token || ''}`,
+});
+
+router.get('/service-orders/view/:token/pdf', serviceOrderPublicLimiter, getPublicServiceOrderViewPdf);
+router.get('/service-orders/view/:token', serviceOrderPublicLimiter, getPublicServiceOrderView);
+router.get('/service-orders/sign/:token/pdf', serviceOrderPublicLimiter, getPublicServiceOrderSignPdf);
+router.get('/service-orders/sign/:token', serviceOrderPublicLimiter, getPublicServiceOrderSign);
+router.post('/service-orders/sign/:token', serviceOrderPublicSignPostLimiter, postPublicServiceOrderSign);
 
 router.get('/customer-invoices/pay/:token', getPayByToken);
 router.post('/customer-invoices/pay/:token/complete', postCompletePayByToken);

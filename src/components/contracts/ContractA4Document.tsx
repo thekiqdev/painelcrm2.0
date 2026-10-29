@@ -1,6 +1,12 @@
-import { sanitizeHtml } from '@/lib/sanitize';
+import { sanitizeHtml, sanitizeServiceOrderDocumentHtml } from '@/lib/sanitize';
 import { cn } from '@/lib/utils';
 import { CONTRACT_A4_PROSE_CLASS, CONTRACT_A4_SHEET_CLASS } from '@/utils/contractA4Styles';
+import {
+  SERVICE_ORDER_A4_INNER_CSS,
+  SERVICE_ORDER_A4_SHEET_CLASS,
+  SERVICE_ORDER_A4_SHEET_FIXED_CLASS,
+} from '@/components/service-orders/serviceOrderA4Styles';
+import { ScaledA4Viewport } from '@/components/service-orders/ScaledA4Viewport';
 import { stripTrailingSignatureSectionFromHtml } from '@/utils/contractDocumentHtml';
 import {
   ContractSignatureBlocksList,
@@ -27,6 +33,13 @@ type Props = {
   className?: string;
   highlightUnresolved?: boolean;
   signersAppendix?: ContractA4SignerAppendixItem[];
+  /** OS usa tabelas + imgs data-URL de assinatura/logo. */
+  documentKind?: 'contract' | 'service_order';
+  /**
+   * OS: reduz a folha A4 com scale (layout fixo, fiel ao PDF).
+   * Default true para service_order.
+   */
+  scaleToFit?: boolean;
 };
 
 function wrapUnresolved(html: string): string {
@@ -54,32 +67,59 @@ function appendixToDisplayModels(items: ContractA4SignerAppendixItem[]) {
   });
 }
 
-export function ContractA4Document({ html, className, highlightUnresolved, signersAppendix }: Props) {
+export function ContractA4Document({
+  html,
+  className,
+  highlightUnresolved,
+  signersAppendix,
+  documentKind = 'contract',
+  scaleToFit,
+}: Props) {
   const raw = signersAppendix != null ? stripTrailingSignatureSectionFromHtml(html) : html;
   const piped = highlightUnresolved ? wrapUnresolved(raw) : raw;
-  const safe = sanitizeHtml(piped || '<p></p>');
+  const isOs = documentKind === 'service_order';
+  const useScale = isOs && scaleToFit !== false;
+  const safe = isOs
+    ? sanitizeServiceOrderDocumentHtml(piped || '<p></p>')
+    : sanitizeHtml(piped || '<p></p>');
   const signatureModels =
     signersAppendix != null ? appendixToDisplayModels(signersAppendix) : null;
 
+  const sheet = (
+    <article className={isOs ? (useScale ? SERVICE_ORDER_A4_SHEET_FIXED_CLASS : SERVICE_ORDER_A4_SHEET_CLASS) : CONTRACT_A4_SHEET_CLASS}>
+      <div
+        className={isOs ? undefined : CONTRACT_A4_PROSE_CLASS}
+        dangerouslySetInnerHTML={{ __html: safe }}
+      />
+      {signatureModels != null ? (
+        <div className="mt-10 pt-6 [font-family:ui-sans-serif,system-ui,sans-serif]">
+          <ContractSignatureBlocksList signers={signatureModels} title="Assinatura" />
+        </div>
+      ) : null}
+      <style>{`
+        .contract-ph-unresolved {
+          background: rgba(251, 191, 36, 0.28);
+          padding: 0 3px;
+          border-radius: 3px;
+          font-family: ui-sans-serif, system-ui, sans-serif;
+          font-size: 0.88em;
+        }
+        ${isOs ? SERVICE_ORDER_A4_INNER_CSS : ''}
+      `}</style>
+    </article>
+  );
+
+  if (useScale) {
+    return (
+      <ScaledA4Viewport className={className}>
+        {sheet}
+      </ScaledA4Viewport>
+    );
+  }
+
   return (
     <div className={cn('flex w-full justify-center', className)}>
-      <article className={CONTRACT_A4_SHEET_CLASS}>
-        <div className={CONTRACT_A4_PROSE_CLASS} dangerouslySetInnerHTML={{ __html: safe }} />
-        {signatureModels != null ? (
-          <div className="mt-10 pt-6 [font-family:ui-sans-serif,system-ui,sans-serif]">
-            <ContractSignatureBlocksList signers={signatureModels} title="Assinatura" />
-          </div>
-        ) : null}
-        <style>{`
-          .contract-ph-unresolved {
-            background: rgba(251, 191, 36, 0.28);
-            padding: 0 3px;
-            border-radius: 3px;
-            font-family: ui-sans-serif, system-ui, sans-serif;
-            font-size: 0.88em;
-          }
-        `}</style>
-      </article>
+      {sheet}
     </div>
   );
 }

@@ -83,6 +83,7 @@ import apiKeyRoutes from './routes/apiKeyRoutes.js';
 import * as mercadoPagoIntegrationController from './controllers/mercadoPagoIntegrationController.js';
 import { mercadoPagoFeatureGuard } from './middleware/mercadoPagoFeatureGuard.js';
 import appointmentsRoutes from './routes/appointmentsRoutes.js';
+import serviceOrdersRoutes from './routes/serviceOrdersRoutes.js';
 import chatbotFlowsRoutes from './routes/chatbotFlowsRoutes.js';
 import { getCheckoutContext } from './controllers/checkoutContextController.js';
 import planPurchaseRoutes from './routes/planPurchaseRoutes.js';
@@ -504,6 +505,7 @@ app.post('/api/webhooks/mercado-pago', mercadoPagoFeatureGuard, mercadoPagoInteg
 app.use('/api/integrations/mercado-pago', mercadoPagoIntegrationRoutes);
 app.use('/api/integrations/api-keys', apiKeyRoutes);
 app.use('/api/appointments', appointmentsRoutes);
+app.use('/api/service-orders', serviceOrdersRoutes);
 app.use('/api/chatbot-flows', chatbotFlowsRoutes);
 app.use('/api/announcements', authenticateToken, setCurrentTenant, announcementsUpdatesRoutes);
 app.use('/api/superadmin', superadminRoutes);

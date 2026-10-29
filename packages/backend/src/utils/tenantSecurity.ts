@@ -19,6 +19,7 @@ const TENANT_SCOPED_TABLES = [
   'team_members',
   'user_profiles',
   'clients',
+  'client_addresses',
   'client_groups',
   'client_tasks',
   'leads',

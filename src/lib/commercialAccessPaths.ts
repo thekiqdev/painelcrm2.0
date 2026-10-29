@@ -10,6 +10,7 @@ export function isCommercialHubFrontendPath(pathname: string): boolean {
   if (p === '/login' || p === '/register' || p.startsWith('/register/')) return true;
   if (p === '/') return true;
   if (p.startsWith('/contract-view/') || p.startsWith('/contract-sign/')) return true;
+  if (p.startsWith('/service-order-view/') || p.startsWith('/service-order-sign/')) return true;
   if (p.startsWith('/proposal-view/') || p.startsWith('/pay/')) return true;
   return false;
 }

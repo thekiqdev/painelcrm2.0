@@ -17,6 +17,7 @@ import {
   MessageSquare,
   Calendar,
   FileCheck,
+  ClipboardList,
   Settings,
   History,
   FileText,
@@ -75,7 +76,9 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
   const location = useLocation();
   const { canView } = useModulePermissions();
   const hasTicketsModule = useFeatureFlag("tickets");
+  const hasServiceOrdersModule = useFeatureFlag("service_orders");
   const showTicketsNav = hasTicketsModule && canView("tickets");
+  const showServiceOrdersNav = hasServiceOrdersModule && canView("service_orders");
 
   const menuItems = useMemo((): MenuItem[] => {
     const base = `/clients/${clientId}`;
@@ -113,6 +116,17 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
         path: base,
         description: "Visão geral e cadastro",
       },
+      ...(showServiceOrdersNav
+        ? [
+            {
+              id: "service-orders",
+              label: "Ordens de serviço",
+              icon: ClipboardList,
+              path: `${base}/service-orders`,
+              description: "OS do cliente",
+            } satisfies MenuItem,
+          ]
+        : []),
       ...billing,
       {
         id: "tasks",
@@ -189,7 +203,7 @@ export const ClientSidebar: React.FC<ClientSidebarProps> = ({
         description: "Configurações do cliente",
       },
     ];
-  }, [clientId, showBilling, showTicketsNav]);
+  }, [clientId, showBilling, showTicketsNav, showServiceOrdersNav]);
 
   const isActive = (path: string) => {
     if (path === `/clients/${clientId}`) {

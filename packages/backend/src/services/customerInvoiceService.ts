@@ -105,6 +105,8 @@ export interface CreateManualCustomerInvoiceInput {
   charge_id?: string | null;
   /** Proposta de origem (Etapa 2 — migração 118+). */
   proposal_id?: string | null;
+  /** Ordem de serviço de origem (OS-S5 — migração 362). */
+  service_order_id?: string | null;
   /** Projeto vinculado (migração 235). */
   project_id?: string | null;
   /** Se informado, amount_cents é ignorado e calculado como soma dos total_cents dos itens. */
@@ -283,7 +285,7 @@ export async function createManualCustomerInvoice(
     throw new Error('Coluna customer_invoices.project_id não encontrada. Execute a migração 235_project_financial_links.');
   }
   const projectColumns = schema.hasProjectIdColumn ? ', project_id' : '';
-  const projectValue = schema.hasProjectIdColumn ? ', $12' : '';
+  const projectValue = schema.hasProjectIdColumn ? ', $13' : '';
   const params: unknown[] = [
     data.tenant_id,
     data.client_id ?? null,
@@ -295,6 +297,7 @@ export async function createManualCustomerInvoice(
     paymentToken,
     data.charge_id ?? null,
     data.proposal_id ?? null,
+    data.service_order_id ?? null,
     initialStatus,
   ];
   if (schema.hasProjectIdColumn) {
@@ -303,8 +306,8 @@ export async function createManualCustomerInvoice(
   const r = await pool.query<{ id: string; created_at: string }>(
     `INSERT INTO customer_invoices (
       tenant_id, client_id, subscription_id, period_start, period_end, amount_cents, due_date,
-      status, origin, invoice_type, description, payment_method, gateway_metadata, payment_token, charge_id, proposal_id${projectColumns}
-    ) VALUES ($1, $2, NULL, NULL, NULL, $3, $4, $11, 'manual', 'manual', $5, $6, $7, $8, $9, $10${projectValue})
+      status, origin, invoice_type, description, payment_method, gateway_metadata, payment_token, charge_id, proposal_id, service_order_id${projectColumns}
+    ) VALUES ($1, $2, NULL, NULL, NULL, $3, $4, $12, 'manual', 'manual', $5, $6, $7, $8, $9, $10, $11${projectValue})
     RETURNING id, created_at`,
     params
   );

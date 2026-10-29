@@ -1,0 +1,29 @@
+{
+  "title": "Service orders",
+  "new": "New service order",
+  "empty": "No service orders yet",
+  "emptyFiltered": "No results for these filters",
+  "emptyClient": "No service orders for this client",
+  "createFirst": "Create first service order",
+  "status": {
+    "draft": "Draft",
+    "scheduled": "Scheduled",
+    "in_progress": "In progress",
+    "awaiting_signature": "Awaiting signature",
+    "signed": "Signed",
+    "invoiced": "Invoiced",
+    "completed": "Completed",
+    "cancelled": "Cancelled"
+  },
+  "actions": {
+    "sendSignature": "Send for signature",
+    "generateInvoice": "Generate invoice",
+    "scheduleVisit": "Schedule site visit",
+    "downloadPdf": "Download PDF"
+  },
+  "billing": {
+    "manual": "Manual",
+    "auto_on_sign": "Automatic on sign",
+    "none": "No invoice"
+  }
+}

@@ -86,6 +86,9 @@ const ContractTemplates = lazyWithReload(() => import("./pages/ContractTemplates
 const ContractTemplateFormPage = lazyWithReload(() => import("./pages/ContractTemplateFormPage"));
 const NewContract = lazyWithReload(() => import("./pages/NewContract"));
 const ContractDetails = lazyWithReload(() => import("./pages/ContractDetails"));
+const ServiceOrders = lazyWithReload(() => import("./pages/ServiceOrders"));
+const NewServiceOrder = lazyWithReload(() => import("./pages/NewServiceOrder"));
+const ServiceOrderDetails = lazyWithReload(() => import("./pages/ServiceOrderDetails"));
 const CustomerInvoices = lazyWithReload(() => import("./pages/CustomerInvoices"));
 const CustomerInvoiceNew = lazyWithReload(() => import("./pages/CustomerInvoiceNew"));
 const CustomerInvoiceDetail = lazyWithReload(() => import("./pages/CustomerInvoiceDetail"));
@@ -94,6 +97,8 @@ const SubscriptionDetail = lazyWithReload(() => import("./pages/SubscriptionDeta
 const CustomerInvoicePay = lazyWithReload(() => import("./pages/CustomerInvoicePay"));
 const PublicContractView = lazyWithReload(() => import("./pages/PublicContractView"));
 const PublicContractSign = lazyWithReload(() => import("./pages/PublicContractSign"));
+const PublicServiceOrderView = lazyWithReload(() => import("./pages/PublicServiceOrderView"));
+const PublicServiceOrderSign = lazyWithReload(() => import("./pages/PublicServiceOrderSign"));
 const PublicProposalView = lazyWithReload(() => import("./pages/PublicProposalView"));
 const PublicAppointmentConfirmation = lazyWithReload(() => import("./pages/PublicAppointmentConfirmation"));
 const PublicTicketView = lazyWithReload(() => import("./pages/PublicTicketView"));
@@ -434,6 +439,8 @@ const App = () => (
               }
             />
             <Route path="/contract-sign/:token" element={<Suspense fallback={<LoadingFallback />}><PublicContractSign /></Suspense>} />
+            <Route path="/service-order-view/:token" element={<Suspense fallback={<LoadingFallback />}><PublicServiceOrderView /></Suspense>} />
+            <Route path="/service-order-sign/:token" element={<Suspense fallback={<LoadingFallback />}><PublicServiceOrderSign /></Suspense>} />
             <Route
               path="/legal/privacy-policy"
               element={
@@ -750,6 +757,33 @@ const App = () => (
                   <AppLayout>
                     <Suspense fallback={<PageContentSkeleton />}>
                       <ProposalDetails />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/service-orders" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <ServiceOrders />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/service-orders/new" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <NewServiceOrder />
+                    </Suspense>
+                  </AppLayout>
+              </AuthGuard>
+            } />
+            <Route path="/service-orders/:id" element={
+              <AuthGuard requireAuth={true} redirectTo="/">
+                  <AppLayout>
+                    <Suspense fallback={<PageContentSkeleton />}>
+                      <ServiceOrderDetails />
                     </Suspense>
                   </AppLayout>
               </AuthGuard>

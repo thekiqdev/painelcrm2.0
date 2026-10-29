@@ -97,6 +97,18 @@ export type PermissionCatalogKey =
   | 'contracts.request_signature'
   | 'contracts.cancel'
   | 'contracts.view_signed_files'
+  | 'service_orders.view'
+  | 'service_orders.view_all'
+  | 'service_orders.view_own'
+  | 'service_orders.create'
+  | 'service_orders.edit'
+  | 'service_orders.edit_own'
+  | 'service_orders.delete'
+  | 'service_orders.delete_own'
+  | 'service_orders.send'
+  | 'service_orders.request_signature'
+  | 'service_orders.generate_invoice'
+  | 'service_orders.cancel'
   | 'chat.view'
   | 'chat.view_queue'
   | 'chat.view_own_conversations'
@@ -513,6 +525,47 @@ export function resolveContractsGranularFromLegacy(map: ModulePermissionsMap): C
   };
 }
 
+export interface ServiceOrdersGranularResolved {
+  view: boolean;
+  view_all: boolean;
+  view_own: boolean;
+  create: boolean;
+  edit: boolean;
+  edit_own: boolean;
+  delete: boolean;
+  delete_own: boolean;
+  send: boolean;
+  request_signature: boolean;
+  generate_invoice: boolean;
+  cancel: boolean;
+}
+
+export function resolveServiceOrdersGranularFromLegacy(
+  map: ModulePermissionsMap,
+): ServiceOrdersGranularResolved {
+  const m = map.service_orders;
+  const cv = m?.can_view === true;
+  const cc = m?.can_create === true;
+  const ce = m?.can_edit === true;
+  const cd = m?.can_delete === true;
+  const ex = (m?.module_extras ?? {}) as Record<string, unknown>;
+  const listOwnOnly = extraFlag(ex, 'service_orders_view_own_only', false);
+  return {
+    view: cv,
+    view_all: cv && !listOwnOnly,
+    view_own: cv && listOwnOnly,
+    create: cc,
+    edit: ce,
+    edit_own: ce && m?.edit_own_only === true,
+    delete: cd,
+    delete_own: cd && m?.delete_own_only === true,
+    send: ce && extraFlag(ex, 'service_orders_send', true),
+    request_signature: ce && extraFlag(ex, 'service_orders_request_signature', true),
+    generate_invoice: ce && extraFlag(ex, 'service_orders_generate_invoice', true),
+    cancel: ce && extraFlag(ex, 'service_orders_cancel', true),
+  };
+}
+
 export interface DashboardGranularResolved {
   view: boolean;
   view_sales_cards: boolean;
@@ -575,6 +628,7 @@ export function hasPermissionKey(
   const ld = resolveLeadsGranularFromLegacy(map);
   const pr = resolveProposalsGranularFromLegacy(map);
   const ct = resolveContractsGranularFromLegacy(map);
+  const so = resolveServiceOrdersGranularFromLegacy(map);
   const tk = resolveTasksGranularFromLegacy(map);
   const st = resolveSettingsGranularFromLegacy(map);
 
@@ -753,6 +807,31 @@ export function hasPermissionKey(
       return ct.cancel;
     case 'contracts.view_signed_files':
       return ct.view_signed_files;
+
+    case 'service_orders.view':
+      return so.view;
+    case 'service_orders.view_all':
+      return so.view_all;
+    case 'service_orders.view_own':
+      return so.view_own;
+    case 'service_orders.create':
+      return so.create;
+    case 'service_orders.edit':
+      return so.edit;
+    case 'service_orders.edit_own':
+      return so.edit_own;
+    case 'service_orders.delete':
+      return so.delete;
+    case 'service_orders.delete_own':
+      return so.delete_own;
+    case 'service_orders.send':
+      return so.send;
+    case 'service_orders.request_signature':
+      return so.request_signature;
+    case 'service_orders.generate_invoice':
+      return so.generate_invoice;
+    case 'service_orders.cancel':
+      return so.cancel;
 
     case 'tasks.view':
       return tk.view;

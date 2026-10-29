@@ -1,5 +1,11 @@
 import { Router } from 'express';
 import * as clientsController from '../controllers/clientsController.js';
+import {
+  deleteClientAddressHandler,
+  getClientAddressesHandler,
+  patchClientAddressHandler,
+  postClientAddressHandler,
+} from '../controllers/clientAddressesController.js';
 import { tenantAuthCrm } from '../middleware/auth.js';
 import { requirePermission } from '../permissions/index.js';
 import { clientGoogleDriveFileUploadSingle } from '../middleware/clientGoogleDriveFilesMulter.js';
@@ -8,6 +14,10 @@ const router = Router();
 router.use(...tenantAuthCrm);
 
 router.get('/', clientsController.getClients);
+router.get('/:id/addresses', getClientAddressesHandler);
+router.post('/:id/addresses', postClientAddressHandler);
+router.patch('/:id/addresses/:addressId', patchClientAddressHandler);
+router.delete('/:id/addresses/:addressId', deleteClientAddressHandler);
 router.get('/:id/financial-summary', clientsController.getClientFinancialSummary);
 router.get('/:id/timeline', clientsController.getClientTimeline);
 router.post('/:id/timeline/events', clientsController.createClientTimeline);

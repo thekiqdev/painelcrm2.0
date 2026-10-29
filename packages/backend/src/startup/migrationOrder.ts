@@ -576,5 +576,15 @@ export const MIGRATION_ORDER = [
   '358_lead_client_observacao.sql',
   /** Leads ainda não abertos — badge do menu */
   '359_leads_seen_at.sql',
+  /** OS-S1 — ordens de serviço (schema + feature + permissões) */
+  '360_service_orders_module.sql',
+  /** OS-S4 — assinatura online (signers, view tokens, invites + eventos notificação) */
+  '361_service_orders_signature.sql',
+  /** OS-S5 — fatura a partir da OS (customer_invoices.service_order_id) */
+  '362_customer_invoices_service_order_id.sql',
+  /** OS-S6 — visita técnica: appointments.service_order_id + FK OS.appointment_id */
+  '363_appointments_service_order_id.sql',
+  /** S10 — endereços do cliente (N por cliente + ViaCEP / prefill OS) */
+  '364_client_addresses.sql',
   'create-admin-user.sql',
 ];

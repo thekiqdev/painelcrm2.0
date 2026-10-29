@@ -124,6 +124,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const publicCrmDocPath =
       path.startsWith('/contract-view/') ||
       path.startsWith('/contract-sign/') ||
+      path.startsWith('/service-order-view/') ||
+      path.startsWith('/service-order-sign/') ||
       path.startsWith('/proposal-view/') ||
       path.startsWith('/pay/');
     const skipPlanHub = commercialPayPath || publicCrmDocPath;

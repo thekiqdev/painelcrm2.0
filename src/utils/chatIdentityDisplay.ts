@@ -262,10 +262,22 @@ export type ProfileAvatarResolution = {
  * Não altera dados persistidos; alinha regra ao chat.
  */
 export function resolveProfileAvatarUrl(
-  entity: { name?: string | null; avatar_url?: string | null; photo?: string | null } | null,
+  entity: {
+    name?: string | null;
+    avatar_url?: string | null;
+    photo?: string | null;
+    whatsapp_avatar_url?: string | null;
+    whatsapp_avatar_cached_url?: string | null;
+  } | null,
   whatsappFallbackUrl: string | null
 ): ProfileAvatarResolution {
-  const crm = pickCrmPhoto(entity as ChatCrmEntity);
+  const crm = pickCrmPhoto({
+    ...(entity ?? {}),
+    whatsapp_avatar_url:
+      entity?.whatsapp_avatar_cached_url ||
+      entity?.whatsapp_avatar_url ||
+      null,
+  } as ChatCrmEntity);
   const initials = (entity?.name?.trim() || '?').charAt(0).toUpperCase();
   if (crm) {
     return { src: crm, isWhatsappFallback: false, initials };

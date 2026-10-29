@@ -3,6 +3,7 @@ import {
   hasPermissionKey,
   resolveBillingGranularFromLegacy,
   resolveChatGranularFromLegacy,
+  resolveServiceOrdersGranularFromLegacy,
   resolveTasksGranularFromLegacy,
 } from './permissionCatalog.js';
 import type { ModulePermissionsMap } from './permissionTypes.js';
@@ -151,4 +152,50 @@ describe('permissionCatalog', () => {
     };
     expect(hasPermissionKey(allow, 'settings.manage_users')).toBe(true);
   });
+
+  it('service_orders.generate_invoice / request_signature respeitam extras', () => {
+    const base: ModulePermissionsMap = {
+      service_orders: {
+        module: 'service_orders',
+        can_view: true,
+        can_create: true,
+        can_edit: true,
+        can_delete: false,
+        edit_own_only: false,
+        delete_own_only: false,
+        module_extras: {
+          service_orders_generate_invoice: false,
+          service_orders_request_signature: true,
+          service_orders_send: true,
+        },
+      },
+    };
+    expect(hasPermissionKey(base, 'service_orders.generate_invoice')).toBe(false);
+    expect(hasPermissionKey(base, 'service_orders.request_signature')).toBe(true);
+    expect(hasPermissionKey(base, 'service_orders.send')).toBe(true);
+
+    const g = resolveServiceOrdersGranularFromLegacy(base);
+    expect(g.generate_invoice).toBe(false);
+    expect(g.request_signature).toBe(true);
+    expect(g.view_own).toBe(false);
+  });
+
+  it('service_orders_view_own_only resolve view_own', () => {
+    const map: ModulePermissionsMap = {
+      service_orders: {
+        module: 'service_orders',
+        can_view: true,
+        can_create: false,
+        can_edit: false,
+        can_delete: false,
+        edit_own_only: false,
+        delete_own_only: false,
+        module_extras: { service_orders_view_own_only: true },
+      },
+    };
+    const g = resolveServiceOrdersGranularFromLegacy(map);
+    expect(g.view_own).toBe(true);
+    expect(g.view_all).toBe(false);
+  });
 });
+

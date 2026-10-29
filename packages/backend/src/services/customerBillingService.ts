@@ -292,6 +292,8 @@ export async function createManualInvoice(
     charge_id?: string | null;
     /** Proposta de origem (Etapa 2). */
     proposal_id?: string | null;
+    /** Ordem de serviço de origem (OS-S5). */
+    service_order_id?: string | null;
     /** Projeto vinculado (opcional, migração 235). */
     project_id?: string | null;
     /** strict: API / ações explícitas; lenient: jobs automáticos (renovação). */
@@ -333,6 +335,7 @@ export async function createManualInvoice(
     items: body.items,
     charge_id: body.charge_id ?? null,
     proposal_id: body.proposal_id ?? null,
+    service_order_id: body.service_order_id ?? null,
     project_id: projectLink.project_id,
   };
 
@@ -513,6 +516,7 @@ export async function createManualInvoice(
     items: body.items,
     charge_id: body.charge_id ?? null,
     proposal_id: body.proposal_id ?? null,
+    service_order_id: body.service_order_id ?? null,
     project_id: projectLink.project_id,
     ...(body.initial_invoice_status === 'waiting_payment'
       ? { initial_status: 'waiting_payment' as const }

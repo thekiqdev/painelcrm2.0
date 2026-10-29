@@ -109,6 +109,7 @@ export const AppShellSidebar = React.memo(function AppShellSidebar() {
   const hasTickets = useFeatureFlag('tickets');
   const hasChatbotFlows = useFeatureFlag('chatbot_flows');
   const hasProposals = useFeatureFlag('proposals');
+  const hasServiceOrders = useFeatureFlag('service_orders');
   const hasContracts = useFeatureFlag('contracts');
   const hasInvoices = useFeatureFlag('invoices');
   const hasExpenses = useFeatureFlag('expenses');
@@ -439,6 +440,15 @@ export const AppShellSidebar = React.memo(function AppShellSidebar() {
             <SidebarMenu className="gap-0.5">
               {show(hasProposals, 'proposals') && (
                 <SidebarNavLinkItem to="/proposals" icon={FileText} label={t('proposals')} preload={() => routePreload.proposals()} collapsed={collapsed} />
+              )}
+              {show(hasServiceOrders, 'service_orders') && (
+                <SidebarNavLinkItem
+                  to="/service-orders"
+                  icon={ClipboardList}
+                  label={t('service_orders')}
+                  preload={() => routePreload.serviceOrders()}
+                  collapsed={collapsed}
+                />
               )}
               {show(hasContracts, 'contracts') && (
                 <SidebarNavLinkItem to="/contracts" icon={FileSearch} label={t('contracts')} preload={() => routePreload.contracts()} collapsed={collapsed} />

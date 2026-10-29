@@ -15,12 +15,14 @@ type Props = {
   fallbackIcon?: React.ReactNode;
   /** Quando não há logo: não repetir o nome ao lado do ícone (ex.: nome já vai noutra linha). */
   nameShownElsewhere?: boolean;
+  /** Com logo cadastrado, nunca mostrar o nome da empresa (alinha ao PDF/preview da OS). */
+  hideNameWhenLogo?: boolean;
 };
 
 /**
  * Marca da empresa em páginas públicas: imagem conforme tema (claro/escuro + fallbacks)
  * ou texto quando não houver logo.
- * Logo ~1:1 → ícone + nome; horizontal → só a imagem.
+ * Com `hideNameWhenLogo` (padrão em páginas de OS): só a imagem.
  */
 export function PublicTenantBrandMark({
   branding,
@@ -29,13 +31,16 @@ export function PublicTenantBrandMark({
   textClassName,
   fallbackIcon,
   nameShownElsewhere = false,
+  hideNameWhenLogo = false,
 }: Props) {
   const { resolvedTheme } = useTheme();
   const url = resolveTenantLogoUrl(resolvedTheme, branding);
   const name = branding.name?.trim() || '';
   const [logoFailed, setLogoFailed] = useState(false);
   const presentation = useLogoPresentation(url && !logoFailed ? url : null);
-  const showNameBesideLogo = presentation === 'icon' && !!name;
+  // Com logo cadastrado e hideNameWhenLogo: nunca repetir o nome (PDF/preview).
+  const showNameBesideLogo =
+    !hideNameWhenLogo && presentation === 'icon' && !!name;
 
   useEffect(() => {
     setLogoFailed(false);
