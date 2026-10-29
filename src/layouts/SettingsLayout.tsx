@@ -42,6 +42,11 @@ export default function SettingsLayout() {
 
     const slugMatch = location.pathname.match(/^\/settings\/([^/]+)$/);
     if (slugMatch?.[1]) {
+      // Compat: URL antiga de Aparência
+      if (slugMatch[1] === "preferences") {
+        navigate("/settings/localizacao", { replace: true });
+        return;
+      }
       const sec = settingSectionFromPathSlug(slugMatch[1]);
       if (sec) {
         setActiveSectionState(sec);
@@ -52,7 +57,7 @@ export default function SettingsLayout() {
     const s =
       sectionFromQueryParam(searchParams.get("section")) ?? sectionFromQueryParam(searchParams.get("tab"));
     if (s) setActiveSectionState(s);
-  }, [location.pathname, searchParams]);
+  }, [location.pathname, searchParams, navigate]);
 
   const handleSelect = useCallback(
     (section: SettingSection) => {

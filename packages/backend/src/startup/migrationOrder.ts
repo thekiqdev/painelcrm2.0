@@ -586,5 +586,7 @@ export const MIGRATION_ORDER = [
   '363_appointments_service_order_id.sql',
   /** S10 — endereços do cliente (N por cliente + ViaCEP / prefill OS) */
   '364_client_addresses.sql',
+  /** Localização: moedas habilitadas + padrão do tenant */
+  '365_tenant_localization_currencies.sql',
   'create-admin-user.sql',
 ];

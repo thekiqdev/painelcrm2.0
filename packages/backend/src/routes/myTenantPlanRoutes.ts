@@ -81,6 +81,14 @@ router.get('/company', ...tenantAuthCrm, myTenantCompanyController.getMyTenantCo
 router.put('/company', ...tenantAuthCrm, myTenantCompanyController.putMyTenantCompany);
 router.get('/billing-preferences', ...tenantAuthCrm, myTenantBillingPreferencesController.getMyTenantBillingPreferences);
 router.put('/billing-preferences', ...tenantAuthCrm, myTenantBillingPreferencesController.putMyTenantBillingPreferences);
+router.get('/localization', ...tenantAuthCrm, async (req, res, next) => {
+  const { getMyTenantLocalization } = await import('../controllers/myTenantLocalizationController.js');
+  return getMyTenantLocalization(req, res).catch(next);
+});
+router.put('/localization', ...tenantAuthCrm, async (req, res, next) => {
+  const { putMyTenantLocalization } = await import('../controllers/myTenantLocalizationController.js');
+  return putMyTenantLocalization(req, res).catch(next);
+});
 
 /** TD S1 — domínio personalizado (loja | abertura de chamados) */
 router.get('/domain', ...tenantAuthCrm, async (req, res, next) => {
