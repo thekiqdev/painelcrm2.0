@@ -78,19 +78,27 @@ describe('serviceOrderDocumentModel', () => {
     expect(html).toContain('Tec Suprema');
   });
 
-  it('omits company name in header when logo is present', () => {
+  it('keeps company name beside logo in the 3-column header', () => {
     const html = buildServiceOrderDocumentHtml({
       ...sample,
       tenant: { ...sample.tenant, logo_url: 'data:image/png;base64,abc' },
     });
     expect(html).toContain('os-logo');
-    expect(html).not.toContain('os-brand');
+    expect(html).toContain('os-brand');
+    expect(html).toContain('os-header-left');
+    expect(html).toContain('os-header-right');
+    expect(html).toContain('CNPJ: 62.710.770/0001-85');
+    expect(html).toContain('Responsável:');
   });
 
-  it('strips legacy os-brand from snapshots that already have logo', () => {
+  it('strips legacy os-brand only inside os-header-brand', () => {
     const legacy =
       '<div class="os-header-brand"><img class="os-logo" src="x"/><p class="os-brand">Empresa X</p></div>';
     expect(stripServiceOrderBrandNameWhenLogoPresent(legacy)).not.toContain('os-brand');
     expect(stripServiceOrderBrandNameWhenLogoPresent(legacy)).toContain('os-logo');
+
+    const modern =
+      '<div class="os-header-row"><img class="os-logo" src="x"/><div class="os-header-left"><p class="os-brand">Tec</p></div></div>';
+    expect(stripServiceOrderBrandNameWhenLogoPresent(modern)).toContain('os-brand');
   });
 });

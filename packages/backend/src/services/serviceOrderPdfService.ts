@@ -188,19 +188,20 @@ function safeFilenamePart(s: string): string {
 }
 
 function drawSectionTitle(doc: PdfDoc, title: string, x: number, width: number): void {
-  doc.moveDown(0.55);
+  doc.moveDown(0.7);
   doc.font('Helvetica-Bold').fontSize(9).fillColor('#111111').text(title.toUpperCase(), x, doc.y, {
     width,
     characterSpacing: 0.6,
+    lineGap: 2,
   });
-  const y = doc.y + 2;
+  const y = doc.y + 3;
   doc
     .moveTo(x, y)
     .lineTo(x + width, y)
     .strokeColor('#999999')
     .lineWidth(0.6)
     .stroke();
-  doc.moveDown(0.35);
+  doc.y = y + 6;
   doc.fillColor('#000000');
 }
 
@@ -218,16 +219,19 @@ function drawFieldRow(
     doc.font('Helvetica-Bold').fontSize(8).fillColor('#555555').text(`${left.label}: `, x, y, {
       continued: true,
       width: colW,
+      lineGap: 2,
     });
-    doc.font('Helvetica').fillColor('#111111').text(left.value || '—', { width: colW - 4 });
+    doc.font('Helvetica').fillColor('#111111').text(left.value || '—', { width: colW - 4, lineGap: 2 });
+    const leftBottom = doc.y;
     if (right) {
       doc.font('Helvetica-Bold').fontSize(8).fillColor('#555555').text(`${right.label}: `, x + colW, y, {
         continued: true,
         width: colW,
+        lineGap: 2,
       });
-      doc.font('Helvetica').fillColor('#111111').text(right.value || '—', { width: colW - 4 });
+      doc.font('Helvetica').fillColor('#111111').text(right.value || '—', { width: colW - 4, lineGap: 2 });
     }
-    y = Math.max(doc.y, y) + 2;
+    y = Math.max(leftBottom, doc.y) + 5;
     doc.y = y;
   }
   doc.fillColor('#000000');
@@ -244,7 +248,7 @@ function drawTable(
 ): void {
   const sumW = colWeights.reduce((a, b) => a + b, 0);
   const cols = colWeights.map((w) => (w / sumW) * width);
-  const rowH = 16;
+  const rowH = 18;
   const startY = doc.y;
 
   const drawRow = (cells: string[], bold: boolean, fill: string | null, y: number) => {
@@ -355,63 +359,114 @@ export function renderServiceOrderPdfBuffer(
     const signers = opts?.signers ?? [];
     const logoBuf = opts?.logoBuffer ?? null;
 
-    // Header (logo + dados da empresa). Com logo, não repetir o nome textual da empresa.
-    const headerTop = doc.y;
-    let textX = x;
-    let textWidth = width;
+    // Header 3 colunas (igual ao preview): [logo] | identidade | contato
+    const padY = 8;
+    const padX = 10;
+    const boxX = x;
+    const boxTop = doc.y;
+    const logoMaxW = 110;
+    const logoMaxH = 54;
+    const gap = 14;
+    const rightW = Math.min(200, Math.floor(width * 0.36));
+
     let logoDrawn = false;
+    let logoUsedW = 0;
+    let logoUsedH = 0;
+    let logoImg: ReturnType<typeof doc.openImage> | null = null;
+    const contentLeft = boxX + padX;
+    const contentRight = boxX + width - padX;
+
     if (logoBuf) {
       try {
-        const logoW = 110;
-        const logoH = 48;
-        doc.image(logoBuf, x, headerTop, { fit: [logoW, logoH] });
-        textX = x + logoW + 12;
-        textWidth = width - logoW - 12;
-        doc.y = headerTop;
+        logoImg = doc.openImage(logoBuf);
+        const scale = Math.min(logoMaxW / logoImg.width, logoMaxH / logoImg.height, 1);
+        logoUsedW = logoImg.width * scale;
+        logoUsedH = logoImg.height * scale;
         logoDrawn = true;
       } catch {
-        /* logo inválido — segue só com texto */
+        logoImg = null;
       }
     }
-    if (!logoDrawn) {
-      doc
-        .font('Helvetica-Bold')
-        .fontSize(16)
-        .fillColor('#111111')
-        .text(model.tenant.name, textX, headerTop, { width: textWidth });
-      doc.moveDown(0.2);
-    }
-    doc.font('Helvetica').fontSize(8).fillColor('#444444');
-    if (model.tenant.phone) doc.text(model.tenant.phone, textX, doc.y, { width: textWidth });
-    if (model.tenant.email) doc.text(model.tenant.email, textX, doc.y, { width: textWidth });
-    if (model.tenant.document) doc.text(`CNPJ: ${model.tenant.document}`, textX, doc.y, { width: textWidth });
-    if (model.tenant.responsible_name) {
-      doc.text(`Responsável: ${model.tenant.responsible_name}`, textX, doc.y, { width: textWidth });
-    }
-    const tenantAddr = [model.tenant.address, model.tenant.city_uf, model.tenant.postal_code ? `CEP: ${model.tenant.postal_code}` : null]
-      .filter(Boolean)
-      .join(' · ');
-    if (tenantAddr) doc.text(tenantAddr, textX, doc.y, { width: textWidth });
 
-    if (logoDrawn) {
-      doc.y = Math.max(doc.y, headerTop + 52);
+    const leftX = contentLeft + (logoDrawn ? logoUsedW + gap : 0);
+    const rightX = contentRight - rightW;
+    const leftW = Math.max(120, rightX - gap - leftX);
+
+    // Mede altura do texto (sem desenhar) para centralizar verticalmente como no preview
+    const leftLines: string[] = [model.tenant.name];
+    if (model.tenant.document) leftLines.push(`CNPJ: ${model.tenant.document}`);
+    if (model.tenant.address) leftLines.push(model.tenant.address);
+    const cityCep = [model.tenant.city_uf, model.tenant.postal_code ? `CEP: ${model.tenant.postal_code}` : null]
+      .filter(Boolean)
+      .join(' - ');
+    if (cityCep) leftLines.push(cityCep);
+
+    const rightLines: string[] = [];
+    if (model.tenant.phone) rightLines.push(model.tenant.phone);
+    if (model.tenant.email) rightLines.push(model.tenant.email);
+    if (model.tenant.responsible_name) rightLines.push(`Responsável: ${model.tenant.responsible_name}`);
+
+    // left: nome bold 13 + meta 8; right: tudo bold 9
+    let leftH = 0;
+    leftLines.forEach((line, i) => {
+      doc.font(i === 0 ? 'Helvetica-Bold' : 'Helvetica').fontSize(i === 0 ? 13 : 8);
+      leftH += doc.heightOfString(line, { width: leftW, lineGap: 0 });
+      if (i === 0) leftH += 1;
+    });
+    let rightH = 0;
+    rightLines.forEach((line) => {
+      doc.font('Helvetica-Bold').fontSize(9);
+      rightH += doc.heightOfString(line, { width: rightW, lineGap: 0 });
+    });
+
+    const innerH = Math.max(logoDrawn ? logoUsedH : 0, leftH, rightH);
+    const contentTop = boxTop + padY;
+    const logoY = contentTop + (innerH - (logoDrawn ? logoUsedH : 0)) / 2;
+    const leftStartY = contentTop + (innerH - leftH) / 2;
+    const rightStartY = contentTop + (innerH - rightH) / 2;
+
+    if (logoDrawn && logoImg) {
+      doc.image(logoImg, contentLeft, logoY, { width: logoUsedW, height: logoUsedH });
     }
-    doc.moveDown(0.4);
-    const hy = doc.y;
-    doc.moveTo(x, hy).lineTo(x + width, hy).strokeColor('#222222').lineWidth(1.2).stroke();
-    doc.moveDown(0.5);
+
+    let leftY = leftStartY;
+    leftLines.forEach((line, i) => {
+      doc
+        .font(i === 0 ? 'Helvetica-Bold' : 'Helvetica')
+        .fontSize(i === 0 ? 13 : 8)
+        .fillColor('#111111');
+      doc.text(line, leftX, leftY, { width: leftW, lineGap: 0 });
+      leftY = doc.y + (i === 0 ? 1 : 0);
+    });
+
+    let rightY = rightStartY;
+    rightLines.forEach((line) => {
+      doc.font('Helvetica-Bold').fontSize(9).fillColor('#111111');
+      doc.text(line, rightX, rightY, { width: rightW, align: 'right', lineGap: 0 });
+      rightY = doc.y;
+    });
+
+    const boxBottom = contentTop + innerH + padY;
+    doc
+      .rect(boxX, boxTop, width, boxBottom - boxTop)
+      .strokeColor('#c8c8c8')
+      .lineWidth(0.8)
+      .stroke();
+    doc.y = boxBottom + 10;
 
     // Title
-    doc.font('Helvetica-Bold').fontSize(12).fillColor('#111111').text(model.service_order.number_label, x, doc.y, {
-      width: width * 0.7,
+    const titleTop = doc.y;
+    doc.font('Helvetica-Bold').fontSize(12).fillColor('#111111').text(model.service_order.number_label, x, titleTop, {
+      width: width * 0.68,
       continued: false,
+      lineGap: 2,
     });
-    const titleY = doc.y - 14;
     doc
       .font('Helvetica-Bold')
       .fontSize(10)
-      .text(model.service_order.issued_at_formatted, x, titleY, { width, align: 'right' });
-    doc.moveDown(0.35);
+      .text(model.service_order.issued_at_formatted, x, titleTop, { width, align: 'right' });
+    doc.y = Math.max(doc.y, titleTop + 16);
+    doc.moveDown(0.3);
     doc.moveTo(x, doc.y).lineTo(x + width, doc.y).strokeColor('#222222').lineWidth(0.6).stroke();
 
     drawSectionTitle(doc, 'Período de execução', x, width);
@@ -508,14 +563,25 @@ export function renderServiceOrderPdfBuffer(
       [1, 4, 1.2, 1.8, 2.2, 2.2],
     );
 
-    doc.moveDown(0.3);
+    doc.moveDown(0.45);
     doc.font('Helvetica').fontSize(9).fillColor('#111111');
-    doc.text(`PRODUTOS: ${formatCentsBr(model.service_order.total_products_cents)}`, { align: 'right', width });
-    doc.text(`SERVIÇOS: ${formatCentsBr(model.service_order.total_services_cents)}`, { align: 'right', width });
+    doc.text(`PRODUTOS: ${formatCentsBr(model.service_order.total_products_cents)}`, {
+      align: 'right',
+      width,
+      lineGap: 3,
+    });
+    doc.moveDown(0.15);
+    doc.text(`SERVIÇOS: ${formatCentsBr(model.service_order.total_services_cents)}`, {
+      align: 'right',
+      width,
+      lineGap: 3,
+    });
+    doc.moveDown(0.2);
     doc.font('Helvetica-Bold').fontSize(11);
     doc.text(`TOTAL: ${formatMoneyLabel(model.service_order.total_cents, model.service_order.currency)}`, {
       align: 'right',
       width,
+      lineGap: 2,
     });
 
     drawSectionTitle(doc, 'Observações', x, width);
@@ -525,7 +591,8 @@ export function renderServiceOrderPdfBuffer(
       .fillColor('#111111')
       .text(model.service_order.observations || ' ', {
         width,
-        height: 48,
+        height: 52,
+        lineGap: 3,
       });
 
     doc.moveDown(1.2);

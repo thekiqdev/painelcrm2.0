@@ -18,10 +18,13 @@ export function sanitizeHtml(html: string): string {
   });
 }
 
-/** Snapshots antigos: remove nome textual se já houver logo no header. */
+/** Snapshots antigos: remove nome só no layout legado `.os-header-brand` + logo. */
 function stripOsBrandNameWhenLogoPresent(html: string): string {
-  if (!html || !/\bos-logo\b/i.test(html)) return html;
-  return html.replace(/<p\b[^>]*\bos-brand\b[^>]*>[\s\S]*?<\/p>/gi, '');
+  if (!html || !/\bos-logo\b/i.test(html) || !/\bos-header-brand\b/i.test(html)) return html;
+  return html.replace(
+    /(<div\b[^>]*\bos-header-brand\b[^>]*>[\s\S]*?)<p\b[^>]*\bos-brand\b[^>]*>[\s\S]*?<\/p>/gi,
+    '$1',
+  );
 }
 
 /** Documento A4 da OS (tabelas + imagens de assinatura/logo em data URL). */

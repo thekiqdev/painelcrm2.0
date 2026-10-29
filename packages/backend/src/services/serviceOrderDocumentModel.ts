@@ -234,14 +234,18 @@ export type ServiceOrderHtmlSignerOpt = {
 };
 
 /**
- * Snapshots antigos gravavam logo + `<p class="os-brand">`.
- * Com logo presente, remove o nome textual da empresa.
+ * Snapshots antigos: logo + nome empilhados em `.os-header-brand`.
+ * Remove só o `<p class="os-brand">` nesse layout legado (o header novo
+ * mostra logo + nome em colunas distintas e deve preservar o nome).
  */
 export function stripServiceOrderBrandNameWhenLogoPresent(html: string): string {
   const raw = String(html || '');
   if (!raw) return raw;
-  if (!/\bos-logo\b/i.test(raw)) return raw;
-  return raw.replace(/<p\b[^>]*\bos-brand\b[^>]*>[\s\S]*?<\/p>/gi, '');
+  if (!/\bos-logo\b/i.test(raw) || !/\bos-header-brand\b/i.test(raw)) return raw;
+  return raw.replace(
+    /(<div\b[^>]*\bos-header-brand\b[^>]*>[\s\S]*?)<p\b[^>]*\bos-brand\b[^>]*>[\s\S]*?<\/p>/gi,
+    '$1',
+  );
 }
 
 /**
@@ -252,9 +256,9 @@ export function buildServiceOrderDocumentHtml(
   opts?: { signers?: ServiceOrderHtmlSignerOpt[] },
 ): string {
   const e = escapeHtml;
-  const tenantAddr = [model.tenant.address, model.tenant.city_uf, model.tenant.postal_code ? `CEP: ${model.tenant.postal_code}` : null]
+  const cityCep = [model.tenant.city_uf, model.tenant.postal_code ? `CEP: ${model.tenant.postal_code}` : null]
     .filter(Boolean)
-    .join(' · ');
+    .join(' - ');
 
   const servicesRows = model.services
     .map(
@@ -310,22 +314,30 @@ export function buildServiceOrderDocumentHtml(
 
   const hasLogo = Boolean(model.tenant.logo_url);
   const logoHtml = hasLogo
-    ? `<img class="os-logo" alt="Logo" src="${e(model.tenant.logo_url!)}" style="max-height:56px;max-width:180px;object-fit:contain" />`
+    ? `<img class="os-logo" alt="Logo" src="${e(model.tenant.logo_url!)}" />`
     : '';
-  const brandNameHtml = hasLogo ? '' : `<p class="os-brand">${e(model.tenant.name)}</p>`;
 
   const built = `
 <article class="os-a4-doc">
   <header class="os-header">
-    <div class="os-header-brand">
+    <div class="os-header-row">
       ${logoHtml}
-      ${brandNameHtml}
-      <div class="os-meta">
+      <div class="os-header-left">
+        <p class="os-brand">${e(model.tenant.name)}</p>
+        <div class="os-meta">
+          ${model.tenant.document ? `<div>CNPJ: ${e(model.tenant.document)}</div>` : ''}
+          ${model.tenant.address ? `<div>${e(model.tenant.address)}</div>` : ''}
+          ${cityCep ? `<div>${e(cityCep)}</div>` : ''}
+        </div>
+      </div>
+      <div class="os-header-right">
         ${model.tenant.phone ? `<div>${e(model.tenant.phone)}</div>` : ''}
         ${model.tenant.email ? `<div>${e(model.tenant.email)}</div>` : ''}
-        ${model.tenant.document ? `<div>CNPJ: ${e(model.tenant.document)}</div>` : ''}
-        ${model.tenant.responsible_name ? `<div>Responsável: ${e(model.tenant.responsible_name)}</div>` : ''}
-        ${tenantAddr ? `<div>${e(tenantAddr)}</div>` : ''}
+        ${
+          model.tenant.responsible_name
+            ? `<div>Responsável: <span class="os-resp-name">${e(model.tenant.responsible_name)}</span></div>`
+            : ''
+        }
       </div>
     </div>
   </header>
