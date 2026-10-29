@@ -53,13 +53,21 @@ const itemSchema = z.object({
   sort_order: z.number().int().optional(),
 });
 
+const nullableEquipStr = (max: number) =>
+  z
+    .string()
+    .max(max)
+    .optional()
+    .nullable()
+    .transform((v): string | null => (v == null || String(v).trim() === '' ? null : String(v)));
+
 const equipmentItemSchema = z
   .object({
-    name: z.string().max(500).optional().nullable(),
-    brand: z.string().max(200).optional().nullable(),
-    model: z.string().max(200).optional().nullable(),
-    serial: z.string().max(200).optional().nullable(),
-    defects: z.string().max(5000).optional().nullable(),
+    name: nullableEquipStr(500),
+    brand: nullableEquipStr(200),
+    model: nullableEquipStr(200),
+    serial: nullableEquipStr(200),
+    defects: nullableEquipStr(5000),
   })
   .passthrough();
 

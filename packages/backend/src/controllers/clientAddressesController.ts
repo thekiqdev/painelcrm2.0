@@ -46,7 +46,7 @@ async function loadClientOwner(
 
 function respondError(res: Response, error: unknown): boolean {
   if (error instanceof ModulePermissionError) {
-    res.status(error.statusCode).json({ error: error.message, code: error.code });
+    res.status(error.statusCode).json({ error: error.message });
     return true;
   }
   if (error instanceof ClientAddressDomainError) {

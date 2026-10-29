@@ -51,7 +51,7 @@ export async function putMyTenantLocalization(req: AuthRequest, res: Response): 
     res.json(resolved);
   } catch (error) {
     if (error instanceof ModulePermissionError) {
-      res.status(error.status).json({ error: error.message, code: error.code });
+      res.status(error.statusCode).json({ error: error.message });
       return;
     }
     if (error instanceof z.ZodError) {

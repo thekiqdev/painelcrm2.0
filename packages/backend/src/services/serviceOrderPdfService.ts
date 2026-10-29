@@ -66,6 +66,36 @@ function bufferToImageDataUrl(buf: Buffer, fileHint?: string): string {
   return `data:${mime};base64,${buf.toString('base64')}`;
 }
 
+/** Dimensões de PNG/JPEG para caber o logo sem `doc.openImage` (ausente nos types do PDFKit). */
+function probeRasterImageSize(buf: Buffer): { w: number; h: number } | null {
+  if (!buf || buf.length < 24) return null;
+  // PNG
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+    return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
+  }
+  // JPEG SOF0/SOF2
+  if (buf[0] === 0xff && buf[1] === 0xd8) {
+    let i = 2;
+    while (i + 9 < buf.length) {
+      if (buf[i] !== 0xff) break;
+      const marker = buf[i + 1];
+      if (marker === 0xd9 || marker === 0xda) break;
+      const segLen = buf.readUInt16BE(i + 2);
+      if (segLen < 2) break;
+      if (
+        (marker >= 0xc0 && marker <= 0xc3) ||
+        (marker >= 0xc5 && marker <= 0xc7) ||
+        (marker >= 0xc9 && marker <= 0xcb) ||
+        (marker >= 0xcd && marker <= 0xcf)
+      ) {
+        return { h: buf.readUInt16BE(i + 5), w: buf.readUInt16BE(i + 7) };
+      }
+      i += 2 + segLen;
+    }
+  }
+  return null;
+}
+
 /** PDFKit só aceita PNG/JPEG — WebP/GIF são convertidos via sharp. */
 async function toPdfKitCompatibleImage(buf: Buffer, fileHint?: string): Promise<Buffer | null> {
   const kind = sniffImageKind(buf, fileHint);
@@ -372,19 +402,20 @@ export function renderServiceOrderPdfBuffer(
     let logoDrawn = false;
     let logoUsedW = 0;
     let logoUsedH = 0;
-    let logoImg: ReturnType<typeof doc.openImage> | null = null;
     const contentLeft = boxX + padX;
     const contentRight = boxX + width - padX;
 
     if (logoBuf) {
-      try {
-        logoImg = doc.openImage(logoBuf);
-        const scale = Math.min(logoMaxW / logoImg.width, logoMaxH / logoImg.height, 1);
-        logoUsedW = logoImg.width * scale;
-        logoUsedH = logoImg.height * scale;
+      const dims = probeRasterImageSize(logoBuf);
+      if (dims && dims.w > 0 && dims.h > 0) {
+        const scale = Math.min(logoMaxW / dims.w, logoMaxH / dims.h, 1);
+        logoUsedW = dims.w * scale;
+        logoUsedH = dims.h * scale;
         logoDrawn = true;
-      } catch {
-        logoImg = null;
+      } else {
+        logoUsedW = logoMaxW;
+        logoUsedH = Math.min(logoMaxH, 40);
+        logoDrawn = true;
       }
     }
 
@@ -425,8 +456,12 @@ export function renderServiceOrderPdfBuffer(
     const leftStartY = contentTop + (innerH - leftH) / 2;
     const rightStartY = contentTop + (innerH - rightH) / 2;
 
-    if (logoDrawn && logoImg) {
-      doc.image(logoImg, contentLeft, logoY, { width: logoUsedW, height: logoUsedH });
+    if (logoDrawn && logoBuf) {
+      try {
+        doc.image(logoBuf, contentLeft, logoY, { width: logoUsedW, height: logoUsedH });
+      } catch {
+        /* logo inválido no desenho — caixa segue só com texto */
+      }
     }
 
     let leftY = leftStartY;
