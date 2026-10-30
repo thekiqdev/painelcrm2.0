@@ -12,6 +12,7 @@ import {
 export type ServiceOrderDocLine = {
   index: number;
   name: string;
+  description: string | null;
   unit: string;
   quantity: number;
   unit_price_cents: number;
@@ -109,11 +110,18 @@ function mapLines(items: ServiceOrderItemRow[], kind: 'service' | 'product'): Se
     .map((it, idx) => ({
       index: idx + 1,
       name: it.name,
+      description: it.description?.trim() ? String(it.description).trim() : null,
       unit: it.unit || 'UN',
       quantity: Number(it.quantity) || 0,
       unit_price_cents: Number(it.unit_price_cents) || 0,
       subtotal_cents: Number(it.subtotal_cents) || 0,
     }));
+}
+
+function lineNameHtml(e: (s: string) => string, r: ServiceOrderDocLine): string {
+  const desc = r.description?.trim();
+  if (!desc) return e(r.name);
+  return `<div class="os-line-name">${e(r.name)}</div><div class="os-line-desc">${e(desc)}</div>`;
 }
 
 export async function loadServiceOrderDocumentModel(
@@ -264,7 +272,7 @@ export function buildServiceOrderDocumentHtml(
     .map(
       (r) => `<tr>
         <td style="text-align:center">${r.index}</td>
-        <td>${e(r.name)}</td>
+        <td>${lineNameHtml(e, r)}</td>
         <td style="text-align:right">${qtyLabel(r.quantity)}</td>
         <td style="text-align:right">${moneyCell(r.unit_price_cents)}</td>
         <td style="text-align:right">${moneyCell(r.subtotal_cents)}</td>
@@ -276,7 +284,7 @@ export function buildServiceOrderDocumentHtml(
     .map(
       (r) => `<tr>
         <td style="text-align:center">${r.index}</td>
-        <td>${e(r.name)}</td>
+        <td>${lineNameHtml(e, r)}</td>
         <td style="text-align:center">${e(r.unit)}</td>
         <td style="text-align:right">${qtyLabel(r.quantity)}</td>
         <td style="text-align:right">${moneyCell(r.unit_price_cents)}</td>

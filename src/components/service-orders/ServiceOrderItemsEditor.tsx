@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Briefcase, Package, Plus, Search, Trash2 } from "lucide-react";
@@ -172,6 +173,7 @@ export function ServiceOrderItemsEditor({
           id: newLineId(),
           kind,
           name: kind === "service" ? "Novo serviço" : "Novo produto",
+          description: null,
           unit: "UN",
           quantity: 1,
           unit_price_cents: 0,
@@ -195,7 +197,7 @@ export function ServiceOrderItemsEditor({
           kind,
           product_id: product.id,
           name: product.name,
-          description: product.short_description ?? null,
+          description: String(product.short_description ?? "").trim() || null,
           unit: "UN",
           quantity: 1,
           unit_price_cents: toCentsFromMajor(Number(major) || 0),
@@ -257,6 +259,11 @@ export function ServiceOrderItemsEditor({
                         onClick={() => addFromCatalog(p)}
                       >
                         <span className="text-sm font-medium">{p.name}</span>
+                        {p.short_description?.trim() ? (
+                          <span className="line-clamp-2 text-xs text-muted-foreground">
+                            {p.short_description.trim()}
+                          </span>
+                        ) : null}
                         <span className="text-xs text-muted-foreground">
                           {formatAppMoney(
                             toCentsFromMajor(Number(resolvePublicCatalogUnitPrice(p)) || 0),
@@ -284,126 +291,147 @@ export function ServiceOrderItemsEditor({
           {rows.map((row, index) => (
             <div
               key={row.id ?? `${kind}-${index}`}
-              className="grid gap-2 rounded-md border border-border/50 bg-background/60 p-2 sm:grid-cols-12 sm:items-end"
+              className="space-y-2 rounded-md border border-border/50 bg-background/60 p-2"
             >
-              <div className={cn("space-y-1", kind === "product" ? "sm:col-span-3" : "sm:col-span-3")}>
-                <Label className="text-xs">Nome</Label>
-                <Input
-                  disabled={disabled}
-                  value={row.name}
-                  onChange={(e) => updateInKind(kind, index, { name: e.target.value })}
-                />
-              </div>
-              {kind === "product" ? (
-                <div className="space-y-1 sm:col-span-1">
-                  <Label className="text-xs">Und.</Label>
+              <div className="grid gap-2 sm:grid-cols-12 sm:items-end">
+                <div className={cn("space-y-1", kind === "product" ? "sm:col-span-3" : "sm:col-span-3")}>
+                  <Label className="text-xs">Nome</Label>
                   <Input
                     disabled={disabled}
-                    value={row.unit ?? "UN"}
-                    onChange={(e) => updateInKind(kind, index, { unit: e.target.value })}
+                    value={row.name}
+                    onChange={(e) => updateInKind(kind, index, { name: e.target.value })}
                   />
                 </div>
-              ) : null}
-              <div className="space-y-1 sm:col-span-1">
-                <Label className="text-xs">Qtd.</Label>
-                <Input
-                  type="number"
-                  min={0.01}
-                  step="0.01"
-                  disabled={disabled}
-                  value={row.quantity}
-                  onChange={(e) => updateInKind(kind, index, { quantity: Number(e.target.value) })}
-                />
-              </div>
-              <div className="space-y-1 sm:col-span-2">
-                <Label className="text-xs">Vr. unit. (R$)</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  disabled={disabled}
-                  value={majorFromCents(Number(row.unit_price_cents) || 0)}
-                  onChange={(e) =>
-                    updateInKind(kind, index, { unit_price_cents: toCentsFromMajor(Number(e.target.value)) })
-                  }
-                />
-              </div>
-              <div className="space-y-1 sm:col-span-2">
-                <Label className="text-xs">Desconto</Label>
-                {(() => {
-                  const rowKey = String(row.id ?? `${kind}-${index}`);
-                  const mode = discountModeByKey[rowKey] ?? "fixed";
-                  const gross = lineGrossCents(row);
-                  const setMode = (next: DiscountMode) => {
-                    setDiscountModeByKey((prev) => ({ ...prev, [rowKey]: next }));
-                    if (next === "percent") {
-                      const pct = percentFromDiscountCents(gross, Number(row.discount_cents) || 0);
-                      setPercentDraftByKey((prev) => ({ ...prev, [rowKey]: String(pct) }));
+                {kind === "product" ? (
+                  <div className="space-y-1 sm:col-span-1">
+                    <Label className="text-xs">Und.</Label>
+                    <Input
+                      disabled={disabled}
+                      value={row.unit ?? "UN"}
+                      onChange={(e) => updateInKind(kind, index, { unit: e.target.value })}
+                    />
+                  </div>
+                ) : null}
+                <div className="space-y-1 sm:col-span-1">
+                  <Label className="text-xs">Qtd.</Label>
+                  <Input
+                    type="number"
+                    min={0.01}
+                    step="0.01"
+                    disabled={disabled}
+                    value={row.quantity}
+                    onChange={(e) => updateInKind(kind, index, { quantity: Number(e.target.value) })}
+                  />
+                </div>
+                <div className="space-y-1 sm:col-span-2">
+                  <Label className="text-xs">Vr. unit. (R$)</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    disabled={disabled}
+                    value={majorFromCents(Number(row.unit_price_cents) || 0)}
+                    onChange={(e) =>
+                      updateInKind(kind, index, { unit_price_cents: toCentsFromMajor(Number(e.target.value)) })
                     }
-                  };
-                  return (
-                    <div className="flex gap-1">
-                      <Input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        max={mode === "percent" ? 100 : undefined}
-                        disabled={disabled}
-                        className="min-w-0 flex-1"
-                        value={
-                          mode === "percent"
-                            ? (percentDraftByKey[rowKey] ??
-                              String(percentFromDiscountCents(gross, Number(row.discount_cents) || 0)))
-                            : majorFromCents(Number(row.discount_cents) || 0)
-                        }
-                        onChange={(e) => {
-                          const raw = e.target.value;
-                          if (mode === "percent") {
-                            setPercentDraftByKey((prev) => ({ ...prev, [rowKey]: raw }));
-                            updateInKind(kind, index, {
-                              discount_cents: discountCentsFromPercent(gross, Number(raw)),
-                            });
-                          } else {
-                            updateInKind(kind, index, {
-                              discount_cents: Math.min(
-                                gross,
-                                toCentsFromMajor(Number(raw)),
-                              ),
-                            });
+                  />
+                </div>
+                <div className="space-y-1 sm:col-span-2">
+                  <Label className="text-xs">Desconto</Label>
+                  {(() => {
+                    const rowKey = String(row.id ?? `${kind}-${index}`);
+                    const mode = discountModeByKey[rowKey] ?? "fixed";
+                    const gross = lineGrossCents(row);
+                    const setMode = (next: DiscountMode) => {
+                      setDiscountModeByKey((prev) => ({ ...prev, [rowKey]: next }));
+                      if (next === "percent") {
+                        const pct = percentFromDiscountCents(gross, Number(row.discount_cents) || 0);
+                        setPercentDraftByKey((prev) => ({ ...prev, [rowKey]: String(pct) }));
+                      }
+                    };
+                    return (
+                      <div className="flex gap-1">
+                        <Input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          max={mode === "percent" ? 100 : undefined}
+                          disabled={disabled}
+                          className="min-w-0 flex-1"
+                          value={
+                            mode === "percent"
+                              ? (percentDraftByKey[rowKey] ??
+                                String(percentFromDiscountCents(gross, Number(row.discount_cents) || 0)))
+                              : majorFromCents(Number(row.discount_cents) || 0)
                           }
-                        }}
-                      />
-                      <select
-                        aria-label="Tipo de desconto"
-                        disabled={disabled}
-                        className="h-9 w-[4.25rem] shrink-0 rounded-md border border-input bg-background px-1.5 text-xs"
-                        value={mode}
-                        onChange={(e) => setMode(e.target.value === "percent" ? "percent" : "fixed")}
-                      >
-                        <option value="fixed">R$</option>
-                        <option value="percent">%</option>
-                      </select>
-                    </div>
-                  );
-                })()}
-              </div>
-              <div className={cn("space-y-1", kind === "product" ? "sm:col-span-2" : "sm:col-span-3")}>
-                <Label className="text-xs">Subtotal</Label>
-                <div className="flex h-9 items-center rounded-md border border-transparent px-2 text-sm font-medium tabular-nums">
-                  {formatAppMoney(lineSubtotal(row), currency)}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            if (mode === "percent") {
+                              setPercentDraftByKey((prev) => ({ ...prev, [rowKey]: raw }));
+                              updateInKind(kind, index, {
+                                discount_cents: discountCentsFromPercent(gross, Number(raw)),
+                              });
+                            } else {
+                              updateInKind(kind, index, {
+                                discount_cents: Math.min(
+                                  gross,
+                                  toCentsFromMajor(Number(raw)),
+                                ),
+                              });
+                            }
+                          }}
+                        />
+                        <select
+                          aria-label="Tipo de desconto"
+                          disabled={disabled}
+                          className="h-9 w-[4.25rem] shrink-0 rounded-md border border-input bg-background px-1.5 text-xs"
+                          value={mode}
+                          onChange={(e) => setMode(e.target.value === "percent" ? "percent" : "fixed")}
+                        >
+                          <option value="fixed">R$</option>
+                          <option value="percent">%</option>
+                        </select>
+                      </div>
+                    );
+                  })()}
+                </div>
+                <div className={cn("space-y-1", kind === "product" ? "sm:col-span-2" : "sm:col-span-3")}>
+                  <Label className="text-xs">Subtotal</Label>
+                  <div className="flex h-9 items-center rounded-md border border-transparent px-2 text-sm font-medium tabular-nums">
+                    {formatAppMoney(lineSubtotal(row), currency)}
+                  </div>
+                </div>
+                <div className="sm:col-span-1 sm:justify-self-end">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    disabled={disabled}
+                    aria-label="Remover linha"
+                    onClick={() => removeInKind(kind, index)}
+                  >
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
                 </div>
               </div>
-              <div className="sm:col-span-1 sm:justify-self-end">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
+              <div className="space-y-1">
+                <Label className="text-xs">Descrição</Label>
+                <Textarea
                   disabled={disabled}
-                  aria-label="Remover linha"
-                  onClick={() => removeInKind(kind, index)}
-                >
-                  <Trash2 className="h-4 w-4 text-destructive" />
-                </Button>
+                  rows={2}
+                  className="min-h-[64px] resize-y"
+                  placeholder={
+                    kind === "service"
+                      ? "Descrição do serviço (preenchida pela descrição curta do catálogo)"
+                      : "Descrição do produto (preenchida pela descrição curta do catálogo)"
+                  }
+                  value={row.description ?? ""}
+                  onChange={(e) =>
+                    updateInKind(kind, index, {
+                      description: e.target.value.trim() ? e.target.value : null,
+                    })
+                  }
+                />
               </div>
             </div>
           ))}

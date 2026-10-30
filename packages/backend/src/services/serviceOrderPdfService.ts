@@ -278,10 +278,24 @@ function drawTable(
 ): void {
   const sumW = colWeights.reduce((a, b) => a + b, 0);
   const cols = colWeights.map((w) => (w / sumW) * width);
-  const rowH = 18;
+  const minRowH = 18;
+  const maxRowH = 72;
   const startY = doc.y;
 
-  const drawRow = (cells: string[], bold: boolean, fill: string | null, y: number) => {
+  const measureRowH = (cells: string[], bold: boolean) => {
+    let h = minRowH;
+    for (let i = 0; i < cells.length; i++) {
+      doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(8);
+      const th = doc.heightOfString(cells[i] ?? '', {
+        width: Math.max(8, cols[i]! - 6),
+        lineGap: 1,
+      });
+      h = Math.max(h, th + 8);
+    }
+    return Math.min(h, maxRowH);
+  };
+
+  const drawRow = (cells: string[], bold: boolean, fill: string | null, y: number, rowH: number) => {
     if (fill) {
       doc.rect(x, y, width, rowH).fill(fill);
     }
@@ -302,6 +316,7 @@ function drawTable(
         .text(cells[i] ?? '', cx + 3, y + 4, {
           width: cols[i]! - 6,
           height: rowH - 6,
+          lineGap: 1,
           ellipsis: true,
         });
       cx += cols[i]!;
@@ -309,35 +324,43 @@ function drawTable(
   };
 
   let y = startY;
-  if (y + rowH > doc.page.height - doc.page.margins.bottom) {
+  const headerH = measureRowH(headers, true);
+  if (y + headerH > doc.page.height - doc.page.margins.bottom) {
     doc.addPage();
     y = doc.page.margins.top;
   }
-  drawRow(headers, true, '#f3f3f3', y);
-  y += rowH;
+  drawRow(headers, true, '#f3f3f3', y, headerH);
+  y += headerH;
 
   for (const row of rows) {
+    const rowH = measureRowH(row, false);
     if (y + rowH > doc.page.height - doc.page.margins.bottom) {
       doc.addPage();
       y = doc.page.margins.top;
-      drawRow(headers, true, '#f3f3f3', y);
-      y += rowH;
+      drawRow(headers, true, '#f3f3f3', y, headerH);
+      y += headerH;
     }
-    drawRow(row, false, null, y);
+    drawRow(row, false, null, y, rowH);
     y += rowH;
   }
 
   if (footer) {
-    if (y + rowH > doc.page.height - doc.page.margins.bottom) {
+    const footerH = measureRowH(footer, true);
+    if (y + footerH > doc.page.height - doc.page.margins.bottom) {
       doc.addPage();
       y = doc.page.margins.top;
     }
-    drawRow(footer, true, '#fafafa', y);
-    y += rowH;
+    drawRow(footer, true, '#fafafa', y, footerH);
+    y += footerH;
   }
 
   doc.y = y + 4;
   doc.fillColor('#000000');
+}
+
+function lineNamePdf(r: ServiceOrderDocLine): string {
+  const desc = r.description?.trim();
+  return desc ? `${r.name}\n${desc}` : r.name;
 }
 
 function formatQty(n: number): string {
@@ -347,7 +370,7 @@ function formatQty(n: number): string {
 function linesToServiceRows(lines: ServiceOrderDocLine[]): string[][] {
   return lines.map((r) => [
     String(r.index),
-    r.name,
+    lineNamePdf(r),
     formatQty(r.quantity),
     formatCentsBr(r.unit_price_cents),
     formatCentsBr(r.subtotal_cents),
@@ -357,7 +380,7 @@ function linesToServiceRows(lines: ServiceOrderDocLine[]): string[][] {
 function linesToProductRows(lines: ServiceOrderDocLine[]): string[][] {
   return lines.map((r) => [
     String(r.index),
-    r.name,
+    lineNamePdf(r),
     r.unit,
       formatQty(r.quantity),
       formatCentsBr(r.unit_price_cents),

@@ -53,11 +53,35 @@ const sample: ServiceOrderDocumentModel = {
     },
   ],
   services: [
-    { index: 1, name: 'MÃO DE OBRA', unit: 'UN', quantity: 1, unit_price_cents: 23000, subtotal_cents: 23000 },
+    {
+      index: 1,
+      name: 'MÃO DE OBRA',
+      description: 'Mão de obra técnica',
+      unit: 'UN',
+      quantity: 1,
+      unit_price_cents: 23000,
+      subtotal_cents: 23000,
+    },
   ],
   products: [
-    { index: 1, name: 'MAÇANETA DA PORTA', unit: 'UN', quantity: 1, unit_price_cents: 8000, subtotal_cents: 8000 },
-    { index: 2, name: 'TERMOSTATO', unit: 'UN', quantity: 2, unit_price_cents: 6000, subtotal_cents: 12000 },
+    {
+      index: 1,
+      name: 'MAÇANETA DA PORTA',
+      description: null,
+      unit: 'UN',
+      quantity: 1,
+      unit_price_cents: 8000,
+      subtotal_cents: 8000,
+    },
+    {
+      index: 2,
+      name: 'TERMOSTATO',
+      description: 'Termostato original',
+      unit: 'UN',
+      quantity: 2,
+      unit_price_cents: 6000,
+      subtotal_cents: 12000,
+    },
   ],
 };
 
@@ -71,7 +95,10 @@ describe('serviceOrderDocumentModel', () => {
     expect(html).toContain('ORDEM DE SERVIÇO Nº 138');
     expect(html).toContain('OIKOS SOLUCOES AMBIENTAIS LTDA');
     expect(html).toContain('MÃO DE OBRA');
+    expect(html).toContain('Mão de obra técnica');
     expect(html).toContain('TERMOSTATO');
+    expect(html).toContain('Termostato original');
+    expect(html).toContain('os-line-desc');
     expect(html).toContain('Assinatura do cliente');
     expect(html).toContain('TOTAL: R$ 430,00');
     expect(html).toContain('os-brand');

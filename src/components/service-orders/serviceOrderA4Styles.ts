@@ -50,9 +50,11 @@ export const SERVICE_ORDER_A4_INNER_CSS = `
 .os-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 16px; }
 .os-lbl { color: #555; font-weight: 700; margin-right: 4px; font-size: 10px; }
 .os-table { width: 100%; border-collapse: collapse; margin-top: 4px; font-size: 10px; }
-.os-table th, .os-table td { border: 1px solid #555; padding: 5px 6px; text-align: left; line-height: 1.35; }
+.os-table th, .os-table td { border: 1px solid #555; padding: 5px 6px; text-align: left; line-height: 1.35; vertical-align: top; }
 .os-table th { background: #f3f3f3; font-weight: 700; text-transform: uppercase; font-size: 9px; }
 .os-table tfoot td { font-weight: 700; background: #fafafa; }
+.os-line-name { font-weight: 600; }
+.os-line-desc { margin-top: 2px; color: #444; font-size: 9px; font-weight: 400; white-space: pre-wrap; }
 .os-totals { margin-top: 10px; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; font-size: 11px; line-height: 1.4; }
 .os-grand { font-size: 13px; font-weight: 700; margin-top: 4px; border-top: 1px solid #222; padding-top: 4px; }
 .os-obs { min-height: 36px; border: 1px solid #999; padding: 8px; white-space: pre-wrap; line-height: 1.4; }
