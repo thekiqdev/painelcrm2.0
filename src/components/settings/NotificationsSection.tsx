@@ -54,6 +54,9 @@ const EVENT_FALLBACK_TITLE: Record<string, string> = {
   "invoice.due_soon": "Fatura a vencer",
   "invoice.overdue": "Fatura vencida",
   "invoice.paid": "Fatura paga",
+  "service_order.shared": "OS enviada ao cliente (visualização)",
+  "service_order.sent": "OS enviada para assinatura",
+  "service_order.signed": "OS assinada",
 };
 
 function readableEventTitle(row: NeCatalogItem): string {
@@ -78,6 +81,7 @@ function preferenceToCatalogItem(mod: NePreferenceModule, ev: NePreferenceEvent)
 
 function channelLabel(ch: string): string {
   if (ch === "whatsapp") return "WhatsApp";
+  if (ch === "email") return "E-mail";
   return ch;
 }
 
@@ -102,6 +106,8 @@ function moduleLabelFromCatalogDb(db: string | null | undefined): string {
     proposals: "Propostas",
     contracts: "Contratos",
     agenda: "Agenda",
+    service_orders: "Ordens de serviço",
+    billing: "Faturas",
   };
   return labels[db] ?? "Outros";
 }
@@ -532,7 +538,7 @@ export const NotificationsSection: React.FC<SettingsSectionProps> = () => {
                 <h3 className="text-lg font-semibold tracking-tight">Eventos automáticos</h3>
                 <p className="text-sm text-muted-foreground">
                   Escolha quais mensagens automáticas a sua empresa envia aos clientes. Cada evento corresponde a uma
-                  mensagem do motor (neste MVP: WhatsApp).
+                  mensagem do motor (WhatsApp e/ou e-mail, conforme o canal do evento).
                 </p>
               </div>
 
@@ -825,10 +831,11 @@ export const NotificationsSection: React.FC<SettingsSectionProps> = () => {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="__all__">Todos</SelectItem>
-                      <SelectItem value="billing">Faturas</SelectItem>
+                      <SelectItem value="invoices">Faturas</SelectItem>
                       <SelectItem value="proposals">Propostas</SelectItem>
                       <SelectItem value="contracts">Contratos</SelectItem>
                       <SelectItem value="agenda">Agenda</SelectItem>
+                      <SelectItem value="service_orders">Ordens de serviço</SelectItem>
                       <SelectItem value="other">Outros</SelectItem>
                     </SelectContent>
                   </Select>

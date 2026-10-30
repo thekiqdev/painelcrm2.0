@@ -9,6 +9,7 @@
     "draft": "Draft",
     "scheduled": "Scheduled",
     "in_progress": "In progress",
+    "sent": "Sent",
     "awaiting_signature": "Awaiting signature",
     "signed": "Signed",
     "invoiced": "Invoiced",
@@ -16,6 +17,8 @@
     "cancelled": "Cancelled"
   },
   "actions": {
+    "send": "Send service order",
+    "resend": "Resend service order",
     "sendSignature": "Send for signature",
     "generateInvoice": "Generate invoice",
     "scheduleVisit": "Schedule site visit",

@@ -409,8 +409,10 @@ export function buildServiceOrderDocumentHtml(
   </section>
 
   ${(() => {
-    const clientSig = opts?.signers?.find((s) => s.role === 'client');
-    const techSig = opts?.signers?.find((s) => s.role === 'technician');
+    // Só após "Enviar para assinatura" (signers persistidos).
+    if (!opts?.signers?.length) return '';
+    const clientSig = opts.signers.find((s) => s.role === 'client');
+    const techSig = opts.signers.find((s) => s.role === 'technician');
     const png = (s?: ServiceOrderHtmlSignerOpt) => {
       const b64 = s?.signature_data?.signature_image_png_base64;
       if (typeof b64 !== 'string' || !b64.trim()) return null;

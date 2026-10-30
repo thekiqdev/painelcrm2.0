@@ -9,6 +9,7 @@
     "draft": "Borrador",
     "scheduled": "Programada",
     "in_progress": "En ejecución",
+    "sent": "Enviado",
     "awaiting_signature": "Pendiente de firma",
     "signed": "Firmada",
     "invoiced": "Facturada",
@@ -16,6 +17,8 @@
     "cancelled": "Cancelada"
   },
   "actions": {
+    "send": "Enviar OS",
+    "resend": "Reenviar OS",
     "sendSignature": "Enviar a firma",
     "generateInvoice": "Generar factura",
     "scheduleVisit": "Programar visita",

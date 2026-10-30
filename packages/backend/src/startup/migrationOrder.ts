@@ -588,5 +588,7 @@ export const MIGRATION_ORDER = [
   '364_client_addresses.sql',
   /** Localização: moedas habilitadas + padrão do tenant */
   '365_tenant_localization_currencies.sql',
+  /** OS: status sent + notificação service_order.shared (link de visualização) */
+  '366_service_orders_sent_status_and_shared_notification.sql',
   'create-admin-user.sql',
 ];

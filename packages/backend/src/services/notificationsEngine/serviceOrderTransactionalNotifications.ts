@@ -1,5 +1,5 @@
 /**
- * OS-S4 — Notificações transacionais de Ordem de Serviço (sent / signed).
+ * OS — Notificações transacionais de Ordem de Serviço (shared / sent / signed).
  */
 import type { Pool } from 'pg';
 import {
@@ -101,6 +101,85 @@ async function gateAndPublish(
       ...(chatInstanceId ? { whatsapp_routed_chat_instance_id: chatInstanceId } : {}),
     },
     chatInstanceId,
+  });
+}
+
+/** Envio da OS ao cliente (link de visualização) — e-mail + WhatsApp. */
+export function publishServiceOrderSharedNotifications(params: {
+  pool: Pool;
+  tenantId: string;
+  serviceOrderId: string;
+  actorUserId: string;
+  viewPath: string;
+}): void {
+  enqueue('service_order.shared', async () => {
+    const base = resolveFrontendBaseUrl();
+    const viewUrl = base ? `${base}${params.viewPath}` : params.viewPath;
+
+    const head = await params.pool.query<{
+      service_order_number: number;
+      tenant_name: string;
+      client_name: string | null;
+      client_phone: string | null;
+      client_email: string | null;
+    }>(
+      `SELECT so.service_order_number, t.name AS tenant_name,
+              COALESCE(NULLIF(trim(so.client_snapshot->>'name'), ''), cl.name) AS client_name,
+              COALESCE(NULLIF(trim(so.client_snapshot->>'phone'), ''), cl.phone) AS client_phone,
+              COALESCE(NULLIF(trim(so.client_snapshot->>'email'), ''), cl.email) AS client_email
+       FROM public.service_orders so
+       INNER JOIN public.tenants t ON t.id = so.tenant_id
+       LEFT JOIN public.clients cl ON cl.id = so.client_id
+       WHERE so.id = $1 AND so.tenant_id = $2
+       LIMIT 1`,
+      [params.serviceOrderId, params.tenantId],
+    );
+    const row = head.rows[0];
+    if (!row) return;
+
+    const mergeCtx: Record<string, string> = {
+      'tenant.name': row.tenant_name,
+      'client.name': row.client_name?.trim() || 'Cliente',
+      'service_order.number': String(row.service_order_number),
+      'service_order.public_view_link': viewUrl,
+    };
+
+    const event = await getEventByKey(params.pool, 'service_order.shared');
+    const emailTpl =
+      event?.is_active
+        ? await getSystemTemplate(params.pool, 'service_order.shared', 'email', 'pt-BR')
+        : null;
+
+    const email = row.client_email?.trim();
+    if (email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && emailTpl) {
+      const rendered = renderStrictTemplates({
+        subjectTemplate: emailTpl.subject_template ?? 'Ordem de serviço',
+        bodyTemplate: emailTpl.body_template,
+        context: mergeCtx,
+        allowedMergeFields: event?.merge_field_list ?? [],
+      });
+      if (rendered.ok && rendered.body.trim()) {
+        await sendTransactionalEmail({
+          to: email,
+          subject: rendered.subject?.trim() || `OS Nº ${row.service_order_number}`,
+          html: rendered.body,
+          eventKey: 'service_order.shared',
+          tenantId: params.tenantId,
+        });
+      }
+    }
+
+    if (row.client_phone) {
+      await gateAndPublish(params.pool, {
+        eventKey: 'service_order.shared',
+        tenantId: params.tenantId,
+        preferredSenderUserId: params.actorUserId,
+        entityId: params.serviceOrderId,
+        idempotencyKey: `service_order.shared:${params.serviceOrderId}:${Date.now()}`,
+        recipientPhone: row.client_phone,
+        mergeContext: mergeCtx,
+      });
+    }
   });
 }
 

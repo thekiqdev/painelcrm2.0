@@ -15,6 +15,7 @@ import {
   postServiceOrderRescheduleVisitHandler,
   postServiceOrderScheduleVisitHandler,
   postServiceOrderSendForSignatureHandler,
+  postServiceOrderSendHandler,
 } from '../controllers/serviceOrdersController.js';
 
 const router = Router();
@@ -25,6 +26,7 @@ router.get('/', getServiceOrdersHandler);
 router.post('/', postServiceOrderHandler);
 router.get('/:id/document', getServiceOrderDocumentHandler);
 router.get('/:id/pdf', getServiceOrderPdfHandler);
+router.post('/:id/send', postServiceOrderSendHandler);
 router.post('/:id/send-for-signature', postServiceOrderSendForSignatureHandler);
 router.post('/:id/revoke-signature-links', postServiceOrderRevokeLinksHandler);
 router.patch('/:id/signers/:signerId', patchServiceOrderSignerHandler);

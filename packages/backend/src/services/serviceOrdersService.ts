@@ -14,6 +14,7 @@ export const SERVICE_ORDER_STATUSES = [
   'draft',
   'scheduled',
   'in_progress',
+  'sent',
   'awaiting_signature',
   'signed',
   'invoiced',
@@ -157,6 +158,7 @@ const EDITABLE_STATUSES: ReadonlySet<ServiceOrderStatus> = new Set([
   'draft',
   'scheduled',
   'in_progress',
+  'sent',
 ]);
 
 export class ServiceOrderDomainError extends Error {
@@ -539,7 +541,13 @@ export async function createServiceOrder(
   if (!SERVICE_ORDER_STATUSES.includes(status)) {
     throw new ServiceOrderDomainError('Status inválido.');
   }
-  if (status === 'cancelled' || status === 'signed' || status === 'invoiced' || status === 'awaiting_signature') {
+  if (
+    status === 'cancelled' ||
+    status === 'signed' ||
+    status === 'invoiced' ||
+    status === 'awaiting_signature' ||
+    status === 'sent'
+  ) {
     throw new ServiceOrderDomainError('Status inicial inválido; use draft, scheduled ou in_progress.');
   }
 
@@ -701,12 +709,17 @@ export async function updateServiceOrder(
       if (!SERVICE_ORDER_STATUSES.includes(input.status)) {
         throw new ServiceOrderDomainError('Status inválido.');
       }
-      // S1: transição livre entre status operacionais; assinatura/fatura endurecem em S4/S5
-      if (input.status === 'awaiting_signature' || input.status === 'signed' || input.status === 'invoiced') {
+      // Status de fluxo: só via endpoints (enviar OS / assinatura / fatura)
+      if (
+        input.status === 'sent' ||
+        input.status === 'awaiting_signature' ||
+        input.status === 'signed' ||
+        input.status === 'invoiced'
+      ) {
         throw new ServiceOrderDomainError(
-          'Transição para este status ainda não habilitada (sprints S4/S5).',
+          'Este status só muda pelo fluxo de envio, assinatura ou fatura.',
           400,
-          'status_not_enabled',
+          'status_flow_only',
         );
       }
     }

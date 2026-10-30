@@ -84,6 +84,10 @@ type LeadKanbanBoardProps = {
   onStatusChange: (lead: LeadKanbanLead, nextStatus: string) => Promise<void>;
   onQuickAction: (lead: LeadKanbanLead, action: LeadKanbanAction) => void;
   canCreateProposal?: boolean;
+  /** Quando false, oculta atalhos de conversa/tarefa/agenda/proposta (ex.: Kanban de OS). */
+  showQuickActions?: boolean;
+  emptyColumnTitle?: string;
+  loadingLabel?: string;
 };
 
 function statusKey(status: string | null | undefined): string {
@@ -163,6 +167,7 @@ const LeadKanbanCard = memo(function LeadKanbanCard({
   dragHandleProps,
   onQuickAction,
   canCreateProposal,
+  showQuickActions = true,
 }: {
   lead: LeadKanbanLead;
   statusColor: string;
@@ -170,6 +175,7 @@ const LeadKanbanCard = memo(function LeadKanbanCard({
   dragHandleProps?: React.ButtonHTMLAttributes<HTMLButtonElement>;
   onQuickAction: (action: LeadKanbanAction) => void;
   canCreateProposal?: boolean;
+  showQuickActions?: boolean;
 }) {
   const avatar = resolveProfileAvatarUrl(lead, lead.whatsapp_avatar_url ?? null);
   const updated = formatLeadDate(lead.updated_at);
@@ -232,51 +238,53 @@ const LeadKanbanCard = memo(function LeadKanbanCard({
         </div>
       </button>
 
-      <div className="pointer-events-none absolute bottom-2 right-2 flex items-center gap-0.5 rounded-lg border border-border/50 bg-background/95 p-0.5 shadow-sm opacity-95 sm:opacity-0 sm:transition-opacity sm:group-hover/card:opacity-100 sm:group-focus-within/card:opacity-100">
-        <div className="pointer-events-auto flex items-center gap-0.5">
-          <QuickActionButton
-            label="Abrir conversa"
-            title="Abrir conversa"
-            icon={<MessageCircle className="h-3.5 w-3.5" aria-hidden />}
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onQuickAction('conversation');
-            }}
-          />
-          <QuickActionButton
-            label="Criar tarefa"
-            title="Criar tarefa"
-            icon={<ListTodo className="h-3.5 w-3.5" aria-hidden />}
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onQuickAction('task');
-            }}
-          />
-          <QuickActionButton
-            label="Abrir agenda"
-            title="Agendar compromisso"
-            icon={<CalendarPlus className="h-3.5 w-3.5" aria-hidden />}
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onQuickAction('agenda');
-            }}
-          />
-          <QuickActionButton
-            label="Criar proposta"
-            title={canCreateProposal ? 'Criar proposta' : 'Sem permissão para criar proposta'}
-            disabled={!canCreateProposal}
-            icon={<FileText className="h-3.5 w-3.5" aria-hidden />}
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onQuickAction('proposal');
-            }}
-          />
+      {showQuickActions ? (
+        <div className="pointer-events-none absolute bottom-2 right-2 flex items-center gap-0.5 rounded-lg border border-border/50 bg-background/95 p-0.5 shadow-sm opacity-95 sm:opacity-0 sm:transition-opacity sm:group-hover/card:opacity-100 sm:group-focus-within/card:opacity-100">
+          <div className="pointer-events-auto flex items-center gap-0.5">
+            <QuickActionButton
+              label="Abrir conversa"
+              title="Abrir conversa"
+              icon={<MessageCircle className="h-3.5 w-3.5" aria-hidden />}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onQuickAction('conversation');
+              }}
+            />
+            <QuickActionButton
+              label="Criar tarefa"
+              title="Criar tarefa"
+              icon={<ListTodo className="h-3.5 w-3.5" aria-hidden />}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onQuickAction('task');
+              }}
+            />
+            <QuickActionButton
+              label="Abrir agenda"
+              title="Agendar compromisso"
+              icon={<CalendarPlus className="h-3.5 w-3.5" aria-hidden />}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onQuickAction('agenda');
+              }}
+            />
+            <QuickActionButton
+              label="Criar proposta"
+              title={canCreateProposal ? 'Criar proposta' : 'Sem permissão para criar proposta'}
+              disabled={!canCreateProposal}
+              icon={<FileText className="h-3.5 w-3.5" aria-hidden />}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onQuickAction('proposal');
+              }}
+            />
+          </div>
         </div>
-      </div>
+      ) : null}
     </div>
   );
 });
@@ -287,12 +295,14 @@ function LeadKanbanSortableCard({
   onOpenLead,
   onQuickAction,
   canCreateProposal,
+  showQuickActions = true,
 }: {
   lead: LeadKanbanLead;
   statusColor: string;
   onOpenLead: (lead: LeadKanbanLead) => void;
   onQuickAction: (lead: LeadKanbanLead, action: LeadKanbanAction) => void;
   canCreateProposal?: boolean;
+  showQuickActions?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: lead.id,
@@ -312,6 +322,7 @@ function LeadKanbanSortableCard({
         dragHandleProps={{ ...attributes, ...listeners }}
         onQuickAction={(action) => onQuickAction(lead, action)}
         canCreateProposal={canCreateProposal}
+        showQuickActions={showQuickActions}
       />
       {isDragging ? (
         <div className="pointer-events-none absolute inset-0 rounded-xl border border-dashed border-primary/25 bg-muted/40" aria-hidden />
@@ -328,6 +339,8 @@ function LeadKanbanColumn({
   onOpenLead,
   onQuickAction,
   canCreateProposal,
+  showQuickActions = true,
+  emptyColumnTitle = 'Nenhum lead nesta etapa.',
 }: {
   column: LeadKanbanStatus;
   cardIds: string[];
@@ -336,6 +349,8 @@ function LeadKanbanColumn({
   onOpenLead: (lead: LeadKanbanLead) => void;
   onQuickAction: (lead: LeadKanbanLead, action: LeadKanbanAction) => void;
   canCreateProposal?: boolean;
+  showQuickActions?: boolean;
+  emptyColumnTitle?: string;
 }) {
   const dropId = leadKanbanColumnDropId(column.name);
   const { setNodeRef, isOver } = useDroppable({ id: dropId });
@@ -367,7 +382,7 @@ function LeadKanbanColumn({
             <div className={cn('flex min-h-full flex-col gap-2 p-2 transition-colors', isOver && orderedLeads.length > 0 && 'bg-primary/5')}>
               {orderedLeads.length === 0 ? (
                 <div className="flex min-h-[220px] flex-1 flex-col justify-center rounded-lg border border-dashed border-border/60 bg-background/45 px-3 py-6 text-center">
-                  <p className="text-xs font-medium text-muted-foreground">Nenhum lead nesta etapa.</p>
+                  <p className="text-xs font-medium text-muted-foreground">{emptyColumnTitle}</p>
                   <p className="mt-1 text-[10px] text-muted-foreground/90">Arraste um card para atualizar o status.</p>
                 </div>
               ) : (
@@ -379,6 +394,7 @@ function LeadKanbanColumn({
                     onOpenLead={onOpenLead}
                     onQuickAction={onQuickAction}
                     canCreateProposal={canCreateProposal}
+                    showQuickActions={showQuickActions}
                   />
                 ))
               )}
@@ -399,6 +415,9 @@ export default function LeadKanbanBoard({
   onStatusChange,
   onQuickAction,
   canCreateProposal = true,
+  showQuickActions = true,
+  emptyColumnTitle = 'Nenhum lead nesta etapa.',
+  loadingLabel = 'Carregando Kanban de leads…',
 }: LeadKanbanBoardProps) {
   const columns = useMemo(() => {
     const seen = new Set<string>();
@@ -607,7 +626,7 @@ export default function LeadKanbanBoard({
   if (loading) {
     return (
       <div className="flex min-h-[320px] items-center justify-center rounded-xl border border-border/60 bg-muted/15 text-sm text-muted-foreground">
-        Carregando Kanban de leads…
+        {loadingLabel}
       </div>
     );
   }
@@ -648,6 +667,8 @@ export default function LeadKanbanBoard({
                 onOpenLead={onOpenLead}
                 onQuickAction={onQuickAction}
                 canCreateProposal={canCreateProposal}
+                showQuickActions={showQuickActions}
+                emptyColumnTitle={emptyColumnTitle}
               />
             ))}
           </div>
@@ -663,6 +684,7 @@ export default function LeadKanbanBoard({
               onClick={() => {}}
               onQuickAction={() => {}}
               canCreateProposal={canCreateProposal}
+              showQuickActions={showQuickActions}
             />
           </div>
         ) : null}

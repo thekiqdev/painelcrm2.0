@@ -341,7 +341,7 @@ export async function listRecentDeliveriesFiltered(
     eventKey?: string | null;
     channel?: string | null;
     hours?: number | null;
-    /** Valores do catálogo: invoices, proposals, contracts, agenda, ou 'other'. */
+    /** Valores do catálogo: invoices, proposals, contracts, agenda, service_orders, ou 'other'. */
     catalogModule?: string | null;
   },
 ): Promise<DeliveryRow[]> {
@@ -364,7 +364,7 @@ export async function listRecentDeliveriesFiltered(
   }
   if (params.catalogModule === 'other') {
     conds.push(
-      `(c.module IS NULL OR c.module NOT IN ('invoices', 'proposals', 'contracts', 'agenda'))`,
+      `(c.module IS NULL OR c.module NOT IN ('invoices', 'proposals', 'contracts', 'agenda', 'service_orders'))`,
     );
   } else if (params.catalogModule) {
     conds.push(`c.module = $${i++}`);

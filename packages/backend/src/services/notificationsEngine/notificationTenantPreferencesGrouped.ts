@@ -43,6 +43,9 @@ const EVENT_LABEL_PT: Record<string, string> = {
   'invoice.due_soon': 'Lembrete antes do vencimento',
   'invoice.overdue': 'Fatura em atraso',
   'invoice.paid': 'Confirmação de pagamento',
+  'service_order.shared': 'OS enviada ao cliente (visualização)',
+  'service_order.sent': 'OS enviada para assinatura',
+  'service_order.signed': 'OS assinada',
 };
 
 const MODULE_BUCKET_LABEL: Record<string, string> = {
@@ -50,16 +53,18 @@ const MODULE_BUCKET_LABEL: Record<string, string> = {
   proposals: 'Propostas',
   contracts: 'Contratos',
   agenda: 'Agenda',
+  service_orders: 'Ordens de serviço',
   other: 'Outros',
 };
 
-const MODULE_ORDER = ['billing', 'proposals', 'contracts', 'agenda', 'other'];
+const MODULE_ORDER = ['billing', 'proposals', 'contracts', 'agenda', 'service_orders', 'other'];
 
 function toApiModule(dbModule: string): keyof typeof MODULE_BUCKET_LABEL | string {
   if (dbModule === 'invoices') return 'billing';
   if (dbModule === 'proposals') return 'proposals';
   if (dbModule === 'contracts') return 'contracts';
   if (dbModule === 'agenda') return 'agenda';
+  if (dbModule === 'service_orders') return 'service_orders';
   return 'other';
 }
 

@@ -621,109 +621,125 @@ export function renderServiceOrderPdfBuffer(
       [1, 4, 1.2, 1.8, 2.2, 2.2],
     );
 
-    doc.moveDown(0.45);
+    // Totals: resetar x após a tabela (PDFKit deixa o cursor à direita e o texto some).
+    const totalsBlockH = 48;
+    if (doc.y + totalsBlockH > doc.page.height - doc.page.margins.bottom) {
+      doc.addPage();
+      doc.x = x;
+      doc.y = doc.page.margins.top;
+    }
+    let totalsY = doc.y + 8;
+    doc.x = x;
     doc.font('Helvetica').fontSize(9).fillColor('#111111');
-    doc.text(`PRODUTOS: ${formatCentsBr(model.service_order.total_products_cents)}`, {
-      align: 'right',
-      width,
-      lineGap: 3,
-    });
-    doc.moveDown(0.15);
-    doc.text(`SERVIÇOS: ${formatCentsBr(model.service_order.total_services_cents)}`, {
-      align: 'right',
-      width,
-      lineGap: 3,
-    });
-    doc.moveDown(0.2);
-    doc.font('Helvetica-Bold').fontSize(11);
-    doc.text(`TOTAL: ${formatMoneyLabel(model.service_order.total_cents, model.service_order.currency)}`, {
+    doc.text(`PRODUTOS: ${formatCentsBr(model.service_order.total_products_cents)}`, x, totalsY, {
       align: 'right',
       width,
       lineGap: 2,
     });
+    totalsY = doc.y + 2;
+    doc.text(`SERVIÇOS: ${formatCentsBr(model.service_order.total_services_cents)}`, x, totalsY, {
+      align: 'right',
+      width,
+      lineGap: 2,
+    });
+    totalsY = doc.y + 3;
+    doc.font('Helvetica-Bold').fontSize(11);
+    doc.text(
+      `TOTAL: ${formatMoneyLabel(model.service_order.total_cents, model.service_order.currency)}`,
+      x,
+      totalsY,
+      { align: 'right', width, lineGap: 2 },
+    );
+    doc.x = x;
+    doc.y = doc.y + 6;
 
     drawSectionTitle(doc, 'Observações', x, width);
     doc
       .font('Helvetica')
       .fontSize(9)
       .fillColor('#111111')
-      .text(model.service_order.observations || ' ', {
+      .text(model.service_order.observations || ' ', x, doc.y, {
         width,
         height: 52,
         lineGap: 3,
       });
 
-    doc.moveDown(1.2);
-    const sigGap = 40;
-    const sigW = (width - sigGap) / 2;
-    const clientSig = signers.find((s) => s.role === 'client');
-    const techSig = signers.find((s) => s.role === 'technician');
-    const clientPng = pngBufferFromSignatureData(clientSig?.signature_data ?? null);
-    const techPng = pngBufferFromSignatureData(techSig?.signature_data ?? null);
+    // Assinaturas só após "Enviar para assinatura" (quando há signers persistidos).
+    if (signers.length > 0) {
+      doc.moveDown(1.2);
+      const sigGap = 40;
+      const sigW = (width - sigGap) / 2;
+      const clientSig = signers.find((s) => s.role === 'client');
+      const techSig = signers.find((s) => s.role === 'technician');
+      const clientPng = pngBufferFromSignatureData(clientSig?.signature_data ?? null);
+      const techPng = pngBufferFromSignatureData(techSig?.signature_data ?? null);
 
-    const imgMaxH = 48;
-    const needH = imgMaxH + 28;
-    if (doc.y + needH > doc.page.height - doc.page.margins.bottom) {
-      doc.addPage();
-    }
-
-    const drawSigColumn = (optsCol: {
-      left: number;
-      png: Buffer | null;
-      nameFallback: string;
-      label: string;
-      signerName?: string | null;
-    }) => {
-      const colLeft = optsCol.left;
-      let cursorY = doc.y;
-      if (optsCol.png) {
-        try {
-          doc.image(optsCol.png, colLeft + 8, cursorY, {
-            fit: [sigW - 16, imgMaxH],
-          });
-          cursorY += imgMaxH + 4;
-        } catch {
-          cursorY += 8;
-        }
-      } else {
-        cursorY += imgMaxH - 4;
-        doc
-          .moveTo(colLeft + 10, cursorY)
-          .lineTo(colLeft + sigW - 10, cursorY)
-          .strokeColor('#222')
-          .lineWidth(0.8)
-          .stroke();
-        cursorY += 6;
+      const imgMaxH = 48;
+      const needH = imgMaxH + 28;
+      if (doc.y + needH > doc.page.height - doc.page.margins.bottom) {
+        doc.addPage();
+        doc.x = x;
+        doc.y = doc.page.margins.top;
       }
-      const caption = optsCol.png
-        ? optsCol.signerName?.trim() || optsCol.nameFallback
-        : optsCol.label;
-      doc
-        .font('Helvetica')
-        .fontSize(8)
-        .fillColor('#555555')
-        .text(caption, colLeft + 10, cursorY, { width: sigW - 20, align: 'center' });
-      return doc.y;
-    };
 
-    const startY = doc.y + 8;
-    doc.y = startY;
-    const y1 = drawSigColumn({
-      left: x,
-      png: clientPng,
-      nameFallback: 'Cliente',
-      label: 'Assinatura do cliente',
-      signerName: clientSig?.name,
-    });
-    doc.y = startY;
-    const y2 = drawSigColumn({
-      left: x + sigW + sigGap,
-      png: techPng,
-      nameFallback: 'Técnico',
-      label: 'Assinatura do técnico',
-      signerName: techSig?.name,
-    });
-    doc.y = Math.max(y1, y2) + 8;
+      const drawSigColumn = (optsCol: {
+        left: number;
+        png: Buffer | null;
+        nameFallback: string;
+        label: string;
+        signerName?: string | null;
+      }) => {
+        const colLeft = optsCol.left;
+        let cursorY = doc.y;
+        if (optsCol.png) {
+          try {
+            doc.image(optsCol.png, colLeft + 8, cursorY, {
+              fit: [sigW - 16, imgMaxH],
+            });
+            cursorY += imgMaxH + 4;
+          } catch {
+            cursorY += 8;
+          }
+        } else {
+          cursorY += imgMaxH - 4;
+          doc
+            .moveTo(colLeft + 10, cursorY)
+            .lineTo(colLeft + sigW - 10, cursorY)
+            .strokeColor('#222')
+            .lineWidth(0.8)
+            .stroke();
+          cursorY += 6;
+        }
+        const caption = optsCol.png
+          ? optsCol.signerName?.trim() || optsCol.nameFallback
+          : optsCol.label;
+        doc
+          .font('Helvetica')
+          .fontSize(8)
+          .fillColor('#555555')
+          .text(caption, colLeft + 10, cursorY, { width: sigW - 20, align: 'center' });
+        return doc.y;
+      };
+
+      const startY = doc.y + 8;
+      doc.y = startY;
+      const y1 = drawSigColumn({
+        left: x,
+        png: clientPng,
+        nameFallback: 'Cliente',
+        label: 'Assinatura do cliente',
+        signerName: clientSig?.name,
+      });
+      doc.y = startY;
+      const y2 = drawSigColumn({
+        left: x + sigW + sigGap,
+        png: techPng,
+        nameFallback: 'Técnico',
+        label: 'Assinatura do técnico',
+        signerName: techSig?.name,
+      });
+      doc.y = Math.max(y1, y2) + 8;
+    }
 
     doc.end();
   });
@@ -742,11 +758,11 @@ export async function persistServiceOrderDocumentHtml(params: {
       `UPDATE public.service_orders
        SET content_html = $3,
            content_snapshot_html = CASE
-             WHEN status IN ('draft', 'scheduled', 'in_progress') THEN $3
+             WHEN status IN ('draft', 'scheduled', 'in_progress', 'sent') THEN $3
              ELSE COALESCE(content_snapshot_html, $3)
            END,
            document_frozen_at = CASE
-             WHEN status IN ('draft', 'scheduled', 'in_progress') THEN now()
+             WHEN status IN ('draft', 'scheduled', 'in_progress', 'sent') THEN now()
              ELSE COALESCE(document_frozen_at, now())
            END,
            updated_at = now()

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { format } from "date-fns";
 import {
   ArrowLeft,
@@ -9,10 +9,11 @@ import {
   Download,
   ExternalLink,
   FileSignature,
-  FileText,
   Loader2,
+  MoreVertical,
   Pencil,
   Receipt,
+  Send,
   Trash2,
   XCircle,
 } from "lucide-react";
@@ -22,7 +23,15 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Button } from "@/components/ui/button";
+import { Button, type ButtonProps } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -36,6 +45,7 @@ import {
 } from "@/components/ui/dialog";
 import { ServiceOrderForm } from "@/components/service-orders/ServiceOrderForm";
 import { ServiceOrderA4Preview } from "@/components/service-orders/ServiceOrderA4Preview";
+import { ServiceOrderStatusMenu } from "@/components/service-orders/ServiceOrderStatusMenu";
 import { toast } from "@/components/ui/sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { useModulePermissions } from "@/contexts/ModulePermissionsContext";
@@ -93,10 +103,18 @@ function syncStatusLabel(s: string): string {
   }
 }
 
+const SHAREABLE = new Set<ServiceOrderStatus>([
+  "draft",
+  "scheduled",
+  "in_progress",
+  "sent",
+]);
+
 const SENDABLE = new Set<ServiceOrderStatus>([
   "draft",
   "scheduled",
   "in_progress",
+  "sent",
   "awaiting_signature",
   "signed",
 ]);
@@ -105,6 +123,7 @@ const STATUS_LABELS: Record<ServiceOrderStatus, string> = {
   draft: "Rascunho",
   scheduled: "Agendada",
   in_progress: "Em execução",
+  sent: "Enviado",
   awaiting_signature: "Aguardando assinatura",
   signed: "Assinada",
   invoiced: "Faturada",
@@ -112,7 +131,7 @@ const STATUS_LABELS: Record<ServiceOrderStatus, string> = {
   cancelled: "Cancelada",
 };
 
-const EDITABLE = new Set<ServiceOrderStatus>(["draft", "scheduled", "in_progress"]);
+const EDITABLE = new Set<ServiceOrderStatus>(["draft", "scheduled", "in_progress", "sent"]);
 
 function fmtDt(iso: string | null | undefined): string {
   if (!iso) return "—";
@@ -121,9 +140,53 @@ function fmtDt(iso: string | null | undefined): string {
   return format(d, "dd/MM/yyyy HH:mm");
 }
 
+/** Ação secundária: só ícone; no hover/foco expande o rótulo. */
+function ExpandOnHoverActionButton({
+  label,
+  icon,
+  className,
+  children: _children,
+  ...props
+}: Omit<ButtonProps, "children" | "size"> & {
+  label: string;
+  icon: ReactNode;
+}) {
+  return (
+    <Button
+      type="button"
+      size="default"
+      aria-label={label}
+      title={label}
+      className={cn(
+        "hidden md:inline-flex group h-10 w-10 shrink-0 gap-0 overflow-hidden px-0 transition-[width,padding,gap] duration-200 ease-out",
+        "hover:w-auto hover:gap-2 hover:px-3 focus-visible:w-auto focus-visible:gap-2 focus-visible:px-3",
+        className,
+      )}
+      {...props}
+    >
+      <span className="inline-flex shrink-0 items-center justify-center [&_svg]:size-4">{icon}</span>
+      <span
+        className={cn(
+          "max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-all duration-200 ease-out",
+          "group-hover:max-w-[14rem] group-hover:opacity-100",
+          "group-focus-visible:max-w-[14rem] group-focus-visible:opacity-100",
+        )}
+      >
+        {label}
+      </span>
+    </Button>
+  );
+}
+
+type ServiceOrderDetailsLocationState = {
+  openScheduleVisit?: boolean;
+  startEditing?: boolean;
+};
+
 export default function ServiceOrderDetails() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const {
     canView,
@@ -138,9 +201,9 @@ export default function ServiceOrderDetails() {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [showPreview, setShowPreview] = useState(true);
   const [previewKey, setPreviewKey] = useState(0);
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [sendBusy, setSendBusy] = useState(false);
   const [signBusy, setSignBusy] = useState(false);
   const [convertOpen, setConvertOpen] = useState(false);
   const [dueDate, setDueDate] = useState(() => defaultDueDatePlus(14));
@@ -167,6 +230,7 @@ export default function ServiceOrderDetails() {
   const [clientAvatarUrl, setClientAvatarUrl] = useState<string | null>(null);
   const [techEditOpen, setTechEditOpen] = useState(false);
   const [techEditSignerId, setTechEditSignerId] = useState<string | null>(null);
+  const [statusBusy, setStatusBusy] = useState(false);
   const [techEditName, setTechEditName] = useState("");
   const [techEditBusy, setTechEditBusy] = useState(false);
 
@@ -240,6 +304,42 @@ export default function ServiceOrderDetails() {
     return canEditRecord("service_orders", order.created_by, currentUserId);
   }, [order, hasPermissionKey, canEdit, canEditRecord, currentUserId]);
 
+  const canChangeStatus = useMemo(() => {
+    if (!order) return false;
+    if (order.status === "cancelled") return false;
+    return hasEditPermission;
+  }, [order, hasEditPermission]);
+
+  const changeStatus = useCallback(
+    async (next: ServiceOrderStatus) => {
+      if (!order || next === order.status) return;
+      if (next === "cancelled" && !canCancelThis) {
+        toast.error("Sem permissão para cancelar esta OS");
+        return;
+      }
+      setStatusBusy(true);
+      try {
+        const updated = await serviceOrdersService.update(order.id, { status: next });
+        setOrder(updated);
+        setPreviewKey((k) => k + 1);
+        toast.success(`Status atualizado: ${STATUS_LABELS[next]}`);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Falha ao alterar status");
+      } finally {
+        setStatusBusy(false);
+      }
+    },
+    [order, canCancelThis],
+  );
+
+  const canSendToClient = useMemo(() => {
+    if (!order) return false;
+    if (!SHAREABLE.has(order.status)) return false;
+    if (!canEdit("service_orders")) return false;
+    if (!hasPermissionKey("service_orders.send")) return false;
+    return canEditRecord("service_orders", order.created_by, currentUserId);
+  }, [order, canEdit, canEditRecord, hasPermissionKey, currentUserId]);
+
   const canSendSignature = useMemo(() => {
     if (!order) return false;
     if (!SENDABLE.has(order.status)) return false;
@@ -279,6 +379,142 @@ export default function ServiceOrderDetails() {
     if (!canEdit("agenda")) return false;
     return canEditRecord("service_orders", order.created_by, currentUserId);
   }, [order, canEdit, canEditRecord, currentUserId]);
+
+  const hasMobileMoreActions = useMemo(() => {
+    if (editing) return Boolean(canDeleteThis);
+    return Boolean(
+      canScheduleVisit ||
+        canRescheduleVisit ||
+        canConvertToInvoice ||
+        canSendSignature ||
+        hasEditPermission ||
+        canDeleteThis ||
+        canCancelThis,
+    );
+  }, [
+    editing,
+    canScheduleVisit,
+    canRescheduleVisit,
+    canConvertToInvoice,
+    canSendSignature,
+    hasEditPermission,
+    canDeleteThis,
+    canCancelThis,
+  ]);
+
+  const signatureActionLabel =
+    order?.status === "awaiting_signature"
+      ? "Reenviar assinatura"
+      : order?.status === "signed"
+        ? "Gerar link do técnico"
+        : "Enviar para assinatura";
+
+  const openScheduleVisit = useCallback(() => {
+    if (!order) return;
+    const w = defaultVisitWindow();
+    setVisitMode("schedule");
+    setVisitStart(w.start);
+    setVisitEnd(w.end);
+    setVisitTitle(`Visita técnica — OS Nº ${order.service_order_number}`);
+    setCreateGoogle(false);
+    setCreateMeet(false);
+    setVisitOpen(true);
+  }, [order]);
+
+  useEffect(() => {
+    if (!order || loading) return;
+    const state = (location.state ?? null) as ServiceOrderDetailsLocationState | null;
+    if (!state?.openScheduleVisit && !state?.startEditing) return;
+
+    if (state.openScheduleVisit && canScheduleVisit) {
+      openScheduleVisit();
+    }
+    if (state.startEditing && canEditThis) {
+      setEditing(true);
+    }
+    navigate(location.pathname, { replace: true, state: null });
+  }, [
+    order,
+    loading,
+    location.state,
+    location.pathname,
+    canScheduleVisit,
+    canEditThis,
+    openScheduleVisit,
+    navigate,
+  ]);
+
+  const openRescheduleVisit = useCallback(() => {
+    if (!order) return;
+    setVisitMode("reschedule");
+    setVisitStart(isoToLocalDatetimeValue(order.appointment?.starts_at));
+    setVisitEnd(isoToLocalDatetimeValue(order.appointment?.ends_at));
+    setVisitTitle(
+      order.appointment?.title || `Visita técnica — OS Nº ${order.service_order_number}`,
+    );
+    setCreateGoogle(
+      Boolean(order.appointment?.google_html_link) || order.appointment?.sync_status === "synced",
+    );
+    setCreateMeet(Boolean(order.appointment?.google_meet_link));
+    setVisitOpen(true);
+  }, [order]);
+
+  const sendForSignature = useCallback(async () => {
+    if (!order) return;
+    setSignBusy(true);
+    try {
+      const res = await serviceOrdersService.sendForSignature(order.id, {
+        include_technician: true,
+        regenerate: order.status === "awaiting_signature",
+      });
+      setLastSignLinks({
+        view: res.view.frontend_path,
+        invites: res.invites.map((i) => ({
+          signer_id: i.signer_id,
+          name: i.name,
+          role: i.role,
+          url: i.frontend_path,
+          already_active: i.already_active,
+        })),
+      });
+      await load();
+      setPreviewKey((k) => k + 1);
+      toast.success(
+        order.status === "awaiting_signature" ? "Links regenerados" : "Enviado para assinatura",
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Falha ao enviar");
+    } finally {
+      setSignBusy(false);
+    }
+  }, [order, load]);
+
+  const deleteOrder = useCallback(async () => {
+    if (!order) return;
+    if (!window.confirm(`Excluir OS Nº ${order.service_order_number}?`)) return;
+    try {
+      await serviceOrdersService.remove(order.id);
+      toast.success("Ordem excluída");
+      navigate("/service-orders");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Falha ao excluir");
+    }
+  }, [order, navigate]);
+
+  const cancelOrder = useCallback(async () => {
+    if (!order) return;
+    if (!window.confirm(`Cancelar OS Nº ${order.service_order_number}?`)) return;
+    setCancelBusy(true);
+    try {
+      const updated = await serviceOrdersService.update(order.id, { status: "cancelled" });
+      setOrder(updated);
+      toast.success("Ordem cancelada");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Falha ao cancelar");
+    } finally {
+      setCancelBusy(false);
+    }
+  }, [order]);
 
   const toAbsUrl = (pathOrUrl: string) =>
     pathOrUrl.startsWith("http")
@@ -344,12 +580,58 @@ export default function ServiceOrderDetails() {
             <h1 className="text-xl font-semibold tracking-tight md:text-2xl">
               Ordem de serviço Nº {order.service_order_number}
             </h1>
-            <p className="text-sm text-muted-foreground">
-              {STATUS_LABELS[order.status]} · criada em {fmtDt(order.created_at)}
+            <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm text-muted-foreground">
+              <ServiceOrderStatusMenu
+                status={order.status}
+                label={(s) => STATUS_LABELS[s]}
+                disabled={!canChangeStatus}
+                busy={statusBusy}
+                canCancel={canCancelThis}
+                onChange={(next) => void changeStatus(next)}
+                className="text-sm"
+              />
+              <span>· criada em {fmtDt(order.created_at)}</span>
             </p>
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
+          {canSendToClient && !editing ? (
+            <Button
+              type="button"
+              variant="default"
+              disabled={sendBusy || signBusy}
+              onClick={async () => {
+                setSendBusy(true);
+                try {
+                  const res = await serviceOrdersService.sendToClient(order.id, {
+                    regenerate: order.status === "sent",
+                  });
+                  if (res.view.frontend_path) {
+                    setLastSignLinks((prev) => ({
+                      view: res.view.frontend_path,
+                      invites: prev?.invites ?? [],
+                    }));
+                  }
+                  await load();
+                  setPreviewKey((k) => k + 1);
+                  toast.success(
+                    order.status === "sent" ? "OS reenviada ao cliente" : "OS enviada ao cliente",
+                  );
+                } catch (e) {
+                  toast.error(e instanceof Error ? e.message : "Falha ao enviar OS");
+                } finally {
+                  setSendBusy(false);
+                }
+              }}
+            >
+              {sendBusy ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Send className="mr-2 h-4 w-4" />
+              )}
+              {order.status === "sent" ? "Reenviar OS" : "Enviar OS"}
+            </Button>
+          ) : null}
           {!editing ? (
             <Button
               type="button"
@@ -377,120 +659,51 @@ export default function ServiceOrderDetails() {
               Baixar PDF
             </Button>
           ) : null}
-          {!editing ? (
-            <Button type="button" variant="outline" onClick={() => setShowPreview((v) => !v)}>
-              <FileText className="mr-2 h-4 w-4" />
-              {showPreview ? "Ocultar preview" : "Ver documento A4"}
-            </Button>
-          ) : null}
           {canScheduleVisit && !editing ? (
-            <Button
-              type="button"
+            <ExpandOnHoverActionButton
               variant="outline"
-              onClick={() => {
-                const w = defaultVisitWindow();
-                setVisitMode("schedule");
-                setVisitStart(w.start);
-                setVisitEnd(w.end);
-                setVisitTitle(`Visita técnica — OS Nº ${order.service_order_number}`);
-                setCreateGoogle(false);
-                setCreateMeet(false);
-                setVisitOpen(true);
-              }}
-            >
-              <CalendarPlus className="mr-2 h-4 w-4" />
-              Marcar visita técnica
-            </Button>
+              label="Marcar visita técnica"
+              icon={<CalendarPlus />}
+              onClick={openScheduleVisit}
+            />
           ) : null}
           {canRescheduleVisit && !editing ? (
-            <Button
-              type="button"
+            <ExpandOnHoverActionButton
               variant="outline"
-              onClick={() => {
-                setVisitMode("reschedule");
-                setVisitStart(isoToLocalDatetimeValue(order.appointment?.starts_at));
-                setVisitEnd(isoToLocalDatetimeValue(order.appointment?.ends_at));
-                setVisitTitle(
-                  order.appointment?.title ||
-                    `Visita técnica — OS Nº ${order.service_order_number}`,
-                );
-                setCreateGoogle(Boolean(order.appointment?.google_html_link) || order.appointment?.sync_status === "synced");
-                setCreateMeet(Boolean(order.appointment?.google_meet_link));
-                setVisitOpen(true);
-              }}
-            >
-              <CalendarClock className="mr-2 h-4 w-4" />
-              Remarcar na agenda
-            </Button>
+              label="Remarcar na agenda"
+              icon={<CalendarClock />}
+              onClick={openRescheduleVisit}
+            />
           ) : null}
           {canConvertToInvoice && !editing ? (
-            <Button type="button" variant="default" onClick={() => setConvertOpen(true)}>
-              <Receipt className="mr-2 h-4 w-4" />
-              Gerar fatura
-            </Button>
+            <ExpandOnHoverActionButton
+              variant="outline"
+              label="Gerar fatura"
+              icon={<Receipt />}
+              onClick={() => setConvertOpen(true)}
+            />
           ) : null}
           {canSendSignature && !editing ? (
-            <Button
-              type="button"
+            <ExpandOnHoverActionButton
               variant="secondary"
-              disabled={signBusy}
-              onClick={async () => {
-                setSignBusy(true);
-                try {
-                  const res = await serviceOrdersService.sendForSignature(order.id, {
-                    include_technician: true,
-                    regenerate: order.status === "awaiting_signature",
-                  });
-                  setLastSignLinks({
-                    view: res.view.frontend_path,
-                    invites: res.invites.map((i) => ({
-                      signer_id: i.signer_id,
-                      name: i.name,
-                      role: i.role,
-                      url: i.frontend_path,
-                      already_active: i.already_active,
-                    })),
-                  });
-                  await load();
-                  setPreviewKey((k) => k + 1);
-                  toast.success(
-                    order.status === "awaiting_signature"
-                      ? "Links regenerados"
-                      : "Enviado para assinatura",
-                  );
-                } catch (e) {
-                  toast.error(e instanceof Error ? e.message : "Falha ao enviar");
-                } finally {
-                  setSignBusy(false);
-                }
-              }}
-            >
-              {signBusy ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <FileSignature className="mr-2 h-4 w-4" />
-              )}
-              {order.status === "awaiting_signature"
-                ? "Reenviar assinatura"
-                : order.status === "signed"
-                  ? "Gerar link do técnico"
-                  : "Enviar para assinatura"}
-            </Button>
+              disabled={signBusy || sendBusy}
+              label={signatureActionLabel}
+              icon={signBusy ? <Loader2 className="animate-spin" /> : <FileSignature />}
+              onClick={() => void sendForSignature()}
+            />
           ) : null}
           {hasEditPermission && !editing ? (
             <TooltipProvider delayDuration={200}>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <span className="inline-flex">
-                    <Button
-                      type="button"
+                  <span className="hidden md:inline-flex">
+                    <ExpandOnHoverActionButton
                       variant="outline"
                       disabled={!canEditThis}
+                      label="Editar"
+                      icon={<Pencil />}
                       onClick={() => setEditing(true)}
-                    >
-                      <Pencil className="mr-2 h-4 w-4" />
-                      Editar
-                    </Button>
+                    />
                   </span>
                 </TooltipTrigger>
                 {!canEditThis ? (
@@ -502,54 +715,121 @@ export default function ServiceOrderDetails() {
             </TooltipProvider>
           ) : null}
           {canDeleteThis ? (
-            <Button
-              type="button"
+            <ExpandOnHoverActionButton
               variant="outline"
               className="text-destructive"
-              onClick={async () => {
-                if (!window.confirm(`Excluir OS Nº ${order.service_order_number}?`)) return;
-                try {
-                  await serviceOrdersService.remove(order.id);
-                  toast.success("Ordem excluída");
-                  navigate("/service-orders");
-                } catch (e) {
-                  toast.error(e instanceof Error ? e.message : "Falha ao excluir");
-                }
-              }}
-            >
-              <Trash2 className="mr-2 h-4 w-4" />
-              Excluir
-            </Button>
+              label="Excluir"
+              icon={<Trash2 />}
+              onClick={() => void deleteOrder()}
+            />
           ) : null}
           {canCancelThis && !editing ? (
-            <Button
-              type="button"
+            <ExpandOnHoverActionButton
               variant="outline"
               className="text-destructive"
               disabled={cancelBusy}
-              onClick={async () => {
-                if (!window.confirm(`Cancelar OS Nº ${order.service_order_number}?`)) return;
-                setCancelBusy(true);
-                try {
-                  const updated = await serviceOrdersService.update(order.id, {
-                    status: "cancelled",
-                  });
-                  setOrder(updated);
-                  toast.success("Ordem cancelada");
-                } catch (e) {
-                  toast.error(e instanceof Error ? e.message : "Falha ao cancelar");
-                } finally {
-                  setCancelBusy(false);
-                }
-              }}
-            >
-              {cancelBusy ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <XCircle className="mr-2 h-4 w-4" />
-              )}
-              Cancelar
-            </Button>
+              label="Cancelar"
+              icon={cancelBusy ? <Loader2 className="animate-spin" /> : <XCircle />}
+              onClick={() => void cancelOrder()}
+            />
+          ) : null}
+
+          {hasMobileMoreActions ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="md:hidden"
+                  aria-label="Mais ações"
+                >
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                {canScheduleVisit && !editing ? (
+                  <DropdownMenuItem onClick={openScheduleVisit}>
+                    <CalendarPlus className="mr-2 h-4 w-4" />
+                    Marcar visita técnica
+                  </DropdownMenuItem>
+                ) : null}
+                {canRescheduleVisit && !editing ? (
+                  <DropdownMenuItem onClick={openRescheduleVisit}>
+                    <CalendarClock className="mr-2 h-4 w-4" />
+                    Remarcar na agenda
+                  </DropdownMenuItem>
+                ) : null}
+                {canConvertToInvoice && !editing ? (
+                  <DropdownMenuItem onClick={() => setConvertOpen(true)}>
+                    <Receipt className="mr-2 h-4 w-4" />
+                    Gerar fatura
+                  </DropdownMenuItem>
+                ) : null}
+                {canSendSignature && !editing ? (
+                  <DropdownMenuItem
+                    disabled={signBusy || sendBusy}
+                    onClick={() => void sendForSignature()}
+                  >
+                    {signBusy ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <FileSignature className="mr-2 h-4 w-4" />
+                    )}
+                    {signatureActionLabel}
+                  </DropdownMenuItem>
+                ) : null}
+                {hasEditPermission && !editing ? (
+                  <DropdownMenuItem
+                    disabled={!canEditThis}
+                    onClick={() => {
+                      if (!canEditThis) {
+                        toast.error(
+                          "Edição bloqueada após envio para assinatura / OS congelada",
+                        );
+                        return;
+                      }
+                      setEditing(true);
+                    }}
+                  >
+                    <Pencil className="mr-2 h-4 w-4" />
+                    Editar
+                  </DropdownMenuItem>
+                ) : null}
+                {(canDeleteThis || (canCancelThis && !editing)) &&
+                (canScheduleVisit ||
+                  canRescheduleVisit ||
+                  canConvertToInvoice ||
+                  canSendSignature ||
+                  hasEditPermission) &&
+                !editing ? (
+                  <DropdownMenuSeparator />
+                ) : null}
+                {canCancelThis && !editing ? (
+                  <DropdownMenuItem
+                    disabled={cancelBusy}
+                    className="text-destructive focus:text-destructive"
+                    onClick={() => void cancelOrder()}
+                  >
+                    {cancelBusy ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <XCircle className="mr-2 h-4 w-4" />
+                    )}
+                    Cancelar
+                  </DropdownMenuItem>
+                ) : null}
+                {canDeleteThis ? (
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onClick={() => void deleteOrder()}
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Excluir
+                  </DropdownMenuItem>
+                ) : null}
+              </DropdownMenuContent>
+            </DropdownMenu>
           ) : null}
         </div>
       </div>
@@ -645,25 +925,23 @@ export default function ServiceOrderDetails() {
             ) : null}
           </section>
 
-          {showPreview ? (
-            <section className="space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Documento A4
-                  {order.document_frozen_at ? (
-                    <span className="ml-2 font-normal normal-case text-muted-foreground">
-                      · snapshot em {fmtDt(order.document_frozen_at)}
-                    </span>
-                  ) : (
-                    <span className="ml-2 font-normal normal-case text-muted-foreground">
-                      · preview ao vivo (congela ao baixar PDF)
-                    </span>
-                  )}
-                </h2>
-              </div>
-              <ServiceOrderA4Preview serviceOrderId={order.id} refreshKey={previewKey} />
-            </section>
-          ) : null}
+          <section className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Documento A4
+                {order.document_frozen_at ? (
+                  <span className="ml-2 font-normal normal-case text-muted-foreground">
+                    · snapshot em {fmtDt(order.document_frozen_at)}
+                  </span>
+                ) : (
+                  <span className="ml-2 font-normal normal-case text-muted-foreground">
+                    · preview ao vivo (congela ao baixar PDF)
+                  </span>
+                )}
+              </h2>
+            </div>
+            <ServiceOrderA4Preview serviceOrderId={order.id} refreshKey={previewKey} />
+          </section>
 
           {(order.appointment || canScheduleVisit) && (
             <section className="rounded-lg border bg-card p-4 space-y-2">
@@ -820,14 +1098,18 @@ export default function ServiceOrderDetails() {
             </section>
           ) : null}
 
-          {(order.status === "awaiting_signature" ||
+          {(order.status === "sent" ||
+            order.status === "awaiting_signature" ||
             order.status === "signed" ||
             lastSignLinks ||
+            order.public_view?.has_active ||
             (order.signers?.length ?? 0) > 0) && (
             <section className="space-y-3 rounded-lg border bg-card p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Assinatura online
+                  {order.status === "sent" && !(order.signers?.length)
+                    ? "Envio ao cliente"
+                    : "Assinatura online"}
                 </h2>
                 {order.status === "awaiting_signature" && canSendSignature ? (
                   <Button

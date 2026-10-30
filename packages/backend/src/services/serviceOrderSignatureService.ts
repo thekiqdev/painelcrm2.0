@@ -30,6 +30,7 @@ import {
 import { validateSignaturePngBase64 } from './contractSignatureInviteService.js';
 import {
   publishServiceOrderSentNotifications,
+  publishServiceOrderSharedNotifications,
   publishServiceOrderSignedNotification,
 } from './notificationsEngine/serviceOrderTransactionalNotifications.js';
 
@@ -53,7 +54,10 @@ export type ServiceOrderSignerRow = {
 };
 
 /** Inclui `signed` para permitir criar/reemitir convite do técnico após o cliente assinar. */
-const SENDABLE = new Set(['draft', 'scheduled', 'in_progress', 'awaiting_signature', 'signed']);
+const SENDABLE = new Set(['draft', 'scheduled', 'in_progress', 'sent', 'awaiting_signature', 'signed']);
+
+/** Statuses em que "Enviar OS" (link de visualização) muda para `sent`. */
+const SHAREABLE = new Set(['draft', 'scheduled', 'in_progress', 'sent']);
 
 function str(v: unknown): string {
   return v == null ? '' : String(v).trim();
@@ -511,6 +515,90 @@ export async function sendServiceOrderForSignature(params: {
   });
 
   return { order: full, view, invites };
+}
+
+export type SendServiceOrderToClientResult = {
+  order: NonNullable<Awaited<ReturnType<typeof getServiceOrderById>>>;
+  view: { token: string; frontend_path: string; expires_at: string | null };
+};
+
+/** Emite link público de visualização, notifica o cliente e define status `sent`. */
+export async function sendServiceOrderToClient(params: {
+  tenantId: string;
+  userId: string;
+  serviceOrderId: string;
+  regenerate?: boolean;
+}): Promise<SendServiceOrderToClientResult> {
+  const order = await getServiceOrderById(params.tenantId, params.serviceOrderId);
+  if (!order) {
+    throw new ServiceOrderDomainError('Ordem de serviço não encontrada.', 404, 'not_found');
+  }
+  if (!SHAREABLE.has(order.status)) {
+    throw new ServiceOrderDomainError(
+      'Status atual não permite envio da OS ao cliente.',
+      409,
+      'invalid_status',
+    );
+  }
+
+  const regenerate = params.regenerate === true || order.status === 'sent';
+  let view: SendServiceOrderToClientResult['view'] = {
+    token: '',
+    frontend_path: '',
+    expires_at: null,
+  };
+
+  await withTenantRlsContext(params.tenantId, async () => {
+    await freezeDocument(params.tenantId, params.serviceOrderId);
+
+    const issuedView = await issueViewToken({
+      tenantId: params.tenantId,
+      serviceOrderId: params.serviceOrderId,
+      regenerate,
+    });
+    view = {
+      token: issuedView.raw_token,
+      frontend_path: issuedView.frontend_path,
+      expires_at: issuedView.expires_at,
+    };
+
+    if (order.status !== 'sent') {
+      await pool.query(
+        `UPDATE public.service_orders
+         SET status = 'sent', updated_at = now()
+         WHERE id = $1 AND tenant_id = $2`,
+        [params.serviceOrderId, params.tenantId],
+      );
+    }
+
+    const client = await pool.connect();
+    try {
+      await insertServiceOrderEvent(client, {
+        tenantId: params.tenantId,
+        serviceOrderId: params.serviceOrderId,
+        eventType: 'sent_to_client',
+        payload: { regenerate, view_path: view.frontend_path },
+        createdBy: params.userId,
+      });
+    } finally {
+      client.release();
+    }
+  });
+
+  const full = await getServiceOrderById(params.tenantId, params.serviceOrderId);
+  if (!full) {
+    throw new ServiceOrderDomainError('Ordem de serviço não encontrada.', 404, 'not_found');
+  }
+
+  publishServiceOrderSharedNotifications({
+    pool,
+    tenantId: params.tenantId,
+    serviceOrderId: params.serviceOrderId,
+    actorUserId: params.userId,
+    viewPath: view.frontend_path,
+  });
+
+  return { order: full, view };
 }
 
 export async function revokeServiceOrderPublicLinks(params: {

@@ -99,10 +99,23 @@ describe('serviceOrderDocumentModel', () => {
     expect(html).toContain('TERMOSTATO');
     expect(html).toContain('Termostato original');
     expect(html).toContain('os-line-desc');
-    expect(html).toContain('Assinatura do cliente');
+    expect(html).not.toContain('Assinatura do cliente');
+    expect(html).not.toContain('os-signs');
     expect(html).toContain('TOTAL: R$ 430,00');
     expect(html).toContain('os-brand');
     expect(html).toContain('Tec Suprema');
+  });
+
+  it('includes signature block only when signers are provided', () => {
+    const html = buildServiceOrderDocumentHtml(sample, {
+      signers: [
+        { role: 'client', name: 'Cliente Teste' },
+        { role: 'technician', name: 'Técnico Teste' },
+      ],
+    });
+    expect(html).toContain('os-signs');
+    expect(html).toContain('Assinatura do cliente');
+    expect(html).toContain('Assinatura do técnico');
   });
 
   it('keeps company name beside logo in the 3-column header', () => {

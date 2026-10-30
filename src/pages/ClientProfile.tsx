@@ -2225,33 +2225,45 @@ const ClientProfile = () => {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {clientServiceOrders.map((so) => (
-                        <TableRow key={so.id}>
-                          <TableCell className="font-mono text-sm">{so.service_order_number}</TableCell>
-                          <TableCell>
-                            <Badge variant="outline">{so.status}</Badge>
-                          </TableCell>
-                          <TableCell>
-                            {formatAppMoney(Number(so.total_cents) || 0, so.currency || "BRL")}
-                          </TableCell>
-                          <TableCell>
-                            {so.created_at ? format(new Date(so.created_at), "dd/MM/yyyy") : "—"}
-                          </TableCell>
-                          <TableCell>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() =>
-                                navigate(`/service-orders/${so.id}`, {
-                                  state: { fromClientProfile: true },
-                                })
+                      {clientServiceOrders.map((so) => {
+                        const openOrder = () =>
+                          navigate(`/service-orders/${so.id}`, {
+                            state: { fromClientProfile: true },
+                          });
+                        return (
+                          <TableRow
+                            key={so.id}
+                            className="cursor-pointer hover:bg-muted/50"
+                            onClick={openOrder}
+                            onKeyDown={(e) => {
+                              if (e.target !== e.currentTarget) return;
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                openOrder();
                               }
-                            >
-                              Abrir
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                            }}
+                            tabIndex={0}
+                            role="link"
+                            aria-label={`Abrir OS Nº ${so.service_order_number}`}
+                          >
+                            <TableCell className="font-mono text-sm">{so.service_order_number}</TableCell>
+                            <TableCell>
+                              <Badge variant="outline">{so.status}</Badge>
+                            </TableCell>
+                            <TableCell>
+                              {formatAppMoney(Number(so.total_cents) || 0, so.currency || "BRL")}
+                            </TableCell>
+                            <TableCell>
+                              {so.created_at ? format(new Date(so.created_at), "dd/MM/yyyy") : "—"}
+                            </TableCell>
+                            <TableCell onClick={(e) => e.stopPropagation()}>
+                              <Button variant="ghost" size="sm" onClick={openOrder}>
+                                Abrir
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 )}

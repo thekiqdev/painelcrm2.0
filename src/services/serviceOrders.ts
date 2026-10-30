@@ -3,6 +3,7 @@ import type {
   CreateServiceOrderInput,
   ListServiceOrdersParams,
   SendServiceOrderForSignatureResult,
+  SendServiceOrderToClientResult,
   ServiceOrder,
   ServiceOrderListResponse,
   UpdateServiceOrderInput,
@@ -68,6 +69,19 @@ export const serviceOrdersService = {
     );
     if (response.error) throw new Error(response.error);
     if (!response.data?.html) throw new Error('Documento não disponível');
+    return response.data;
+  },
+
+  async sendToClient(
+    id: string,
+    body?: { regenerate?: boolean },
+  ): Promise<SendServiceOrderToClientResult> {
+    const response = await apiClient.post<SendServiceOrderToClientResult>(
+      `/api/service-orders/${id}/send`,
+      body ?? {},
+    );
+    if (response.error) throw new Error(response.error);
+    if (!response.data) throw new Error('Resposta vazia ao enviar OS');
     return response.data;
   },
 

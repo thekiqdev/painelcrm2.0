@@ -4,6 +4,7 @@ export type ServiceOrderStatus =
   | 'draft'
   | 'scheduled'
   | 'in_progress'
+  | 'sent'
   | 'awaiting_signature'
   | 'signed'
   | 'invoiced'
@@ -166,6 +167,11 @@ export interface SendServiceOrderForSignatureResult {
     already_active?: boolean;
     already_signed?: boolean;
   }>;
+}
+
+export interface SendServiceOrderToClientResult {
+  order: ServiceOrder;
+  view: { token: string; frontend_path: string; expires_at: string | null };
 }
 
 export interface ServiceOrderListResponse {

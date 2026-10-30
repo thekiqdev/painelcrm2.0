@@ -35,6 +35,7 @@ import {
   reissueSignerInvite,
   revokeServiceOrderPublicLinks,
   sendServiceOrderForSignature,
+  sendServiceOrderToClient,
   updateServiceOrderSignerName,
 } from '../services/serviceOrderSignatureService.js';
 
@@ -101,6 +102,7 @@ const patchBody = z
         'draft',
         'scheduled',
         'in_progress',
+        'sent',
         'awaiting_signature',
         'signed',
         'invoiced',
@@ -366,6 +368,50 @@ const sendSignatureBody = z.object({
   include_technician: z.boolean().optional().default(true),
   regenerate: z.boolean().optional().default(false),
 });
+
+const sendToClientBody = z.object({
+  regenerate: z.boolean().optional().default(false),
+});
+
+/** Enviar OS ao cliente (link de visualização + notificação + status sent). */
+export async function postServiceOrderSendHandler(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const tenantId = requireTenantId(req, res);
+    if (!tenantId) return;
+    const userId = req.userId!;
+    const id = String(req.params.id || '');
+
+    const existing = await getServiceOrderById(tenantId, id);
+    if (!existing) {
+      res.status(404).json({ error: 'Ordem de serviço não encontrada.' });
+      return;
+    }
+    await assertModulePermission(
+      userId,
+      MODULE,
+      'edit',
+      { ownerId: existing.created_by, assigneeId: existing.responsible_user_id },
+      req,
+    );
+    await assertPermissionKey(userId, 'service_orders.send', req);
+
+    const body = sendToClientBody.parse(req.body ?? {});
+    const result = await sendServiceOrderToClient({
+      tenantId,
+      userId,
+      serviceOrderId: id,
+      regenerate: body.regenerate,
+    });
+    res.json(result);
+  } catch (error) {
+    if (respondError(res, error)) return;
+    console.error('[service-orders] send failed', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
 
 /** OS-S4 — Enviar / reenviar para assinatura (freeze + invites + notificação). */
 export async function postServiceOrderSendForSignatureHandler(
