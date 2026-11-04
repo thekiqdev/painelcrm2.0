@@ -6,7 +6,10 @@ import crypto from 'node:crypto';
 import { pool } from '../utils/db.js';
 import { getActiveConfig, getConfigForTest } from './paymentGatewayConfigService.js';
 import { ensurePaymentCustomerForCrmClient } from './paymentCustomersService.js';
-import { isAsaasInvalidCustomerError } from '../modules/gateways/asaas/asaasErrors.js';
+import {
+  isAsaasInvalidCustomerError,
+  isAsaasMissingCustomerDocumentError,
+} from '../modules/gateways/asaas/asaasErrors.js';
 import { getActiveGateway } from '../modules/payments/gatewayProvider.js';
 import { buildGateway } from '../modules/payments/gatewayRegistry.js';
 import { normalizeGatewayStatus } from '../modules/payments/webhook/statusNormalizer.js';
@@ -379,49 +382,73 @@ export async function ensureReusablePaymentAttemptForSwitch(
     .toString(36)
     .slice(0, 8)}`.slice(0, 100);
 
+  const buildChargeInput = (custId: string, idem: string, extRef: string) => ({
+    customerId: custId,
+    amountCents,
+    dueDate,
+    paymentMethod: requestedMethod,
+    allowedPaymentMethods: allowedPaymentMethods,
+    description,
+    idempotencyKey: idem,
+    externalReference: extRef,
+    currency: currency ?? undefined,
+  });
+
   let chargeResult;
   try {
-    chargeResult = await gateway.createCharge({
-      customerId,
-      amountCents,
-      dueDate,
-      paymentMethod: requestedMethod,
-      allowedPaymentMethods: allowedPaymentMethods,
-      description,
-      idempotencyKey: generatedIdem,
-      externalReference,
-      currency: currency ?? undefined,
-    });
+    chargeResult = await gateway.createCharge(
+      buildChargeInput(customerId, generatedIdem, externalReference)
+    );
   } catch (e) {
     if (!isAsaasInvalidCustomerError(e)) {
       throw e;
     }
-    customerId = await ensurePaymentCustomerForCrmClient(
-      tenantId,
-      gatewayKey,
-      clientId,
-      gateway,
-      crmPayload,
-      { forceRecreate: true }
-    );
-    const retrySuffix = crypto.randomUUID().slice(0, 8);
-    generatedIdem = idempotencyKey?.trim()
-      ? `${idempotencyKey.trim()}_r_${retrySuffix}`
-      : `customer_switch_${tenantId}_${invoiceId}_${requestedMethod}_${retrySuffix}`;
-    externalReference = `inv_${invoiceId.replace(/-/g, '').slice(0, 24)}_${requestedMethod}_${Date.now()
-      .toString(36)
-      .slice(0, 8)}`.slice(0, 100);
-    chargeResult = await gateway.createCharge({
-      customerId,
-      amountCents,
-      dueDate,
-      paymentMethod: requestedMethod,
-      allowedPaymentMethods: allowedPaymentMethods,
-      description,
-      idempotencyKey: generatedIdem,
-      externalReference,
-      currency: currency ?? undefined,
-    });
+
+    let recovered = false;
+    // Preferência: sincronizar CPF/CNPJ no customer existente (CRM tem documento, Asaas não).
+    if (
+      isAsaasMissingCustomerDocumentError(e) &&
+      typeof gateway.syncCustomerDocument === 'function' &&
+      crmPayload.cpfCnpj?.trim()
+    ) {
+      try {
+        await gateway.syncCustomerDocument(customerId, crmPayload);
+        const syncSuffix = crypto.randomUUID().slice(0, 8);
+        generatedIdem = idempotencyKey?.trim()
+          ? `${idempotencyKey.trim()}_s_${syncSuffix}`
+          : `customer_switch_${tenantId}_${invoiceId}_${requestedMethod}_${syncSuffix}`;
+        externalReference = `inv_${invoiceId.replace(/-/g, '').slice(0, 24)}_${requestedMethod}_${Date.now()
+          .toString(36)
+          .slice(0, 8)}`.slice(0, 100);
+        chargeResult = await gateway.createCharge(
+          buildChargeInput(customerId, generatedIdem, externalReference)
+        );
+        recovered = true;
+      } catch {
+        recovered = false;
+      }
+    }
+
+    if (!recovered) {
+      customerId = await ensurePaymentCustomerForCrmClient(
+        tenantId,
+        gatewayKey,
+        clientId,
+        gateway,
+        crmPayload,
+        { forceRecreate: true }
+      );
+      const retrySuffix = crypto.randomUUID().slice(0, 8);
+      generatedIdem = idempotencyKey?.trim()
+        ? `${idempotencyKey.trim()}_r_${retrySuffix}`
+        : `customer_switch_${tenantId}_${invoiceId}_${requestedMethod}_${retrySuffix}`;
+      externalReference = `inv_${invoiceId.replace(/-/g, '').slice(0, 24)}_${requestedMethod}_${Date.now()
+        .toString(36)
+        .slice(0, 8)}`.slice(0, 100);
+      chargeResult = await gateway.createCharge(
+        buildChargeInput(customerId, generatedIdem, externalReference)
+      );
+    }
   }
 
   const attemptMetadata = {

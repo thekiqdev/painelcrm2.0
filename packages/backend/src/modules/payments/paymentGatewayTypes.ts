@@ -231,6 +231,11 @@ export interface PaymentGateway {
   ensureCustomer?(tenantId: string): Promise<string>;
   /** CRM: criar ou reutilizar cliente do gateway para um client_id; retorna gateway_customer_id. Dados do cliente em clientData. */
   ensureCustomerForClient?(tenantId: string, clientId: string, clientData: CreateCustomerInput): Promise<string>;
+  /**
+   * CRM/SaaS: sincroniza documento (CPF/CNPJ) e dados básicos no customer já existente no gateway.
+   * Usado quando o vínculo local existe mas o cadastro remoto ficou sem documento.
+   */
+  syncCustomerDocument?(customerId: string, clientData: CreateCustomerInput): Promise<void>;
   createCharge(input: CreateChargeInput): Promise<CreateChargeResult>;
   /**
    * Atualiza cobrança existente (valor, vencimento, descrição). Opcional — gateways sem suporte devem omitir.

@@ -147,6 +147,22 @@ function buildGateway(config?: AsaasConfig | null): PaymentGateway {
         return res.id;
       });
     },
+    async syncCustomerDocument(customerId: string, clientData: CreateCustomerInput): Promise<void> {
+      return withLog('syncCustomerDocument', undefined, async () => {
+        const cpfDigits = normalizeTenantCpfDigits(clientData.cpfCnpj);
+        await syncCpfToAsaasCustomerIfNeeded(
+          customerId,
+          cpfDigits,
+          {
+            name: clientData.name,
+            email: clientData.email,
+            phone: clientData.phone,
+          },
+          config,
+          disableNativeCustomerNotifications
+        );
+      });
+    },
     async createCharge(input: CreateChargeInput): Promise<CreateChargeResult> {
       return withLog('createCharge', undefined, async () => {
         const body: AsaasPaymentRequest = asaasMapper.toAsaasPayment(input.customerId, input);
@@ -491,30 +507,41 @@ function normalizeTenantCpfDigits(cpfCnpj: string | null | undefined): string | 
   return d;
 }
 
+type SyncCustomerFallback = {
+  name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+};
+
 /**
- * Se o tenant tem CPF/CNPJ válido e o customer remoto está vazio ou diverge, atualiza no Asaas.
+ * Se há CPF/CNPJ local válido e o customer remoto está vazio ou diverge, atualiza no Asaas.
  * Falhas de rede/timeout não bloqueiam o checkout — o vínculo local continua válido.
  */
-async function syncTenantCpfToAsaasCustomerIfNeeded(
+async function syncCpfToAsaasCustomerIfNeeded(
   customerId: string,
-  tenantCpfDigits: string | null,
+  localCpfDigits: string | null,
+  fallback: SyncCustomerFallback | undefined,
   config?: AsaasConfig | null,
   disableNativeCustomerNotifications = true
 ): Promise<void> {
-  if (!tenantCpfDigits) return;
+  if (!localCpfDigits) return;
   try {
     const remote = await asaasClient.getCustomer(customerId, config);
-    if (!remote?.email) return;
-    const remoteDigits = onlyDigits((remote.cpfCnpj as string | undefined) ?? '');
-    if (remoteDigits === tenantCpfDigits) return;
+    const remoteDigits = onlyDigits((remote?.cpfCnpj as string | undefined) ?? '');
+    if (remoteDigits === localCpfDigits) return;
 
-    const name = String(remote.name ?? '').trim() || 'Cliente';
-    const email = String(remote.email).trim();
+    const name =
+      String(remote?.name ?? fallback?.name ?? '')
+        .trim() || 'Cliente';
+    const email = String(remote?.email ?? fallback?.email ?? '').trim();
+    if (!email) return;
+
+    const phoneRaw = remote?.phone != null ? String(remote.phone) : fallback?.phone;
     const raw = asaasMapper.tenantToAsaasCustomer({
       name,
       email,
-      cpfCnpj: tenantCpfDigits,
-      phone: remote.phone != null ? String(remote.phone) : undefined,
+      cpfCnpj: localCpfDigits,
+      phone: phoneRaw ?? undefined,
     });
     const payload = asaasMapper.withAsaasCustomerNotificationPreference(
       raw,
@@ -523,8 +550,23 @@ async function syncTenantCpfToAsaasCustomerIfNeeded(
     await asaasClient.updateCustomer(customerId, payload, config);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.warn('[asaasService] syncTenantCpfToAsaasCustomerIfNeeded skipped:', customerId, msg);
+    console.warn('[asaasService] syncCpfToAsaasCustomerIfNeeded skipped:', customerId, msg);
   }
+}
+
+async function syncTenantCpfToAsaasCustomerIfNeeded(
+  customerId: string,
+  tenantCpfDigits: string | null,
+  config?: AsaasConfig | null,
+  disableNativeCustomerNotifications = true
+): Promise<void> {
+  await syncCpfToAsaasCustomerIfNeeded(
+    customerId,
+    tenantCpfDigits,
+    undefined,
+    config,
+    disableNativeCustomerNotifications
+  );
 }
 
 /**

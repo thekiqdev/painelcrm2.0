@@ -126,6 +126,20 @@ export async function ensurePaymentCustomerForCrmClient(
   } else {
     const existing = await getPaymentCustomerForClient(tenantId, gatewayKey, clientId);
     if (existing?.gateway_customer_id) {
+      // Customer já vinculado: sincroniza CPF/CNPJ no gateway se o CRM tiver documento
+      // e o remoto estiver vazio/divergente (evita cobrança Asaas sem cpfCnpj).
+      if (typeof gateway.syncCustomerDocument === 'function' && clientData.cpfCnpj?.trim()) {
+        try {
+          await gateway.syncCustomerDocument(existing.gateway_customer_id, clientData);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.warn(
+            '[paymentCustomers] syncCustomerDocument failed; reusing existing customer',
+            existing.gateway_customer_id,
+            msg
+          );
+        }
+      }
       return existing.gateway_customer_id;
     }
   }
