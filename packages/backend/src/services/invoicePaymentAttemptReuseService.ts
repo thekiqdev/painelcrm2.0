@@ -13,7 +13,7 @@ import {
 import { getActiveGateway } from '../modules/payments/gatewayProvider.js';
 import { buildGateway } from '../modules/payments/gatewayRegistry.js';
 import { normalizeGatewayStatus } from '../modules/payments/webhook/statusNormalizer.js';
-import type { PaymentGateway } from '../modules/payments/paymentGatewayTypes.js';
+import type { CreateChargeResult, PaymentGateway } from '../modules/payments/paymentGatewayTypes.js';
 import { updateCustomerInvoiceGatewayData } from './customerInvoiceService.js';
 import {
   activateInvoicePaymentAttempt,
@@ -394,7 +394,7 @@ export async function ensureReusablePaymentAttemptForSwitch(
     currency: currency ?? undefined,
   });
 
-  let chargeResult;
+  let chargeResult: CreateChargeResult | undefined;
   try {
     chargeResult = await gateway.createCharge(
       buildChargeInput(customerId, generatedIdem, externalReference)
@@ -449,6 +449,10 @@ export async function ensureReusablePaymentAttemptForSwitch(
         buildChargeInput(customerId, generatedIdem, externalReference)
       );
     }
+  }
+
+  if (!chargeResult) {
+    throw new Error('Falha ao criar cobrança no gateway');
   }
 
   const attemptMetadata = {
