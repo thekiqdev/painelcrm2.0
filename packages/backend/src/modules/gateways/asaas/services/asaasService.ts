@@ -522,9 +522,14 @@ async function syncCpfToAsaasCustomerIfNeeded(
   localCpfDigits: string | null,
   fallback: SyncCustomerFallback | undefined,
   config?: AsaasConfig | null,
-  disableNativeCustomerNotifications = true
+  disableNativeCustomerNotifications = true,
+  options?: { strict?: boolean }
 ): Promise<void> {
-  if (!localCpfDigits) return;
+  const strict = options?.strict === true;
+  if (!localCpfDigits) {
+    if (strict) throw new Error('CPF/CNPJ inválido para atualizar o cliente no Asaas.');
+    return;
+  }
   try {
     const remote = await asaasClient.getCustomer(customerId, config);
     const remoteDigits = onlyDigits((remote?.cpfCnpj as string | undefined) ?? '');
@@ -534,7 +539,10 @@ async function syncCpfToAsaasCustomerIfNeeded(
       String(remote?.name ?? fallback?.name ?? '')
         .trim() || 'Cliente';
     const email = String(remote?.email ?? fallback?.email ?? '').trim();
-    if (!email) return;
+    if (!email) {
+      if (strict) throw new Error('O cliente no Asaas não tem e-mail para atualizar o documento.');
+      return;
+    }
 
     const phoneRaw = remote?.phone != null ? String(remote.phone) : fallback?.phone;
     const raw = asaasMapper.tenantToAsaasCustomer({
@@ -549,9 +557,30 @@ async function syncCpfToAsaasCustomerIfNeeded(
     );
     await asaasClient.updateCustomer(customerId, payload, config);
   } catch (e) {
+    if (strict) throw e;
     const msg = e instanceof Error ? e.message : String(e);
     console.warn('[asaasService] syncCpfToAsaasCustomerIfNeeded skipped:', customerId, msg);
   }
+}
+
+export async function syncAsaasCustomerDocumentStrict(
+  customerId: string,
+  clientData: CreateCustomerInput,
+  config?: AsaasConfig | null
+): Promise<void> {
+  const cpfDigits = normalizeTenantCpfDigits(clientData.cpfCnpj);
+  await syncCpfToAsaasCustomerIfNeeded(
+    customerId,
+    cpfDigits,
+    {
+      name: clientData.name,
+      email: clientData.email,
+      phone: clientData.phone,
+    },
+    config,
+    config?.disableCustomerNotifications !== false,
+    { strict: true }
+  );
 }
 
 async function syncTenantCpfToAsaasCustomerIfNeeded(

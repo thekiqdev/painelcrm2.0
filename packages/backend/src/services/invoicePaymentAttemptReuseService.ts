@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import { pool } from '../utils/db.js';
 import { getActiveConfig, getConfigForTest } from './paymentGatewayConfigService.js';
 import { ensurePaymentCustomerForCrmClient } from './paymentCustomersService.js';
+import { clientBillingDigits } from './clientDocumentFields.js';
 import {
   isAsaasInvalidCustomerError,
   isAsaasMissingCustomerDocumentError,
@@ -349,9 +350,12 @@ export async function ensureReusablePaymentAttemptForSwitch(
     name: string;
     email: string | null;
     phone: string | null;
+    cpf: string | null;
+    cnpj: string | null;
+    billing_document: string | null;
     cpf_cnpj: string | null;
   }>(
-    `SELECT c.name, c.email, c.phone, c.cpf_cnpj
+    `SELECT c.name, c.email, c.phone, c.cpf, c.cnpj, c.billing_document, c.cpf_cnpj
      FROM clients c
      INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $2
      WHERE c.id = $1`,
@@ -364,7 +368,7 @@ export async function ensureReusablePaymentAttemptForSwitch(
     name: client.name,
     email: client.email ?? '',
     phone: client.phone ?? undefined,
-    cpfCnpj: client.cpf_cnpj?.trim() || undefined,
+    cpfCnpj: clientBillingDigits(client) || undefined,
   };
 
   let customerId = await ensurePaymentCustomerForCrmClient(

@@ -24,6 +24,14 @@ import {
   CLIENT_GOOGLE_DRIVE_SOURCE_MODULE,
 } from '../services/clientGoogleDriveFilesService.js';
 import { retryInvoiceGeneration } from '../services/customerBillingService.js';
+import { CnpjLookupError, lookupCnpj } from '../services/cnpjLookupService.js';
+import {
+  ClientDocumentValidationError,
+  clientBillingDigits,
+  presentDocumentKeys,
+  resolveClientDocumentPatch,
+} from '../services/clientDocumentFields.js';
+import { BillingDocumentSyncError, syncBillingDocumentChange } from '../services/clientBillingSync.js';
 
 const MODULE_CLIENTS = 'clients';
 
@@ -171,6 +179,11 @@ const clientSchema = z.object({
   group_id: z.any().optional().nullable(),
   profile_id: z.any().optional().nullable(),
   cpf_cnpj: z.string().optional().nullable(),
+  cpf: z.string().optional().nullable(),
+  cnpj: z.string().optional().nullable(),
+  rg: z.string().optional().nullable(),
+  razao_social: z.string().optional().nullable(),
+  billing_document: z.enum(['cpf', 'cnpj']).optional().nullable(),
 });
 
 const timelineEventNameSchema = z.enum([
@@ -200,16 +213,35 @@ const createTimelineEventSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
-/** Normaliza CPF/CNPJ: apenas dígitos. Retorna null se vazio ou inválido. */
+/** Normaliza CPF/CNPJ: apenas dígitos. Retorna null se vazio. */
 function normalizeCpfCnpj(value: string | null | undefined): string | null {
   if (value == null || typeof value !== 'string') return null;
   const digits = value.replace(/\D/g, '');
   return digits.length === 0 ? null : digits;
 }
 
-/** Valida se o CPF/CNPJ normalizado tem 11 (CPF) ou 14 (CNPJ) dígitos. */
-function isValidCpfCnpjLength(digits: string): boolean {
-  return digits.length === 11 || digits.length === 14;
+export async function lookupClientCnpj(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId;
+    if (!userId) {
+      res.status(401).json({ error: 'Não autenticado' });
+      return;
+    }
+    await assertPermissionKey(userId, 'clients.view', req);
+    const result = await lookupCnpj(String(req.params.cnpj ?? ''));
+    res.json(result);
+  } catch (error) {
+    if (error instanceof ModulePermissionError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
+    if (error instanceof CnpjLookupError) {
+      res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
+    console.error('Error looking up CNPJ:', error);
+    res.status(503).json({ error: 'Consulta de CNPJ indisponível.' });
+  }
 }
 
 export async function getClients(req: AuthRequest, res: Response): Promise<void> {
@@ -290,6 +322,10 @@ export async function getClients(req: AuthRequest, res: Response): Promise<void>
           OR COALESCE(c.email, '') ILIKE $${p}
           OR COALESCE(c.phone, '') ILIKE $${p}
           OR COALESCE(c.cpf_cnpj, '') ILIKE $${p}
+          OR COALESCE(c.cpf, '') ILIKE $${p}
+          OR COALESCE(c.cnpj, '') ILIKE $${p}
+          OR COALESCE(c.rg, '') ILIKE $${p}
+          OR COALESCE(c.razao_social, '') ILIKE $${p}
         )`;
         params.push(pattern);
         p += 1;
@@ -1163,12 +1199,13 @@ export async function createClient(req: AuthRequest, res: Response): Promise<voi
       cleanData.profile_id = null;
     }
 
-    const rawCpfCnpj = clientData.cpf_cnpj != null && typeof clientData.cpf_cnpj === 'string' ? clientData.cpf_cnpj.trim() : '';
-    cleanData.cpf_cnpj = normalizeCpfCnpj(rawCpfCnpj || null);
-    if (cleanData.cpf_cnpj !== null && !isValidCpfCnpjLength(cleanData.cpf_cnpj)) {
-      res.status(400).json({ error: 'CPF/CNPJ deve ter 11 (CPF) ou 14 (CNPJ) dígitos.' });
-      return;
-    }
+    const documents = resolveClientDocumentPatch(clientData, presentDocumentKeys(clientData), null);
+    cleanData.cpf = documents.cpf ?? null;
+    cleanData.cnpj = documents.cnpj ?? null;
+    cleanData.rg = documents.rg ?? null;
+    cleanData.razao_social = documents.razao_social ?? null;
+    cleanData.billing_document = documents.billing_document ?? null;
+    cleanData.cpf_cnpj = documents.cpf_cnpj ?? null;
 
     const tenantId = req.tenantId ?? null;
     if (cleanData.group_id) {
@@ -1209,14 +1246,16 @@ export async function createClient(req: AuthRequest, res: Response): Promise<voi
     const result = await pool.query(
       `INSERT INTO clients (
         user_id, name, email, phone, company, status, source,
-        funnel_stage, notes, group_id, profile_id, cpf_cnpj, observacao
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        funnel_stage, notes, group_id, profile_id, cpf_cnpj, observacao,
+        cpf, cnpj, rg, razao_social, billing_document
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
       RETURNING *`,
       [
         userId, cleanData.name, cleanData.email, cleanData.phone,
         cleanData.company, cleanData.status, cleanData.source,
         cleanData.funnel_stage, cleanData.notes, cleanData.group_id,
-        cleanData.profile_id, cleanData.cpf_cnpj, cleanData.observacao
+        cleanData.profile_id, cleanData.cpf_cnpj, cleanData.observacao,
+        cleanData.cpf, cleanData.cnpj, cleanData.rg, cleanData.razao_social, cleanData.billing_document,
       ]
     );
 
@@ -1243,6 +1282,10 @@ export async function createClient(req: AuthRequest, res: Response): Promise<voi
       res.status(error.statusCode).json({ error: error.message });
       return;
     }
+    if (error instanceof ClientDocumentValidationError) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: 'Validation error', details: error.errors });
       return;
@@ -1256,8 +1299,14 @@ export async function updateClient(req: AuthRequest, res: Response): Promise<voi
   try {
     const userId = req.userId!;
     const { id } = req.params;
-    const existing = await pool.query<{ user_id: string; cpf_cnpj: string | null }>(
-      `SELECT c.user_id, c.cpf_cnpj FROM clients c
+    const existing = await pool.query<{
+      user_id: string;
+      cpf_cnpj: string | null;
+      cpf: string | null;
+      cnpj: string | null;
+      billing_document: 'cpf' | 'cnpj' | null;
+    }>(
+      `SELECT c.user_id, c.cpf_cnpj, c.cpf, c.cnpj, c.billing_document FROM clients c
        INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = (SELECT tenant_id FROM users WHERE id = $2)
        WHERE c.id = $1`,
       [id, userId]
@@ -1270,14 +1319,13 @@ export async function updateClient(req: AuthRequest, res: Response): Promise<voi
       ownerId: existing.rows[0].user_id,
     }, req);
     const clientData = clientSchema.partial().parse(req.body);
-
-    if (clientData.cpf_cnpj !== undefined) {
-      const normalizedCpfCnpj = normalizeCpfCnpj(clientData.cpf_cnpj);
-      if (normalizedCpfCnpj !== null && !isValidCpfCnpjLength(normalizedCpfCnpj)) {
-        res.status(400).json({ error: 'CPF/CNPJ deve ter 11 (CPF) ou 14 (CNPJ) dígitos.' });
-        return;
-      }
-    }
+    const current = existing.rows[0];
+    const documentPatch = resolveClientDocumentPatch(clientData, presentDocumentKeys(clientData), {
+      cpf: current.cpf,
+      cnpj: current.cnpj,
+      billing_document: current.billing_document,
+      cpf_cnpj: current.cpf_cnpj,
+    });
 
     const tenantIdForRefs = req.tenantId ?? null;
     const uuidRegex =
@@ -1342,20 +1390,20 @@ export async function updateClient(req: AuthRequest, res: Response): Promise<voi
     const updates: string[] = [];
     const values: any[] = [];
     let paramIndex = 1;
+    const documentColumns = new Set(['cpf', 'cnpj', 'rg', 'razao_social', 'billing_document', 'cpf_cnpj']);
 
     Object.entries(clientData).forEach(([key, value]) => {
-      if (value !== undefined) {
-        let normalized: unknown = value;
-        if (key === 'cpf_cnpj') {
-          normalized = normalizeCpfCnpj(value as string);
-          if (normalized === null && (value === '' || (typeof value === 'string' && !(value as string).trim()))) {
-            normalized = null;
-          }
-        }
+      if (value !== undefined && !documentColumns.has(key)) {
         updates.push(`${key} = $${paramIndex}`);
-        values.push(normalized);
+        values.push(value);
         paramIndex++;
       }
+    });
+
+    Object.entries(documentPatch).forEach(([key, value]) => {
+      updates.push(`${key} = $${paramIndex}`);
+      values.push(value);
+      paramIndex++;
     });
 
     if (updates.length === 0) {
@@ -1376,6 +1424,34 @@ export async function updateClient(req: AuthRequest, res: Response): Promise<voi
     if (result.rows.length === 0) {
       res.status(404).json({ error: 'Client not found' });
       return;
+    }
+
+    const saved = result.rows[0];
+    const beforeDigits = clientBillingDigits(current);
+    const afterDigits = clientBillingDigits(saved);
+    if (beforeDigits !== afterDigits && afterDigits && tenantIdForRefs) {
+      try {
+        await syncBillingDocumentChange({
+          tenantId: tenantIdForRefs,
+          clientId: id,
+          name: String(saved.name ?? ''),
+          email: saved.email ?? null,
+          phone: saved.phone ?? null,
+          cpfCnpj: afterDigits,
+        });
+      } catch (syncError) {
+        await pool.query(
+          `UPDATE clients
+           SET cpf = $1, cnpj = $2, billing_document = $3, cpf_cnpj = $4, updated_at = now()
+           WHERE id = $5`,
+          [current.cpf, current.cnpj, current.billing_document, current.cpf_cnpj, id],
+        );
+        if (syncError instanceof BillingDocumentSyncError) {
+          res.status(400).json({ error: syncError.message });
+          return;
+        }
+        throw syncError;
+      }
     }
 
     const beforeCpf = normalizeCpfCnpj(existing.rows[0].cpf_cnpj);
@@ -1415,10 +1491,14 @@ export async function updateClient(req: AuthRequest, res: Response): Promise<voi
       }
     }
 
-    res.json(result.rows[0]);
+    res.json(saved);
   } catch (error) {
     if (error instanceof ModulePermissionError) {
       res.status(error.statusCode).json({ error: error.message });
+      return;
+    }
+    if (error instanceof ClientDocumentValidationError) {
+      res.status(400).json({ error: error.message });
       return;
     }
     if (error instanceof z.ZodError) {

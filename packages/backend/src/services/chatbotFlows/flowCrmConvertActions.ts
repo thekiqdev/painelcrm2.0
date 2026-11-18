@@ -6,6 +6,7 @@ import type { PoolClient } from 'pg';
 import { pool } from '../../utils/db.js';
 import { migrateTicketsLeadToClientInTransaction } from '../leadConversionMigrationService.js';
 import { classifyCrmLinkKind, type CrmLinkKind } from './flowCrmLinkActions.js';
+import { newClientDocumentColumns } from '../clientDocumentFields.js';
 
 export type CrmConvertMode = 'to_lead' | 'to_client';
 export type CrmConvertResult = 'created' | 'linked' | 'unchanged';
@@ -533,10 +534,12 @@ async function convertToClient(
     let clientId = existing?.id || null;
     let result: CrmConvertResult = 'linked';
     if (!clientId) {
+      const docs = newClientDocumentColumns(lead.cpf_cnpj);
       const ins = await client.query<{ id: string }>(
         `INSERT INTO clients (
-          user_id, name, email, phone, company, status, source, notes, funnel_stage, cpf_cnpj, observacao
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULL,$9,$10)
+          user_id, name, email, phone, company, status, source, notes, funnel_stage,
+          cpf, cnpj, billing_document, cpf_cnpj, observacao
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULL,$9,$10,$11,$12,$13)
         RETURNING id`,
         [
           lead.user_id,
@@ -547,7 +550,10 @@ async function convertToClient(
           'Ativo',
           (lead.source || FLOW_CLIENT_SOURCE).trim().slice(0, 120),
           lead.notes ? lead.notes.slice(0, 2000) : null,
-          lead.cpf_cnpj?.replace(/\D/g, '') || null,
+          docs.cpf,
+          docs.cnpj,
+          docs.billing_document,
+          docs.cpf_cnpj,
           lead.observacao ? lead.observacao.slice(0, 4000) : null,
         ]
       );

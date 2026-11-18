@@ -10,6 +10,7 @@ import { sendWhatsappModelSequence } from './whatsappModelSequenceService.js';
 import { normalizeConversationPhone } from './conversationMatchingService.js';
 import { migrateTicketsLeadToClientInTransaction } from './leadConversionMigrationService.js';
 import { runKanbanPhase2AutomationsForLead } from './kanbanLeadPhase2AutomationService.js';
+import { newClientDocumentColumns } from './clientDocumentFields.js';
 
 type AutomationStatus = 'executed' | 'skipped' | 'failed';
 
@@ -1278,10 +1279,12 @@ export async function runKanbanEnsureClientAutomationInTransaction(
     });
     let finalClientId = existingByLead;
     if (!finalClientId) {
+      const docs = newClientDocumentColumns(lead.cpf_cnpj);
       const ins = await client.query<{ id: string }>(
         `INSERT INTO clients (
-          user_id, name, email, phone, company, status, source, notes, funnel_stage, cpf_cnpj, observacao
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULL,$9,$10)
+          user_id, name, email, phone, company, status, source, notes, funnel_stage,
+          cpf, cnpj, billing_document, cpf_cnpj, observacao
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULL,$9,$10,$11,$12,$13)
         RETURNING id`,
         [
           lead.user_id,
@@ -1292,7 +1295,10 @@ export async function runKanbanEnsureClientAutomationInTransaction(
           'Ativo',
           (lead.source || 'kanban_column').trim().slice(0, 120),
           lead.notes ? lead.notes.slice(0, 2000) : null,
-          lead.cpf_cnpj?.replace(/\D/g, '') || null,
+          docs.cpf,
+          docs.cnpj,
+          docs.billing_document,
+          docs.cpf_cnpj,
           lead.observacao ? lead.observacao.slice(0, 4000) : null,
         ],
       );

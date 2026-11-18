@@ -13,6 +13,7 @@ import { clientGoogleDriveFileUploadSingle } from '../middleware/clientGoogleDri
 const router = Router();
 router.use(...tenantAuthCrm);
 
+router.get('/cnpj-lookup/:cnpj', clientsController.lookupClientCnpj);
 router.get('/', clientsController.getClients);
 router.get('/:id/addresses', getClientAddressesHandler);
 router.post('/:id/addresses', postClientAddressHandler);

@@ -55,6 +55,12 @@ import {
 } from './publicPayCardIdempotencyService.js';
 import { isValidCpfOrCnpj } from '../utils/cpfCnpj.js';
 import {
+  clientBillingDigits,
+  documentPatchSql,
+  externalDocumentPatch,
+  newClientDocumentColumns,
+} from './clientDocumentFields.js';
+import {
   getInvoiceById as getTenantBillingById,
   updateInvoiceGatewayData,
   updateInvoiceStatus,
@@ -425,9 +431,12 @@ export async function createManualInvoice(
     email: string | null;
     phone: string | null;
     company: string | null;
+    cpf: string | null;
+    cnpj: string | null;
+    billing_document: string | null;
     cpf_cnpj: string | null;
   }>(
-    `SELECT c.name, c.email, c.phone, c.company, c.cpf_cnpj
+    `SELECT c.name, c.email, c.phone, c.company, c.cpf, c.cnpj, c.billing_document, c.cpf_cnpj
      FROM clients c
      INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $2
      WHERE c.id = $1`,
@@ -442,7 +451,7 @@ export async function createManualInvoice(
     name: client.name,
     email: client.email ?? '',
     phone: client.phone ?? undefined,
-    cpfCnpj: client.cpf_cnpj?.trim() || undefined,
+    cpfCnpj: clientBillingDigits(client) || undefined,
   };
 
   let customerId = await ensurePaymentCustomerForCrmClient(
@@ -822,9 +831,12 @@ export async function completePaymentByToken(
       name: string;
       email: string | null;
       phone: string | null;
+      cpf: string | null;
+      cnpj: string | null;
+      billing_document: 'cpf' | 'cnpj' | null;
       cpf_cnpj: string | null;
     }>(
-      `SELECT c.id, c.name, c.email, c.phone, c.cpf_cnpj
+      `SELECT c.id, c.name, c.email, c.phone, c.cpf, c.cnpj, c.billing_document, c.cpf_cnpj
        FROM clients c
        INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $2
        WHERE c.id = $1
@@ -833,14 +845,17 @@ export async function completePaymentByToken(
     );
     const row = existingClient.rows[0] ?? null;
     if (!row) throw new Error('Cliente não encontrado');
-    await pool.query(
-      `UPDATE clients
-       SET cpf_cnpj = $1,
-           updated_at = now()
-       WHERE id = $2`,
-      [cpfCnpj, row.id]
-    );
-    client = { ...row, cpf_cnpj: cpfCnpj };
+    const patch = externalDocumentPatch(row, cpfCnpj);
+    const documentSql = documentPatchSql(patch, row.id);
+    if (documentSql) await pool.query(documentSql.text, documentSql.values);
+    const merged = { ...row, ...patch };
+    client = {
+      id: row.id,
+      name: row.name,
+      email: row.email,
+      phone: row.phone,
+      cpf_cnpj: clientBillingDigits(merged),
+    };
   } else {
     const userName = (body.name || '').trim();
     if (!userName) {
@@ -855,13 +870,32 @@ export async function completePaymentByToken(
       throw new Error('Empresa sem usuário para vincular cliente');
     }
     const companyTrim = (body.company || '').trim() || null;
-    const clientResult = await pool.query<{ id: string; name: string; email: string | null; phone: string | null; cpf_cnpj: string | null }>(
-      `INSERT INTO clients (user_id, name, email, phone, company, cpf_cnpj, source)
-       VALUES ($1, $2, $3, $4, $5, $6, 'payment_link')
-       RETURNING id, name, email, phone, cpf_cnpj`,
-      [userId, userName, (body.email || '').trim() || null, (body.phone || '').trim() || null, companyTrim, cpfCnpj]
+    const docs = newClientDocumentColumns(cpfCnpj);
+    const clientResult = await pool.query<{
+      id: string;
+      name: string;
+      email: string | null;
+      phone: string | null;
+      cpf: string | null;
+      cnpj: string | null;
+      billing_document: 'cpf' | 'cnpj' | null;
+      cpf_cnpj: string | null;
+    }>(
+      `INSERT INTO clients (user_id, name, email, phone, company, cpf, cnpj, billing_document, cpf_cnpj, source)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'payment_link')
+       RETURNING id, name, email, phone, cpf, cnpj, billing_document, cpf_cnpj`,
+      [userId, userName, (body.email || '').trim() || null, (body.phone || '').trim() || null, companyTrim, docs.cpf, docs.cnpj, docs.billing_document, docs.cpf_cnpj]
     );
-    client = clientResult.rows[0] ?? null;
+    const created = clientResult.rows[0] ?? null;
+    client = created
+      ? {
+          id: created.id,
+          name: created.name,
+          email: created.email,
+          phone: created.phone,
+          cpf_cnpj: clientBillingDigits(created),
+        }
+      : null;
     if (!client) {
       throw new Error('Erro ao criar cliente');
     }
@@ -1039,15 +1073,20 @@ export async function switchPaymentMethodByToken(
   const invoiceGateway = gwRow.rows[0]?.gateway ?? null;
   const stripeDocument = invoiceGateway === 'stripe';
 
-  const clientCpf = await pool.query<{ cpf_cnpj: string | null }>(
-    `SELECT c.cpf_cnpj
+  const clientCpf = await pool.query<{
+    cpf: string | null;
+    cnpj: string | null;
+    billing_document: string | null;
+    cpf_cnpj: string | null;
+  }>(
+    `SELECT c.cpf, c.cnpj, c.billing_document, c.cpf_cnpj
      FROM clients c
      INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $2
      WHERE c.id = $1
      LIMIT 1`,
     [data.client_id, data.tenant_id]
   );
-  const cpfCnpj = normalizeCpfCnpjDigits(clientCpf.rows[0]?.cpf_cnpj ?? null);
+  const cpfCnpj = clientBillingDigits(clientCpf.rows[0] ?? null);
   if (!stripeDocument) {
     if (!cpfCnpj) {
       throw new InvoiceGenerationError('CPF/CNPJ é obrigatório para gerar a cobrança', 'missing_cpf_cnpj');
@@ -1151,15 +1190,20 @@ export async function retryInvoiceGeneration(invoiceId: string): Promise<void> {
     throw new InvoiceGenerationError('Só é possível gerar cobrança para fatura pagável', 'not_payable');
   }
 
-  const clientCpf = await pool.query<{ cpf_cnpj: string | null }>(
-    `SELECT c.cpf_cnpj
+  const clientCpf = await pool.query<{
+    cpf: string | null;
+    cnpj: string | null;
+    billing_document: string | null;
+    cpf_cnpj: string | null;
+  }>(
+    `SELECT c.cpf, c.cnpj, c.billing_document, c.cpf_cnpj
      FROM clients c
      INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $2
      WHERE c.id = $1
      LIMIT 1`,
     [invoice.client_id, invoice.tenant_id]
   );
-  const cpfCnpj = normalizeCpfCnpjDigits(clientCpf.rows[0]?.cpf_cnpj ?? null);
+  const cpfCnpj = clientBillingDigits(clientCpf.rows[0] ?? null);
   if (invoice.gateway !== 'stripe') {
     if (!cpfCnpj) {
       throw new InvoiceGenerationError('CPF/CNPJ é obrigatório para gerar a cobrança', 'missing_cpf_cnpj');

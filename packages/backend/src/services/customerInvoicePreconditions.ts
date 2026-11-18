@@ -4,6 +4,7 @@
  */
 import { pool } from '../utils/db.js';
 import { getActiveConfig } from './paymentGatewayConfigService.js';
+import { clientBillingDigits } from './clientDocumentFields.js';
 import { isValidCpfOrCnpj, onlyDigits } from '../utils/cpfCnpj.js';
 
 /**
@@ -39,21 +40,23 @@ export async function validateInvoicePreconditions(
 ): Promise<ValidateInvoicePreconditionsResult> {
   const errors: string[] = [];
 
-  const clientRow = await pool.query<{ cpf_cnpj: string | null }>(
-    `SELECT c.cpf_cnpj FROM clients c
+  const clientRow = await pool.query<{
+    cpf: string | null;
+    cnpj: string | null;
+    billing_document: string | null;
+    cpf_cnpj: string | null;
+  }>(
+    `SELECT c.cpf, c.cnpj, c.billing_document, c.cpf_cnpj FROM clients c
      INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $1
      WHERE c.id = $2
      LIMIT 1`,
     [tenantId, clientId]
   );
   const client = clientRow.rows[0];
-  const clientCpfCnpjDigits = onlyDigits(client?.cpf_cnpj ?? '');
-  const clientHasCpfCnpj = !!(
-    client &&
-    client.cpf_cnpj != null &&
-    String(client.cpf_cnpj).trim() !== ''
-  );
-  const clientCpfCnpjValid = clientHasCpfCnpj && isValidCpfOrCnpj(clientCpfCnpjDigits);
+  const billingDigits = clientBillingDigits(client);
+  const rawDigits = onlyDigits(client?.cpf_cnpj ?? client?.cpf ?? client?.cnpj ?? '');
+  const clientHasCpfCnpj = !!billingDigits || rawDigits.length > 0;
+  const clientCpfCnpjValid = !!billingDigits && isValidCpfOrCnpj(billingDigits);
   const config = await getActiveConfig('crm', tenantId);
   const gatewayConfigured = config != null;
   if (!gatewayConfigured) {

@@ -69,6 +69,7 @@ import {
   FileSignature,
   Pencil,
   Upload,
+  Star,
 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 import { clientsService } from "@/services/clients";
@@ -84,6 +85,17 @@ import { withUserId } from "@/utils/auth-helpers";
 import { useAuth } from "@/contexts/AuthContext";
 import { addClient, addClientTask } from "@/utils/clients-helpers";
 import { formatCpfCnpjDisplay } from "@/utils/cpfCnpj";
+import {
+  clientDocumentWrite,
+  clientDocumentsFromRecord,
+  formatCnpjTyping,
+  formatCpfTyping,
+  visibleBillingStar,
+  type BillingKind,
+} from "@/utils/clientBillingDocument";
+import { DocumentLabel } from "@/components/clients/DocumentLabel";
+import { useCnpjAutofill } from "@/hooks/useCnpjAutofill";
+import { cnpjLookupFill } from "@/utils/cnpjLookup";
 import { resolveProfileAvatarUrl } from "@/utils/chatIdentityDisplay";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { StickyNote, StickyNoteData } from "@/components/clients/StickyNote";
@@ -112,7 +124,14 @@ import {
   saveClientsListScrollPosition,
 } from "@/lib/clientsListRestore";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { prepareClientsFromCsv } from "@/utils/importClientsCsv";
+import { ClientImportSheet } from "@/components/clients/ClientImportSheet";
+import { clientAddressesService } from "@/services/clientAddresses";
+import {
+  parseClientImportFile,
+  buildClientImportPlan,
+  type ClientImportColumnMapping,
+  type ClientImportFile,
+} from "@/utils/importClientsCsv";
 
 // Opções para quantidade de itens por página
 const itemsPerPageOptions = [10, 25, 50, 100];
@@ -168,6 +187,42 @@ function clientNotesPreview(raw: unknown, maxLen = 72): string | null {
   return `${oneLine.slice(0, maxLen).trimEnd()}…`;
 }
 
+function identityFromClient(client: {
+  cpf?: string | null;
+  cnpj?: string | null;
+  cpf_cnpj?: string | null;
+  rg?: string | null;
+  razao_social?: string | null;
+  billing_document?: string | null;
+}) {
+  const docs = clientDocumentsFromRecord(client);
+  return {
+    cpf: docs.cpf,
+    cnpj: docs.cnpj,
+    rg: docs.rg,
+    razao_social: docs.razao_social,
+    billingChoice: null as BillingKind | null,
+    savedBilling: docs.savedBilling,
+  };
+}
+
+const emptyNewClient = {
+  name: "",
+  company: "",
+  email: "",
+  phone: "",
+  status: "Ativo",
+  group_id: "",
+  notes: "",
+  observacao: "",
+  cpf: "",
+  cnpj: "",
+  rg: "",
+  razao_social: "",
+  billingChoice: null as BillingKind | null,
+  savedBilling: null as BillingKind | null,
+};
+
 const Clients = () => {
   const { t } = useTranslation("crm");
   const navigate = useNavigate();
@@ -195,6 +250,9 @@ const Clients = () => {
   const csvImportInputRef = useRef<HTMLInputElement>(null);
   const [csvImportDialogOpen, setCsvImportDialogOpen] = useState(false);
   const [csvImportRunning, setCsvImportRunning] = useState(false);
+  const [importFiles, setImportFiles] = useState<ClientImportFile[]>([]);
+  const [importSheetOpen, setImportSheetOpen] = useState(false);
+  const [importSession, setImportSession] = useState(0);
   const [csvImportSummary, setCsvImportSummary] = useState<{
     created: number;
     failed: { line: number; message: string }[];
@@ -328,29 +386,34 @@ const Clients = () => {
   }, [isViewDialogOpen, selectedClient?.id, tabSelected, canView]);
   
   // New client data state
-  const [newClient, setNewClient] = useState({
-    name: "",
-    company: "",
-    email: "",
-    phone: "",
-    status: "Ativo",
-    group_id: "",
-    notes: "",
-    observacao: "",
-    cpf_cnpj: ""
-  });
+  const [newClient, setNewClient] = useState(emptyNewClient);
   
   // Edited client state (for edit mode)
   const [editedClient, setEditedClient] = useState({
-    name: "",
-    company: "",
-    email: "",
-    phone: "",
+    ...emptyNewClient,
     status: "",
-    group_id: "",
-    notes: "",
-    observacao: "",
-    cpf_cnpj: ""
+  });
+  const { onCnpjBlur: onNewCnpjBlur, cancelCnpjLookup: cancelNewCnpjLookup } = useCnpjAutofill((found) => {
+    setNewClient((current) => {
+      const patch = cnpjLookupFill({
+        razaoSocial: current.razao_social,
+        company: current.company,
+        found,
+      });
+      if (!patch.razao_social && !patch.company) return current;
+      return { ...current, ...patch };
+    });
+  });
+  const { onCnpjBlur: onEditCnpjBlur, cancelCnpjLookup: cancelEditCnpjLookup } = useCnpjAutofill((found) => {
+    setEditedClient((current) => {
+      const patch = cnpjLookupFill({
+        razaoSocial: current.razao_social,
+        company: current.company,
+        found,
+      });
+      if (!patch.razao_social && !patch.company) return current;
+      return { ...current, ...patch };
+    });
   });
 
   // Form para adicionar nova tarefa
@@ -384,6 +447,11 @@ const Clients = () => {
         notes: client.notes,
         observacao: client.observacao ?? "",
         cpf_cnpj: client.cpf_cnpj ?? null,
+        cpf: client.cpf ?? null,
+        cnpj: client.cnpj ?? null,
+        rg: client.rg ?? null,
+        razao_social: client.razao_social ?? null,
+        billing_document: client.billing_document ?? null,
         whatsapp_avatar_url: client.whatsapp_avatar_url ?? null,
       }));
       return { clients: formatted, groups };
@@ -502,7 +570,7 @@ const Clients = () => {
       group_id: client.group_id || "",
       notes: typeof client.notes === "string" ? client.notes : "",
       observacao: typeof client.observacao === "string" ? client.observacao : "",
-      cpf_cnpj: client.cpf_cnpj ?? "",
+      ...identityFromClient(client),
     });
     setNewClientGroup(client.group_id || "");
     try {
@@ -531,7 +599,7 @@ const Clients = () => {
         group_id: selectedClient.group_id || "",
         notes: selectedClient.notes || "",
         observacao: selectedClient.observacao || "",
-        cpf_cnpj: selectedClient.cpf_cnpj ?? ""
+        ...identityFromClient(selectedClient),
       });
       setIsEditMode(true);
     }
@@ -544,7 +612,14 @@ const Clients = () => {
   const handleSaveEdit = async () => {
     if (selectedClient) {
       try {
-        await clientsService.updateClient(selectedClient.id, {
+        const documents = clientDocumentWrite({
+          cpf: editedClient.cpf,
+          cnpj: editedClient.cnpj,
+          rg: editedClient.rg,
+          razaoSocial: editedClient.razao_social,
+          billingChoice: editedClient.billingChoice,
+        });
+        const updated = await clientsService.updateClient(selectedClient.id, {
             name: editedClient.name,
             company: editedClient.company,
             email: editedClient.email,
@@ -552,7 +627,7 @@ const Clients = () => {
             status: editedClient.status,
           group_id: editedClient.group_id || undefined,
             observacao: editedClient.observacao?.trim() || null,
-            cpf_cnpj: editedClient.cpf_cnpj?.replace(/\D/g, "").trim() || null
+            ...documents,
         });
         
         // Atualizar o cliente na lista local
@@ -561,6 +636,7 @@ const Clients = () => {
             const updatedGroupName = clientGroups.find(g => g.id === editedClient.group_id)?.name || "";
             return {
               ...client,
+              ...updated,
               name: editedClient.name,
               company: editedClient.company,
               email: editedClient.email,
@@ -570,7 +646,6 @@ const Clients = () => {
               group: updatedGroupName,
               notes: client.notes,
               observacao: editedClient.observacao,
-              cpf_cnpj: editedClient.cpf_cnpj?.trim() || null
             };
           }
           return client;
@@ -580,16 +655,9 @@ const Clients = () => {
         queryClient.invalidateQueries({ queryKey: [...CLIENTS_QUERY_KEY, tenantId, userId] });
         setSelectedClient({
           ...selectedClient,
-          name: editedClient.name,
-          company: editedClient.company,
-          email: editedClient.email,
-          phone: editedClient.phone,
-          status: editedClient.status,
-          group_id: editedClient.group_id,
+          ...updated,
           group: clientGroups.find(g => g.id === editedClient.group_id)?.name || "",
           notes: selectedClient.notes,
-          observacao: editedClient.observacao,
-          cpf_cnpj: editedClient.cpf_cnpj?.trim() || null
         });
         
         setIsEditMode(false);
@@ -603,19 +671,39 @@ const Clients = () => {
 
   // Handle input change for new client form
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
-    const { id, value } = e.target;
+    const { value } = e.target;
+    const field = e.currentTarget.dataset.field || e.currentTarget.id;
+    if (field === "cpf") {
+      setNewClient({ ...newClient, cpf: formatCpfTyping(value) });
+      return;
+    }
+    if (field === "cnpj") {
+      cancelNewCnpjLookup();
+      setNewClient({ ...newClient, cnpj: formatCnpjTyping(value) });
+      return;
+    }
     setNewClient({
       ...newClient,
-      [id]: value
+      [field]: value
     });
   };
   
   // Handle input change for edit client form
   const handleEditInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
-    const { id, value } = e.target;
+    const { value } = e.target;
+    const field = e.currentTarget.dataset.field || e.currentTarget.id;
+    if (field === "cpf") {
+      setEditedClient({ ...editedClient, cpf: formatCpfTyping(value) });
+      return;
+    }
+    if (field === "cnpj") {
+      cancelEditCnpjLookup();
+      setEditedClient({ ...editedClient, cnpj: formatCnpjTyping(value) });
+      return;
+    }
     setEditedClient({
       ...editedClient,
-      [id]: value
+      [field]: value
     });
   };
 
@@ -647,7 +735,13 @@ const Clients = () => {
         status: newClient.status || undefined,
         group_id: newClient.group_id || undefined,
         observacao: newClient.observacao?.trim() || undefined,
-        cpf_cnpj: newClient.cpf_cnpj?.trim() || undefined
+        ...clientDocumentWrite({
+          cpf: newClient.cpf,
+          cnpj: newClient.cnpj,
+          rg: newClient.rg,
+          razaoSocial: newClient.razao_social,
+          billingChoice: newClient.billingChoice,
+        }),
       });
       
       if (!result.success) {
@@ -673,7 +767,12 @@ const Clients = () => {
         group_id: addedClient.group_id,
         notes: addedClient.notes,
         observacao: addedClient.observacao ?? "",
-        cpf_cnpj: addedClient.cpf_cnpj ?? null
+        cpf_cnpj: addedClient.cpf_cnpj ?? null,
+        cpf: addedClient.cpf ?? null,
+        cnpj: addedClient.cnpj ?? null,
+        rg: addedClient.rg ?? null,
+        razao_social: addedClient.razao_social ?? null,
+        billing_document: addedClient.billing_document ?? null,
       };
       
       setClients([...clients, formattedClient]);
@@ -682,17 +781,7 @@ const Clients = () => {
       setIsAddDialogOpen(false);
       
       // Reset the form
-      setNewClient({
-        name: "",
-        company: "",
-        email: "",
-        phone: "",
-        status: "Ativo",
-        group_id: "",
-        notes: "",
-        observacao: "",
-        cpf_cnpj: ""
-      });
+      setNewClient(emptyNewClient);
     } catch (error: any) {
       console.error("Erro ao adicionar cliente:", error);
       toast.error(`Erro ao adicionar cliente: ${error.message}`);
@@ -700,60 +789,104 @@ const Clients = () => {
   };
 
   const handleCsvFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const selected = Array.from(e.target.files ?? []);
     e.target.value = "";
-    if (!file || !canCreate(MODULE_CLIENTS)) return;
+    if (selected.length === 0 || !canCreate(MODULE_CLIENTS)) return;
+
+    const accepted = selected.filter((file) => /\.(csv|txt|xls|xlsx)$/i.test(file.name));
+    if (accepted.length === 0) {
+      toast.error("Use um arquivo CSV, TXT, XLS ou XLSX.");
+      return;
+    }
 
     setCsvImportRunning(true);
     try {
-      const text = await file.text();
-      const { prepared, skipped } = prepareClientsFromCsv(text, clientGroups);
-      const failed: { line: number; message: string }[] = skipped.map((s) => ({
-        line: s.line,
-        message: s.reason,
-      }));
+      const parsed: ClientImportFile[] = [];
+      for (let index = 0; index < accepted.length; index++) {
+        const file = accepted[index];
+        parsed.push(await parseClientImportFile(file, `${Date.now()}-${index}-${file.name}`));
+      }
+      setImportFiles(parsed);
+      setImportSession((current) => current + 1);
+      setImportSheetOpen(true);
+    } catch (err: unknown) {
+      console.error(err);
+      toast.error(err instanceof Error ? err.message : "Falha ao ler o arquivo.");
+    } finally {
+      setCsvImportRunning(false);
+    }
+  };
+
+  const handleImportConfirm = async (mappings: ClientImportColumnMapping[]) => {
+    if (!canCreate(MODULE_CLIENTS)) return;
+    const { prepared, skipped } = buildClientImportPlan(importFiles, mappings, clientGroups);
+    const failed: { line: number; message: string }[] = skipped.map((skip) => ({
+      line: skip.line,
+      message: skip.reason,
+    }));
+
+    setCsvImportRunning(true);
+    try {
       let created = 0;
       const BATCH = 4;
       for (let i = 0; i < prepared.length; i += BATCH) {
         const chunk = prepared.slice(i, i + BATCH);
         await Promise.all(
-          chunk.map(async ({ lineNumber, payload }) => {
-            const result = await addClient(payload);
+          chunk.map(async (row) => {
+            const result = await addClient(row.payload);
             if (!result.success) {
               const err = result.error as Error | undefined;
               failed.push({
-                line: lineNumber,
-                message:
-                  typeof err?.message === "string"
-                    ? err.message
-                    : String(err ?? "Erro ao criar cliente"),
+                line: row.lineNumber,
+                message: `${row.sourceLabel}: ${
+                  typeof err?.message === "string" ? err.message : String(err ?? "Erro ao criar cliente")
+                }`,
               });
-            } else {
-              created++;
+              return;
+            }
+            created++;
+            for (const warning of row.warnings) {
+              failed.push({
+                line: row.lineNumber,
+                message: `${row.sourceLabel}: ${warning}`,
+              });
+            }
+            const createdClient = result.data as { id?: string } | undefined;
+            if (row.address && createdClient?.id) {
+              try {
+                await clientAddressesService.create(createdClient.id, row.address);
+              } catch (addressError: unknown) {
+                failed.push({
+                  line: row.lineNumber,
+                  message: `${row.sourceLabel}: cliente criado, endereço não gravado. ${
+                    addressError instanceof Error ? addressError.message : "Falha ao criar endereço"
+                  }`,
+                });
+              }
             }
           }),
         );
       }
 
       await queryClient.invalidateQueries({ queryKey: [...CLIENTS_QUERY_KEY, tenantId, userId] });
-
       setCsvImportSummary({ created, failed });
-      const showReportDialog = failed.length > 0 || created === 0;
-      if (showReportDialog) setCsvImportDialogOpen(true);
+      setImportSheetOpen(false);
 
       if (created > 0 && failed.length === 0) {
         toast.success(`${created} cliente${created === 1 ? "" : "s"} importado${created === 1 ? "" : "s"}.`);
       } else if (created > 0) {
         toast.warning(`${created} importado(s); ${failed.length} linha(s) com falha ou aviso.`);
-      } else if (failed.length > 0 || skipped.length > 0) {
-        toast.error("Nenhum cliente criado ou arquivo com problemas. Veja o relatório.");
+        setCsvImportDialogOpen(true);
+      } else if (failed.length > 0) {
+        toast.error("Nenhum cliente criado. Veja o relatório.");
+        setCsvImportDialogOpen(true);
       } else {
         toast.message("Nenhuma linha válida para importar.");
         setCsvImportDialogOpen(true);
       }
     } catch (err: unknown) {
       console.error(err);
-      toast.error(err instanceof Error ? err.message : "Falha ao ler o arquivo CSV.");
+      toast.error(err instanceof Error ? err.message : "Falha ao importar clientes.");
     } finally {
       setCsvImportRunning(false);
     }
@@ -1060,125 +1193,153 @@ const Clients = () => {
       // Modo de edição - exibir formulário
       return (
         <form onSubmit={(e) => { e.preventDefault(); handleSaveEdit(); }}>
-          <div className="grid grid-cols-2 gap-4 mb-4">
-            <div className="space-y-2">
-              <Label htmlFor="name">Nome</Label>
-              <Input 
-                id="name" 
-                value={editedClient.name}
-                onChange={handleEditInputChange}
-                required
-              />
+          <div className="mb-4 space-y-3">
+            <p className="text-sm font-semibold">Cliente</p>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit-name">Nome</Label>
+                <Input id="edit-name" data-field="name" value={editedClient.name} onChange={handleEditInputChange} required />
+              </div>
+              <div className="space-y-2">
+                <DocumentLabel
+                  htmlFor="edit-cpf"
+                  showStar={visibleBillingStar(editedClient.cpf, editedClient.cnpj, editedClient.savedBilling, editedClient.billingChoice) != null}
+                  active={visibleBillingStar(editedClient.cpf, editedClient.cnpj, editedClient.savedBilling, editedClient.billingChoice) === "cpf"}
+                  onSelect={() => setEditedClient({ ...editedClient, billingChoice: "cpf" })}
+                >
+                  CPF
+                </DocumentLabel>
+                <Input id="edit-cpf" data-field="cpf" placeholder="000.000.000-00" value={editedClient.cpf} onChange={handleEditInputChange} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-rg">RG</Label>
+                <Input id="edit-rg" data-field="rg" value={editedClient.rg} onChange={handleEditInputChange} maxLength={20} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-email">E-mail</Label>
+                <Input id="edit-email" data-field="email" type="email" value={editedClient.email} onChange={handleEditInputChange} required />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-phone">Telefone</Label>
+                <Input id="edit-phone" data-field="phone" value={editedClient.phone} onChange={handleEditInputChange} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-status">Status</Label>
+                <Select value={editedClient.status} onValueChange={(value) => handleEditSelectChange("status", value)}>
+                  <SelectTrigger id="edit-status">
+                    <SelectValue placeholder="Selecione" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Ativo">Ativo</SelectItem>
+                    <SelectItem value="Inativo">Inativo</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-group">Grupo</Label>
+                <Select value={editedClient.group_id} onValueChange={(value) => handleEditSelectChange("group_id", value)}>
+                  <SelectTrigger id="edit-group">
+                    <SelectValue placeholder="Selecione um grupo" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {clientGroups.map(group => (
+                      <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="company">Empresa</Label>
-              <Input 
-                id="company" 
-                value={editedClient.company}
-                onChange={handleEditInputChange}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="email">E-mail</Label>
-              <Input 
-                id="email"
-                type="email"
-                value={editedClient.email}
-                onChange={handleEditInputChange}
-                required
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="phone">Telefone</Label>
-              <Input 
-                id="phone"
-                value={editedClient.phone}
-                onChange={handleEditInputChange}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="cpf_cnpj">CPF ou CNPJ</Label>
-              <Input 
-                id="cpf_cnpj"
-                placeholder="000.000.000-00 ou 00.000.000/0000-00"
-                value={editedClient.cpf_cnpj}
-                onChange={handleEditInputChange}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="status">Status</Label>
-              <Select
-                value={editedClient.status}
-                onValueChange={(value) => handleEditSelectChange("status", value)}
-              >
-                <SelectTrigger id="status">
-                  <SelectValue placeholder="Selecione" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Ativo">Ativo</SelectItem>
-                  <SelectItem value="Inativo">Inativo</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="group_id">Grupo</Label>
-              <Select
-                value={editedClient.group_id}
-                onValueChange={(value) => handleEditSelectChange("group_id", value)}
-              >
-                <SelectTrigger id="group_id">
-                  <SelectValue placeholder="Selecione um grupo" />
-                </SelectTrigger>
-                <SelectContent>
-                  {clientGroups.map(group => (
-                    <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label htmlFor="edit-observacao">Observação</Label>
+              <Textarea id="edit-observacao" data-field="observacao" value={editedClient.observacao} onChange={handleEditInputChange} placeholder="Adicione informações relevantes sobre este cliente" />
             </div>
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="observacao">Observação</Label>
-            <Textarea
-              id="observacao"
-              value={editedClient.observacao}
-              onChange={handleEditInputChange}
-              placeholder="Adicione informações relevantes sobre este cliente"
-            />
+          <div className="space-y-3">
+            <p className="text-sm font-semibold">Empresa</p>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <DocumentLabel
+                  htmlFor="edit-cnpj"
+                  showStar={visibleBillingStar(editedClient.cpf, editedClient.cnpj, editedClient.savedBilling, editedClient.billingChoice) != null}
+                  active={visibleBillingStar(editedClient.cpf, editedClient.cnpj, editedClient.savedBilling, editedClient.billingChoice) === "cnpj"}
+                  onSelect={() => setEditedClient({ ...editedClient, billingChoice: "cnpj" })}
+                >
+                  CNPJ
+                </DocumentLabel>
+                <Input id="edit-cnpj" data-field="cnpj" placeholder="00.000.000/0000-00" value={editedClient.cnpj} onChange={handleEditInputChange} onBlur={(event) => onEditCnpjBlur(event.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-razao">Razão social</Label>
+                <Input id="edit-razao" data-field="razao_social" value={editedClient.razao_social} onChange={handleEditInputChange} maxLength={200} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-company">Nome fantasia</Label>
+                <Input id="edit-company" data-field="company" value={editedClient.company} onChange={handleEditInputChange} />
+              </div>
+            </div>
           </div>
         </form>
       );
     } else {
-      // Modo de visualização - exibir detalhes
+      const viewDocs = clientDocumentsFromRecord(selectedClient);
+      const viewStar = visibleBillingStar(viewDocs.cpf, viewDocs.cnpj, viewDocs.savedBilling, null);
       return (
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-1">
-            <Label>E-mail</Label>
-            <p className="text-sm">{selectedClient.email}</p>
+        <div className="space-y-4">
+          <div>
+            <p className="mb-2 text-sm font-semibold">Cliente</p>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <Label>E-mail</Label>
+                <p className="text-sm">{selectedClient.email}</p>
+              </div>
+              <div className="space-y-1">
+                <Label>Telefone</Label>
+                <p className="text-sm">{selectedClient.phone}</p>
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-1">
+                  <Label>CPF</Label>
+                  {viewStar === "cpf" ? <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-500" aria-label="CPF usado nas faturas" /> : null}
+                </div>
+                <p className="text-sm">{formatCpfCnpjDisplay(selectedClient.cpf || (String(selectedClient.cpf_cnpj || "").replace(/\D/g, "").length === 11 ? selectedClient.cpf_cnpj : ""))}</p>
+              </div>
+              <div className="space-y-1">
+                <Label>RG</Label>
+                <p className="text-sm">{selectedClient.rg || "—"}</p>
+              </div>
+              <div className="space-y-1">
+                <Label>Status</Label>
+                <p className="text-sm">
+                  <Badge variant={selectedClient.status === "Ativo" ? "default" : (selectedClient.status === "Inativo" ? "destructive" : "outline")}>
+                    {selectedClient.status}
+                  </Badge>
+                </p>
+              </div>
+              <div className="space-y-1 col-span-2">
+                <Label>Observação</Label>
+                <p className="text-sm whitespace-pre-wrap">{selectedClient.observacao || "—"}</p>
+              </div>
+            </div>
           </div>
-          <div className="space-y-1">
-            <Label>Telefone</Label>
-            <p className="text-sm">{selectedClient.phone}</p>
-          </div>
-          <div className="space-y-1">
-            <Label>CPF ou CNPJ</Label>
-            <p className="text-sm">{formatCpfCnpjDisplay(selectedClient.cpf_cnpj)}</p>
-          </div>
-          <div className="space-y-1">
-            <Label>Empresa</Label>
-            <p className="text-sm">{selectedClient.company}</p>
-          </div>
-          <div className="space-y-1">
-            <Label>Status</Label>
-            <p className="text-sm">
-              <Badge variant={selectedClient.status === "Ativo" ? "default" : (selectedClient.status === "Inativo" ? "destructive" : "outline")}>
-                {selectedClient.status}
-              </Badge>
-            </p>
-          </div>
-          <div className="space-y-1 col-span-2">
-            <Label>Observação</Label>
-            <p className="text-sm whitespace-pre-wrap">{selectedClient.observacao || "Nenhuma observação registrada."}</p>
+          <div>
+            <p className="mb-2 text-sm font-semibold">Empresa</p>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-1">
+                  <Label>CNPJ</Label>
+                  {viewStar === "cnpj" ? <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-500" aria-label="CNPJ usado nas faturas" /> : null}
+                </div>
+                <p className="text-sm">{formatCpfCnpjDisplay(selectedClient.cnpj || (String(selectedClient.cpf_cnpj || "").replace(/\D/g, "").length === 14 ? selectedClient.cpf_cnpj : ""))}</p>
+              </div>
+              <div className="space-y-1">
+                <Label>Razão social</Label>
+                <p className="text-sm">{selectedClient.razao_social || "—"}</p>
+              </div>
+              <div className="space-y-1">
+                <Label>Nome fantasia</Label>
+                <p className="text-sm">{selectedClient.company || "—"}</p>
+              </div>
+            </div>
           </div>
           <div className="space-y-1">
             <Label>Grupo</Label>
@@ -1341,11 +1502,26 @@ const Clients = () => {
             <input
               ref={csvImportInputRef}
               type="file"
-              accept=".csv,text/csv,.txt"
+              accept=".csv,.txt,.xls,.xlsx,text/csv,text/plain,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              multiple
               className="sr-only"
               tabIndex={-1}
               aria-hidden
               onChange={handleCsvFileChange}
+            />
+            <ClientImportSheet
+              open={importSheetOpen}
+              onOpenChange={setImportSheetOpen}
+              files={importFiles}
+              sessionKey={importSession}
+              groups={clientGroups}
+              running={csvImportRunning}
+              onActiveSheetChange={(fileId, sheetName) => {
+                setImportFiles((current) =>
+                  current.map((file) => (file.id === fileId ? { ...file, activeSheet: sheetName } : file)),
+                );
+              }}
+              onConfirm={handleImportConfirm}
             />
             <MobileClientsSearchSheet
               open={mobileSearchOpen}
@@ -1467,104 +1643,91 @@ const Clients = () => {
                 </DialogDescription>
               </DialogHeader>
               <form onSubmit={handleAddClient}>
-                <div className="grid gap-6 py-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="name">Nome</Label>
-                      <Input 
-                        id="name" 
-                        placeholder="Nome completo" 
-                        required 
-                        value={newClient.name}
-                        onChange={handleInputChange}
-                      />
+                <div className="grid max-h-[70vh] gap-6 overflow-y-auto py-4 pr-1">
+                  <div className="space-y-3">
+                    <p className="text-sm font-semibold">Cliente</p>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="new-name">Nome</Label>
+                        <Input id="new-name" data-field="name" placeholder="Nome completo" required value={newClient.name} onChange={handleInputChange} />
+                      </div>
+                      <div className="space-y-2">
+                        <DocumentLabel
+                          htmlFor="new-cpf"
+                          showStar={visibleBillingStar(newClient.cpf, newClient.cnpj, newClient.savedBilling, newClient.billingChoice) != null}
+                          active={visibleBillingStar(newClient.cpf, newClient.cnpj, newClient.savedBilling, newClient.billingChoice) === "cpf"}
+                          onSelect={() => setNewClient({ ...newClient, billingChoice: "cpf" })}
+                        >
+                          CPF
+                        </DocumentLabel>
+                        <Input id="new-cpf" data-field="cpf" placeholder="000.000.000-00" value={newClient.cpf} onChange={handleInputChange} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="new-rg">RG</Label>
+                        <Input id="new-rg" data-field="rg" value={newClient.rg} onChange={handleInputChange} maxLength={20} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="new-email">E-mail</Label>
+                        <Input id="new-email" data-field="email" type="email" placeholder="email@exemplo.com" required value={newClient.email} onChange={handleInputChange} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="new-phone">Telefone</Label>
+                        <Input id="new-phone" data-field="phone" placeholder="(00) 00000-0000" value={newClient.phone} onChange={handleInputChange} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="new-status">Status</Label>
+                        <Select defaultValue="Ativo" onValueChange={(value) => handleSelectChange("status", value)}>
+                          <SelectTrigger id="new-status">
+                            <SelectValue placeholder="Selecione" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Ativo">Ativo</SelectItem>
+                            <SelectItem value="Inativo">Inativo</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="new-group">Grupo</Label>
+                        <Select defaultValue="" onValueChange={(value) => handleSelectChange("group_id", value)}>
+                          <SelectTrigger id="new-group">
+                            <SelectValue placeholder="Selecione um grupo" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {clientGroups.map((group) => (
+                              <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="company">Empresa</Label>
-                      <Input 
-                        id="company" 
-                        placeholder="Nome da empresa" 
-                        value={newClient.company}
-                        onChange={handleInputChange}
-                      />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="email">E-mail</Label>
-                      <Input 
-                        id="email" 
-                        type="email" 
-                        placeholder="email@exemplo.com" 
-                        required 
-                        value={newClient.email}
-                        onChange={handleInputChange}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="phone">Telefone</Label>
-                      <Input 
-                        id="phone" 
-                        placeholder="(00) 00000-0000" 
-                        value={newClient.phone}
-                        onChange={handleInputChange}
-                      />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="cpf_cnpj">CPF ou CNPJ</Label>
-                      <Input 
-                        id="cpf_cnpj" 
-                        placeholder="000.000.000-00 ou 00.000.000/0000-00" 
-                        value={newClient.cpf_cnpj}
-                        onChange={handleInputChange}
-                      />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="status">Status</Label>
-                      <Select 
-                        defaultValue="Ativo"
-                        onValueChange={(value) => handleSelectChange("status", value)}
-                      >
-                        <SelectTrigger id="status">
-                          <SelectValue placeholder="Selecione" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="Ativo">Ativo</SelectItem>
-                          <SelectItem value="Inativo">Inativo</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="group_id">Grupo</Label>
-                      <Select 
-                        defaultValue=""
-                        onValueChange={(value) => handleSelectChange("group_id", value)}
-                      >
-                        <SelectTrigger id="group_id">
-                          <SelectValue placeholder="Selecione um grupo" />
-                        </SelectTrigger>
-                        <SelectContent>
-                                {clientGroups.map((group) => (
-                                  <SelectItem key={group.id} value={group.id}>
-                                    {group.name}
-                                  </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <Label htmlFor="new-observacao">Observação</Label>
+                      <Textarea id="new-observacao" data-field="observacao" placeholder="Adicione informações relevantes sobre este cliente" value={newClient.observacao || ""} onChange={handleInputChange} />
                     </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="observacao">Observação</Label>
-                    <Textarea 
-                      id="observacao" 
-                      placeholder="Adicione informações relevantes sobre este cliente" 
-                      value={newClient.observacao || ""}
-                      onChange={handleInputChange}
-                    />
+                  <div className="space-y-3">
+                    <p className="text-sm font-semibold">Empresa</p>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <DocumentLabel
+                          htmlFor="new-cnpj"
+                          showStar={visibleBillingStar(newClient.cpf, newClient.cnpj, newClient.savedBilling, newClient.billingChoice) != null}
+                          active={visibleBillingStar(newClient.cpf, newClient.cnpj, newClient.savedBilling, newClient.billingChoice) === "cnpj"}
+                          onSelect={() => setNewClient({ ...newClient, billingChoice: "cnpj" })}
+                        >
+                          CNPJ
+                        </DocumentLabel>
+                        <Input id="new-cnpj" data-field="cnpj" placeholder="00.000.000/0000-00" value={newClient.cnpj} onChange={handleInputChange} onBlur={(event) => onNewCnpjBlur(event.target.value)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="new-razao">Razão social</Label>
+                        <Input id="new-razao" data-field="razao_social" value={newClient.razao_social} onChange={handleInputChange} maxLength={200} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="new-company">Nome fantasia</Label>
+                        <Input id="new-company" data-field="company" placeholder="Nome da empresa" value={newClient.company} onChange={handleInputChange} />
+                      </div>
+                    </div>
                   </div>
                 </div>
                 <DialogFooter>
@@ -1582,8 +1745,8 @@ const Clients = () => {
             <Dialog open={csvImportDialogOpen} onOpenChange={setCsvImportDialogOpen}>
               <DialogContent className="max-w-lg">
                 <DialogHeader>
-                  <DialogTitle>Importação CSV</DialogTitle>
-                  <DialogDescription>Resumo do envio do arquivo.</DialogDescription>
+                  <DialogTitle>Importação</DialogTitle>
+                  <DialogDescription>Resumo do envio dos arquivos.</DialogDescription>
                 </DialogHeader>
                 {csvImportSummary ? (
                   <div className="space-y-3">

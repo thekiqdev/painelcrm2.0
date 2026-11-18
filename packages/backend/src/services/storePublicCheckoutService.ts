@@ -10,6 +10,7 @@ import {
   parseCpfCnpjDigits,
   assertCpfCnpjValidOrThrow,
 } from './storeCheckoutClientResolver.js';
+import { clientBillingDigits, documentPatchSql, externalDocumentPatch, newClientDocumentColumns } from './clientDocumentFields.js';
 import {
   InsufficientStockError,
   InventoryValidationError,
@@ -159,7 +160,7 @@ export async function getStoreCheckoutClientEligibility(input: {
   }
   const { storeUserId, tenantId } = await resolveStoreCheckoutStoreContext(slug);
   const clientRow = await findClientByStoreOwnerPhone(storeUserId, tenantId, phone);
-  const needs_cpf = clientRow == null || !String(clientRow.cpf_cnpj ?? '').trim();
+  const needs_cpf = clientRow == null || !clientBillingDigits(clientRow);
   return { needs_cpf };
 }
 
@@ -403,24 +404,27 @@ export async function createStorePublicCheckout(
       if (foundClient) {
         clientId = foundClient.id;
         await mergeClientContactFromCheckout(clientId, input.customer_email, input.customer_name);
-        if (cpfDigits && !String(foundClient.cpf_cnpj ?? '').trim()) {
-          await pool.query(`UPDATE clients SET cpf_cnpj = $1, updated_at = now() WHERE id = $2`, [
-            cpfDigits,
-            clientId,
-          ]);
+        if (cpfDigits) {
+          const patch = externalDocumentPatch(foundClient, cpfDigits);
+          const documentSql = documentPatchSql(patch, clientId);
+          if (documentSql) await pool.query(documentSql.text, documentSql.values);
         }
       } else {
         const emailVal = input.customer_email.trim().toLowerCase();
+        const docs = newClientDocumentColumns(cpfDigits);
         const ins = await pool.query<{ id: string }>(
-          `INSERT INTO clients (user_id, name, email, phone, cpf_cnpj, source)
-           VALUES ($1::uuid, $2, $3, $4, $5, 'store_public_checkout')
+          `INSERT INTO clients (user_id, name, email, phone, cpf, cnpj, billing_document, cpf_cnpj, source)
+           VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, 'store_public_checkout')
            RETURNING id`,
           [
             storeUserId,
             input.customer_name.trim(),
             emailVal || null,
             checkoutPhone,
-            cpfDigits,
+            docs.cpf,
+            docs.cnpj,
+            docs.billing_document,
+            docs.cpf_cnpj,
           ]
         );
         const row = ins.rows[0];

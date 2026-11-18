@@ -15,6 +15,7 @@ import {
   deletePaymentCustomerForClient,
   getPaymentCustomerForClient,
 } from '../services/paymentCustomersService.js';
+import { clientBillingDigits } from '../services/clientDocumentFields.js';
 import { logExecutionOrchestrator } from './orchestratorLogger.js';
 import type { DbQueryable, GatewayExecutionOutcome } from './types.js';
 
@@ -60,19 +61,29 @@ export async function executeGatewayChargeForInvoice(
       (await getPaymentCustomerForClient(subscription.tenant_id, gatewayKey, clientId))
         ?.gateway_customer_id ?? null;
 
-    const clientR = await db.query('SELECT name, email, phone, cpf_cnpj FROM clients WHERE id = $1', [
-      clientId,
-    ]);
+    const clientR = await db.query(
+      'SELECT name, email, phone, cpf, cnpj, billing_document, cpf_cnpj FROM clients WHERE id = $1',
+      [clientId],
+    );
     const c = clientR.rows[0] as
-      | { name: string; email: string | null; phone: string | null; cpf_cnpj: string | null }
+      | {
+          name: string;
+          email: string | null;
+          phone: string | null;
+          cpf: string | null;
+          cnpj: string | null;
+          billing_document: string | null;
+          cpf_cnpj: string | null;
+        }
       | undefined;
+    const billingDocument = clientBillingDigits(c) || undefined;
 
     if (!customerId && gateway.ensureCustomerForClient && c) {
       customerId = await gateway.ensureCustomerForClient(subscription.tenant_id, clientId, {
         name: c.name,
         email: c.email ?? '',
         phone: c.phone ?? undefined,
-        cpfCnpj: c.cpf_cnpj?.trim() || undefined,
+        cpfCnpj: billingDocument,
       });
       await createPaymentCustomerForClient(
         subscription.tenant_id,
@@ -220,7 +231,7 @@ export async function executeGatewayChargeForInvoice(
         name: c.name,
         email: c.email ?? '',
         phone: c.phone ?? undefined,
-        cpfCnpj: c.cpf_cnpj?.trim() || undefined,
+        cpfCnpj: billingDocument,
       });
       await createPaymentCustomerForClient(
         subscription.tenant_id,

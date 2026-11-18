@@ -17,6 +17,11 @@ export interface Client {
   group_id?: string;
   profile_id?: string;
   cpf_cnpj?: string | null;
+  cpf?: string | null;
+  cnpj?: string | null;
+  rg?: string | null;
+  razao_social?: string | null;
+  billing_document?: "cpf" | "cnpj" | null;
   /** Foto WhatsApp derivada da conversa vinculada (API GET /api/clients). */
   whatsapp_avatar_url?: string | null;
   client_groups?: { id: string; name: string } | null;
@@ -207,6 +212,16 @@ export class ClientsService {
     const response = await apiClient.patch<Client>(`/api/clients/${id}`, clientData);
     if (response.error) throw new Error(response.error);
     if (!response.data) throw new Error('No data returned');
+    return response.data;
+  }
+
+  async lookupCnpj(cnpj: string): Promise<{ razao_social: string; nome_fantasia: string | null }> {
+    const digits = cnpj.replace(/\D/g, '');
+    const response = await apiClient.get<{ razao_social: string; nome_fantasia: string | null }>(
+      `/api/clients/cnpj-lookup/${digits}`,
+    );
+    if (response.error) throw new Error(response.error);
+    if (!response.data?.razao_social) throw new Error('Consulta de CNPJ indisponível.');
     return response.data;
   }
 

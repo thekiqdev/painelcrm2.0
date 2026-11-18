@@ -10,6 +10,9 @@ export interface StoreCheckoutClientRow {
   name: string;
   email: string | null;
   phone: string | null;
+  cpf: string | null;
+  cnpj: string | null;
+  billing_document: 'cpf' | 'cnpj' | null;
   cpf_cnpj: string | null;
 }
 
@@ -42,10 +45,13 @@ export async function findClientByStoreOwnerPhone(
     name: string;
     email: string | null;
     phone: string | null;
+    cpf: string | null;
+    cnpj: string | null;
+    billing_document: 'cpf' | 'cnpj' | null;
     cpf_cnpj: string | null;
     phone_digits: string;
   }>(
-    `SELECT c.id, c.name, c.email, c.phone, c.cpf_cnpj,
+    `SELECT c.id, c.name, c.email, c.phone, c.cpf, c.cnpj, c.billing_document, c.cpf_cnpj,
             regexp_replace(COALESCE(c.phone, ''), '[^0-9]', '', 'g') AS phone_digits
      FROM clients c
      INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $2::uuid

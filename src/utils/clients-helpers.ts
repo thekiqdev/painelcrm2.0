@@ -14,6 +14,11 @@ export interface ClientData {
   observacao?: string | null;
   profile_id?: string;
   cpf_cnpj?: string | null;
+  cpf?: string | null;
+  cnpj?: string | null;
+  rg?: string | null;
+  razao_social?: string | null;
+  billing_document?: "cpf" | "cnpj" | null;
 }
 
 // Interface para os dados de tarefas do cliente
@@ -41,7 +46,19 @@ export const addClient = async (clientData: ClientData) => {
     if (clientData.observacao && clientData.observacao.trim()) cleanData.observacao = clientData.observacao.trim();
     if (clientData.group_id && clientData.group_id.trim()) cleanData.group_id = clientData.group_id;
     if (clientData.profile_id && clientData.profile_id.trim()) cleanData.profile_id = clientData.profile_id;
-    if (clientData.cpf_cnpj != null && String(clientData.cpf_cnpj).trim()) {
+    const usesSplitDocuments =
+      clientData.cpf !== undefined ||
+      clientData.cnpj !== undefined ||
+      clientData.rg !== undefined ||
+      clientData.razao_social !== undefined ||
+      clientData.billing_document != null;
+    if (usesSplitDocuments) {
+      cleanData.cpf = clientData.cpf ?? null;
+      cleanData.cnpj = clientData.cnpj ?? null;
+      cleanData.rg = clientData.rg ?? null;
+      cleanData.razao_social = clientData.razao_social ?? null;
+      if (clientData.billing_document) cleanData.billing_document = clientData.billing_document;
+    } else if (clientData.cpf_cnpj != null && String(clientData.cpf_cnpj).trim()) {
       const digits = String(clientData.cpf_cnpj).replace(/\D/g, "").trim();
       if (digits.length > 0) cleanData.cpf_cnpj = digits;
     }

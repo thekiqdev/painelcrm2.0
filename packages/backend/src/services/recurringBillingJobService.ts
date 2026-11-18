@@ -6,6 +6,7 @@
  */
 import crypto from 'node:crypto';
 import { pool, dbRequestStorage, withBillingWorkerRlsBypass } from '../utils/db.js';
+import { clientBillingDigits } from './clientDocumentFields.js';
 
 import { billingLog, notifyBillingJobFailed, subscriptionBillingLog } from './billingLogger.js';
 import {
@@ -2323,15 +2324,19 @@ export async function processChildItemDueInvoices(): Promise<ProcessChildInvoice
           name: string;
           email: string | null;
           phone: string | null;
+          cpf: string | null;
+          cnpj: string | null;
+          billing_document: string | null;
           cpf_cnpj: string | null;
-        }>('SELECT name, email, phone, cpf_cnpj FROM clients WHERE id = $1', [clientId]);
+        }>('SELECT name, email, phone, cpf, cnpj, billing_document, cpf_cnpj FROM clients WHERE id = $1', [clientId]);
         const childClient = childClientRow.rows[0];
+        const childDocument = clientBillingDigits(childClient) || undefined;
         if (!customerId && gateway.ensureCustomerForClient && childClient) {
           customerId = await gateway.ensureCustomerForClient(row.tenant_id, clientId, {
             name: childClient.name,
             email: childClient.email ?? '',
             phone: childClient.phone ?? undefined,
-            cpfCnpj: childClient.cpf_cnpj?.trim() || undefined,
+            cpfCnpj: childDocument,
           });
           await createPaymentCustomerForClient(row.tenant_id, gatewayKey, clientId, customerId, clientId);
         }
@@ -2367,7 +2372,7 @@ export async function processChildItemDueInvoices(): Promise<ProcessChildInvoice
               name: childClient.name,
               email: childClient.email ?? '',
               phone: childClient.phone ?? undefined,
-              cpfCnpj: childClient.cpf_cnpj?.trim() || undefined,
+              cpfCnpj: childDocument,
             });
             await createPaymentCustomerForClient(row.tenant_id, gatewayKey, clientId, customerId, clientId);
             idempotencyKey = `customer_child_${row.item_id}_${due}_r_${crypto.randomUUID().slice(0, 8)}`;

@@ -52,6 +52,7 @@ import {
   PieChart,
   CalendarSync,
   CalendarDays,
+  Star,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAuth } from "@/contexts/AuthContext";
@@ -75,7 +76,17 @@ import { formatDateOnlyPtBr } from "@/utils/formatCalendarDate";
 import { ptBR } from "date-fns/locale";
 import { StickyNote, StickyNoteData } from "@/components/clients/StickyNote";
 import { cn } from "@/lib/utils";
-import { formatCpfCnpjDisplay } from "@/utils/cpfCnpj";
+import {
+  clientDocumentWrite,
+  clientDocumentsFromRecord,
+  formatCnpjTyping,
+  formatCpfTyping,
+  visibleBillingStar,
+  type BillingKind,
+} from "@/utils/clientBillingDocument";
+import { DocumentLabel } from "@/components/clients/DocumentLabel";
+import { useCnpjAutofill } from "@/hooks/useCnpjAutofill";
+import { cnpjLookupFill } from "@/utils/cnpjLookup";
 import { resolveProfileAvatarUrl } from "@/utils/chatIdentityDisplay";
 import {
   getClientProfileReturnContext,
@@ -139,7 +150,10 @@ const clientEditSchema = z.object({
   company: z.string().optional(),
   email: z.string().email("E-mail inválido").optional().or(z.literal("")),
   phone: z.string().optional(),
-  cpf_cnpj: z.string().optional(),
+  cpf: z.string().optional(),
+  cnpj: z.string().optional(),
+  rg: z.string().max(20, "RG deve ter no máximo 20 caracteres").optional(),
+  razao_social: z.string().max(200, "Razão social deve ter no máximo 200 caracteres").optional(),
   status: z.string().optional(),
   source: z.string().optional(),
   observacao: z.string().optional(),
@@ -319,12 +333,33 @@ const ClientProfile = () => {
       company: "",
       email: "",
       phone: "",
-      cpf_cnpj: "",
+      cpf: "",
+      cnpj: "",
+      rg: "",
+      razao_social: "",
       status: "",
       source: "",
       observacao: "",
     },
   });
+  const [billingChoice, setBillingChoice] = useState<BillingKind | null>(null);
+  const { onCnpjBlur, cancelCnpjLookup } = useCnpjAutofill((found) => {
+    const values = clientForm.getValues();
+    const patch = cnpjLookupFill({
+      razaoSocial: values.razao_social || "",
+      company: values.company || "",
+      found,
+    });
+    if (patch.razao_social) clientForm.setValue("razao_social", patch.razao_social, { shouldDirty: true });
+    if (patch.company) clientForm.setValue("company", patch.company, { shouldDirty: true });
+  });
+  const profileDocs = client ? clientDocumentsFromRecord(client) : null;
+  const billingStar = visibleBillingStar(
+    clientForm.watch("cpf") || "",
+    clientForm.watch("cnpj") || "",
+    profileDocs?.savedBilling ?? null,
+    billingChoice,
+  );
 
   // Determinar qual aba mostrar baseado na rota
   const getActiveTab = () => {
@@ -525,16 +560,21 @@ const ClientProfile = () => {
 
   useEffect(() => {
     if (!client) return;
+    const docs = clientDocumentsFromRecord(client);
     clientForm.reset({
       name: client.name || "",
       company: client.company || "",
       email: client.email || "",
       phone: client.phone || "",
-      cpf_cnpj: client.cpf_cnpj || "",
+      cpf: docs.cpf,
+      cnpj: docs.cnpj,
+      rg: docs.rg,
+      razao_social: docs.razao_social,
       status: client.status || "Ativo",
       source: client.source || "",
       observacao: client.observacao || "",
     });
+    setBillingChoice(null);
   }, [client, clientForm]);
 
   const loadClientData = async () => {
@@ -853,15 +893,22 @@ const ClientProfile = () => {
   const handleSaveClientDetails = async (values: z.infer<typeof clientEditSchema>) => {
     if (!client?.id) return;
     try {
+      const documents = clientDocumentWrite({
+        cpf: values.cpf || "",
+        cnpj: values.cnpj || "",
+        rg: values.rg || "",
+        razaoSocial: values.razao_social || "",
+        billingChoice,
+      });
       const payload = {
         name: values.name.trim(),
         company: values.company?.trim() || undefined,
         email: values.email?.trim() || undefined,
         phone: values.phone?.trim() || undefined,
-        cpf_cnpj: values.cpf_cnpj?.replace(/\D/g, "").trim() || null,
         status: values.status?.trim() || undefined,
         source: values.source?.trim() || undefined,
         observacao: values.observacao?.trim() || null,
+        ...documents,
       };
       const updated = await clientsService.updateClient(client.id, payload);
       setClient((prev: any) => ({ ...prev, ...updated }));
@@ -1641,8 +1688,10 @@ const ClientProfile = () => {
                 <CardContent>
                   {isEditingClientDetails ? (
                     <Form {...clientForm}>
-                      <form className="space-y-4">
-                        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <form className="space-y-6">
+                        <div className="space-y-3">
+                          <p className="text-sm font-semibold">Cliente</p>
+                          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                           <FormField control={clientForm.control} name="name" render={({ field }) => (
                             <FormItem>
                               <FormLabel>Nome</FormLabel>
@@ -1650,10 +1699,30 @@ const ClientProfile = () => {
                               <FormMessage />
                             </FormItem>
                           )} />
-                          <FormField control={clientForm.control} name="company" render={({ field }) => (
+                          <FormField control={clientForm.control} name="cpf" render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Empresa</FormLabel>
-                              <FormControl><Input {...field} value={field.value || ""} /></FormControl>
+                              <DocumentLabel
+                                htmlFor="profile-cpf"
+                                showStar={billingStar != null}
+                                active={billingStar === "cpf"}
+                                onSelect={() => setBillingChoice("cpf")}
+                              >
+                                CPF
+                              </DocumentLabel>
+                              <FormControl>
+                                <Input
+                                  id="profile-cpf"
+                                  value={field.value || ""}
+                                  onChange={(event) => field.onChange(formatCpfTyping(event.target.value))}
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )} />
+                          <FormField control={clientForm.control} name="rg" render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>RG</FormLabel>
+                              <FormControl><Input {...field} value={field.value || ""} maxLength={20} /></FormControl>
                               <FormMessage />
                             </FormItem>
                           )} />
@@ -1667,13 +1736,6 @@ const ClientProfile = () => {
                           <FormField control={clientForm.control} name="phone" render={({ field }) => (
                             <FormItem>
                               <FormLabel>Telefone</FormLabel>
-                              <FormControl><Input {...field} value={field.value || ""} /></FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )} />
-                          <FormField control={clientForm.control} name="cpf_cnpj" render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>CPF ou CNPJ</FormLabel>
                               <FormControl><Input {...field} value={field.value || ""} /></FormControl>
                               <FormMessage />
                             </FormItem>
@@ -1699,20 +1761,94 @@ const ClientProfile = () => {
                               <FormMessage />
                             </FormItem>
                           )} />
+                          </div>
+                        </div>
+                        <div className="space-y-3">
+                          <p className="text-sm font-semibold">Empresa</p>
+                          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                          <FormField control={clientForm.control} name="cnpj" render={({ field }) => (
+                            <FormItem>
+                              <DocumentLabel
+                                htmlFor="profile-cnpj"
+                                showStar={billingStar != null}
+                                active={billingStar === "cnpj"}
+                                onSelect={() => setBillingChoice("cnpj")}
+                              >
+                                CNPJ
+                              </DocumentLabel>
+                              <FormControl>
+                                <Input
+                                  id="profile-cnpj"
+                                  value={field.value || ""}
+                                  onChange={(event) => {
+                                    cancelCnpjLookup();
+                                    field.onChange(formatCnpjTyping(event.target.value));
+                                  }}
+                                  onBlur={(event) => {
+                                    field.onBlur();
+                                    onCnpjBlur(event.target.value);
+                                  }}
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )} />
+                          <FormField control={clientForm.control} name="razao_social" render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Razão social</FormLabel>
+                              <FormControl><Input {...field} value={field.value || ""} maxLength={200} /></FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )} />
+                          <FormField control={clientForm.control} name="company" render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Nome fantasia</FormLabel>
+                              <FormControl><Input {...field} value={field.value || ""} /></FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )} />
+                          </div>
                         </div>
                       </form>
                     </Form>
                   ) : (
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                        <div><Label>Nome</Label><p className="text-sm mt-1">{client.name}</p></div>
-                        <div><Label>Empresa</Label><p className="text-sm mt-1">{client.company || "Não informado"}</p></div>
-                        <div><Label>E-mail</Label><p className="text-sm mt-1">{client.email || "Não informado"}</p></div>
-                        <div><Label>Telefone</Label><p className="text-sm mt-1">{client.phone || "Não informado"}</p></div>
-                        <div><Label>CPF ou CNPJ</Label><p className="text-sm mt-1">{formatCpfCnpjDisplay(client.cpf_cnpj) === "—" ? "Não informado" : formatCpfCnpjDisplay(client.cpf_cnpj)}</p></div>
-                        <div><Label>Status</Label><p className="text-sm mt-1">{client.status || "Ativo"}</p></div>
-                        <div className="md:col-span-2"><Label>Origem</Label><p className="text-sm mt-1">{client.source || "Não informado"}</p></div>
-                        <div className="md:col-span-2"><Label>Observação</Label><p className="text-sm mt-1 whitespace-pre-wrap">{client.observacao || "Não informado"}</p></div>
+                    <div className="space-y-6">
+                      <div>
+                        <p className="mb-2 text-sm font-semibold">Cliente</p>
+                        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                          <div><Label>Nome</Label><p className="text-sm mt-1">{client.name}</p></div>
+                          <div>
+                            <div className="flex items-center gap-1">
+                              <Label>CPF</Label>
+                              {visibleBillingStar(profileDocs?.cpf || "", profileDocs?.cnpj || "", profileDocs?.savedBilling ?? null, null) === "cpf" ? (
+                                <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-500" aria-label="CPF usado nas faturas" />
+                              ) : null}
+                            </div>
+                            <p className="text-sm mt-1">{profileDocs?.cpf || "Não informado"}</p>
+                          </div>
+                          <div><Label>RG</Label><p className="text-sm mt-1">{client.rg || "Não informado"}</p></div>
+                          <div><Label>E-mail</Label><p className="text-sm mt-1">{client.email || "Não informado"}</p></div>
+                          <div><Label>Telefone</Label><p className="text-sm mt-1">{client.phone || "Não informado"}</p></div>
+                          <div><Label>Status</Label><p className="text-sm mt-1">{client.status || "Ativo"}</p></div>
+                          <div className="md:col-span-2"><Label>Origem</Label><p className="text-sm mt-1">{client.source || "Não informado"}</p></div>
+                          <div className="md:col-span-2"><Label>Observação</Label><p className="text-sm mt-1 whitespace-pre-wrap">{client.observacao || "Não informado"}</p></div>
+                        </div>
+                      </div>
+                      <div>
+                        <p className="mb-2 text-sm font-semibold">Empresa</p>
+                        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                          <div>
+                            <div className="flex items-center gap-1">
+                              <Label>CNPJ</Label>
+                              {visibleBillingStar(profileDocs?.cpf || "", profileDocs?.cnpj || "", profileDocs?.savedBilling ?? null, null) === "cnpj" ? (
+                                <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-500" aria-label="CNPJ usado nas faturas" />
+                              ) : null}
+                            </div>
+                            <p className="text-sm mt-1">{profileDocs?.cnpj || "Não informado"}</p>
+                          </div>
+                          <div><Label>Razão social</Label><p className="text-sm mt-1">{client.razao_social || "Não informado"}</p></div>
+                          <div><Label>Nome fantasia</Label><p className="text-sm mt-1">{client.company || "Não informado"}</p></div>
+                        </div>
                       </div>
                     </div>
                   )}

@@ -18,6 +18,7 @@ import { buildPublicPayPayloadMeta } from '../services/publicPayPayloadMeta.js';
 import { billingLog } from '../services/billingLogger.js';
 import { isPublicPayTelemetryEnabled, isPublicPaySwitchMethodEnabledForTenant } from '../config/publicPayEnv.js';
 import { pool } from '../utils/db.js';
+import { clientBillingDigits } from '../services/clientDocumentFields.js';
 import { getActiveGateway } from '../modules/payments/gatewayProvider.js';
 import { buildGateway } from '../modules/payments/gatewayRegistry.js';
 import { getActiveConfig, getConfigForTest } from '../services/paymentGatewayConfigService.js';
@@ -299,16 +300,22 @@ export async function getPayByToken(req: Request, res: Response): Promise<void> 
         email: string | null;
         phone: string | null;
         company: string | null;
+        cpf: string | null;
+        cnpj: string | null;
+        billing_document: string | null;
         cpf_cnpj: string | null;
       }>(
-        `SELECT c.name, c.email, c.phone, c.company, c.cpf_cnpj
+        `SELECT c.name, c.email, c.phone, c.company, c.cpf, c.cnpj, c.billing_document, c.cpf_cnpj
          FROM clients c
          INNER JOIN users u ON u.id = c.user_id AND u.tenant_id = $2
          WHERE c.id = $1
          LIMIT 1`,
         [freshData.client_id, freshData.tenant_id]
       );
-      clientProfile = clientRow.rows[0] ?? null;
+      const loaded = clientRow.rows[0] ?? null;
+      clientProfile = loaded
+        ? { ...loaded, cpf_cnpj: clientBillingDigits(loaded) }
+        : null;
     }
     const missingLinkedClientCpf =
       invoice.gateway !== 'stripe' &&

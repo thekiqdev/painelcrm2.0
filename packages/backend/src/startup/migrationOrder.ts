@@ -590,5 +590,7 @@ export const MIGRATION_ORDER = [
   '365_tenant_localization_currencies.sql',
   /** OS: status sent + notificação service_order.shared (link de visualização) */
   '366_service_orders_sent_status_and_shared_notification.sql',
+  /** Cliente — CPF, CNPJ, RG, razão social e documento de cobrança */
+  '370_clients_cpf_cnpj_split.sql',
   'create-admin-user.sql',
 ];
