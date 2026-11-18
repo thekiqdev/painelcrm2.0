@@ -51,4 +51,16 @@ describe('lookupCnpj', () => {
       statusCode: 503,
     });
   });
+
+  it('usa a fonte seguinte quando a Brasil API falha', async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (String(url).includes('brasilapi.com.br')) return jsonResponse(503, { message: 'indisponível' });
+      return jsonResponse(200, { razao_social: 'ARECO SEG', nome_fantasia: '' });
+    });
+    await expect(lookupCnpj(CNPJ, fetchImpl as unknown as typeof fetch)).resolves.toEqual({
+      razao_social: 'ARECO SEG',
+      nome_fantasia: null,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
 });

@@ -221,12 +221,14 @@ export async function listUnifiedTasks(params: {
       t.priority,
       CASE
         WHEN t.due_date IS NULL THEN NULL
-        WHEN NULLIF(trim(COALESCE(t.due_time, '')), '') IS NULL THEN (t.due_date::timestamp AT TIME ZONE 'UTC')
+        WHEN NULLIF(btrim(COALESCE(t.due_time, '')), '') IS NULL
+          OR btrim(t.due_time) !~ '^([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$'
+          THEN (t.due_date::timestamp AT TIME ZONE 'UTC')
         ELSE (
           (t.due_date::text || ' ' ||
             CASE
-              WHEN trim(t.due_time) LIKE '__:__' AND trim(t.due_time) NOT LIKE '%:%:%' THEN trim(t.due_time) || ':00'
-              ELSE trim(t.due_time)
+              WHEN btrim(t.due_time) ~ '^[0-9]{2}:[0-9]{2}$' THEN btrim(t.due_time) || ':00'
+              ELSE btrim(t.due_time)
             END
           )::timestamp AT TIME ZONE 'UTC'
         )
@@ -241,8 +243,8 @@ export async function listUnifiedTasks(params: {
       ) AS assignee_name,
       NULL::uuid AS project_id,
       NULL::text AS project_name,
-      NULL::uuid AS client_id,
-      NULL::text AS client_name,
+      t.client_id,
+      t.client_name,
       NULL::uuid AS lead_id,
       NULL::text AS lead_name,
       t.deal,
@@ -271,8 +273,8 @@ export async function listUnifiedTasks(params: {
       NULLIF(trim(concat_ws(' ', pap.first_name, pap.last_name)), '') AS assignee_name,
       p.id AS project_id,
       p.name AS project_name,
-      NULL::uuid AS client_id,
-      NULL::text AS client_name,
+      p.client_id,
+      pc.name AS client_name,
       NULL::uuid AS lead_id,
       NULL::text AS lead_name,
       NULL::text AS deal,
@@ -282,6 +284,7 @@ export async function listUnifiedTasks(params: {
     FROM project_tasks pt
     INNER JOIN projects p ON p.id = pt.project_id
     INNER JOIN users owner ON owner.id = p.user_id AND owner.tenant_id = $1::uuid
+    LEFT JOIN clients pc ON pc.id = p.client_id
     LEFT JOIN profiles pap ON pap.id = pt.assignee_id
     WHERE ${innerProject}
 
